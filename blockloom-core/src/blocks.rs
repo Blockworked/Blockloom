@@ -190,6 +190,16 @@ pub enum InstructionKind {
     WhenUiChanged {
         element: String,
     },
+    /// Runs when a plugin fires `event` (a hat its `BlockSchema` adds). An
+    /// empty entry of `args` matches anything; the others must equal what the
+    /// plugin fired, as text, in the schema's slot order.
+    WhenPlugin {
+        plugin: String,
+        block: String,
+        event: String,
+        #[serde(default)]
+        args: Vec<String>,
+    },
     /// Marks a strand as a custom block's body; `block_id` is its
     /// [`BlockDef::id`]. Never runs on its own.
     BlockHeader {
@@ -1069,6 +1079,16 @@ pub enum InstructionKind {
     Return {
         value: Value,
     },
+
+    // ─── Plugin blocks ──────────────────────────────────────────────────────
+    /// A statement a plugin's `BlockSchema`
+    /// adds. `args` follow the schema's slot order; the editor runs the
+    /// block's command with them when the instruction executes.
+    PluginBlock {
+        plugin: String,
+        block: String,
+        args: Vec<Value>,
+    },
 }
 
 /// Blockloom's half of the block-editor contract: where its instructions
@@ -1472,6 +1492,11 @@ impl BlockKind for InstructionKind {
                     f(arg, InputValueType::Any);
                 }
             }
+            K::PluginBlock { args, .. } => {
+                for arg in args {
+                    f(arg, InputValueType::Any);
+                }
+            }
             K::RumbleGamepad { strength, duration } => {
                 f(strength, InputValueType::Any);
                 f(duration, InputValueType::Any);
@@ -1499,6 +1524,7 @@ impl BlockKind for InstructionKind {
             | K::WhenSceneEnds
             | K::WhenCutsceneSignal { .. }
             | K::WhenCutsceneEnds
+            | K::WhenPlugin { .. }
             | K::SkipCutscene
             | K::BlockHeader { .. }
             | K::CreateClone { .. }
@@ -1560,6 +1586,7 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenSceneEnds
                 | InstructionKind::WhenCutsceneSignal { .. }
                 | InstructionKind::WhenCutsceneEnds
+                | InstructionKind::WhenPlugin { .. }
                 | InstructionKind::WhenUiEvent { .. }
                 | InstructionKind::WhenUiClicked { .. }
                 | InstructionKind::WhenUiChanged { .. }

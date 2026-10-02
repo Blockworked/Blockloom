@@ -6,6 +6,13 @@ members = [
     "blockloom-core",
     "blockloom-protocol",
     "blockloom-runtime",
+    "blockloom-plugin-api",
+    "blockloom-plugin-host",
+    "blockloom-plugin-sdk",
+    "blockloom-plugin-gpu",
+    "plugins/examples/tally",
+    "plugins/examples/palette",
+    "plugins/voxel",
 ]
 resolver = "2"
 
@@ -14,6 +21,10 @@ default-members = [
     "blockloom-app",
     "blockloom-core",
     "blockloom-protocol",
+    "blockloom-plugin-api",
+    "blockloom-plugin-host",
+    "blockloom-plugin-sdk",
+    "blockloom-plugin-gpu",
 ]
 
 [workspace.package]
@@ -23,8 +34,8 @@ edition = "2024"
 [workspace.dependencies]
 # Both halves come from one blockstitch commit; `just blockstitch-published`
 # moves them together and `just blockstitch-local` overrides both.
-blockstitch-core = { git = "https://github.com/Blockworked/blockstitch", rev = "fa100f5e" }
-blockstitch-qml = { git = "https://github.com/Blockworked/blockstitch", rev = "fa100f5e" }
+blockstitch-core = { git = "https://github.com/Blockworked/blockstitch", rev = "1cf265dd" }
+blockstitch-qml = { git = "https://github.com/Blockworked/blockstitch", rev = "1cf265dd" }
 bevy = "0.20.0-rc.2"
 # No 0.20 release yet: the bindings moved into the rapier monorepo, which
 # tracks Bevy's main. Patched onto the RC below until a release lands.
@@ -49,12 +60,20 @@ wesl = { version = "0.4.4" }
 wgsl-parse = { version = "0.4.4" }
 polyanya = { version = "0.17", default-features = false }
 libloading = "0.9.0"
+# Portable dispatch keeps the interpreter loop-based: the default tail-call
+# dispatch relies on LLVM sibling-call optimisation and overflowed the stack
+# on a runaway module in a debug-assertions build.
+wasmi = { version = "2.0.0", default-features = false, features = ["stable", "std", "validate", "memory64", "portable-dispatch"] }
+wat = "1.260.0"
 axum = { version = "0.8.9", features = ["ws"] }
 tower-http = { version = "0.7.1", features = ["cors"] }
 image = { version = "0.25.10", default-features = false, features = ["bmp", "dds", "exr", "gif", "hdr", "jpeg", "png", "tga", "webp"] }
 ico = "0.5.0"
 flate2 = "1.1.10"
 crc32fast = "1.5.2"
+semver = { version = "1.0.28", features = ["serde"] }
+sha2 = "0.10.9"
+tempfile = "3.27.0"
 
 # The runtime process renders a live game world; a debug-speed Bevy is
 # unusable, so its dependencies stay optimized even in a debug build.

@@ -14,18 +14,18 @@ use blockloom_core::codegen::{
     ACT_HIDE_ELEMENT, ACT_HITSTOP, ACT_JSON_TO_DICT, ACT_JSON_TO_LIST, ACT_LIST_ADD,
     ACT_LIST_CLEAR, ACT_LIST_DELETE, ACT_LIST_INSERT, ACT_LIST_REPLACE, ACT_LIST_REVERSE,
     ACT_LIST_SHIFT, ACT_MOVE, ACT_NAVIGATE_TO, ACT_PAINT_TILE, ACT_PLAY_ANIMATION,
-    ACT_PLAY_CUTSCENE, ACT_PLAY_SOUND, ACT_POINT_TOWARDS, ACT_PUFF_SMOKE, ACT_RUMBLE_GAMEPAD,
-    ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_ANIMATION_SPEED, ACT_SET_AURORA, ACT_SET_BODY,
-    ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH, ACT_SET_CAMERA_VIEW,
-    ACT_SET_CLOUD_DRIFT, ACT_SET_CLOUD_LAYER, ACT_SET_CLOUDS, ACT_SET_COLLISION_LAYER,
-    ACT_SET_COLLISION_MASK, ACT_SET_COLOR, ACT_SET_DENSITY, ACT_SET_EMISSIVE_STRENGTH,
-    ACT_SET_EMITTER_DIAL, ACT_SET_EMITTER_PLAYING, ACT_SET_EXPOSURE, ACT_SET_FIELD, ACT_SET_FOCUS,
-    ACT_SET_FOG_DENSITY, ACT_SET_GI_BOUNCES, ACT_SET_GI_SAMPLES, ACT_SET_GRAVITY,
-    ACT_SET_HDR_OUTPUT, ACT_SET_IK_TARGET, ACT_SET_LETTERBOX, ACT_SET_LIGHT_INTENSITY,
-    ACT_SET_LIGHT_SHADOWS, ACT_SET_LIGHTNING_RATE, ACT_SET_MASS, ACT_SET_MOUSE_LOCKED,
-    ACT_SET_PARALLAX, ACT_SET_PARENT, ACT_SET_PAUSED, ACT_SET_PEAK_BRIGHTNESS,
-    ACT_SET_PRECIPITATION, ACT_SET_RAY_TRACING, ACT_SET_RENDER_SETTING, ACT_SET_RIG_SLOT,
-    ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_SHADOW_DISTANCE, ACT_SET_SLOT_TINT,
+    ACT_PLAY_CUTSCENE, ACT_PLAY_SOUND, ACT_PLUGIN_CALL, ACT_POINT_TOWARDS, ACT_PUFF_SMOKE,
+    ACT_RUMBLE_GAMEPAD, ACT_SAVE_VARIABLE, ACT_SAY, ACT_SET_ANIMATION_SPEED, ACT_SET_AURORA,
+    ACT_SET_BODY, ACT_SET_BUS_VOLUME, ACT_SET_CAMERA_FOV, ACT_SET_CAMERA_PITCH,
+    ACT_SET_CAMERA_VIEW, ACT_SET_CLOUD_DRIFT, ACT_SET_CLOUD_LAYER, ACT_SET_CLOUDS,
+    ACT_SET_COLLISION_LAYER, ACT_SET_COLLISION_MASK, ACT_SET_COLOR, ACT_SET_DENSITY,
+    ACT_SET_EMISSIVE_STRENGTH, ACT_SET_EMITTER_DIAL, ACT_SET_EMITTER_PLAYING, ACT_SET_EXPOSURE,
+    ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_FOG_DENSITY, ACT_SET_GI_BOUNCES, ACT_SET_GI_SAMPLES,
+    ACT_SET_GRAVITY, ACT_SET_HDR_OUTPUT, ACT_SET_IK_TARGET, ACT_SET_LETTERBOX,
+    ACT_SET_LIGHT_INTENSITY, ACT_SET_LIGHT_SHADOWS, ACT_SET_LIGHTNING_RATE, ACT_SET_MASS,
+    ACT_SET_MOUSE_LOCKED, ACT_SET_PARALLAX, ACT_SET_PARENT, ACT_SET_PAUSED,
+    ACT_SET_PEAK_BRIGHTNESS, ACT_SET_PRECIPITATION, ACT_SET_RAY_TRACING, ACT_SET_RENDER_SETTING,
+    ACT_SET_RIG_SLOT, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_SHADOW_DISTANCE, ACT_SET_SLOT_TINT,
     ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_SPRITE_DIAL, ACT_SET_TIME_OF_DAY,
     ACT_SET_TIME_SCALE, ACT_SET_TRAIL_ENABLED, ACT_SET_TRIGGER, ACT_SET_UI_PROP, ACT_SET_UI_THEME,
     ACT_SET_VELOCITY, ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT, ACT_SET_WATER, ACT_SET_WIND,
@@ -247,6 +247,17 @@ impl LoadedLogic {
             // itself, so nothing outside it queues one. A script's clone
             // comes through `cloned` below instead.
             Event::Cloned { .. } => {}
+            Event::Plugin {
+                plugin,
+                event,
+                args,
+                actor,
+            } => self.fire_raw(
+                "Plugin",
+                actor.as_deref().unwrap_or(""),
+                &blockloom_core::codegen::plugin_detail(&plugin, &event, &args),
+                "",
+            ),
         }
     }
 
@@ -971,6 +982,18 @@ extern "C" fn act(
             scene: a.trim().to_string(),
             transition: b.trim().to_string(),
         },
+        ACT_PLUGIN_CALL => match serde_json::from_str::<Vec<serde_json::Value>>(c) {
+            Ok(args) => Effect::PluginCall {
+                actor,
+                plugin: a.to_string(),
+                block: b.to_string(),
+                args,
+            },
+            Err(error) => Effect::Error {
+                actor,
+                message: format!("{a}/{b} got slot values it couldn't read: {error}"),
+            },
+        },
         ACT_SET_MOUSE_LOCKED => Effect::SetMouseLocked { locked: n0 != 0.0 },
         ACT_SET_CAMERA_PITCH => Effect::SetCameraPitch {
             actor,
@@ -1296,6 +1319,136 @@ mod tests {
             ]
         );
         assert_eq!(variables.read("a1", "distance"), Evaluated::Number(9.0));
+        drop(logic);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn plugin_blocks_run_through_the_player_boundary() {
+        if blockloom_core::script::toolchain_version().is_err() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!(
+            "blockloom-native-plugin-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        // Registers the operator a plugin reporter is looked up by.
+        blockloom_core::init();
+        let mut project = Project::starter("Native plugins", Mode::TwoD);
+        project.actors.clear();
+        let mut actor = Actor::new(
+            "Player",
+            Visual::Circle {
+                color: "#fff".to_string(),
+                radius: 10.0,
+            },
+        );
+        actor.id = "a1".to_string();
+        // The green flag heals by a plugin's own reading, and the plugin's
+        // `changed` event calls the block again with a quoted text slot.
+        actor.graph.strands.push(Strand::with_instructions(
+            0,
+            0,
+            vec![
+                Instruction::new(K::WhenStarted),
+                Instruction::new(K::PluginBlock {
+                    plugin: "com.example.health".to_string(),
+                    block: "heal".to_string(),
+                    args: vec![
+                        Value::op(
+                            Op::from_name(blockloom_core::value::PLUGIN_READ),
+                            vec![
+                                Value::text("com.example.health"),
+                                Value::text("amount"),
+                                Value::text("Hero"),
+                            ],
+                        ),
+                        Value::text("Hero \"one\""),
+                    ],
+                }),
+            ],
+        ));
+        actor.graph.strands.push(Strand::with_instructions(
+            0,
+            400,
+            vec![
+                Instruction::new(K::WhenPlugin {
+                    plugin: "com.example.health".to_string(),
+                    block: "changed".to_string(),
+                    event: "changed".to_string(),
+                    args: vec!["Hero".to_string()],
+                }),
+                Instruction::new(K::Move {
+                    steps: Value::number(3.0),
+                }),
+            ],
+        ));
+        project.actors.push(actor);
+
+        codegen::compile_for(&project, &root, None).unwrap();
+        let variables = Variables::default();
+        variables.load(&project);
+        let lists = Lists::default();
+        lists.load(&project);
+        let dicts = Dicts::default();
+        dicts.load(&project);
+        sense::set_plugin_reader(Some(Box::new(|plugin, block, args| {
+            assert_eq!((plugin, block), ("com.example.health", "amount"));
+            assert_eq!(args, [Evaluated::Text("Hero".to_string())]);
+            Ok(Evaluated::Number(25.0))
+        })));
+        let mut logic = LoadedLogic::load(&root).unwrap();
+        logic.fire(Event::Started, &project);
+        // One for everyone that doesn't match the hat's slot, one that does.
+        logic.fire(
+            Event::Plugin {
+                plugin: "com.example.health".to_string(),
+                event: "changed".to_string(),
+                args: vec!["Villain".to_string()],
+                actor: None,
+            },
+            &project,
+        );
+        logic.fire(
+            Event::Plugin {
+                plugin: "com.example.health".to_string(),
+                event: "changed".to_string(),
+                args: vec!["Hero".to_string()],
+                actor: Some("a1".to_string()),
+            },
+            &project,
+        );
+        let mut effects = Vec::new();
+        let mut messages = Vec::new();
+        logic.tick(
+            0.0,
+            0.0,
+            variables.clone(),
+            lists.clone(),
+            dicts.clone(),
+            &mut effects,
+            &mut messages,
+        );
+        sense::set_plugin_reader(None);
+        assert_eq!(
+            effects,
+            vec![
+                Effect::PluginCall {
+                    actor: "a1".to_string(),
+                    plugin: "com.example.health".to_string(),
+                    block: "heal".to_string(),
+                    args: vec![serde_json::json!(25), serde_json::json!("Hero \"one\"")],
+                },
+                Effect::Move {
+                    actor: "a1".to_string(),
+                    steps: 3.0,
+                },
+            ]
+        );
         drop(logic);
         let _ = std::fs::remove_dir_all(root);
     }

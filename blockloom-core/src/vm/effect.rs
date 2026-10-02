@@ -504,6 +504,14 @@ pub enum Effect {
     SetMouseLocked {
         locked: bool,
     },
+    /// A plugin block ran: the editor looks the block up in its plugin and
+    /// runs the command. `args` follow the block's slot order.
+    PluginCall {
+        actor: String,
+        plugin: String,
+        block: String,
+        args: Vec<serde_json::Value>,
+    },
     /// Rumbles connected gamepads. Window-global: no actor.
     RumbleGamepad {
         strength: f32,

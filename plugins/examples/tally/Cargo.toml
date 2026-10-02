@@ -1,0 +1,17 @@
+[package]
+name = "blockloom-example-tally"
+version.workspace = true
+edition.workspace = true
+description = "An example plugin written with the SDK: named counters, as a native library or a WebAssembly module."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+blockloom-plugin-sdk = { path = "../../../blockloom-plugin-sdk" }
+
+[dev-dependencies]
+blockloom-plugin-api = { path = "../../../blockloom-plugin-api" }
+blockloom-plugin-host = { path = "../../../blockloom-plugin-host" }
+tempfile.workspace = true
+serde_json.workspace = true

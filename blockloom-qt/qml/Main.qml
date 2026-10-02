@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQml
 import com.blockworked.Blockstitch 1.0
 import com.blockworked.Blockloom 1.0
 
@@ -163,6 +164,25 @@ ApplicationWindow {
     Shortcut { sequences: [StandardKey.Undo]; enabled: !!root.appState.project; onActivated: root.invoke("undo") }
     Shortcut { sequences: [StandardKey.Redo, "Ctrl+Y"]; enabled: !!root.appState.project; onActivated: root.invoke("redo") }
     Shortcut { sequences: [StandardKey.Save]; enabled: !!root.appState.project; onActivated: root.invoke("save_project") }
+
+    // Keys plugins bind, their own and the ones on their menu items.
+    readonly property var pluginKeys: {
+        const s = appState.plugins && appState.plugins.surfaces ? appState.plugins.surfaces : null;
+        if (!s) return [];
+        const keys = [];
+        s.shortcuts.forEach(k => { if (k.keys) keys.push({ keys: k.keys, command: k.command, args: k.args }); });
+        s.menus.forEach(m => { if (m.shortcut) keys.push({ keys: m.shortcut, command: m.command, args: m.args }); });
+        return keys;
+    }
+    Instantiator {
+        model: root.pluginKeys
+        delegate: Shortcut {
+            required property var modelData
+            sequence: modelData.keys
+            enabled: !!root.appState.project
+            onActivated: root.invoke("plugin_call", { command: modelData.command, args: modelData.args })
+        }
+    }
 
     Loader {
         id: pageLoader

@@ -1,0 +1,18 @@
+[package]
+name = "blockloom-example-palette"
+version.workspace = true
+edition.workspace = true
+description = "An example plugin with an importer and a build hook: GIMP palettes become palette images."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+blockloom-plugin-sdk = { path = "../../../blockloom-plugin-sdk" }
+
+[dev-dependencies]
+blockloom-plugin-api = { path = "../../../blockloom-plugin-api" }
+blockloom-plugin-host = { path = "../../../blockloom-plugin-host" }
+tempfile.workspace = true
+serde_json.workspace = true
+image.workspace = true

@@ -373,6 +373,25 @@ pub enum Event {
         id: String,
         value: Evaluated,
     },
+    /// A plugin fired one of its events, for every actor or only `actor`.
+    Plugin {
+        plugin: String,
+        event: String,
+        args: Vec<String>,
+        actor: Option<String>,
+    },
+}
+
+/// Whether a plugin hat's slots take what a plugin fired: an empty slot takes
+/// anything, the rest must be equal as text or as numbers.
+fn plugin_args_match(want: &[String], got: &[String]) -> bool {
+    want.iter().enumerate().all(|(i, want)| {
+        want.is_empty()
+            || got.get(i).is_some_and(|got| {
+                got == want
+                    || matches!((got.parse::<f64>(), want.parse::<f64>()), (Ok(a), Ok(b)) if a == b)
+            })
+    })
 }
 
 impl Event {
@@ -387,6 +406,7 @@ impl Event {
             | Event::Particles { actor, .. }
             | Event::AnimationMarker { actor, .. }
             | Event::EnteredRoom { actor, .. } => Some(actor),
+            Event::Plugin { actor, .. } => actor.as_deref(),
             _ => None,
         }
     }
@@ -874,6 +894,19 @@ impl Vm {
             ) => want == id && kind == event,
             (Trigger::UiClicked(want), Event::UiClicked { id }) => want == id,
             (Trigger::UiChanged(want), Event::UiChanged { id, .. }) => want == id,
+            (
+                Trigger::Plugin {
+                    plugin: want_plugin,
+                    event: want_event,
+                    args: want,
+                },
+                Event::Plugin {
+                    plugin,
+                    event,
+                    args,
+                    ..
+                },
+            ) => want_plugin == plugin && want_event == event && plugin_args_match(want, args),
             _ => false,
         }
     }
@@ -2165,6 +2198,22 @@ impl Vm {
                 clear: *clear,
             }),
             Action::SetMouseLocked(locked) => out.push(Effect::SetMouseLocked { locked: *locked }),
+            Action::PluginCall {
+                plugin,
+                block,
+                args,
+            } => {
+                let args = args
+                    .iter()
+                    .map(|arg| crate::value::json_of(&self.eval(arg, actor, params, temps, out)))
+                    .collect();
+                out.push(Effect::PluginCall {
+                    actor: actor.to_string(),
+                    plugin: plugin.clone(),
+                    block: block.clone(),
+                    args,
+                });
+            }
             Action::RumbleGamepad { strength, duration } => {
                 let strength = self
                     .eval_f32(strength, actor, params, temps, out)

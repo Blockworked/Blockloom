@@ -1,0 +1,44 @@
+[package]
+name = "blockloom-plugin-host"
+version.workspace = true
+edition.workspace = true
+description = "Installs, resolves and runs plugin packages: cache, lockfile, lifecycle and loaders."
+
+[dependencies]
+blockloom-plugin-api = { path = "../blockloom-plugin-api" }
+blockloom-plugin-gpu = { path = "../blockloom-plugin-gpu" }
+serde.workspace = true
+serde_json.workspace = true
+semver.workspace = true
+sha2.workspace = true
+base64.workspace = true
+web-time = "1.1"
+wasmi.workspace = true
+wat = { workspace = true, optional = true }
+dirs.workspace = true
+zip = { version = "7.2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libloading.workspace = true
+
+# Android's player only reads what its APK ships, and rustls needs a C build.
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "android")))'.dependencies]
+ureq = { version = "3.4", default-features = false, features = ["rustls"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "blockloom-plugin-worker"
+path = "src/bin/worker.rs"
+
+[[test]]
+name = "isolation"
+required-features = ["test-fixtures"]
+
+[features]
+test-fixtures = ["dep:wat"]
+
+[dev-dependencies]
+tempfile.workspace = true
+wat.workspace = true

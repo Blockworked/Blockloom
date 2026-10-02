@@ -7,6 +7,7 @@ mod build_jobs;
 mod commands;
 mod dispatch;
 mod runtime;
+mod scaffold;
 pub mod screen;
 pub mod shell;
 mod state;
@@ -107,6 +108,7 @@ impl Backend {
             preview_port: None,
             pointer_locked: false,
             ray_tracing: None,
+            plugin_diagnostics: serde_json::Value::Null,
             embedded,
             scene_view: Default::default(),
             picked_tile: None,

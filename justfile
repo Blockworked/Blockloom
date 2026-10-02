@@ -198,7 +198,7 @@ stage-player target file:
 # scripts compile to wasm modules of their own. Needs, once:
 # `rustup target add wasm32-unknown-unknown` and `just web-tools`.
 web-check: prepare-patched-deps
-    cargo check -p blockloom-runtime --no-default-features --target wasm32-unknown-unknown
+    cargo check -p blockloom-runtime --no-default-features --features plugins --target wasm32-unknown-unknown
 
 # The wasm-bindgen CLI matching Cargo.lock's wasm-bindgen, which the glue
 # generator has to match exactly.
@@ -383,10 +383,12 @@ blockstitch-published commit="": prepare-patched-deps
 
 [linux]
 install:
-    # The editor starts `blockloom-runtime` from beside itself, so both live
+    # The editor starts `blockloom-runtime` (and the plugin worker) from beside itself, so all live
     # in a private libdir with a symlink on the PATH.
     sudo install -Dm0755 {{TARGET}} {{LIBDIR}}/blockloom
     sudo install -Dm0755 target/release/blockloom-runtime {{LIBDIR}}/blockloom-runtime
+    # Native plugins load in this worker when BLOCKLOOM_PLUGIN_ISOLATION is set.
+    sudo install -Dm0755 target/release/blockloom-plugin-worker {{LIBDIR}}/blockloom-plugin-worker
     sudo ln -sf {{LIBDIR}}/blockloom /usr/bin/blockloom
     sudo install -Dm0644 res/blockloom.desktop /usr/share/applications/com.blockworked.Blockloom.desktop
     sudo install -Dm0644 res/icons/blockloom.png /usr/share/icons/hicolor/256x256/apps/blockloom.png
@@ -433,3 +435,30 @@ _stage-release-player:
 # The optional jobs argument sets each build's Cargo job limit.
 replace jobs="": prepare-patched-deps
     {{if os() == "windows" { "python" } else { "python3" }}} scripts/replace.py {{jobs}}
+
+# Stage and seal the voxel plugin (com.blockworked.voxel) into target/plugins
+voxel-plugin:
+    rustup target add wasm32-unknown-unknown
+    cargo build --release -p blockloom-voxel --target wasm32-unknown-unknown
+    rm -rf target/plugins/com.blockworked.voxel
+    mkdir -p target/plugins/com.blockworked.voxel/portable
+    cp -r plugins/voxel/package/. target/plugins/com.blockworked.voxel/
+    cp target/wasm32-unknown-unknown/release/blockloom_voxel.wasm target/plugins/com.blockworked.voxel/portable/voxel.wasm
+    cargo run -p blockloom-app --bin blockloom-shell -- --no-state --eval 'plugin-seal path=target/plugins/com.blockworked.voxel'
+
+# The SDK example plugin (com.example.tally) as a sealed portable package in
+# target/plugins/, ready for `plugin-install source=path:...`.
+example-plugin:
+    rustup target add wasm32-unknown-unknown
+    cargo build --release -p blockloom-example-tally --target wasm32-unknown-unknown
+    rm -rf target/plugins/com.example.tally
+    mkdir -p target/plugins/com.example.tally/portable
+    cp -r plugins/examples/tally/package/. target/plugins/com.example.tally/
+    cp target/wasm32-unknown-unknown/release/blockloom_example_tally.wasm target/plugins/com.example.tally/portable/tally.wasm
+    cargo run -p blockloom-app --bin blockloom-shell -- --no-state --eval 'plugin-seal path=target/plugins/com.example.tally'
+    cargo build --release -p blockloom-example-palette --target wasm32-unknown-unknown
+    rm -rf target/plugins/com.example.palette
+    mkdir -p target/plugins/com.example.palette/portable
+    cp -r plugins/examples/palette/package/. target/plugins/com.example.palette/
+    cp target/wasm32-unknown-unknown/release/blockloom_example_palette.wasm target/plugins/com.example.palette/portable/palette.wasm
+    cargo run -p blockloom-app --bin blockloom-shell -- --no-state --eval 'plugin-seal path=target/plugins/com.example.palette'

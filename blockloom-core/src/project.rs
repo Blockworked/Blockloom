@@ -15,6 +15,7 @@ use crate::blocks::{ActorGraph, BlockKind, DictDef, InstructionKind, ListDef, Va
 use crate::components::{ActorComponent, CameraAttach, CameraView, Components};
 use crate::scene::{Mode, Physics, Placement, Visual, World};
 use crate::value::Evaluated;
+use blockloom_plugin_api::record::PluginRecord;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
@@ -673,6 +674,8 @@ pub struct ProjectFile {
     pub global_lists: Vec<ListDef>,
     #[serde(default)]
     pub global_dicts: Vec<DictDef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugin_resources: Vec<PluginRecord>,
 }
 
 /// A scene asset file: its settings as components plus its actors. Older
@@ -912,6 +915,9 @@ pub struct Project {
     /// model, parallel to [`Project::global_lists`]. An actor's own dict of
     /// the same name shadows this one for that actor.
     pub global_dicts: Vec<DictDef>,
+    /// Records plugins keep on the project itself rather than on an actor.
+    /// Opaque to the document: see [`PluginRecord`].
+    pub plugin_resources: Vec<PluginRecord>,
 }
 
 // ─── Scene-backed project ────────────────────────────────────────────────
@@ -932,7 +938,7 @@ impl DerefMut for Project {
 impl Serialize for Project {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let active = self.active_scene_ref();
-        let mut s = serializer.serialize_struct("Project", 10)?;
+        let mut s = serializer.serialize_struct("Project", 13)?;
         s.serialize_field("id", &self.id)?;
         s.serialize_field("name", &self.name)?;
         s.serialize_field("icon", &self.icon)?;
@@ -947,6 +953,9 @@ impl Serialize for Project {
         s.serialize_field("globals", &self.globals)?;
         s.serialize_field("global_lists", &self.global_lists)?;
         s.serialize_field("global_dicts", &self.global_dicts)?;
+        if !self.plugin_resources.is_empty() {
+            s.serialize_field("plugin_resources", &self.plugin_resources)?;
+        }
         s.end()
     }
 }
@@ -979,6 +988,8 @@ impl<'de> Deserialize<'de> for Project {
             global_lists: Vec<ListDef>,
             #[serde(default)]
             global_dicts: Vec<DictDef>,
+            #[serde(default)]
+            plugin_resources: Vec<PluginRecord>,
         }
         let de = ProjectDe::deserialize(deserializer)?;
         let mut scenes = de.scenes.unwrap_or_default();
@@ -1016,9 +1027,194 @@ impl<'de> Deserialize<'de> for Project {
             globals: de.globals,
             global_lists: de.global_lists,
             global_dicts: de.global_dicts,
+            plugin_resources: de.plugin_resources,
         };
         project.ensure_scene_invariants();
         Ok(project)
+    }
+}
+
+/// What shape of plugin block a canvas uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginBlockShape {
+    Statement,
+    Reporter,
+    Hat,
+}
+
+/// One plugin block on a canvas, as [`Project::plugin_blocks`] reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginBlockUse {
+    pub place: String,
+    pub plugin: String,
+    pub block: String,
+    pub slots: usize,
+    pub shape: PluginBlockShape,
+}
+
+/// Plugin reporters inside `value`: plugin, block id, slot count.
+fn plugin_reads(value: &crate::value::Value, found: &mut Vec<(String, String, usize)>) {
+    use crate::value::{Op, PLUGIN_READ, Value};
+    if let Value::Op { op, args, .. } = value {
+        if let Op::Ext(name) = op
+            && &**name == PLUGIN_READ
+        {
+            let text = |i: usize| match args.get(i) {
+                Some(Value::Text { value }) => value.clone(),
+                _ => String::new(),
+            };
+            found.push((text(0), text(1), args.len().saturating_sub(2)));
+        }
+        for arg in args {
+            plugin_reads(arg, found);
+        }
+    } else if let Value::Call { args, .. } = value {
+        for arg in args {
+            plugin_reads(arg, found);
+        }
+    }
+}
+
+impl Project {
+    /// Every record a plugin owns in the whole document, each with where it
+    /// lives (`actor Player`, `actor Player in scene Level 1`, `resource`).
+    pub fn plugin_records(&self) -> Vec<(String, &PluginRecord)> {
+        let several = self.scenes.len() > 1;
+        let mut out = Vec::new();
+        for scene in &self.scenes {
+            for actor in &scene.actors {
+                for record in actor.components.plugin_records() {
+                    let place = if several {
+                        format!("actor {} in scene {}", actor.name, scene.name)
+                    } else {
+                        format!("actor {}", actor.name)
+                    };
+                    out.push((place, record));
+                }
+            }
+        }
+        out.extend(
+            self.plugin_resources
+                .iter()
+                .map(|record| ("resource".to_string(), record)),
+        );
+        out
+    }
+
+    /// Every plugin block placed on a canvas (statements, reporters and
+    /// hats): where it sits, its plugin, its block id and how many slots the
+    /// instruction carries.
+    pub fn plugin_blocks(&self) -> Vec<PluginBlockUse> {
+        use crate::blocks::InstructionKind as K;
+        let several = self.scenes.len() > 1;
+        let mut out = Vec::new();
+        for scene in &self.scenes {
+            for actor in &scene.actors {
+                let place = if several {
+                    format!("actor {} in scene {}", actor.name, scene.name)
+                } else {
+                    format!("actor {}", actor.name)
+                };
+                actor
+                    .graph
+                    .walk_instructions(&mut |instruction| match &instruction.kind {
+                        K::PluginBlock {
+                            plugin,
+                            block,
+                            args,
+                        } => out.push(PluginBlockUse {
+                            place: place.clone(),
+                            plugin: plugin.clone(),
+                            block: block.clone(),
+                            slots: args.len(),
+                            shape: PluginBlockShape::Statement,
+                        }),
+                        K::WhenPlugin {
+                            plugin,
+                            block,
+                            args,
+                            ..
+                        } => out.push(PluginBlockUse {
+                            place: place.clone(),
+                            plugin: plugin.clone(),
+                            block: block.clone(),
+                            slots: args.len(),
+                            shape: PluginBlockShape::Hat,
+                        }),
+                        _ => {}
+                    });
+                let mut reads = Vec::new();
+                let mut graph = actor.graph.clone();
+                graph.visit_values_mut(&mut |value, _| plugin_reads(value, &mut reads));
+                out.extend(
+                    reads
+                        .into_iter()
+                        .map(|(plugin, block, slots)| PluginBlockUse {
+                            place: place.clone(),
+                            plugin,
+                            block,
+                            slots,
+                            shape: PluginBlockShape::Reporter,
+                        }),
+                );
+            }
+        }
+        out
+    }
+
+    /// Ids of the plugins the document holds records for.
+    pub fn plugin_ids(&self) -> std::collections::BTreeSet<String> {
+        self.plugin_records()
+            .into_iter()
+            .map(|(_, record)| record.plugin.clone())
+            .collect()
+    }
+
+    /// Sets a project resource, replacing the one of the same name.
+    pub fn set_plugin_resource(&mut self, record: PluginRecord) {
+        match self
+            .plugin_resources
+            .iter_mut()
+            .find(|existing| existing.name() == record.name())
+        {
+            Some(slot) => *slot = record,
+            None => self.plugin_resources.push(record),
+        }
+    }
+
+    pub fn remove_plugin_resource(&mut self, name: &str) -> bool {
+        let before = self.plugin_resources.len();
+        self.plugin_resources.retain(|record| record.name() != name);
+        self.plugin_resources.len() != before
+    }
+
+    /// Replaces every record named like one in `records` (components on any
+    /// actor, and resources) with its new version, in place. Answers how
+    /// many were replaced. This is how a migration is swapped in whole.
+    pub fn replace_plugin_records(&mut self, records: &[PluginRecord]) -> usize {
+        let mut replaced = 0;
+        let mut swap = |slot: &mut PluginRecord| {
+            if let Some(new) = records
+                .iter()
+                .find(|r| r.name() == slot.name() && r.schema_version != slot.schema_version)
+            {
+                *slot = new.clone();
+                replaced += 1;
+            }
+        };
+        for scene in &mut self.scenes {
+            for actor in &mut scene.actors {
+                for component in &mut actor.components.0 {
+                    if let ActorComponent::Plugin { record } = component {
+                        swap(record);
+                    }
+                }
+            }
+        }
+        for record in &mut self.plugin_resources {
+            swap(record);
+        }
+        replaced
     }
 }
 
@@ -1099,6 +1295,7 @@ impl Project {
             globals: Vec::new(),
             global_lists: Vec::new(),
             global_dicts: Vec::new(),
+            plugin_resources: Vec::new(),
         }
     }
 
@@ -2228,6 +2425,7 @@ pub fn read_project_dir(dir: &Path) -> Result<Project, String> {
         globals: file.globals,
         global_lists: file.global_lists,
         global_dicts: file.global_dicts,
+        plugin_resources: file.plugin_resources,
     };
     project.normalize();
     project.resolve_lighting_assets(dir);
@@ -2256,6 +2454,7 @@ pub fn project_to_file(project: &Project) -> ProjectFile {
         globals: project.globals.clone(),
         global_lists: project.global_lists.clone(),
         global_dicts: project.global_dicts.clone(),
+        plugin_resources: project.plugin_resources.clone(),
     }
 }
 
@@ -2343,6 +2542,44 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn plugin_records_of_a_missing_plugin_survive_open_and_save() {
+        let temp = TempDir::new();
+        let mut project = Project::starter("Plugged", Mode::TwoD);
+        let ball = Visual::Circle {
+            color: "#ffffff".into(),
+            radius: 10.0,
+        };
+        let id = project.add_actor(Actor::new("Ball", ball));
+        let payload = serde_json::json!({"hp": 7, "future_field": [1, 2]});
+        project
+            .actor_mut(&id)
+            .unwrap()
+            .components
+            .insert(ActorComponent::Plugin {
+                record: PluginRecord::new("com.example.gone", "Health", 3, payload.clone()),
+            });
+        project.set_plugin_resource(PluginRecord::new(
+            "com.example.gone",
+            "Rules",
+            1,
+            serde_json::json!({"x": "y"}),
+        ));
+        let dir = create_project(&project, &temp.0).unwrap();
+        let first = read_project_dir(&dir).unwrap();
+        save_project(&first, &dir).unwrap();
+        let second = read_project_dir(&dir).unwrap();
+        let record = second
+            .actor(&id)
+            .unwrap()
+            .components
+            .plugin_record("com.example.gone/Health")
+            .unwrap();
+        assert_eq!((record.schema_version, &record.payload), (3, &payload));
+        assert_eq!(second.plugin_resources.len(), 1);
+        assert_eq!(second.plugin_ids().len(), 1);
     }
 
     #[test]

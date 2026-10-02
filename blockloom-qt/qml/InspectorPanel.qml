@@ -28,7 +28,20 @@ Rectangle {
     border.color: Theme.borderSoft
     clip: true
 
-    function componentName(c) { return c.component === "Custom" ? c.name : c.component; }
+    function componentName(c) {
+        if (c.component === "Plugin") return c.record.plugin + "/" + c.record.type_id;
+        return c.component === "Custom" ? c.name : c.component;
+    }
+    // Plugin components are drawn from the schema their plugin declares.
+    readonly property var pluginTypes: appState.plugins && appState.plugins.types ? appState.plugins.types : []
+    function pluginType(name) { return pluginTypes.find(t => t.name === name) || null; }
+    function componentTitle(c) {
+        if (c.component !== "Plugin") return componentName(c);
+        const t = pluginType(componentName(c));
+        return t ? t.displayName : c.record.type_id;
+    }
+    function writePlugin(c, payload) { if (actor) app.invoke("set_plugin_component", { actorId: actor.id, component: componentName(c), payload: payload }); }
+    readonly property var actorOptions: appState.project ? [{ value: "", label: "nothing" }].concat(appState.project.actors.map(a => ({ value: a.id, label: a.name }))) : []
     function write(name, component) { if (actor) app.invoke("set_actor_component", { actorId: actor.id, name: name, component: component }); }
     function remove(name) { if (actor) app.invoke("remove_actor_component", { actorId: actor.id, name: name }); }
     function copy(o) { return JSON.parse(JSON.stringify(o)); }
@@ -329,7 +342,8 @@ Rectangle {
         return ["Look","Render","Body","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
             .filter(n => n !== "Sprite" || !is3d)
             .filter(n => n !== "Fracture" || is3d)
-            .filter(n => n === "Custom" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }));
+            .filter(n => n === "Custom" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }))
+            .concat(pluginTypes.filter(t => t.kind === "component" && held.indexOf(t.name) < 0).map(t => ({ value: "plugin:" + t.name, label: t.displayName + " (" + t.pluginName + ")" })));
     }
     function blank(name) {
         switch (name) {
@@ -365,6 +379,7 @@ Rectangle {
         if (!actor) return;
         // A script needs a file on disk, so the backend makes both at once.
         if (name === "Script") { app.invoke("create_script", { actorId: actor.id }); return; }
+        if (name.indexOf("plugin:") === 0) { app.invoke("add_plugin_component", { actorId: actor.id, component: name.slice(7) }); return; }
         const c = blank(name);
         if (c) app.invoke("add_actor_component", { actorId: actor.id, component: c });
     }
@@ -422,14 +437,14 @@ Rectangle {
                             required property int index
                             readonly property var c: root.actor && root.actor.components[index] ? root.actor.components[index] : ({ component: "" })
                             Layout.fillWidth: true; spacing: 6
-                            heading: root.componentName(card.c)
+                            heading: root.componentTitle(card.c)
                             removable: card.c.component !== "Place"
                             onRemoveRequested: root.remove(root.componentName(card.c))
                             Loader {
                                 Layout.fillWidth: true
                                 readonly property var c: card.c
                                 sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                    Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard })[card.c.component] || null
+                                                    Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard, Plugin: pluginCard })[card.c.component] || null
                             }
                         }
                     }
@@ -865,6 +880,85 @@ Rectangle {
             }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "Real Rust, compiled when you press Play. It runs alongside this actor's blocks, not instead of them." }
+        }
+    }
+    // The QML section the plugin draws for one of its component types, from the
+    // trusted editor modules: {file} once trusted, {file: null} until then, or
+    // null when the plugin draws none.
+    function pluginSection(plugin, typeId) {
+        const shipped = appState.plugins && appState.plugins.editorModules ? appState.plugins.editorModules : [];
+        const owner = shipped.find(p => p.plugin === plugin);
+        const section = owner && owner.inspectors ? owner.inspectors.find(i => i.component === typeId) : null;
+        return section ? { file: section.file || null, pluginName: owner.pluginName } : null;
+    }
+
+    // A plugin's component: a form from its schema, or a note that keeps the
+    // data safe while the plugin is missing. A trusted plugin may draw its own
+    // section instead, with the generated form one click away.
+    Component {
+        id: pluginCard
+        ColumnLayout {
+            id: plug
+            readonly property var c: parent.c
+            readonly property var t: root.pluginType(root.componentName(c))
+            readonly property var section: root.pluginSection(c.record.plugin, c.record.type_id)
+            readonly property bool drawn: !!section && !!section.file && !!t && !sectionFailed
+            property bool sectionFailed: false
+            property bool rawFields: false
+            readonly property bool formShown: !!t && c.record.schema_version === t.version && (!drawn || rawFields)
+            spacing: 6
+            // What the plugin's section is handed as `host`.
+            QtObject {
+                id: sectionHost
+                readonly property string plugin: plug.c.record.plugin
+                readonly property string component: plug.c.record.type_id
+                readonly property string actorId: root.actor ? root.actor.id : ""
+                readonly property var payload: plug.c.record.payload
+                readonly property var type: plug.t
+                readonly property var app: root.app
+                readonly property var project: root.appState.project
+                function write(next) { root.writePlugin(plug.c, next); }
+                function call(command, args, done, failed) {
+                    root.app.invoke("plugin_call", { command: plugin + "/" + command, args: args || ({}) }, done, failed);
+                }
+            }
+            Text {
+                visible: !plug.t
+                Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
+                text: "The plugin " + plug.c.record.plugin + " is not installed here, or no longer has " + plug.c.record.type_id + ". The data is kept as it is; install the plugin from the Plugins dialog to edit it."
+            }
+            Text {
+                visible: !!plug.t && plug.c.record.schema_version !== plug.t.version
+                Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.warning; font.pixelSize: 12
+                text: "Written at schema " + plug.c.record.schema_version + ", the plugin is at " + (plug.t ? plug.t.version : 0) + ". Migrate it from the Plugins dialog before running."
+            }
+            Text {
+                visible: !!plug.section && !plug.section.file
+                Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
+                text: plug.section ? plug.section.pluginName + " draws its own section for this. Trust it in Plugin editors to use it." : ""
+            }
+            Loader {
+                id: sectionLoader
+                objectName: "plugin-section"
+                Layout.fillWidth: true
+                active: plug.drawn && !!plug.t && plug.c.record.schema_version === plug.t.version
+                visible: active && status === Loader.Ready
+                onActiveChanged: if (active) setSource(root.app.toFileUrl(plug.section.file), { host: sectionHost })
+                Component.onCompleted: if (active) setSource(root.app.toFileUrl(plug.section.file), { host: sectionHost })
+                onStatusChanged: if (status === Loader.Error) plug.sectionFailed = true
+            }
+            BwButton {
+                visible: plug.drawn && !!plug.t && plug.c.record.schema_version === plug.t.version
+                implicitHeight: 24; font.pixelSize: 11
+                text: plug.rawFields ? "Hide fields" : "Fields"
+                onClicked: plug.rawFields = !plug.rawFields
+            }
+            PluginRecordForm {
+                objectName: "plugin-fields"
+                visible: plug.formShown
+                app: root.app; type: plug.t || ({ fields: [], defaults: {} }); payload: plug.c.record.payload; actors: root.actorOptions
+                onChanged: next => root.writePlugin(plug.c, next)
+            }
         }
     }
     Component {

@@ -32,6 +32,7 @@ pub const WORKING_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
 
 pub fn register(app: &mut App) {
     register_library(app);
+    app.add_systems(Update, sync_plugin_shaders);
     bevy::asset::embedded_asset!(app, "shaders/bilateral_upsample.wesl");
     app.add_plugins(ExtractComponentPlugin::<WorkingTargets>::default());
     let Some(render) = app.get_sub_app_mut(RenderApp) else {
@@ -62,6 +63,45 @@ fn register_library(app: &mut App) {
         let path = format!("embedded://{}/{name}.wesl", shader_lib::PACKAGE);
         let _ = shaders.insert(id, Shader::from_wesl(*source, path));
     }
+}
+
+/// Registers the shader modules the plugins ship as `blockloom::<module>` and
+/// takes back the ones a changed loadout dropped. A surface shader that
+/// imported a changed module keeps what it compiled until it is rebuilt.
+pub fn sync_plugin_shaders(
+    engine: bevy::ecs::system::NonSend<crate::engine::Engine>,
+    shaders: Option<ResMut<Assets<Shader>>>,
+    mut seen: Local<u64>,
+    mut held: Local<Vec<Uuid>>,
+) {
+    let Some(mut shaders) = shaders else {
+        return;
+    };
+    if *seen == engine.plugins.shaders_serial {
+        return;
+    }
+    *seen = engine.plugins.shaders_serial;
+    for id in held.drain(..) {
+        shaders.remove(id);
+    }
+    let modules: Vec<(String, String)> = engine
+        .plugins
+        .loadout
+        .shaders
+        .iter()
+        .map(|s| (s.module.clone(), s.source.clone()))
+        .collect();
+    for (name, source) in &modules {
+        // A name is hashed to its id, so the same module is the same asset.
+        let hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
+        });
+        let id = Uuid::from_u64_pair(0x706c_7567_696e_7368, hash);
+        let path = format!("embedded://{}/{name}.wesl", shader_lib::PACKAGE);
+        let _ = shaders.insert(id, Shader::from_wesl(source.clone(), path));
+        held.push(id);
+    }
+    shader_lib::set_extra(modules);
 }
 
 /// Asks for a view's working targets and frame uniforms.

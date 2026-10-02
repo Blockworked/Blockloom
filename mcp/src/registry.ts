@@ -45,7 +45,8 @@ function proseToSchema(ty: string): z.ZodType {
   if (ty === "#RRGGBB") return z.string().regex(/^#[0-9a-fA-F]{6}$/);
   if (ty === "[x, y, z]") return z.array(z.number());
   if (ty === "[[u, v]]" || ty === "[[x0, y0, x1, y1]]") return z.array(z.array(z.number()));
-  if (ty === "[source paths]" || ty === "[actor ids]") return z.array(z.string());
+  if (ty === "[source paths]" || ty === "[actor ids]" || ty === "[plugin ids]") return z.array(z.string());
+  if (ty === "[slot values]") return z.array(z.union([z.string(), z.number(), z.boolean()]));
   if (ty.startsWith("[")) return z.array(OPEN_OBJECT);
   if (ty.includes("object") || ty.startsWith("{")) return OPEN_OBJECT;
   throw new Error(`unknown arg type "${ty}"; teach mcp/src/registry.ts about it`);

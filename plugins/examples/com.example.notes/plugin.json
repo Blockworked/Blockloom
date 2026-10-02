@@ -1,0 +1,32 @@
+{
+  "capabilities": [
+    "trusted-editor"
+  ],
+  "contributions": [
+    "schemas/notes.json"
+  ],
+  "description": "Editor-module examples: project notes in a screen the plugin draws itself, and a sticky note whose inspector section it draws itself. Needs the user's trust, since its QML runs inside the editor.",
+  "editor": {
+    "inspectors": [
+      {
+        "component": "sticky",
+        "module": "editor/StickySection.qml"
+      }
+    ],
+    "modules": [
+      "editor/NotesPanel.qml"
+    ]
+  },
+  "engine": ">=0.0.1",
+  "files": {
+    "editor/NotesPanel.qml": "87b430ed4a37c6df71b8c5352dbcc9e47f9d85a74933599682a3283c8429e199",
+    "editor/StickySection.qml": "b0f418f98ce90e8d54a5487fe22820806b263df573f717cea082ce0aaed80618",
+    "schemas/notes.json": "9880b0aba755bff353e9d02c71f99f29a51cb09c88fd32331832fce09b3ceac3"
+  },
+  "format": 1,
+  "id": "com.example.notes",
+  "license": "MIT",
+  "name": "Notes",
+  "tier": "declarative",
+  "version": "1.0.0"
+}

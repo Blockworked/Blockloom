@@ -154,7 +154,11 @@ MCP tool, with schemas derived from the same registry (see `src/registry.ts`,
 which maps every `ArgSpec.ty` prose string to a zod schema - a new prose type
 must be taught there). Tool calls are one shell line, responses are the
 `{ok, result, error}` shape, plus `blockloom://state` and `blockloom://blocks`
-resources. Each session is its own backend unless started with `--attach` (see
+resources. A project's plugin commands are tools too: after `open-project`, `plugin-*`
+and undo/redo the server re-reads `plugin-commands` and registers (or removes)
+one tool per command, named `plugin-id__name` with a schema built from the
+command's typed arguments (`src/plugins.ts`; a new plugin field type must be
+taught there). Each session is its own backend unless started with `--attach` (see
 above), so without it the window-and-shell sharing rules apply: the shell
 attaches to the live owner's files and follows their saves, and one MCP server
 process and the editor should still not write the same project at once. The shell resolves as `target/debug|release/blockloom-shell`
@@ -217,6 +221,9 @@ uploads those bytes as an image. Elsewhere it is a child process.
   `sense.rs` (the world state reporter blocks read), `ui.rs` (the screen-space
   interface a game builds out of blocks - see Interface below), and `wire.rs`
   (the one shape difference between documents and the frontend).
+- **`blockloom-plugin-api`**, **`blockloom-plugin-host`**, **`blockloom-plugin-sdk`**, **`blockloom-plugin-gpu`** - the plugin platform:
+  manifests, schemas, records and the C ABI (api, wasm-safe), resolver, cache,
+  install transactions and the native loader (host). See Plugins below.
 - **`blockstitch-core`** (sibling repo, see above) - the shared block-editor
   backend. `value` is the `Value`/`Op` expression system, extended by an app
   through `register_operators` (Blockloom registers its sensing reporters in
@@ -363,6 +370,484 @@ The local-position reporters (`my local x position`, `<actor>'s local x
 position`, and the matching script reads) answer that frame live: the
 parent's world transform inverted onto the child's world position, or the
 world position itself for an actor hanging off nothing.
+
+### Plugins
+
+Design: `docs/plugin-system-and-voxel-plan.md`; decisions, measurements and
+deviations of the first implementation: `docs/plugin-adr-0001.md`.
+
+- **`blockloom-plugin-api`** has no Qt, Bevy or I/O: `manifest.rs`
+  (`plugin.json`, tiers, capabilities, per-target runtime entries), `schema.rs`
+  (component/resource/block/command/hook schemas, field validation,
+  migrations), `record.rs` (`PluginRecord`), `abi.rs` (the C ABI v1) and `id.rs`.
+  `blockloom-core` depends on this crate and never on the host, which has
+  libloading and git and must not reach the wasm build. Bump
+  `versions::PLUGIN_ABI` only when `abi.rs` changes.
+- **`blockloom-plugin-host`** is everything that touches disk or code:
+  `package` (verify, seal, zip), `source` (`path:`, `archive:`, `git:url#commit`,
+  `registry:`), `registry` (folder registries), `cache` (immutable shared
+  cache), `lock` (`plugins.json`, `plugins.lock`, `plugins.local.json`,
+  `.blockloom/plugin-history`), `resolver`, `install` (plan/apply/rollback),
+  `active` (what a project loads, record audit, migrations, ship plan),
+  `hooks`, `lifecycle` and `native` (library loader, capability gate).
+- **Data**: a plugin's data is an opaque `PluginRecord` in the document, either
+  `ActorComponent::Plugin` on an actor or `Project.plugin_resources`. Core never
+  reads a payload, so a missing, newer or broken plugin loses nothing on open
+  and save. `ActivePlugins::audit` classifies each record, and
+  `commands::plugins::preflight` refuses Play and Build while one that is not
+  `editor_only` has no working plugin, naming the record and the fix. A
+  migration (`plugin-migrate`) is all records or none and snapshots first.
+- **Commands** live in `blockloom-app/src/commands/plugins.rs`: install, remove,
+  update, pin, sync, rollback, registry, gc, seal, publish, migrate, check,
+  list, plus `add_plugin_component`, `set_plugin_component`,
+  `set_plugin_resource`, `plugin_inspect` (verify a folder and say what it is)
+  and `plugin_call`. Package changes are transactions on
+  `plugins.json` and `plugins.lock` only. A command a plugin declares is run as
+  `plugin-id/name key=value` in the shell (`Action::Plugin`, forwarded as
+  `plugin_call`) and through the MCP `plugin-call` tool. A command's action is
+  `add_component`, `set_field`, `set_resource`, `set_resource_field` or
+  `module`. `StateDto.plugins` is the snapshot slot.
+- **Builds**: a pack that carries plugins is `PACK_VERSION` 2 (without them it
+  is still written as 1), each plugin's `plugin.json` and shipped files go to
+  `game/plugins/<id>/`, and Android builds refuse plugins that have code. A web
+  build ships portable ones (the page's mounted files hold `plugins/<id>/`,
+  `Launch::Web` sends the same `Plugins` loadout for target
+  `wasm32-unknown-unknown`, and `blockloom_plugin_host::files::set_reader` points
+  package reads at `vfs`); a code plugin with no portable module is refused for
+  web by the ship plan. The desktop player hosts that code: `Launch::Player` hands the world
+  an `EditorMessage::Plugins` before `Start`, built by
+  `plugins::shipped_loadout` from the pack's `PackedPlugin`s through
+  `blockloom_plugin_host::shipped` (`Package::load_shipped` checks the manifest
+  against the pack's content hash and each shipped file against its declared
+  hash; a missing or altered file, or no artifact for the target, stops the
+  game with the reasons, since it must not run without its plugin). A Build
+  accepts plugin blocks the world can run itself (`block_runs_in_world`: a
+  module-op statement or reporter, any hat) and refuses a statement whose
+  command runs in the editor. Plugin blocks compile too (see below), so a
+  build keeps native logic.
+- **Native modules** load in the editor on a command's first use
+  (`commands::plugins::Modules` on `OpenProject`, keyed by package hash, dropped
+  when the package changes or the project closes): a `module` command action
+  calls `NativeModule::call_json`, the module's logs go to the run log, and a
+  panic is an error, not a crash. A module may be called from any thread but
+  one at a time, hence the `Mutex`.
+- **Portable modules** (`runtime.portable`, `blockloom-plugin-host/src/portable.rs`,
+  contract in `blockloom-plugin-api/src/wasm.rs`) run a `.wasm` through wasmi
+  with portable dispatch: one capped memory, only the `blockloom.log`/`call`
+  imports, and `call_limit_ms * FUEL_PER_MS` fuel per call. A call that runs out
+  or traps stops the module and `Modules::get` loads a fresh one next time.
+  `Modules` holds a `Module::{Native, Portable}`; a plugin with a native library
+  for the target uses it, else its portable module. Editor only so far.
+- **Plugin statement blocks**: the document holds one generic
+  `InstructionKind::PluginBlock { plugin, block, args }` (args in the block
+  schema's slot order, `FieldId::PluginArg(i)`), compiled to
+  `Action::PluginCall` and run by the VM as `Effect::PluginCall`, whole numbers
+  as JSON integers. The world forwards it as `RuntimeMessage::PluginCall`, and
+  the editor runs it (`commands::plugins::run_block`: slots named by the schema,
+  an `actor` argument filled from the running actor, an actor slot's name
+  resolved to an id, then the same `plugin_call` path). Codegen emits it as
+  `Act::PluginCall` (slots read into `let`s in order, then one host act; over
+  the logic ABI as `ACT_PLUGIN_CALL` with the slots as a JSON array in `c`,
+  whole numbers as integers, which `logic.rs` turns back into the same
+  `Effect::PluginCall`), and `preflight` stops Play on a
+  block no installed plugin provides or whose slot count changed. A Build is
+  refused for a statement whose command runs in the editor, since a built game
+  has none (module-op blocks ship, see Builds). `plugin-run-block` runs one from the shell and MCP, and the snapshot's
+  `plugins.blocks` lists every available block. The palette draws the
+  statement ones (`Blocks.qml`'s plugin section, grouped by category): the
+  one `PluginBlock` row's `head` is a function of the instruction that splits
+  the schema's `label` into label pieces and value pieces (`key: "args"`,
+  `index: i`, field `PluginArg:i`), cached so the canvas keeps its controls.
+  `head` as a function and `index` are blockstitch row features.
+- **Plugin code in the game world** (`blockloom-runtime/src/plugins.rs`,
+  `blockloom-plugin-host/src/world.rs`, `blockloom-plugin-api/src/loadout.rs`).
+  Play sends `EditorMessage::Plugins { loadout }` between `Load` and `Start`
+  (`PROTOCOL_VERSION` 26): per plugin its code runtime, hooks and the blocks
+  whose commands are module ops (`ActivePlugins::loadout`). `world::begin_run`
+  opens each module (`WorldPlugins::load`) and calls `world.start` with the
+  plugin's records and resources; `end_run` calls `world.stop` and drops them,
+  so a module lives exactly as long as a run. Hooks are named by a `Stage`
+  (`Input`, `PreSimulation`, `FixedSimulation`, `EffectApplication`,
+  `PostPhysics` in the fixed step, `RenderExtraction` and `Presentation` per
+  frame), ordered by their `before`/`after`, and called once per stage as op
+  `hook.<name>` with `{stage, hook, tick, dt}`; a paused world skips the fixed
+  stages. A module answers `{"effects": [...]}` of `say`, `broadcast` and
+  `error`, which the world applies in order - a plugin never touches the
+  world itself. An `Unsupported` answer means "nothing to do" (once, as an
+  error, for a hook). A faulted portable module is dropped for the rest of the
+  run. A plugin block whose command is a module op runs in the world
+  (`plugins::run_block`); any other still goes to the editor as
+  `RuntimeMessage::PluginCall`. The runtime's `plugins` feature (default) pulls
+  in the host crate, which builds for wasm32 without `libloading` (a browser
+  has no native libraries; the portable executor is wasmi running inside the
+  player's wasm). The web player is built with `--features plugins`; Android
+  builds without it and ignores the loadout.
+  `plugins/examples/tally` answers `world.stop` with a final tally line.
+  A plugin whose manifest says `editor.preview` is also hosted while nothing
+  plays (`plugins::preview`, 3D only): the world opens it on `Load`, `Plugins`
+  and the end of a run, starts it with `preview: true` and draws what it
+  answers, but runs no hooks or blocks and drops `say`s. The module is kept
+  while its loadout and records are unchanged and started over when they
+  change; Play replaces it with the run's own. The editor resends the loadout
+  with every idle sync, so installing or removing a plugin updates the view.
+- **Plugin reporters and hats** are generic like the statement. A reporter is
+  the value `Op::Ext("PluginRead")` (`value::PLUGIN_READ`) with args `[plugin,
+  block, ...slots]`; its operator calls `sense::plugin_read`, which asks a
+  thread-local reader that the world installs while a run has modules open
+  (`plugins::begin`/`end`). The editor has none, so there a reporter errors
+  with "only answers while the game is running". `plugins::read` turns the
+  slots into JSON by the schema (an actor slot's name into its id), calls the
+  block's module op as the asking actor (`sense::current_actor`) and takes the
+  answer's `value` as the schema's `returns` type; a mismatch is an error.
+  `WorldPlugins::read` remembers answers per module until the module is called
+  for anything else or a frame starts (`forget_reads`, from the Input and
+  Presentation stages), and a read may log but not act. A hat is
+  `InstructionKind::WhenPlugin { plugin, block, event, args }`, compiled to
+  `Trigger::Plugin` and started by `Event::Plugin { plugin, event, args, actor
+  }`, which a module raises with an `event` effect (`{name, actor?, args}`).
+  Hat slots are literal text, blank for any, and match as text or as numbers.
+  Both compile: a reporter is the generic sensing read (`sense(h, &me,
+  "PluginRead", ..)`, answered by the host's `ext_operator`, so the world's
+  installed reader answers it exactly as for the VM), and a hat is an
+  `Entry` whose `detail` is `plugin_detail` (plugin, event and slots joined by
+  U+001F), started by `fire("Plugin", actor, detail, "")` - with an actor only
+  that actor's strand, without one every copy's - and matched as the VM does
+  (`plugin_hat_matches`). `tests/codegen.rs` holds statement, reporter and hat
+  against the VM line for line, and `LOGIC_ABI_VERSION` is 34. A script
+  reaches the same three through the script ABI (`ABI_VERSION` 36):
+  `Actor::plugin_call(plugin, block, &[PluginArg])` is `ACT_PLUGIN_CALL`
+  (`c` = slots as JSON), `plugin_number`/`plugin_text` are `READ_PLUGIN`/
+  `TEXT_PLUGIN` (`a` = plugin, `b` = block, U+001F, slots as JSON; answered by
+  the thread's plugin reader, failures go to the run log), and `Event::Plugin`
+  is `EVENT_PLUGIN` (subject the event, detail plugin then slot texts joined
+  by U+001F), sent to every script or only the actor the event names.
+  `Project::plugin_blocks` reports all three shapes (`PluginBlockShape`) so
+  `preflight` checks each one (kind, slot count, and that a reporter's command
+  is a module op), and a Build is refused only for a statement whose command
+  runs in the editor. In the
+  palette the operator `PluginRead` has a `layout` and `result` that are
+  functions of the value, and the `WhenPlugin` header's `head` uses text pieces
+  with an `index` (both blockstitch features). `plugins/examples/tally` has
+  "tally of" and "when tally changes" blocks; its `add` raises `changed` once
+  a run hosts it.
+- **Plugin SDK** (`blockloom-plugin-sdk`): a plugin author implements `Plugin`
+  (`start`, then `call` over bytes or `call_json` over `serde_json::Value`) and
+  names it with `export_plugin!`. The macro expands to the C entry symbol on a
+  desktop target and to the portable module's four exports on
+  `wasm32-unknown-unknown`, so one source builds as a `cdylib` or a `.wasm`
+  with no pointers in sight. `Host` gives `log` and `call` (host services); an
+  `Error` carries the `Status` the host sees and is logged. A panic is caught
+  on native and answers `Panicked`; on wasm a panic hook logs it before the
+  module traps. `NativeModule::from_entry` starts a plugin's entry function
+  in-process, which is how the SDK's tests (`blockloom-plugin-sdk/tests`) and
+  `plugins/examples/tally` run the real ABI without a library on disk. The
+  tally example's package source is `plugins/examples/tally/package`; `just
+  example-plugin` stages and seals it with its wasm into `target/plugins/`.
+  A change to `abi.rs` or `wasm.rs` goes through the SDK too.
+- **Plugin Manager**: `PluginManagerDialog.qml`, opened from the top bar's plug
+  button. It lists `plugin_list`/`plugin_check`/`plugin_commands` and runs the
+  same `plugin_*` commands the shell does (install with a dry-run preview,
+  update, remove, sync, undo the last change, clean the cache). A "Settings"
+  section edits each plugin resource in place. It has QML tests
+  (`tests/qml/tst_Plugins.qml`).
+- **Schema-generated inspectors** (`PluginRecordForm.qml`, `PluginValueEditor.qml`):
+  `plugin_list` and the state snapshot's `plugins.types` list every component
+  and resource type (`name`, `displayName`, `kind`, `version`, `fields`,
+  `defaults`), built by `types_json` from the installed schemas. A form has a
+  row per field and a `PluginValueEditor` per value (`bool`, `int`, `number`,
+  `text`, `color`, `vec3`, `choice`, `asset`, `actor`, and `list` of any of
+  those, recursively), clamped to the schema's bounds. An edit reports the whole
+  next payload with any key the schema doesn't name kept, so an older plugin
+  never trims a newer document. `InspectorPanel.qml` draws a `Plugin` component
+  as that form (`pluginCard`), says so when the plugin is missing or the record
+  needs a migration and keeps the data, and lists installed component types in
+  Add component (`plugin:<name>` -> `add_plugin_component`). Editing goes
+  through `set_plugin_component`/`set_plugin_resource`, so validation and undo
+  are the backend's. QML tests: `tests/qml/tst_PluginInspector.qml`. A new
+  `FieldType` must be taught to `PluginValueEditor.qml` (and `src/plugins.ts`).
+  Drawing hints are declarative and never touch a payload: a field's `ui`
+  (`label`, `widget` of `slider` for a bounded int/number or `multiline` for
+  text, `unit`, `step`, `visible_when` of `{field, equals | not_equals}` or
+  truthy) and a component's `inspector.groups` (`label`, `fields`, `collapsed`).
+  `check_ui` in `schema.rs` refuses a hint that names a missing field, suits the
+  wrong type, or draws a field twice; the form draws ungrouped fields first,
+  then each group under a foldable heading, and hides a row while its
+  `visible_when` fails (the value stays in the record).
+- **Plugin panels** (`PluginPanelDialog.qml`, `Contributions::panels`): a
+  package's `panels` list a name, title and items - `text`, `resource` (a
+  `PluginRecordForm` over one of its resources, written through
+  `set_plugin_resource`) and `command` (a form over the command's arguments and
+  a button that runs `plugin_call`). `check_definition` refuses an unknown
+  resource or command. The snapshot's `plugins.panels` carries each panel with
+  its owner and the commands its buttons run; the top bar shows a panel button
+  while any exist. QML test: `tests/qml/tst_PluginPanels.qml`.
+- **Plugin scene tools** (`ToolSchema`, `Contributions::tools`): a package's
+  `tools` name a `cast` module op, a `reach`, a `command`, that command's `args`
+  (`$hit.cell.0` reads the cast's answer, `$option.name` an option, anything
+  else is text) and typed `options`. `check_definition` refuses an unknown
+  command, argument or option. The snapshot's `plugins.tools` lists them and the
+  scene view's toolbar gets a toggle per tool in 3D, with the options drawn by
+  `PluginValueEditor` under it (kept in the QML `Settings` as JSON per tool).
+  `SceneTool::Plugin` plus `SceneView::plugin_tool` (`PluginToolView`: plugin,
+  tool, cast op, reach, outline, drag, option values; `PROTOCOL_VERSION` 28) tell the world
+  which tool is out. A left click casts the pointer ray through the hosted
+  preview module (`plugins::tool_click`, `WorldPlugins::query`: `{x y z dx dy dz
+  reach}` in, `{hit, ...}` out, read only) and a hit goes back as
+  `RuntimeMessage::PluginTool`; the editor resolves the arguments
+  (`ToolSchema::resolve_args`) and runs the command (`commands::plugins::run_tool`,
+  `plugin-run-tool` in the shell and MCP), one undo step, which reloads the
+  world and so redraws the preview. A tool with `drag` paints a stroke: the
+  button down casts every pointer move (`plugins::tool_stroke`, a cell once per
+  stroke) and the release sends all the hits as one `PluginTool`, which
+  `run_tool` runs batched as a single undo step (Escape or losing focus drops
+  it). A tool with `outline` (a `$`-less path into the cast's answer holding
+  `[x0 y0 z0 x1 y1 z1]`, read by `schema::box_at`) gets a gizmo box under the
+  pointer that follows the hover cast (`plugins::tool_outline`,
+  `edit::follow_plugin_tool`). The voxel tools use both.
+- **Mesh service** (`blockloom-plugin-api/src/mesh.rs`, `blockloom-runtime/src/
+  plugin_meshes.rs`): a module answers with `{"effect": "mesh", name,
+  positions, normals, colors, indices, origin, emission, roughness, collider}`
+  (flat arrays, so any tier builds one) or `{"effect": "remove_mesh", name}`.
+  The host checks a mesh (`MeshData::check`: array lengths agree, indices in
+  range, finite, at most `MAX_VERTICES`) and reports a bad one as an error.
+  `plugins::apply` queues a `MeshOp` on `engine.plugins.meshes` (a 2D game
+  reports that only 3D can show one) and `plugin_meshes::sync` (Update, 3D)
+  carries them out: one entity per (plugin, name) with `Mesh3d`, a standard
+  material shared by roughness and emission (vertex colors multiply the base),
+  and a fixed trimesh collider when `collider` is set. A same-named mesh
+  replaces the old entity, and `plugins::end` queues `Clear`. These are not
+  actors: no batching, LOD or occlusion, and nothing else reads them yet.
+- **Voxel plugin** (`plugins/voxel`, `com.blockworked.voxel`, phase 3's first
+  slice): a finite world of cubes, SDK-built so one source is a native library
+  and the portable module (`just voxel-plugin` seals the wasm). Its `world`
+  resource (preset `island|caves|flat|empty`, seed, size, voxel size, origin,
+  solid, palette colors/emission) is read at `world.start`; `grid.rs` holds
+  16-cell chunks of `u8` material ids (air chunks unallocated, a boundary edit
+  dirties the neighbour), `terrain.rs` generates from hashes of each cell's own
+  coordinates (the same seed always gives the same cells, trees and ore
+  included), `mesher.rs` is the greedy cube mesher (visible faces only, faces
+  across chunk borders ask the grid, each glowing material its own group), and
+  `lib.rs` answers every op with the meshes that changed (`chunk/x/y/z`, and
+  `.../glow<id>` for emissive ones, whose mesh `emission` is color times the
+  palette's intensity) plus `remove_mesh` for ones that went away. Ops `set`,
+  `fill`, `sphere`, `generate` (blocks and commands), reporters `get`/`height`,
+  and rays in world units (`ray.rs`, a cell-grid walk: `cast` reports the cell,
+  the empty cell before it, the face normal and distance; `break` and `place`
+  edit along one); edits last for the run. The package schema declares the
+  resource, commands and nine blocks (a material is a dropdown of the built-in names; ids work
+  too). Measured: the default 64x32x64 island is drawn from the wasm module in
+  under a second, inside its 10 s call budget. Not yet: smooth terrain,
+  streaming and LOD, instancing, GPU meshing, fracture. Its manifest asks for `editor.preview`,
+  so the scene view shows the generated world without Play (edits made by
+  blocks still last only for a run). Saved edits are the `world` resource's
+  `edits` lines (`set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`,
+  `sphere X Y Z radius material`), applied in order over the generated terrain
+  at `world.start` (a bad line is reported by number and skipped), so the scene
+  view and every run show them; `add_voxel_edit` appends one and
+  `clear_voxel_edits` forgets them, both through the `set_resource_field`
+  command action (sets one resource field, or with `append` pushes `value` onto
+  its list; one undo step; a `template` builds the value from the command's
+  arguments, `sphere {x} {y} {z} {radius} {material}`, so no `value` is
+  needed). `paint_voxel`, `paint_voxel_box`, `paint_voxel_sphere` and
+  `paint_voxel_shape` are those templates, and the package's four scene tools
+  (paint, erase, ball, shape) click them into the world (see Plugin scene tools).
+  A solid cell may be a slab, top slab, post, stair or ramp (`Shape` in
+  `shape.rs`, a sparse table in `grid.rs`; a stair or ramp has a facing, the
+  side it rises towards): the greedy mesher takes only whole cubes, shaped
+  cells are a few boxes (and a wedge) meshed on their own from `Shape::faces`,
+  with faces on a cell's edge hidden by a whole-cube neighbour, `shape` is the op, `shape_voxel` the command and block
+  (ten blocks now), `shape X Y Z name` a saved edit line (`stair west`, `ramp north`). Writing a cube or air
+  takes a shape away; rays still treat a shaped cell as the whole cell.
+- **Importers and build hooks** (`blockloom-plugin-api/src/assets.rs`,
+  `blockloom-plugin-host/src/imports.rs`): a package's schema may list
+  `importers` (name, extensions, `limit_ms`) and `build` hooks (name,
+  `limit_ms`). Both are module ops over raw bytes, `importer.<name>` and
+  `build.<name>`: a request is one JSON line (`Request`) then the source
+  file's bytes, an answer one JSON line then each produced file's bytes in
+  listed order (`Produced`, with `warnings`, `errors` and `dependencies`).
+  The host does every read and write, so a module needs no capability: output
+  paths are relative plain names (`check_output_path`), sizes are checked
+  against the bytes, at most `MAX_FILES`/`MAX_OUTPUT_BYTES`, and a portable
+  module gets the schema's `limit_ms` of fuel for the one call
+  (`CodeModule::call_bytes`). An import of `assets/x.gpl` writes
+  `assets/x.gpl.imported/...` (never imported again) and records source,
+  output and dependency hashes in `.blockloom/imports.json`, so
+  `imports::status` says `fresh`, `source_changed`, `dependency_changed`,
+  `output_missing`, `output_edited` or `source_missing`; a re-import replaces
+  exactly what the last one wrote, and deleting the source in the tray forgets
+  it. `import_assets` runs the first importer that takes a file's extension
+  (a failure is logged, the copy stays); `plugin-importers`, `plugin-imports`
+  and `plugin-import path=... importer=...` are the shell/MCP side. Before a
+  desktop or web build `plugins::run_build_hooks` runs every hook with the
+  target and the asset list, stages the files under `.blockloom/cooked/`, and
+  `BuildOptions::extras` (`ExtraFile`) copies them to
+  `game/plugins/<id>/cooked/` (refusing an escape or an overwrite); an error
+  from a hook stops the build, and Android builds ship them in the APK's assets
+  like desktop ones. `plugin-reimport` imports again what a source, dependency or
+  output change left stale (an output edited by hand only when named); Play and
+  Build call it first (`plugins::refresh_imports`, owner only), and the asset
+  tray marks imported files and offers it. A package
+  that is only importers and hooks is an editor tool and is not shipped.
+  `plugins/examples/palette` imports GIMP `.gpl` palettes as a one-row
+  `palette.png` (stored-deflate PNG, no compressor) plus `palette.json`, and
+  its `cook` hook fails a build that has an unimported palette.
+- **HTTP registries** (`blockloom-plugin-host/src/registry.rs`): a `plugins.json`
+  registry value that starts with `https://` (or `http://` for localhost,
+  127.0.0.1 and ::1) is an `HttpRegistry`, which reads a published registry
+  folder (`index.json`, `archives/`) from any static host through `ureq`
+  (not on wasm32). The index is read once per value, size-capped, and every
+  archive is checked against the hash in it before it is unpacked, so only the
+  index has to arrive over a trusted channel; an index naming a path that is
+  not plain-relative is refused. `open_registry(base, value)` is the one place
+  a value becomes a registry. Publishing stays a folder (`plugin-publish`):
+  upload the folder. After a package change the owner bumps the folder's
+  revision (`plugins::reload(s, true)`), so an attached copy's live reload
+  also reloads its active plugins.
+- **Trusted editor modules** (`PluginEditorsDialog.qml`, `blockloom-plugin-host/src/trust.rs`):
+  a package may list `editor.modules` (`.qml` files, which need the
+  `trusted-editor` capability and are left out of every build). Their QML runs
+  inside the editor with the editor's own access, so a module loads only after
+  the user trusts that exact package. `TrustLedger` (`<data dir>/blockloom/trusted-plugins.json`,
+  per user, never in the project) maps a plugin id to the package's
+  `content_hash`; an update changes the hash and asks again. `plugin_trust` and
+  `plugin_untrust` exist in dispatch for the window only: they have no shell or
+  MCP command and the attach socket refuses them (`GUI_ONLY`). The snapshot's
+  `plugins.editorModules` lists each such plugin with `trusted`, `changed` and
+  its modules, and gives a module's `file` only while trusted. The top bar's
+  app-window button opens the dialog, which asks for trust, lists the modules
+  and loads one into a `Loader` with `host` as an initial property: `host.plugin`,
+  `host.project`, `host.resource(name)`, `host.setResource(name, payload)`,
+  `host.call(command, args)` and `host.app` (the editor's `invoke` and state, i.e.
+  host-level). `plugins/examples/com.example.notes` is the example. QML test:
+  `tests/qml/tst_PluginEditors.qml`. A package may also list
+  `editor.inspectors` (`{component, module}`, one `.qml` per component, same
+  capability and trust): `InspectorPanel.qml`'s `pluginSection` loads it in place
+  of the schema form once the package is trusted (the form stays otherwise),
+  with `host.write(next)`, `host.call(...)`, `host.payload`, `host.type`,
+  `host.app` and `host.project`. `com.example.notes` has a `sticky` component
+  with one. Native compiled editor modules are deliberately not offered: they
+  would run host-level code inside the Qt process with no ABI to bound it, so a
+  plugin that needs custom UI uses trusted QML.
+- **Plugin code on Android**: Android loads only portable (wasmi) modules, like
+  the browser (`loads_native_libraries` is false for both). The runtime `.so` is
+  built with `--features plugins`, the plugin host skips `ureq` there, builds
+  ship plugins in the APK's assets (the same `game/plugins/<id>/` layout) and
+  `android.rs` points the host's file reader at the APK. Compile-checked for
+  `aarch64-linux-android`; never run on a device.
+- **Host services** (`blockloom-plugin-host/src/services.rs`): a module's
+  `host.call` reaches one `HostServices` hub, named `area.verb`: `host.version`,
+  `rng.*` (hashes of `{seed, index}`, so a replay matches), `storage.*` and
+  `save.*` (need `project-storage`), `diag.*`, `jobs.*`, and whatever a
+  `ServiceProvider` chained on adds (the world's `physics.*` and `nav.*`,
+  `blockloom-runtime/src/plugin_services.rs`, answered from the published
+  sensor snapshot and the nav bake). The editor and the world each build one
+  hub; the capability gate stays in `native.rs`.
+- **Storage** (`storage.rs`): two stores namespaced by plugin id, project
+  blobs (`.blockloom/plugin-data`, read-only in a built game) and player saves
+  (per project, written while a game plays). `BlobStore` is a flat key space
+  with atomic multi-key `commit`; `DiskStore` writes through a temp file and a
+  rename, `MemoryStore` serves tests. Content blobs live under
+  `blobs/<sha256>` (`put`/`get`) and every write is held to `StoreLimits`
+  (16 MiB a blob, 256 MiB and 4096 keys a plugin). `KvStore<B: KvBackend>` keeps
+  a plugin's saves in any key-value backend (base64 values under a per-project
+  prefix, a failed commit puts back what it changed); the web player's backend
+  is localStorage (`web::LocalKv`). `plugin-data-gc [dryRun=true]`
+  (`storage::collect_blobs`, `commands::plugins::plugin_data_gc`) removes content
+  blobs nothing names: a `blob:<sha256>` string in a record, another stored key
+  or a reachable blob, over the project's data and its saves; refused while a
+  game runs.
+- **Jobs and generation** (`jobs.rs`, `generation.rs`): `jobs.start` runs
+  `job.<name>` in slices under a per-frame budget (`WorldPlugins::run_jobs`),
+  highest priority first. A slice answers `{progress, state}`, `{done,
+  result}` or `{error}`; `state` comes back next slice, cancel calls the op
+  once with `cancel: true`, and a job's `event` is raised when it ends. A
+  package's `nodes` are typed graph nodes (`blockloom-plugin-api/src/
+  generation.rs`, `GraphDef::plan` checks types, one source per input and
+  cycles); the `graph.evaluate` job evaluates one node per slice through a
+  tile cache (`GraphCache`) with per-node margins, so an edit recomputes only
+  what it feeds.
+- **Diagnostics** (`diagnostics.rs`): `diag.count|gauge|time|marker` plus the
+  host's own call counts, timings, errors and faults per plugin.
+  `plugins::report` sends them from the world about every fifth status report
+  (`RuntimeMessage::PluginDiagnostics`, and `plugin/*` render metrics for the
+  profiler); `StateDto.plugin_diagnostics`, `plugin-diagnostics` in the shell
+  and the Plugin Manager's rows read them.
+- **Editor surfaces** (`blockloom-plugin-api/src/surfaces.rs`): a package's
+  `menus`, `shortcuts` and `overlays`. A menu item or shortcut runs one of
+  the package's commands with fixed arguments (so it is that command's
+  validated, undoable action): the top bar's plugin menus and `Main.qml`'s
+  `Instantiator` of `Shortcut`s call `plugin_call`. An overlay is a scene-view
+  toggle that asks the hosted preview module for `overlay.<name>` and draws
+  the answered `Shape`s as gizmos (`SceneView::plugin_overlays`,
+  `PROTOCOL_VERSION` 29); overlays only look. `surfaces_json` in
+  `commands/plugins.rs` builds the snapshot. `conflicts` in a manifest, two
+  packages providing one service and hook orders that cannot be met are
+  `ActivePlugins::conflicts()`; a blocking one stops Play and Build and is
+  listed by `plugin-check` and the manager.
+- **Rendering service** (`blockloom-plugin-api/src/rendering.rs`): an
+  `instances` effect draws many copies of one of the plugin's meshes (position,
+  yaw, scale each) as entities sharing the mesh's buffers and material, which
+  Bevy batches (`plugin_meshes.rs`, `PluginInstance`); a mesh may be a
+  `convex_hull` or `aabb` collider as well as a trimesh. A package's `shaders`
+  are `.wesl` files registered as `blockloom::plugin_<id>_<name>`
+  (`rendering::module_name`): core's `shader_lib` keeps a global extra-module
+  registry (`set_extra`, so the editor's surface check can link them and a
+  plugin cannot replace a built-in module) and the runtime's
+  `passes::sync_plugin_shaders` adds each as a Shader asset when the loadout's
+  shaders change.
+- **GPU compute** (`blockloom-plugin-api/src/compute.rs`, the `blockloom-plugin-gpu`
+  crate, `blockloom-runtime/src/plugin_compute.rs`; ADR 0001's twenty-third
+  batch): a plugin never holds the device. A package's `kernels` (`.wgsl`, an
+  entry, a workgroup size, named group-0 bindings `read|read_write|uniform`)
+  need the `gpu-compute` capability, and `check_kernel` (naga, no optional
+  capabilities) refuses a kernel whose bindings differ from its schema or whose
+  loops aren't `for`s over a constant-bounded counter (total iterations within
+  `MAX_STATIC_COST`), at seal, install and load. A module answers `gpu_buffer`,
+  `gpu_write`, `gpu_dispatch`, `gpu_read` and `gpu_free` effects
+  (`Effect::gpu_command` -> `GpuCommand`; no capability is an error), a read
+  comes back as the module's `gpu.result` op. `ComputeEngine` (feature `engine`,
+  wgpu) owns the buffers and queues per plugin; each frame it runs commands in
+  order in one encoder under `FRAME_INVOCATIONS`, round-robin, writes through a
+  staging copy so they stay ordered, and reads back through mapped staging
+  buffers. The runtime's `ComputeLink` carries commands to the render world
+  (`run` in `RenderSystems::Cleanup`, on Bevy's device) and reports back;
+  `Loadout::kernels` carries the kernels, `PluginHost::kernels_serial` says when
+  they changed, and a run's end clears buffers. The SDK's `gpu` module builds the
+  effects. Tests: `cargo test -p blockloom-plugin-gpu --features engine --
+  --include-ignored` with `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json`.
+  Not offered: textures, push constants, indirect dispatch, WESL imports.
+- **Reload and isolation**: a changed loadout reaches the running world as
+  `WorldPlugins::reload`: a portable module answers `world.save`, is replaced
+  and gets `world.restore`; a native change needs the run restarted
+  (`ReloadReport::restart_needed`). With `BLOCKLOOM_PLUGIN_ISOLATION=process`
+  a native library is loaded by the `blockloom-plugin-worker` binary beside
+  the editor (`BLOCKLOOM_PLUGIN_WORKER` names another; `all` hosts portable
+  modules there too): `isolated.rs` speaks length-prefixed JSON frames over its
+  stdin/stdout, host services stay in the host and cross the pipe, and a call
+  past its wall-clock limit or a worker that dies stops the module, not the
+  game. The worker ships beside the editor (the Linux install, the CI editor
+  archives and the Windows installer carry it); a built game does not.
+- **Authoring kit**: `plugin-new path=... id=... template=declarative|portable|native`
+  (`blockloom-app/src/scaffold.rs`) writes a starter package: a declarative
+  one is sealed at once, a portable one is a crate (`src/lib.rs` is
+  `blockloom-plugin-sdk/templates/lib.rs`, which the SDK's `tests/scaffold.rs`
+  compiles and runs), schemas, `build.sh` (wasm build plus `plugin-seal`) and
+  a CI workflow. A native one is the same crate plus a native library: its
+  `build.sh` also builds this machine's `cdylib` and runs `plugin-add-native
+  path=... target=... library=...` (`scaffold::add_native`: records the
+  library under its target triple, makes the tier `native`, adds the
+  `native-execution` capability and seals again), so each platform's library
+  is one more run of it. The SDK's `testing` feature adds `Harness` and `harness!(T)`
+  (`harness!(T, [Capability::ProjectStorage])`): the plugin runs in-process
+  through the host's loader with memory stores. `docs/plugin-api.md` is the
+  author guide. CI runs `cargo test -p blockloom-plugin-sdk --features testing`
+  and the host with `test-fixtures` (the isolation test).
+- **Not yet**: a faster browser host (the page's own WebAssembly instead of wasmi
+  in wasm; it needs a fuel substitute, since a browser instance has no budget to
+  stop a runaway call), a headless browser proof and native editor modules.
+  `plugins/examples/com.example.health` is the sealed proof package;
+  `plugins/examples/tally` is the SDK one, with code, and
+  `plugins/examples/palette` the importer/build-hook one.
 
 ### Scripts
 

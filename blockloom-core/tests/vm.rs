@@ -44,6 +44,7 @@ fn project_with(strands: Vec<Strand>) -> Project {
         globals: Vec::new(),
         global_lists: Vec::new(),
         global_dicts: Vec::new(),
+        plugin_resources: Vec::new(),
     }
 }
 
@@ -910,6 +911,7 @@ fn project_with_two(first: Vec<Strand>, second: Vec<Strand>) -> Project {
         globals: Vec::new(),
         global_lists: Vec::new(),
         global_dicts: Vec::new(),
+        plugin_resources: Vec::new(),
     }
 }
 
@@ -2369,4 +2371,153 @@ fn the_cutscene_reporters_read_the_published_snapshot() {
     sense::publish(Sensors::default());
     let playing = Value::op(Op::from_name("IsCutscenePlaying"), vec![]);
     assert_eq!(playing.eval(), Ok(Evaluated::Bool(false)));
+}
+
+#[test]
+fn a_plugin_block_asks_the_editor_to_run_its_command_with_its_slots() {
+    let project = project_with(vec![started(vec![
+        InstructionKind::SetVariable {
+            name: "n".to_string(),
+            value: Value::number(4.0),
+        },
+        InstructionKind::PluginBlock {
+            plugin: "com.example.health".to_string(),
+            block: "heal".to_string(),
+            args: vec![
+                Value::text("Hero"),
+                Value::Var {
+                    name: "n".to_string(),
+                },
+                Value::number(1.5),
+                Value::Bool,
+            ],
+        },
+    ])]);
+    let actor = project.actors[0].id.clone();
+    let effects = Harness::started(&project).run(1);
+    assert!(effects.contains(&Effect::PluginCall {
+        actor,
+        plugin: "com.example.health".to_string(),
+        block: "heal".to_string(),
+        // A whole number is an integer; a bare bool slot reads false.
+        args: vec![
+            serde_json::json!("Hero"),
+            serde_json::json!(4),
+            serde_json::json!(1.5),
+            serde_json::json!(false),
+        ],
+    }));
+}
+
+fn when_plugin(event: &str, args: &[&str]) -> Instruction {
+    ins(InstructionKind::WhenPlugin {
+        plugin: "com.example.tally".to_string(),
+        block: "changed".to_string(),
+        event: event.to_string(),
+        args: args.iter().map(|a| a.to_string()).collect(),
+    })
+}
+
+fn plugin_event(event: &str, args: &[&str], actor: Option<&str>) -> Event {
+    Event::Plugin {
+        plugin: "com.example.tally".to_string(),
+        event: event.to_string(),
+        args: args.iter().map(|a| a.to_string()).collect(),
+        actor: actor.map(str::to_string),
+    }
+}
+
+#[test]
+fn a_plugin_hat_starts_on_its_plugins_event_and_matches_its_slots() {
+    let hat = |args: &[&str], line: &str| {
+        Strand::with_instructions(0, 0, vec![when_plugin("changed", args), ins(say(line))])
+    };
+    let project = project_with(vec![
+        hat(&[], "any"),
+        hat(&["coins"], "coins"),
+        hat(&["lives", "3"], "lives at 3"),
+        Strand::with_instructions(0, 0, vec![when_plugin("other", &[]), ins(say("other"))]),
+    ]);
+    let mut run = Harness::new(&project);
+    run.vm.fire(plugin_event("changed", &["coins", "7"], None));
+    assert_eq!(says(&run.run(1)), ["any", "coins"]);
+    // A slot matches as text or as numbers, and an empty slot matches all.
+    run.vm
+        .fire(plugin_event("changed", &["lives", "3.0"], None));
+    assert_eq!(says(&run.run(1)), ["any", "lives at 3"]);
+    run.vm.fire(plugin_event("changed", &["lives", "4"], None));
+    assert_eq!(says(&run.run(1)), ["any"]);
+    // Another plugin's event of the same name is not this one's.
+    run.vm.fire(Event::Plugin {
+        plugin: "com.example.other".to_string(),
+        event: "changed".to_string(),
+        args: vec![],
+        actor: None,
+    });
+    assert!(says(&run.run(1)).is_empty());
+}
+
+#[test]
+fn a_plugin_event_naming_an_actor_starts_only_that_actors_hats() {
+    let project = project_with(vec![Strand::with_instructions(
+        0,
+        0,
+        vec![when_plugin("changed", &[]), ins(say("heard"))],
+    )]);
+    let player = project.actors[0].id.clone();
+    let mut run = Harness::new(&project);
+    run.vm
+        .fire(plugin_event("changed", &[], Some("somebody-else")));
+    assert!(says(&run.run(1)).is_empty());
+    run.vm.fire(plugin_event("changed", &[], Some(&player)));
+    assert_eq!(says(&run.run(1)), ["heard"]);
+}
+
+#[test]
+fn a_plugin_reporter_asks_the_installed_reader_each_time_it_is_evaluated() {
+    use blockloom_core::sense;
+    use blockloom_core::value::PLUGIN_READ;
+    blockloom_core::init();
+    let ask = |name: &str| {
+        Value::op(
+            Op::from_name(PLUGIN_READ),
+            vec![
+                Value::text("com.example.tally"),
+                Value::text("count"),
+                Value::text(name),
+            ],
+        )
+    };
+    // Nothing answers outside a run, and the error says so.
+    sense::set_plugin_reader(None);
+    let error = ask("coins").eval().unwrap_err();
+    assert!(
+        error.contains("only answers while the game is running"),
+        "{error}"
+    );
+
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let log = seen.clone();
+    sense::set_plugin_reader(Some(Box::new(move |plugin, block, args| {
+        log.borrow_mut()
+            .push(format!("{plugin}/{block}/{}", args[0].as_text()));
+        match args[0].as_text().as_str() {
+            "coins" => Ok(Evaluated::Number(12.0)),
+            other => Err(format!("no tally called {other}")),
+        }
+    })));
+    assert_eq!(ask("coins").eval(), Ok(Evaluated::Number(12.0)));
+    // It composes like any reporter.
+    let double = Value::op(Op::Mul, vec![ask("coins"), Value::number(2.0)]);
+    assert_eq!(double.eval(), Ok(Evaluated::Number(24.0)));
+    assert_eq!(ask("gems").eval(), Err("no tally called gems".to_string()));
+    assert_eq!(
+        *seen.borrow(),
+        [
+            "com.example.tally/count/coins",
+            "com.example.tally/count/coins",
+            "com.example.tally/count/gems"
+        ]
+    );
+    sense::set_plugin_reader(None);
 }

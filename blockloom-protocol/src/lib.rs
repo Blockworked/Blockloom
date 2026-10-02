@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 23;
+pub const PROTOCOL_VERSION: u32 = 29;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -164,6 +164,12 @@ pub enum EditorMessage {
     InterfaceDesign {
         design: Option<InterfaceDesign>,
     },
+    /// The plugin code the next run hosts: which modules to open, their
+    /// hooks, and the plugin blocks that run in the world. Sent before
+    /// `Start`; the world opens the modules when the run begins.
+    Plugins {
+        loadout: blockloom_plugin_api::loadout::Loadout,
+    },
     /// The green flag.
     Start,
     /// Stops every script and puts each actor back where the project says.
@@ -280,6 +286,28 @@ pub enum RuntimeMessage {
     },
     /// The Tiles tool's pick read a cell: which sheet tile it shows.
     TilePicked { actor: String, tile: i32 },
+    /// A stroke with a plugin's scene tool ended: the module's answer to each
+    /// cast that hit (a click is a stroke of one) and the tool's option
+    /// values. The editor owns the plugins, so it resolves the tool's command
+    /// arguments for every hit and runs them as one undo step.
+    PluginTool {
+        plugin: String,
+        tool: String,
+        hits: Vec<serde_json::Value>,
+        options: serde_json::Value,
+    },
+    /// What the plugin modules the world hosts cost and report: per plugin its
+    /// call timings, counters, gauges and markers (`Diagnostics::snapshot`).
+    /// Sent about once a second while any are open and the figures changed.
+    PluginDiagnostics { snapshot: serde_json::Value },
+    /// A plugin block ran. The editor owns the plugins, so it looks the block
+    /// up and runs its command; `args` follow the block's slot order.
+    PluginCall {
+        actor: String,
+        plugin: String,
+        block: String,
+        args: Vec<serde_json::Value>,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -322,6 +350,29 @@ pub enum SceneTool {
     /// Paint, erase, fill or pick on the selected tilemap with
     /// `SceneView::tile_brush`.
     Tiles,
+    /// A tool a plugin added: a click casts through its module, see
+    /// `SceneView::plugin_tool`.
+    Plugin,
+}
+
+/// The plugin scene tool in use and what it asks the module.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PluginToolView {
+    pub plugin: String,
+    pub tool: String,
+    /// The module op that takes the pointer's ray.
+    pub cast: String,
+    pub reach: f64,
+    /// Path into the cast's answer of the box to outline (six numbers: min
+    /// then max, in world units); empty draws none.
+    #[serde(default)]
+    pub outline: String,
+    /// Dragging keeps casting, and the hits are sent on release.
+    #[serde(default)]
+    pub drag: bool,
+    /// The tool's option values, passed back with each hit.
+    #[serde(default)]
+    pub options: serde_json::Value,
 }
 
 /// What the Game view shows in place of the lit image, for judging exposure.
@@ -381,7 +432,25 @@ pub struct SceneView {
     pub brush: blockloom_core::terrain::sculpt::Brush,
     /// The tile brush the Tiles tool paints with.
     pub tile_brush: blockloom_core::tilemap::TileBrush,
+    /// The plugin tool `SceneTool::Plugin` clicks with.
+    pub plugin_tool: Option<Box<PluginToolView>>,
+    /// The plugin overlays drawn over the scene.
+    pub plugin_overlays: Vec<PluginOverlayView>,
     pub tiles: TileDebug,
+}
+
+/// A plugin overlay that is on: the world asks the plugin's hosted module for
+/// `overlay.<overlay>` every `interval_ms` and draws what it answers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PluginOverlayView {
+    pub plugin: String,
+    pub overlay: String,
+    #[serde(default = "default_overlay_interval")]
+    pub interval_ms: u32,
+}
+
+fn default_overlay_interval() -> u32 {
+    250
 }
 
 /// The 2D level overlays in the scene view.
@@ -474,6 +543,8 @@ impl Default for SceneView {
             path_tracer: PathTracerView::default(),
             brush: Default::default(),
             tile_brush: Default::default(),
+            plugin_tool: None,
+            plugin_overlays: Vec::new(),
             tiles: TileDebug::default(),
         }
     }

@@ -380,6 +380,131 @@ pub struct BuildOptions {
     /// build, so the next one can skip typing them. Opt-in per build, and
     /// only written when the APK signed: a failed build remembers nothing.
     pub remember_passwords: bool,
+    /// The plugins the game ships with, resolved by the editor from the
+    /// project's lock: what to record in the pack and which files to copy.
+    pub plugins: Vec<PluginPayload>,
+    /// Files a plugin's build hooks made, to add to the game folder.
+    pub extras: Vec<ExtraFile>,
+}
+
+/// A file a build hook produced: where it is now and where in the game
+/// folder it goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtraFile {
+    /// Relative to the game folder, forward slashes.
+    pub to: String,
+    pub from: PathBuf,
+}
+
+/// Copies the build hooks' files into the game folder. A destination that
+/// leaves it, or lands on a file the build already made, fails the build.
+fn copy_extras(extras: &[ExtraFile], game: &Path) -> Result<usize, String> {
+    for extra in extras {
+        let bad = extra.to.is_empty()
+            || extra.to.starts_with('/')
+            || extra.to.contains('\\')
+            || extra
+                .to
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == "..");
+        if bad {
+            return Err(format!("a build hook file can't go to \"{}\"", extra.to));
+        }
+        let to = game.join(&extra.to);
+        if to.exists() {
+            return Err(format!("a build hook file would overwrite {}", extra.to));
+        }
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        std::fs::copy(&extra.from, &to)
+            .map_err(|e| format!("{}: couldn't copy {}: {e}", extra.to, extra.from.display()))?;
+    }
+    Ok(extras.len())
+}
+
+/// One plugin to ship: what the pack records and where its files are now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginPayload {
+    pub entry: pack::PackedPlugin,
+    /// The verified package folder the files are copied from.
+    pub root: PathBuf,
+}
+
+/// Copies each plugin's manifest and shipped files to `game/plugins/<id>/`.
+/// A file that is not where the verified package says it is fails the build.
+fn copy_plugins(plugins: &[PluginPayload], game: &Path) -> Result<usize, String> {
+    for plugin in plugins {
+        let dest = game.join(&plugin.entry.dir);
+        // The player verifies the rest against the manifest, so it ships too.
+        let manifest = blockloom_plugin_api::manifest::MANIFEST_FILE;
+        for file in std::iter::once(manifest).chain(plugin.entry.files.iter().map(String::as_str)) {
+            let from = plugin.root.join(file);
+            let to = dest.join(file);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("{}: {e}", parent.display()))?;
+            }
+            std::fs::copy(&from, &to)
+                .map_err(|e| format!("plugin {}: couldn't copy {file}: {e}", plugin.entry.id))?;
+        }
+    }
+    Ok(plugins.len())
+}
+
+/// Copies the data each shipped plugin keeps in the project to the game's own
+/// `.blockloom/plugin-data`, and writes the index a player lists it by.
+fn copy_plugin_data(
+    plugins: &[PluginPayload],
+    project_dir: &Path,
+    game: &Path,
+) -> Result<usize, String> {
+    use blockloom_plugin_api::data::{DATA_DIR, DataIndex, INDEX_FILE};
+    let mut index = DataIndex::default();
+    for plugin in plugins {
+        let from = project_dir.join(DATA_DIR).join(&plugin.entry.id);
+        if from.is_dir() {
+            copy_data_tree(
+                &from,
+                &game.join(DATA_DIR).join(&plugin.entry.id),
+                &plugin.entry.id,
+                &mut index,
+            )?;
+        }
+    }
+    if !index.files.is_empty() {
+        let to = game.join(DATA_DIR).join(INDEX_FILE);
+        let json = serde_json::to_vec(&index).map_err(|e| e.to_string())?;
+        std::fs::write(&to, json).map_err(|e| format!("{}: {e}", to.display()))?;
+    }
+    Ok(index.files.len())
+}
+
+fn copy_data_tree(
+    from: &Path,
+    to: &Path,
+    key: &str,
+    index: &mut blockloom_plugin_api::data::DataIndex,
+) -> Result<(), String> {
+    std::fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
+    for entry in std::fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // Half-finished commits are not data.
+        if name.ends_with(".blockloom-tmp") || name.ends_with(".blockloom-bak") {
+            continue;
+        }
+        let meta = entry.metadata().map_err(|e| e.to_string())?;
+        let child = format!("{key}/{name}");
+        if meta.is_dir() {
+            copy_data_tree(&entry.path(), &to.join(&name), &child, index)?;
+        } else {
+            std::fs::copy(entry.path(), to.join(&name))
+                .map_err(|e| format!("{}: {e}", entry.path().display()))?;
+            index.files.insert(child, meta.len());
+        }
+    }
+    Ok(())
 }
 
 /// Where a build landed, and what went into it.
@@ -449,7 +574,15 @@ pub fn build(
     options: BuildOptions,
 ) -> Result<Build, String> {
     if target.is_web() {
-        return build_web(project, project_dir, target, player, parent);
+        return build_web(
+            project,
+            project_dir,
+            target,
+            player,
+            parent,
+            &options.plugins,
+            &options.extras,
+        );
     }
     if target.is_android() {
         return build_android(project, project_dir, target, player, parent, options);
@@ -481,12 +614,16 @@ pub fn build(
 
     let game = layout.game.clone();
     std::fs::create_dir_all(&game).map_err(|e| format!("{}: {e}", game.display()))?;
-    let mut game_pack = GamePack::new(project.clone());
+    let mut game_pack = GamePack::new(project.clone())
+        .with_plugins(options.plugins.iter().map(|p| p.entry.clone()).collect());
     game_pack.hdr = !options.sdr_only;
     game_pack.write(&pack::pack_path(&game))?;
 
     crate::build_control::step("Copying game assets")?;
     let assets = copy_assets(project_dir, &game)?;
+    copy_plugins(&options.plugins, &game)?;
+    copy_plugin_data(&options.plugins, project_dir, &game)?;
+    copy_extras(&options.extras, &game)?;
     crate::build_control::step("Baking sprite atlas")?;
     let atlas = bake_sprite_atlas(project, project_dir, &game)?;
     crate::build_control::step("Baking sky")?;
@@ -607,6 +744,8 @@ fn build_web(
     target: &'static Target,
     player: &Path,
     parent: &Path,
+    plugins: &[PluginPayload],
+    extras: &[ExtraFile],
 ) -> Result<Build, String> {
     crate::build_control::step("Checking shaders")?;
     let shaders = check_shaders(project, project_dir)?;
@@ -623,7 +762,8 @@ fn build_web(
 
     let game = dir.join(".game");
     std::fs::create_dir_all(&game).map_err(|e| format!("{}: {e}", game.display()))?;
-    let mut game_pack = GamePack::new(project.clone());
+    let mut game_pack = GamePack::new(project.clone())
+        .with_plugins(plugins.iter().map(|p| p.entry.clone()).collect());
     game_pack.hdr = false;
     game_pack.write(&pack::pack_path(&game))?;
     crate::build_control::step("Copying game assets")?;
@@ -636,6 +776,9 @@ fn build_web(
     crate::build_control::step("Packing terrain and scripts")?;
     copy_terrain(project, project_dir, &game)?;
     let scripts = copy_scripts(project, project_dir, &game, target)?;
+    copy_plugins(plugins, &game)?;
+    copy_plugin_data(plugins, project_dir, &game)?;
+    copy_extras(extras, &game)?;
 
     let mut paths = Vec::new();
     distribution::collect_files(&game, &mut paths)?;
@@ -770,7 +913,8 @@ fn build_android_with_config(
     // Bevy's Android asset reader rather than the disk.
     let game = dir.join("assets");
     std::fs::create_dir_all(&game).map_err(|e| format!("{}: {e}", game.display()))?;
-    let mut game_pack = GamePack::new(project.clone());
+    let mut game_pack = GamePack::new(project.clone())
+        .with_plugins(options.plugins.iter().map(|p| p.entry.clone()).collect());
     game_pack.hdr = false;
     game_pack.write(&pack::pack_path(&game))?;
 
@@ -783,6 +927,9 @@ fn build_android_with_config(
     copy_probes(project, project_dir, &game)?;
     crate::build_control::step("Packing terrain and scripts")?;
     copy_terrain(project, project_dir, &game)?;
+    copy_plugins(&options.plugins, &game)?;
+    copy_plugin_data(&options.plugins, project_dir, &game)?;
+    copy_extras(&options.extras, &game)?;
     let native_libs = android_native_libs(project, project_dir, target, runtime_so, options.fast)?;
 
     let manifest = android::render_manifest(&project.android, &project.name)?;
@@ -978,6 +1125,18 @@ fn android_build_fingerprint(
     project_json.hash(&mut hasher);
     target.triple.hash(&mut hasher);
     options.fast.hash(&mut hasher);
+    // A plugin's package is named by its content hash.
+    for plugin in &options.plugins {
+        plugin.entry.id.hash(&mut hasher);
+        plugin.entry.hash.hash(&mut hasher);
+    }
+    // Hook output is restaged on every build, so its bytes count, not its mtimes.
+    for extra in &options.extras {
+        extra.to.hash(&mut hasher);
+        std::fs::read(&extra.from)
+            .unwrap_or_default()
+            .hash(&mut hasher);
+    }
     hash_file_meta(&mut hasher, runtime_so);
     for relative in script_paths(project) {
         let library = script::library_path_for(project_dir, relative, Some(target.triple));
@@ -1025,7 +1184,7 @@ fn hash_file_meta(hasher: &mut std::collections::hash_map::DefaultHasher, path: 
 }
 
 /// Every file under the project folder, sorted, minus the script build
-/// cache and the output dir. Host Play builds touch that cache constantly;
+/// cache, staged hook output and the output dir. Host Play builds touch that cache constantly;
 /// the triple libs above already cover what Android ships. The output dir
 /// is skipped since a previous APK inside the project would bust every
 /// fingerprint on its own mtime.
@@ -1035,16 +1194,21 @@ fn hash_project_files(
     output_dir: &Path,
 ) -> Result<(), String> {
     let build_cache = project_dir.join(".blockloom").join("build");
+    let cooked = project_dir.join(".blockloom").join("cooked");
     let mut files: Vec<(String, u64, u64, u32)> = Vec::new();
     let mut stack = vec![project_dir.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        if dir.starts_with(&build_cache) || dir.starts_with(output_dir) {
+        if dir.starts_with(&build_cache) || dir.starts_with(&cooked) || dir.starts_with(output_dir)
+        {
             continue;
         }
         let entries = std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.starts_with(&build_cache) || path.starts_with(output_dir) {
+            if path.starts_with(&build_cache)
+                || path.starts_with(&cooked)
+                || path.starts_with(output_dir)
+            {
                 continue;
             }
             if path.is_dir() {
@@ -1666,6 +1830,94 @@ mod tests {
     use super::*;
     use crate::scene::Mode;
 
+    #[test]
+    fn a_shipped_plugin_carries_its_manifest_beside_its_files() {
+        let root = temp("plugin-src");
+        let game = temp("plugin-game");
+        std::fs::create_dir_all(root.join("schemas")).unwrap();
+        std::fs::write(root.join("plugin.json"), "{}").unwrap();
+        std::fs::write(root.join("schemas/a.json"), "{}").unwrap();
+        let payload = PluginPayload {
+            entry: pack::PackedPlugin {
+                id: "com.example.a".to_string(),
+                version: "1.0.0".to_string(),
+                hash: "h".to_string(),
+                tier: "portable".to_string(),
+                dir: "plugins/com.example.a".to_string(),
+                files: vec!["schemas/a.json".to_string()],
+            },
+            root,
+        };
+        copy_plugins(&[payload], &game).unwrap();
+        let there = game.join("plugins/com.example.a");
+        assert!(
+            there.join("plugin.json").is_file(),
+            "the player verifies against it"
+        );
+        assert!(there.join("schemas/a.json").is_file());
+    }
+
+    #[test]
+    fn plugin_data_ships_with_an_index() {
+        use blockloom_plugin_api::data::{DATA_DIR, DataIndex, INDEX_FILE};
+        let dir = temp("plugin-data");
+        let project = dir.join("project");
+        let game = dir.join("game");
+        let data = project.join(DATA_DIR).join("com.example.a");
+        std::fs::create_dir_all(data.join("deep")).unwrap();
+        std::fs::write(data.join("one"), b"1").unwrap();
+        std::fs::write(data.join("deep/two"), b"22").unwrap();
+        std::fs::write(data.join("half.blockloom-tmp"), b"x").unwrap();
+        // Another plugin's data is not shipped unless that plugin is.
+        let other = project.join(DATA_DIR).join("com.example.b");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("nope"), b"x").unwrap();
+        let payload = PluginPayload {
+            entry: pack::PackedPlugin {
+                id: "com.example.a".to_string(),
+                version: "1.0.0".to_string(),
+                hash: "h".to_string(),
+                tier: "portable".to_string(),
+                dir: "plugins/com.example.a".to_string(),
+                files: Vec::new(),
+            },
+            root: project.clone(),
+        };
+        assert_eq!(copy_plugin_data(&[payload], &project, &game).unwrap(), 2);
+        let index: DataIndex =
+            serde_json::from_slice(&std::fs::read(game.join(DATA_DIR).join(INDEX_FILE)).unwrap())
+                .unwrap();
+        assert_eq!(index.files.get("com.example.a/deep/two"), Some(&2));
+        assert!(!game.join(DATA_DIR).join("com.example.b").exists());
+        assert!(
+            !game
+                .join(DATA_DIR)
+                .join("com.example.a/half.blockloom-tmp")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn build_hook_files_land_in_the_game_and_cannot_escape_or_overwrite() {
+        let from = temp("extra-src");
+        let game = temp("extra-game");
+        std::fs::write(from.join("cooked.bin"), b"cooked").unwrap();
+        let extra = |to: &str| ExtraFile {
+            to: to.to_string(),
+            from: from.join("cooked.bin"),
+        };
+        copy_extras(&[extra("plugins/a/cooked/x.bin")], &game).unwrap();
+        assert_eq!(
+            std::fs::read(game.join("plugins/a/cooked/x.bin")).unwrap(),
+            b"cooked"
+        );
+        for bad in ["../x", "/x", "a/../x", "a\\b", "", "a//b"] {
+            assert!(copy_extras(&[extra(bad)], &game).is_err(), "{bad}");
+        }
+        let again = copy_extras(&[extra("plugins/a/cooked/x.bin")], &game);
+        assert!(again.unwrap_err().contains("overwrite"));
+    }
+
     fn temp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "blockloom-build-{name}-{}-{:?}",
@@ -1866,6 +2118,70 @@ mod tests {
         .unwrap();
         // A browser has no HDR output.
         assert!(!pack.hdr);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_web_build_ships_a_portable_plugin_and_records_it() {
+        let root = temp("web-plugin");
+        let (project, project_dir, _) = a_project(&root);
+        let player = root.join(crate::web_build::PLAYER_WASM);
+        std::fs::write(&player, b"\0asm-player").unwrap();
+        std::fs::write(
+            root.join(crate::web_build::PLAYER_GLUE),
+            b"export default 1",
+        )
+        .unwrap();
+        let source = root.join("plugin-src");
+        std::fs::create_dir_all(source.join("portable")).unwrap();
+        std::fs::write(source.join("plugin.json"), "{}").unwrap();
+        std::fs::write(source.join("portable/a.wasm"), b"\0asm-plugin").unwrap();
+        let entry = pack::PackedPlugin {
+            id: "com.example.a".to_string(),
+            version: "1.0.0".to_string(),
+            hash: "h".to_string(),
+            tier: "portable".to_string(),
+            dir: "plugins/com.example.a".to_string(),
+            files: vec!["portable/a.wasm".to_string()],
+        };
+        let options = BuildOptions {
+            plugins: vec![PluginPayload {
+                entry: entry.clone(),
+                root: source,
+            }],
+            ..BuildOptions::default()
+        };
+        let built = build(
+            &project,
+            &project_dir,
+            target("wasm32-unknown-unknown").unwrap(),
+            &player,
+            &root.join("out"),
+            options,
+        )
+        .unwrap();
+
+        let html = std::fs::read_to_string(&built.binary).unwrap();
+        let open = "id=\"blockloom-data\">";
+        let start = html.find(open).unwrap() + open.len();
+        let end = start + html[start..].find("</script>").unwrap();
+        use base64::Engine;
+        let gzipped = base64::engine::general_purpose::STANDARD
+            .decode(&html[start..end])
+            .unwrap();
+        let entries = crate::web_build::unarchive(&gzipped);
+        let find = |name: &str| entries.iter().find(|(n, _)| n == name).map(|(_, b)| b);
+        assert_eq!(
+            find("game/plugins/com.example.a/portable/a.wasm").unwrap(),
+            b"\0asm-plugin"
+        );
+        assert!(find("game/plugins/com.example.a/plugin.json").is_some());
+        let pack = GamePack::from_json(
+            std::str::from_utf8(find("game/game.pack").unwrap()).unwrap(),
+            "game.pack",
+        )
+        .unwrap();
+        assert_eq!(pack.plugins, vec![entry]);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -2398,17 +2714,27 @@ mod tests {
         let runtime = root.join("libblockloom_runtime.so");
         std::fs::write(&runtime, b"fake-so").unwrap();
 
+        let cooked = root.join("cooked.bin");
+        std::fs::write(&cooked, b"cooked").unwrap();
         let built = build_android_with_config(
             &project,
             &project_dir,
             target,
             &runtime,
             &root.join("out"),
-            BuildOptions::default(),
+            BuildOptions {
+                extras: vec![ExtraFile {
+                    to: "plugins/a/cooked/x.bin".to_string(),
+                    from: cooked,
+                }],
+                ..BuildOptions::default()
+            },
             &config,
         )
         .unwrap();
 
+        // A build hook's file rides in the APK's assets like on desktop.
+        assert!(built.dir.join("assets/plugins/a/cooked/x.bin").is_file());
         assert!(built.binary.is_file());
         assert_eq!(built.binary.extension().unwrap().to_string_lossy(), "apk");
         assert!(built.size > 0);

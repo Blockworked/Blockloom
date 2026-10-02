@@ -16,6 +16,9 @@ path = "src/main.rs"
 [dependencies]
 blockloom-core = { path = "../blockloom-core" }
 blockloom-protocol = { path = "../blockloom-protocol" }
+blockloom-plugin-api = { path = "../blockloom-plugin-api" }
+blockloom-plugin-host = { path = "../blockloom-plugin-host", optional = true }
+blockloom-plugin-gpu = { path = "../blockloom-plugin-gpu", optional = true, features = ["engine"] }
 tracing-log = { workspace = true }
 polyanya.workspace = true
 half = "2"
@@ -104,7 +107,7 @@ ash = "0.38"
 windows = { version = "0.62", default-features = false, features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
 
 [features]
-default = ["ray_tracing", "compressed_textures"]
+default = ["ray_tracing", "compressed_textures", "plugins"]
 # Solari's ray-traced lighting and reference path tracer. Experimental
 # upstream, so a build can leave it out; the raster rig is the fallback.
 # Always off on web: Solari has no WebGPU backend.
@@ -113,6 +116,10 @@ ray_tracing = ["bevy/bevy_solari"]
 # the target, which the wasm target has none of here, so web builds leave
 # it out and ship PNG/JPEG instead (see `just web-check`).
 compressed_textures = ["bevy/ktx2", "bevy/basis-universal"]
+# Hosts plugin code (native libraries and WebAssembly modules) in the world.
+# The web and Android players turn it on (portable modules only, run by
+# wasmi: neither can load a native library).
+plugins = ["dep:blockloom-plugin-host", "dep:blockloom-plugin-gpu"]
 # NVIDIA DLSS Super Resolution (and Ray Reconstruction for Solari) through
 # Bevy's `dlss` path. Off by default: building it needs the DLSS SDK
 # (`DLSS_SDK` set to an absolute path), the Vulkan SDK, clang, and agreement
@@ -123,6 +130,7 @@ dlss = ["bevy/dlss"]
 
 [dev-dependencies]
 naga.workspace = true
+blockloom-voxel = { path = "../plugins/voxel" }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libc = "0.2"

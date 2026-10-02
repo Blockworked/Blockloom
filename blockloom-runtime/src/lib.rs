@@ -65,6 +65,12 @@ mod passes;
 mod pbr_patch;
 mod performance;
 pub mod player;
+#[cfg(feature = "plugins")]
+mod plugin_compute;
+mod plugin_meshes;
+#[cfg(feature = "plugins")]
+mod plugin_services;
+mod plugins;
 mod post;
 mod preview;
 mod probes;
@@ -101,6 +107,7 @@ use bevy::prelude::*;
 use bevy::render::diagnostic::{MeshAllocatorDiagnosticPlugin, RenderDiagnosticsPlugin};
 use bevy::window::WindowResolution;
 use blockloom_core::scene::Mode;
+use blockloom_plugin_api::schema::Stage;
 use blockloom_protocol::{GAME_SIZE, PROTOCOL_VERSION, RuntimeMessage};
 use engine::{Dimension, PendingEffects};
 use player::Launch;
@@ -299,7 +306,11 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // unconditionally; an unused plugin costs nothing at runtime.
     materials::register(app);
     sprites::register(app);
-    app.init_resource::<anim2d::RigCache>();
+    app.init_resource::<anim2d::RigCache>()
+        .init_resource::<plugin_meshes::PluginMeshes>()
+        .add_systems(Update, plugin_meshes::sync.run_if(is_3d));
+    #[cfg(feature = "plugins")]
+    plugin_compute::register(app);
     passes::register(app);
     hdr::register(app);
     luminance::register(app);
@@ -328,6 +339,13 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     app.init_resource::<performance::SimSplit>()
         .add_systems(FixedFirst, performance::mark_step_start)
         .add_systems(FixedLast, performance::mark_step_end);
+    // Plugin hooks that follow a frame rather than a fixed step.
+    app.add_systems(
+        PostUpdate,
+        plugins::stage(Stage::RenderExtraction)
+            .before(bevy::transform::TransformSystems::Propagate),
+    )
+    .add_systems(Last, plugins::stage(Stage::Presentation));
     app.init_resource::<performance::LoopPace>()
         .init_resource::<performance::UpdateSplit>()
         .add_systems(First, performance::mark_main_start)
@@ -464,11 +482,17 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 (dim2::sync_timestep, dim3::sync_timestep).chain(),
                 (world::restore_poses, atmosphere::sample_atmosphere).chain(),
                 (
-                    ui_systems::bindings.run_if(ui_design::inactive),
-                    world::step_vm,
+                    plugins::stage(Stage::Input),
+                    plugins::stage(Stage::PreSimulation),
+                    (
+                        ui_systems::bindings.run_if(ui_design::inactive),
+                        world::step_vm,
+                    )
+                        .chain(),
+                    (world::step_scripts, ai::tick).chain(),
+                    plugins::stage(Stage::FixedSimulation),
                 )
                     .chain(),
-                (world::step_scripts, ai::tick).chain(),
                 overlay::apply_ui_effects,
                 world::apply_saved_data,
                 (world::apply_lifetimes, world::sync_navmesh).chain(),
@@ -486,6 +510,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     ray_tracing::apply_ray_tracing_effects.run_if(is_3d),
                 )
                     .chain(),
+                plugins::stage(Stage::EffectApplication),
                 (dim2::sync_joints, dim3::sync_joints).chain(),
                 fx::apply_fx_effects,
                 sound::apply_sound_effects,
@@ -496,9 +521,12 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     anim2d::step_animations,
                 )
                     .chain(),
-                world::apply_input_effects,
-                world::apply_rumble,
-                world::apply_cursor_lock,
+                (
+                    world::apply_input_effects,
+                    world::apply_rumble,
+                    world::apply_cursor_lock,
+                )
+                    .chain(),
                 world::clear_effects,
                 world::finish_step,
             )
@@ -508,6 +536,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         .add_systems(
             FixedPostUpdate,
             (
+                plugins::stage(Stage::PostPhysics),
                 world::apply_parenting,
                 dim2::record_poses,
                 dim3::record_poses,

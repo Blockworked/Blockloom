@@ -1,0 +1,59 @@
+{
+  "commands": [
+    {
+      "name": "add",
+      "summary": "Add to a named counter and answer its new count.",
+      "args": [
+        {"name": "name", "type": "text", "default": "score"},
+        {"name": "by", "type": "int", "min": -1000000, "max": 1000000, "default": 1}
+      ],
+      "action": {"do": "module", "op": "add"}
+    },
+    {
+      "name": "get",
+      "summary": "Answer a named counter's count.",
+      "args": [{"name": "name", "type": "text", "default": "score"}],
+      "action": {"do": "module", "op": "get"}
+    },
+    {
+      "name": "all",
+      "summary": "Answer every counter.",
+      "action": {"do": "module", "op": "all"}
+    },
+    {
+      "name": "reset",
+      "summary": "Clear every counter.",
+      "action": {"do": "module", "op": "reset"}
+    }
+  ],
+  "blocks": [
+    {
+      "type_id": "add",
+      "kind": "statement",
+      "category": "Tally",
+      "label": "add {by} to tally {name}",
+      "slots": [
+        {"name": "by", "type": "int", "min": -1000000, "max": 1000000, "default": 1},
+        {"name": "name", "type": "text", "default": "score"}
+      ],
+      "command": "add"
+    },
+    {
+      "type_id": "count",
+      "kind": "reporter",
+      "category": "Tally",
+      "label": "tally of {name}",
+      "slots": [{"name": "name", "type": "text", "default": "score"}],
+      "returns": {"type": "int"},
+      "command": "get"
+    },
+    {
+      "type_id": "changed",
+      "kind": "hat",
+      "category": "Tally",
+      "label": "when tally {name} changes",
+      "slots": [{"name": "name", "type": "text", "default": ""}],
+      "event": "changed"
+    }
+  ]
+}

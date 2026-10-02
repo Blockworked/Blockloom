@@ -22,13 +22,36 @@ use std::path::{Path, PathBuf};
 
 /// Bumped when the pack changes shape. A player refuses one it doesn't speak
 /// rather than half-loading it.
-pub const PACK_VERSION: u32 = 1;
+pub const PACK_VERSION: u32 = 2;
+
+/// The version a pack without plugins is written at, so players from before
+/// plugins still run it. Only a pack that carries plugins is version 2.
+const PACK_BASE: u32 = 1;
 
 /// The folder a build keeps everything but its binary in.
 pub const GAME_DIR: &str = "game";
 
 /// The pack itself, inside [`GAME_DIR`].
 pub const PACK_FILE: &str = "game.pack";
+
+/// One plugin a built game carries, recorded so a player can check it has
+/// what the game was made with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackedPlugin {
+    pub id: String,
+    pub version: String,
+    /// The package's content hash, as the project's lock recorded it.
+    pub hash: String,
+    /// `declarative`, `portable` or `native`.
+    pub tier: String,
+    /// Where the plugin's files are, relative to the game folder.
+    pub dir: String,
+    /// The package paths copied there.
+    pub files: Vec<String>,
+}
+
+/// The folder under `game/` that holds shipped plugins.
+pub const PLUGINS_DIR: &str = "plugins";
 
 /// A project, ready to run on its own.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -42,6 +65,9 @@ pub struct GamePack {
     /// False when the target was built SDR-only: 8-bit frame, no HDR output.
     #[serde(default = "yes")]
     pub hdr: bool,
+    /// The plugins the game ships with, by what the lock resolved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugins: Vec<PackedPlugin>,
 }
 
 fn yes() -> bool {
@@ -51,11 +77,23 @@ fn yes() -> bool {
 impl GamePack {
     pub fn new(project: Project) -> Self {
         Self {
-            pack: PACK_VERSION,
+            pack: PACK_BASE,
             engine: env!("CARGO_PKG_VERSION").to_string(),
             project,
             hdr: true,
+            plugins: Vec::new(),
         }
+    }
+
+    /// Records the plugins this game ships with. A pack that carries any is
+    /// written at the newer version, so an older player refuses it rather
+    /// than running a game whose plugins it knows nothing about.
+    pub fn with_plugins(mut self, plugins: Vec<PackedPlugin>) -> Self {
+        if !plugins.is_empty() {
+            self.pack = PACK_VERSION;
+        }
+        self.plugins = plugins;
+        self
     }
 
     /// What the window is called.
@@ -79,7 +117,7 @@ impl GamePack {
     pub fn from_json(text: &str, origin: &str) -> Result<Self, String> {
         let mut pack: GamePack =
             serde_json::from_str(text).map_err(|e| format!("{origin}: {e}"))?;
-        if pack.pack != PACK_VERSION {
+        if !(PACK_BASE..=PACK_VERSION).contains(&pack.pack) {
             return Err(format!(
                 "{origin} is a version {} game pack, this player reads version {PACK_VERSION}",
                 pack.pack
@@ -133,7 +171,10 @@ mod tests {
         pack.write(&path).unwrap();
         let read = GamePack::read(&path).unwrap();
 
-        assert_eq!(read.pack, PACK_VERSION);
+        assert_eq!(
+            read.pack, PACK_BASE,
+            "a pack without plugins stays readable by older players"
+        );
         assert_eq!(read.title(), "Pond");
         assert_eq!(read.save_id(), pack.save_id());
         let _ = std::fs::remove_dir_all(&dir);
@@ -165,5 +206,27 @@ mod tests {
         let error = GamePack::read(&path).unwrap_err();
         assert!(error.contains("game pack"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_pack_with_plugins_is_the_newer_version_and_keeps_them() {
+        let plugin = PackedPlugin {
+            id: "com.example.a".into(),
+            version: "1.0.0".into(),
+            hash: "0".repeat(64),
+            tier: "declarative".into(),
+            dir: "plugins/com.example.a".into(),
+            files: vec!["schemas/main.json".into()],
+        };
+        let pack =
+            GamePack::new(Project::starter("Pond", Mode::TwoD)).with_plugins(vec![plugin.clone()]);
+        assert_eq!(pack.pack, PACK_VERSION);
+        let text = serde_json::to_string(&pack).unwrap();
+        let read = GamePack::from_json(&text, "inline").unwrap();
+        assert_eq!(read.plugins, vec![plugin]);
+        // No plugins: no field in the file, and the old version.
+        let plain = GamePack::new(Project::starter("Pond", Mode::TwoD)).with_plugins(vec![]);
+        assert_eq!(plain.pack, PACK_BASE);
+        assert!(!serde_json::to_string(&plain).unwrap().contains("plugins"));
     }
 }

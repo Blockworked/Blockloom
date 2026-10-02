@@ -233,6 +233,22 @@ impl ScriptEvent {
         use blockloom_core::vm::Event;
         Some(match event {
             Event::Started | Event::Cloned { .. } => return None,
+            Event::Plugin {
+                plugin,
+                event,
+                args,
+                actor,
+            } => {
+                let mut detail = plugin.clone();
+                for arg in args {
+                    detail.push(abi::PLUGIN_SEP);
+                    detail.push_str(arg);
+                }
+                (
+                    actor.clone(),
+                    ScriptEvent::new(abi::EVENT_PLUGIN, event).detail(detail),
+                )
+            }
             Event::QualityDropped => (None, ScriptEvent::new(abi::EVENT_QUALITY_DROPPED, "")),
             Event::SceneStarted => (None, ScriptEvent::new(abi::EVENT_SCENE_STARTED, "")),
             Event::SceneEnded => (None, ScriptEvent::new(abi::EVENT_SCENE_ENDED, "")),
@@ -421,6 +437,41 @@ extern "C" fn read_number(
     abi::OK
 }
 
+/// Asks a plugin reporter for a script: `a` is the plugin, `b` the block, a
+/// separator and the slots as a JSON array. A failure is reported to the run
+/// log and answers nothing.
+fn plugin_answer(actor: &str, plugin: &str, asked: &str) -> Option<Evaluated> {
+    let (block, slots) = asked.split_once(abi::PLUGIN_SEP)?;
+    let fail = |message: String| {
+        crate::bridge::send(&RuntimeMessage::Error {
+            actor: actor.to_string(),
+            message,
+        });
+        None
+    };
+    let slots: Vec<serde_json::Value> = match serde_json::from_str(slots) {
+        Ok(slots) => slots,
+        Err(error) => {
+            return fail(format!(
+                "{plugin}/{block} got slot values it couldn't read: {error}"
+            ));
+        }
+    };
+    let slots: Vec<Evaluated> = slots
+        .iter()
+        .map(|slot| match slot {
+            serde_json::Value::Number(n) => Evaluated::Number(n.as_f64().unwrap_or(0.0)),
+            serde_json::Value::String(text) => Evaluated::Text(text.clone()),
+            serde_json::Value::Bool(value) => Evaluated::Bool(*value),
+            other => Evaluated::Text(other.to_string()),
+        })
+        .collect();
+    match sense::plugin_read(plugin, block, &slots) {
+        Ok(answer) => Some(answer),
+        Err(message) => fail(message),
+    }
+}
+
 fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64> {
     let bool_as = |value: bool| Some(if value { 1.0 } else { 0.0 });
     match what {
@@ -579,6 +630,11 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
         abi::READ_DLSS_AVAILABLE => bool_as(sense::read(|s| s.performance.dlss_available)),
         abi::READ_CUTSCENE_TIME => Some(sense::read(|s| s.cutscene_time) as f64),
         abi::READ_ATMOSPHERE => sense::read(|sensors| sensors.atmosphere.field(a)),
+        abi::READ_PLUGIN => match plugin_answer(actor, a, b)? {
+            Evaluated::Number(n) => Some(n),
+            Evaluated::Bool(value) => bool_as(value),
+            Evaluated::Text(text) => text.trim().parse().ok(),
+        },
         abi::READ_WATER => {
             let mut at = a.split_whitespace().map(|n| n.parse::<f32>().ok());
             let (x, z) = (at.next()??, at.next().flatten().unwrap_or(0.0));
@@ -806,6 +862,7 @@ fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
             serde_json::to_string(&sense::read(|s| s.atmosphere.volumes.clone())).ok()
         }
         abi::TEXT_CURRENT_QUALITY => Some(format!("{:?}", sense::read(|s| s.performance.quality))),
+        abi::TEXT_PLUGIN => plugin_answer(actor, a, b).map(|answer| answer.as_text()),
         abi::TEXT_EVENT => EVENT_WORDS.with(|words| {
             let words = words.borrow();
             let (subject, detail) = words.as_ref()?;
@@ -1305,6 +1362,18 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
                 message: format!("there's no parallax axis called \"{b}\""),
             },
         },
+        abi::ACT_PLUGIN_CALL => match serde_json::from_str::<Vec<serde_json::Value>>(c) {
+            Ok(args) => Effect::PluginCall {
+                actor,
+                plugin: a.to_string(),
+                block: b.to_string(),
+                args,
+            },
+            Err(error) => Effect::Error {
+                actor,
+                message: format!("{a}/{b} got slot values it couldn't read: {error}"),
+            },
+        },
         abi::ACT_SWITCH_SCENE => Effect::SwitchScene {
             actor,
             scene: a.trim().to_string(),
@@ -1790,6 +1859,80 @@ blockloom::export!(event = event);
                 "3 hit at 1.5 2",
                 "touched Wall (b2)",
                 "entered Cave"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_script_calls_and_reads_plugin_blocks_and_hears_their_events() {
+        use blockloom_core::vm::Event;
+        blockloom_core::init();
+        let project = TempProject::new("plugins");
+        let Some(script) = project.build(
+            r#"
+use blockloom::*;
+
+fn start(me: &Actor) {
+    let hp = me.plugin_number("com.example.health", "amount", &["Hero".into()]).unwrap_or(-1.0);
+    me.plugin_call("com.example.health", "heal", &["Hero \"one\"".into(), hp.into(), true.into()]);
+    let label = me.plugin_text("com.example.health", "label", &[2.5.into()]);
+    me.say(&format!("{label:?}"));
+}
+
+fn event(me: &Actor, event: &Event) {
+    if let Event::Plugin { plugin, event, args } = event {
+        me.say(&format!("{plugin} {event} {args:?}"));
+    }
+}
+
+blockloom::export!(start = start, event = event);
+"#,
+        ) else {
+            return;
+        };
+
+        sense::set_plugin_reader(Some(Box::new(|plugin, block, args| {
+            assert_eq!(plugin, "com.example.health");
+            match block {
+                "amount" => Ok(Evaluated::Number(25.0)),
+                "label" => Ok(Evaluated::Text(format!("{args:?}"))),
+                other => Err(format!("no {other}")),
+            }
+        })));
+        let mut asked = Asked::default();
+        script.start("a1", &mut asked);
+        let event = Event::Plugin {
+            plugin: "com.example.health".to_string(),
+            event: "changed".to_string(),
+            args: vec!["Hero".to_string(), "5".to_string()],
+            actor: Some("a1".to_string()),
+        };
+        let (to, heard) = ScriptEvent::of(&event, |_| String::new()).expect("a script event");
+        assert_eq!(to.as_deref(), Some("a1"));
+        script.event("a1", &mut asked, &heard);
+        sense::set_plugin_reader(None);
+
+        assert_eq!(
+            asked.effects,
+            vec![
+                Effect::PluginCall {
+                    actor: "a1".to_string(),
+                    plugin: "com.example.health".to_string(),
+                    block: "heal".to_string(),
+                    args: vec![
+                        serde_json::json!("Hero \"one\""),
+                        serde_json::json!(25),
+                        serde_json::json!(true),
+                    ],
+                },
+                Effect::Say {
+                    actor: "a1".to_string(),
+                    text: "Some(\"[Number(2.5)]\")".to_string(),
+                },
+                Effect::Say {
+                    actor: "a1".to_string(),
+                    text: "com.example.health changed [\"Hero\", \"5\"]".to_string(),
+                },
             ]
         );
     }

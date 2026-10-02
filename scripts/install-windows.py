@@ -155,6 +155,10 @@ def install():
     root = install_root()
     install_file(editor, root / "blockloom.exe")
     install_file(runtime, root / "blockloom-runtime.exe")
+    # Hosts native plugins out of process (BLOCKLOOM_PLUGIN_ISOLATION); optional.
+    worker = release / "blockloom-plugin-worker.exe"
+    if worker.is_file():
+        install_file(worker, root / "blockloom-plugin-worker.exe")
     players = release / "players"
     if players.is_dir():
         shutil.copytree(players, root / "players", dirs_exist_ok=True)

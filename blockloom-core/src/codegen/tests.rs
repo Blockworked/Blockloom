@@ -447,6 +447,54 @@ fn a_custom_block_that_calls_itself_compiles_with_a_budget() {
     assert!(source.contains("let mut budget = STEP_BUDGET;"), "{source}");
 }
 
+/// A plugin block compiles to a host act carrying its slots, in order.
+#[test]
+fn a_plugin_block_compiles_to_a_host_act() {
+    let source = compile(&started(vec![Instruction::new(K::PluginBlock {
+        plugin: "com.example.health".to_string(),
+        block: "heal".to_string(),
+        args: vec![Value::text("Hero"), Value::number(5.0)],
+    })]))
+    .expect("plugin blocks compile");
+    assert!(source.contains("Act::PluginCall"), "{source}");
+    assert!(source.contains("\"com.example.health\""), "{source}");
+}
+
+/// A plugin reporter is a sensing read like any other extension operator, and
+/// a plugin hat is an entry keyed by its plugin, event and slots.
+#[test]
+fn a_plugin_reporter_and_hat_compile() {
+    let read = Value::op(
+        Op::from_name(crate::value::PLUGIN_READ),
+        vec![
+            Value::text("com.example.tally"),
+            Value::text("count"),
+            Value::text("coins"),
+        ],
+    );
+    let source = compile(&started(vec![Instruction::new(K::Say { text: read })]))
+        .expect("plugin reporters compile");
+    assert!(source.contains("\"PluginRead\""), "{source}");
+
+    let source = compile(&project_with(vec![
+        Instruction::new(K::WhenPlugin {
+            plugin: "com.example.tally".to_string(),
+            block: "changed".to_string(),
+            event: "changed".to_string(),
+            args: vec!["coins".to_string()],
+        }),
+        Instruction::new(K::Say {
+            text: Value::text("hi"),
+        }),
+    ]))
+    .expect("plugin hats compile");
+    assert!(source.contains("trigger: \"Plugin\""), "{source}");
+    assert!(
+        source.contains("com.example.tally\\u{1f}changed\\u{1f}coins"),
+        "{source}"
+    );
+}
+
 /// A reporter, though, may: each call builds a state of its own, exactly as
 /// the VM builds a fresh script for one.
 #[test]

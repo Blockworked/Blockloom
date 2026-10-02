@@ -152,7 +152,7 @@ QtObject {
         ChangeVariable:"trending-up", SaveVariable:"save", ClearSavedVariable:"trash-2", AddToList:"plus", DeleteOfList:"trash-2",
         DeleteAllOfList:"trash-2", ShiftList:"arrow-left", InsertIntoList:"plus", ReplaceItemOfList:"repeat", ReverseList:"rotate-cw",
         LoadJsonIntoList:"braces", SetDictValue:"book-plus", DeleteDictKey:"trash-2", DeleteAllOfDict:"trash-2", LoadJsonIntoDict:"braces",
-        CallBlock:"blocks", Return:"corner-down-right"
+        CallBlock:"blocks", Return:"corner-down-right", PluginBlock:"plug-zap", WhenPlugin:"plug-zap"
     })
 
     function buildRows() {
@@ -345,10 +345,116 @@ QtObject {
             DeleteDictKey: row([lb("delete"), slot("DeleteDictKey", "key"), lb("of"), dictD()]),
             DeleteAllOfDict: row([lb("delete all of"), dictD()]),
             LoadJsonIntoDict: row([lb("load JSON"), slot("LoadJsonIntoDictText", "json"), lb("into"), dictD()]),
-            Return: cap([lb("return"), slot("ReturnValue", "value")])
+            Return: cap([lb("return"), slot("ReturnValue", "value")]),
+            // One generic type for every plugin block: its row is the schema's label.
+            PluginBlock: { head: pluginHead },
+            WhenPlugin: header(pluginHatHead)
         };
         for (const type in r) r[type].icon = icons[type] || "blocks";
         return r;
+    }
+
+    // ─── Plugin blocks ─────────────────────────────────────────────────────
+    // What installed plugins add, from the snapshot's `plugins.blocks`:
+    // [{ plugin, block: BlockSchema }]. A statement is the one generic
+    // `PluginBlock` row, a hat the generic `WhenPlugin` header (its slots are
+    // literal text a fired event is matched against, blank for any), and a
+    // reporter the generic `PluginRead` operator whose first two args name
+    // the plugin and block and the rest are its slots.
+    readonly property var pluginBlocks: (appState && appState.plugins ? appState.plugins.blocks : null) || []
+    readonly property string pluginSource: JSON.stringify(pluginBlocks.map(b => [b.plugin, b.block.type_id, b.block.kind, b.block.label, b.block.category, b.block.event || "", b.block.returns ? b.block.returns.type : "", b.block.slots.map(sl => [sl.name, sl.type, sl.default === undefined ? null : sl.default])]))
+    onPluginSourceChanged: { pluginPieces = ({}); BlockRegistry.revision++; }
+    // The row's pieces per block. The canvas rebuilds a row's controls when
+    // the array changes, so the same objects come back until the plugins do.
+    property var pluginPieces: ({})
+    function pluginSchema(plugin, block) {
+        for (const b of pluginBlocks) if (b.plugin === plugin && b.block.type_id === block) return b.block;
+        return null;
+    }
+    // A label's words and slots in order: "set {actor} health to {value}".
+    // `slotPiece(index, slot)` makes the piece for a slot.
+    function pluginLabelPieces(schema, slotPiece) {
+        const pieces = [];
+        schema.label.split(/\{([^}]*)\}/).forEach((part, i) => {
+            if (i % 2 === 0) {
+                if (part.trim().length) pieces.push(lb(part.trim()));
+                return;
+            }
+            const index = schema.slots.findIndex(sl => sl.name === part);
+            if (index >= 0) pieces.push(slotPiece(index, schema.slots[index]));
+        });
+        return pieces;
+    }
+    function pluginHead(ins) {
+        const key = ins.plugin + "/" + ins.block;
+        if (pluginPieces[key]) return pluginPieces[key];
+        const schema = pluginSchema(ins.plugin, ins.block);
+        const pieces = schema
+            ? pluginLabelPieces(schema, (index) => ({ kind: "value", field: "PluginArg:" + index, key: "args", index: index }))
+            : [lb(key + " (not installed)")];
+        pluginPieces[key] = pieces;
+        return pieces;
+    }
+    function pluginHatHead(ins) {
+        const key = "hat:" + ins.plugin + "/" + ins.block;
+        if (pluginPieces[key]) return pluginPieces[key];
+        const schema = pluginSchema(ins.plugin, ins.block);
+        const pieces = schema
+            ? pluginLabelPieces(schema, (index, slot) => ({ kind: "text", key: "args", index: index, placeholder: slot.name }))
+            : [lb(ins.plugin + "/" + ins.block + " (not installed)")];
+        pluginPieces[key] = pieces;
+        return pieces;
+    }
+    // A reporter's words and slots; its args start after the plugin and block.
+    function pluginLayout(value) {
+        const args = value && value.args ? value.args : [];
+        const plugin = args[0] ? args[0].value : "", block = args[1] ? args[1].value : "";
+        const key = "read:" + plugin + "/" + block;
+        if (pluginPieces[key]) return pluginPieces[key];
+        const schema = pluginSchema(plugin, block);
+        const pieces = schema
+            ? pluginLabelPieces(schema, (index, slot) => ({ label: "", arg: index + 2, bool: slot.type === "bool" })).map(p => p.kind === "label" ? { label: p.text, arg: -1, bool: false } : p)
+            : [{ label: plugin + "/" + block + " (not installed)", arg: -1, bool: false }];
+        pluginPieces[key] = pieces;
+        return pieces;
+    }
+    function pluginResult(value) {
+        const args = value && value.args ? value.args : [];
+        const schema = pluginSchema(args[0] ? args[0].value : "", args[1] ? args[1].value : "");
+        const type = schema && schema.returns ? schema.returns.type : "";
+        return type === "bool" ? "bool" : (type === "int" || type === "number") ? "number" : "text";
+    }
+    function pluginDefault(slot) {
+        const d = slot.default;
+        switch (slot.type) {
+        case "bool": return { kind: "Bool" };
+        case "int": case "number": return num(d !== undefined && d !== null ? d : (slot.min !== undefined ? slot.min : 0));
+        case "choice": return txt(d !== undefined && d !== null ? d : (slot.options.length ? slot.options[0] : ""));
+        default: return txt(d !== undefined && d !== null && typeof d === "string" ? d : "");
+        }
+    }
+    // A statement or a hat as the palette and canvas hold it.
+    function pluginFresh(entry) {
+        const schema = entry.block;
+        if (schema.kind === "hat")
+            return { id: uuid(), type: "WhenPlugin", plugin: entry.plugin, block: schema.type_id, event: schema.event || "", args: schema.slots.map(sl => sl.default === undefined || sl.default === null ? "" : String(sl.default)) };
+        return { id: uuid(), type: "PluginBlock", plugin: entry.plugin, block: schema.type_id, args: schema.slots.map(pluginDefault) };
+    }
+    // A reporter as a value.
+    function pluginValue(entry) {
+        return { kind: "Op", op: "PluginRead", args: [txt(entry.plugin), txt(entry.block.type_id)].concat(entry.block.slots.map(pluginDefault)), saved: num(0) };
+    }
+    function pluginIsBool(entry) { return !!entry.block.returns && entry.block.returns.type === "bool"; }
+    // The palette's sections, one per category the plugins name: the blocks
+    // (statements and hats) and the reporters of each.
+    readonly property var pluginGroups: {
+        const groups = [];
+        for (const entry of pluginBlocks) {
+            let g = groups.find(x => x.label === entry.block.category);
+            if (!g) { g = { label: entry.block.category, entries: [], reporters: [] }; groups.push(g); }
+            (entry.block.kind === "reporter" ? g.reporters : g.entries).push(entry);
+        }
+        return groups;
     }
 
     // ─── Fresh palette blocks (paletteState.ts) ────────────────────────────
@@ -470,6 +576,8 @@ QtObject {
         case "SetVariable": return { name: variableNames()[0] || "", value: num(0) };
         case "ChangeVariable": return { name: variableNames()[0] || "", value: num(1) };
         case "CallBlock": return { block_id: "", args: [] };
+        case "PluginBlock": return { plugin: "", block: "", args: [] };
+        case "WhenPlugin": return { plugin: "", block: "", event: "", args: [] };
         case "Return": return { value: num(0) };
         case "SetMouseLocked": return { locked: true };
         case "RumbleGamepad": return { strength: num(100), duration: num(0.5) };
@@ -694,7 +802,7 @@ QtObject {
         SaveVariable:"save a variable", ClearSavedVariable:"clear a saved variable", AddToList:"add to a list", DeleteOfList:"delete a list item",
         DeleteAllOfList:"clear a list", ShiftList:"shift a list", InsertIntoList:"insert into a list", ReplaceItemOfList:"replace a list item",
         ReverseList:"reverse a list", LoadJsonIntoList:"load JSON into a list", SetDictValue:"set a dict value", DeleteDictKey:"delete a dict key",
-        DeleteAllOfDict:"clear a dict", LoadJsonIntoDict:"load JSON into a dict", CallBlock:"my block", Return:"return"
+        DeleteAllOfDict:"clear a dict", LoadJsonIntoDict:"load JSON into a dict", CallBlock:"my block", Return:"return", PluginBlock:"plugin block", WhenPlugin:"when a plugin event occurs", PluginRead:"plugin reporter"
     })
 
     Component.onCompleted: {
@@ -705,6 +813,7 @@ QtObject {
             const s = sensing[kind];
             ops[kind] = { prefix: s.prefix, infix: s.infix, suffix: s.suffix, result: s.result, enumArg: s.enumArg };
         }
+        ops.PluginRead = { layout: pluginLayout, result: pluginResult };
         BlockRegistry.registerOperators(ops);
         BlockRegistry.blockMenu = [
             { id: "copy", text: "Copy block", icon: "copy" },

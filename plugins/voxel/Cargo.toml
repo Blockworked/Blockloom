@@ -1,0 +1,18 @@
+[package]
+name = "blockloom-voxel"
+version.workspace = true
+edition.workspace = true
+description = "The voxel plugin (com.blockworked.voxel): a cube world with generated terrain, live edits and meshes the game draws."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+blockloom-plugin-sdk = { path = "../../blockloom-plugin-sdk" }
+blockloom-plugin-api = { path = "../../blockloom-plugin-api" }
+serde.workspace = true
+
+[dev-dependencies]
+blockloom-plugin-host = { path = "../../blockloom-plugin-host" }
+tempfile.workspace = true
+serde_json.workspace = true

@@ -28,6 +28,28 @@ pub const MODULES: &[(&str, &str)] = &[
     ("vfx", include_str!("shaders/vfx.wesl")),
 ];
 
+/// Modules plugins ship, by name under [`PACKAGE`]. Set by whoever loaded the
+/// plugins (the editor, the world) so [`link`] resolves what a surface file
+/// imports from them.
+static EXTRA: std::sync::RwLock<Vec<(String, String)>> = std::sync::RwLock::new(Vec::new());
+
+/// Replaces the plugin modules. A name that is one of the built-in modules is
+/// ignored: a plugin can add to the library but never override it.
+pub fn set_extra(modules: Vec<(String, String)>) {
+    let kept = modules
+        .into_iter()
+        .filter(|(name, _)| module(name).is_none())
+        .collect();
+    if let Ok(mut extra) = EXTRA.write() {
+        *extra = kept;
+    }
+}
+
+/// The plugin modules as last set.
+pub fn extra() -> Vec<(String, String)> {
+    EXTRA.read().map(|e| e.clone()).unwrap_or_default()
+}
+
 pub fn module(name: &str) -> Option<&'static str> {
     MODULES
         .iter()
@@ -65,6 +87,12 @@ pub fn link(source: &str, features: &[(&str, bool)]) -> Result<String, String> {
         },
         ..Default::default()
     };
+    for (name, text) in extra() {
+        resolver.add_module(
+            ModulePath::new(PathOrigin::Package(PACKAGE.to_string()), vec![name]),
+            Cow::Owned(text),
+        );
+    }
     wesl::compile(&root, &resolver, &wesl::EscapeMangler, &options)
         .map(|result| result.to_string())
         .map_err(|error| error.to_string())
@@ -94,6 +122,30 @@ mod tests {
         for (name, source) in MODULES {
             validate(source, &[]).unwrap_or_else(|error| panic!("{name}: {error}"));
         }
+    }
+
+    #[test]
+    fn a_plugin_module_is_importable_but_cannot_replace_a_built_in() {
+        set_extra(vec![
+            (
+                "plugin_test_glow".to_string(),
+                "fn glow(x: f32) -> f32 { return x * 2.0; }".to_string(),
+            ),
+            ("hash".to_string(), "fn hash21() {}".to_string()),
+        ]);
+        let root = "\
+import blockloom::plugin_test_glow::glow;
+import blockloom::hash::hash21;
+
+@fragment
+fn main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    return vec4<f32>(glow(hash21(position.xy)));
+}
+";
+        let verdict = validate(root, &[]);
+        set_extra(Vec::new());
+        verdict.unwrap();
+        assert!(validate(root, &[]).is_err(), "gone once cleared");
     }
 
     #[test]

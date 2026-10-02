@@ -43,6 +43,8 @@ use std::path::{Path, PathBuf};
 use std::sync::MutexGuard;
 use std::sync::atomic::Ordering;
 
+pub(crate) mod plugins;
+
 type Guard<'a> = MutexGuard<'a, AppState>;
 
 fn lock(state: &SharedState) -> Result<Guard<'_>, String> {
@@ -148,6 +150,8 @@ pub(crate) fn poll_live_reload(backend: &Backend) {
         open.project = project;
         open.revision.store(disk, Ordering::SeqCst);
     }
+    // The other side may have changed packages as well as the document.
+    plugins::reload(&mut s, false);
     sync_runtime(&mut s);
     emit(&backend.app, &s);
 }
@@ -2136,10 +2140,13 @@ pub(crate) fn run_project(
     state: &SharedState,
     app: &AppHandle,
 ) -> Result<(), String> {
+    plugins::refresh_imports(state, app);
     let mut s = lock(state)?;
     let Some(project) = s.project().cloned() else {
         return Err("No project is open".to_string());
     };
+    // Missing plugin data is a report, not a game that quietly does less.
+    plugins::preflight_run(&s)?;
     auto_save(&s);
     // Built before the world is handed over, so a script that won't compile
     // shows its errors in the log instead of silently doing nothing.
@@ -2147,6 +2154,8 @@ pub(crate) fn run_project(
     let dir = s
         .project_dir()
         .map(|dir| dir.to_string_lossy().into_owned());
+    // The plugin code this run hosts in its world.
+    let loadout = plugins::loadout(&s);
 
     let wrong_dimension = s
         .runtime
@@ -2170,7 +2179,8 @@ pub(crate) fn run_project(
     let alive = runtime.send(&blockloom_protocol::EditorMessage::Load {
         project: Box::new(project),
         dir,
-    }) && runtime.send(&blockloom_protocol::EditorMessage::Start);
+    }) && runtime.send(&blockloom_protocol::EditorMessage::Plugins { loadout })
+        && runtime.send(&blockloom_protocol::EditorMessage::Start);
     if !alive {
         s.runtime = None;
         return Err("Lost the connection to the game runtime".to_string());
@@ -2257,12 +2267,13 @@ pub(crate) fn open_world(
     let dir = s
         .project_dir()
         .map(|dir| dir.to_string_lossy().into_owned());
+    let loadout = plugins::loadout(&s);
     let alive = greet(&mut s)
         && s.runtime.as_mut().is_some_and(|runtime| {
             runtime.send(&blockloom_protocol::EditorMessage::Load {
                 project: Box::new(project),
                 dir,
-            })
+            }) && runtime.send(&blockloom_protocol::EditorMessage::Plugins { loadout })
         });
     if !alive {
         s.runtime = None;
@@ -2750,12 +2761,16 @@ pub(crate) fn run_build_game(
         }
     }
 
+    blockloom_core::build_control::step("Refreshing imports")?;
+    plugins::refresh_imports(state, app);
     let options = build::BuildOptions {
         fast,
         sdr_only: target.is_web() || !hdr.unwrap_or(target.hdr_default().0),
         store_pass,
         key_pass,
         remember_passwords,
+        plugins: plugins::payloads(&dir, &project, target)?,
+        extras: plugins::run_build_hooks(state, app, &dir, &project, target)?,
     };
     let built = build::build(
         &project,
@@ -3243,6 +3258,8 @@ pub(crate) fn import_assets(
         sync_runtime(&mut s);
         emit(app, &s);
     }
+    drop(s);
+    plugins::auto_import(state, app, &made);
     Ok(made)
 }
 
@@ -3486,6 +3503,7 @@ pub(crate) fn delete_asset(
     let dir = project_dir(&s)?;
     assets::delete(&dir, &path)?;
     pipeline::note_removed(&dir, &path);
+    plugins::forget_import(&dir, &path);
     if touches_scripts(&path) {
         sync_ide(&dir);
     }
@@ -3995,11 +4013,12 @@ fn sync_runtime(s: &mut AppState) {
     let dir = s
         .project_dir()
         .map(|dir| dir.to_string_lossy().into_owned());
+    let loadout = plugins::loadout(s);
     if let Some(runtime) = s.runtime.as_mut()
-        && !runtime.send(&blockloom_protocol::EditorMessage::Load {
+        && !(runtime.send(&blockloom_protocol::EditorMessage::Load {
             project: Box::new(project),
             dir,
-        })
+        }) && runtime.send(&blockloom_protocol::EditorMessage::Plugins { loadout }))
     {
         s.runtime = None;
     }

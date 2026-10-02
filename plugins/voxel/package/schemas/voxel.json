@@ -1,0 +1,396 @@
+{
+  "resources": [
+    {
+      "type_id": "world",
+      "display_name": "Voxel world",
+      "fields": [
+        {"name": "preset", "type": "choice", "options": ["island", "caves", "flat", "empty"], "default": "island", "description": "The terrain the world starts as."},
+        {"name": "seed", "type": "int", "min": -2147483648, "max": 2147483647, "default": 1337, "description": "The same seed and size always make the same world."},
+        {"name": "size", "type": "vec3", "default": [64, 32, 64], "description": "Cells along x, y and z, rounded up to whole 16-cell chunks. At most 4 million cells."},
+        {"name": "voxel_size", "type": "number", "min": 0.05, "max": 64, "default": 1, "description": "How big one cell is in world units."},
+        {"name": "origin", "type": "vec3", "default": [0, 0, 0], "description": "Where the world's low corner stands."},
+        {"name": "solid", "type": "bool", "default": true, "description": "Whether the cells collide."},
+        {"name": "palette_colors", "type": "list", "item": {"type": "color"}, "max_len": 255, "default": [], "description": "Colors laid over the built-in materials by position (stone, dirt, grass, sand, wood, leaves, glow); more add materials. Blank keeps the built-in."},
+        {"name": "palette_emission", "type": "list", "item": {"type": "number", "min": 0, "max": 100}, "max_len": 255, "default": [], "description": "How strongly each material glows, in the same order. 0 does not glow."},
+        {"name": "edits", "type": "list", "item": {"type": "text", "max_len": 120}, "max_len": 4096, "default": [], "description": "Edits laid over the terrain in order: `set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`, `sphere X Y Z radius material`."}
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "name": "set_world",
+      "summary": "Set the voxel world a game starts with.",
+      "args": [
+        {"name": "preset", "type": "choice", "options": ["island", "caves", "flat", "empty"], "default": "island"},
+        {"name": "seed", "type": "int", "min": -2147483648, "max": 2147483647, "default": 1337},
+        {"name": "size", "type": "vec3", "default": [64, 32, 64]},
+        {"name": "voxel_size", "type": "number", "min": 0.05, "max": 64, "default": 1}
+      ],
+      "action": {"do": "set_resource", "resource": "world"}
+    },
+    {
+      "name": "add_voxel_edit",
+      "summary": "Save one edit line (set, fill or sphere) into the world every game starts with.",
+      "args": [{"name": "value", "type": "text", "max_len": 120, "default": "set 0 0 0 stone"}],
+      "action": {"do": "set_resource_field", "resource": "world", "field": "edits", "append": true}
+    },
+    {
+      "name": "clear_voxel_edits",
+      "summary": "Forget every saved edit, back to the generated terrain.",
+      "args": [{"name": "value", "type": "list", "item": {"type": "text"}, "max_len": 0, "default": []}],
+      "action": {"do": "set_resource_field", "resource": "world", "field": "edits"}
+    },
+    {
+      "name": "paint_voxel",
+      "summary": "Save one cell with a material into the world every game starts with.",
+      "args": [{"name": "x", "type": "int", "default": 0}, {"name": "y", "type": "int", "default": 0}, {"name": "z", "type": "int", "default": 0}, {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}],
+      "action": {"do": "set_resource_field", "resource": "world", "field": "edits", "append": true, "template": "set {x} {y} {z} {material}"}
+    },
+    {
+      "name": "paint_voxel_box",
+      "summary": "Save a box of cells with a material into the world every game starts with.",
+      "args": [{"name": "x1", "type": "int", "default": 0}, {"name": "y1", "type": "int", "default": 0}, {"name": "z1", "type": "int", "default": 0}, {"name": "x2", "type": "int", "default": 0}, {"name": "y2", "type": "int", "default": 0}, {"name": "z2", "type": "int", "default": 0}, {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}],
+      "action": {"do": "set_resource_field", "resource": "world", "field": "edits", "append": true, "template": "fill {x1} {y1} {z1} {x2} {y2} {z2} {material}"}
+    },
+    {
+      "name": "paint_voxel_sphere",
+      "summary": "Save a ball of cells with a material into the world every game starts with.",
+      "args": [{"name": "x", "type": "int", "default": 0}, {"name": "y", "type": "int", "default": 0}, {"name": "z", "type": "int", "default": 0}, {"name": "radius", "type": "int", "min": 1, "max": 64, "default": 3}, {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}],
+      "action": {"do": "set_resource_field", "resource": "world", "field": "edits", "append": true, "template": "sphere {x} {y} {z} {radius} {material}"}
+    },
+    {
+      "name": "paint_voxel_shape",
+      "summary": "Save a shape (slab, stair, ramp...) for one cell into the world every game starts with.",
+      "args": [{"name": "x", "type": "int", "default": 0}, {"name": "y", "type": "int", "default": 0}, {"name": "z", "type": "int", "default": 0}, {"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post", "stair south", "stair west", "stair north", "stair east", "ramp south", "ramp west", "ramp north", "ramp east"], "default": "slab"}],
+      "action": {"do": "set_resource_field", "resource": "world", "field": "edits", "append": true, "template": "shape {x} {y} {z} {shape}"}
+    },
+    {
+      "name": "set_voxel",
+      "summary": "Put a material in one cell of the running world.",
+      "args": [
+        {"name": "x", "type": "int", "default": 0},
+        {"name": "y", "type": "int", "default": 0},
+        {"name": "z", "type": "int", "default": 0},
+        {"name": "material", "type": "text", "default": "stone"}
+      ],
+      "action": {"do": "module", "op": "set"}
+    },
+    {
+      "name": "fill_voxels",
+      "summary": "Fill a box of cells of the running world with a material.",
+      "args": [
+        {"name": "x1", "type": "int", "default": 0},
+        {"name": "y1", "type": "int", "default": 0},
+        {"name": "z1", "type": "int", "default": 0},
+        {"name": "x2", "type": "int", "default": 0},
+        {"name": "y2", "type": "int", "default": 0},
+        {"name": "z2", "type": "int", "default": 0},
+        {"name": "material", "type": "text", "default": "stone"}
+      ],
+      "action": {"do": "module", "op": "fill"}
+    },
+    {
+      "name": "voxel_sphere",
+      "summary": "Fill a ball of cells with a material; air carves a hole.",
+      "args": [
+        {"name": "x", "type": "int", "default": 0},
+        {"name": "y", "type": "int", "default": 0},
+        {"name": "z", "type": "int", "default": 0},
+        {"name": "radius", "type": "number", "min": 0, "max": 512, "default": 3},
+        {"name": "material", "type": "text", "default": "air"}
+      ],
+      "action": {"do": "module", "op": "sphere"}
+    },
+    {
+      "name": "generate_terrain",
+      "summary": "Replace the running world with freshly generated terrain.",
+      "args": [
+        {"name": "preset", "type": "choice", "options": ["island", "caves", "flat", "empty"], "default": "island"},
+        {"name": "seed", "type": "int", "min": -2147483648, "max": 2147483647, "default": 1337}
+      ],
+      "action": {"do": "module", "op": "generate"}
+    },
+    {
+      "name": "voxel_at",
+      "summary": "Answer the material id at a cell (0 is air).",
+      "args": [
+        {"name": "x", "type": "int", "default": 0},
+        {"name": "y", "type": "int", "default": 0},
+        {"name": "z", "type": "int", "default": 0}
+      ],
+      "action": {"do": "module", "op": "get"}
+    },
+    {
+      "name": "ground_height",
+      "summary": "Answer the highest solid cell in a column, or -1.",
+      "args": [
+        {"name": "x", "type": "int", "default": 0},
+        {"name": "z", "type": "int", "default": 0}
+      ],
+      "action": {"do": "module", "op": "height"}
+    },
+    {
+      "name": "voxel_distance",
+      "summary": "Answer how far along a ray the first solid cube is, or -1.",
+      "args": [
+        {"name": "x", "type": "number", "default": 0},
+        {"name": "y", "type": "number", "default": 0},
+        {"name": "z", "type": "number", "default": 0},
+        {"name": "dx", "type": "number", "default": 0},
+        {"name": "dy", "type": "number", "default": -1},
+        {"name": "dz", "type": "number", "default": 0},
+        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8}
+      ],
+      "action": {"do": "module", "op": "cast"}
+    },
+    {
+      "name": "break_voxel",
+      "summary": "Remove the first solid cube along a ray.",
+      "args": [
+        {"name": "x", "type": "number", "default": 0},
+        {"name": "y", "type": "number", "default": 0},
+        {"name": "z", "type": "number", "default": 0},
+        {"name": "dx", "type": "number", "default": 0},
+        {"name": "dy", "type": "number", "default": -1},
+        {"name": "dz", "type": "number", "default": 0},
+        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8}
+      ],
+      "action": {"do": "module", "op": "break"}
+    },
+    {
+      "name": "place_voxel",
+      "summary": "Build a cube against the first solid cube a ray meets.",
+      "args": [
+        {"name": "x", "type": "number", "default": 0},
+        {"name": "y", "type": "number", "default": 0},
+        {"name": "z", "type": "number", "default": 0},
+        {"name": "dx", "type": "number", "default": 0},
+        {"name": "dy", "type": "number", "default": -1},
+        {"name": "dz", "type": "number", "default": 0},
+        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8},
+        {"name": "material", "type": "text", "default": "stone"}
+      ],
+      "action": {"do": "module", "op": "place"}
+    },
+    {
+      "name": "shape_voxel",
+      "summary": "Make a solid cell of the running world a slab, top slab, post, stair, ramp or whole cube.",
+      "args": [
+        {"name": "x", "type": "int", "default": 0},
+        {"name": "y", "type": "int", "default": 0},
+        {"name": "z", "type": "int", "default": 0},
+        {"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post", "stair south", "stair west", "stair north", "stair east", "ramp south", "ramp west", "ramp north", "ramp east"], "default": "slab"}
+      ],
+      "action": {"do": "module", "op": "shape"}
+    },
+    {
+      "name": "voxel_stats",
+      "summary": "Answer how many cells are solid and how many chunks are drawn.",
+      "action": {"do": "module", "op": "count"}
+    }
+  ],
+  "tools": [
+    {
+      "name": "paint",
+      "title": "Voxel paint",
+      "description": "Click a surface to save a cube of the chosen material against it.",
+      "cast": "cast",
+      "outline": "before_box",
+      "drag": true,
+      "reach": 200,
+      "command": "paint_voxel",
+      "args": {"x": "$hit.before.0", "y": "$hit.before.1", "z": "$hit.before.2", "material": "$option.material"},
+      "options": [{"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}]
+    },
+    {
+      "name": "erase",
+      "title": "Voxel erase",
+      "description": "Click a cube to save it as air.",
+      "cast": "cast",
+      "outline": "cell_box",
+      "drag": true,
+      "reach": 200,
+      "command": "paint_voxel",
+      "args": {"x": "$hit.cell.0", "y": "$hit.cell.1", "z": "$hit.cell.2", "material": "air"}
+    },
+    {
+      "name": "ball",
+      "title": "Voxel ball",
+      "description": "Click a surface to save a ball of the chosen material centred on the cell against it.",
+      "cast": "cast",
+      "outline": "before_box",
+      "drag": false,
+      "reach": 200,
+      "command": "paint_voxel_sphere",
+      "args": {"x": "$hit.before.0", "y": "$hit.before.1", "z": "$hit.before.2", "radius": "$option.radius", "material": "$option.material"},
+      "options": [
+        {"name": "radius", "type": "int", "min": 1, "max": 16, "default": 3},
+        {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}
+      ]
+    },
+    {
+      "name": "shape",
+      "title": "Voxel shape",
+      "description": "Click a cube to save it as a slab, stair, ramp or other shape.",
+      "cast": "cast",
+      "outline": "cell_box",
+      "drag": true,
+      "reach": 200,
+      "command": "paint_voxel_shape",
+      "args": {"x": "$hit.cell.0", "y": "$hit.cell.1", "z": "$hit.cell.2", "shape": "$option.shape"},
+      "options": [{"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post", "stair south", "stair west", "stair north", "stair east", "ramp south", "ramp west", "ramp north", "ramp east"], "default": "slab"}]
+    }
+  ],
+  "blocks": [
+    {
+      "type_id": "set_voxel",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "set voxel x {x} y {y} z {z} to {material}",
+      "slots": [
+        {"name": "x", "type": "int", "default": 0},
+        {"name": "y", "type": "int", "default": 0},
+        {"name": "z", "type": "int", "default": 0},
+        {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}
+      ],
+      "command": "set_voxel",
+      "help": "Changes one cell of the running world; the chunk it is in is redrawn."
+    },
+    {
+      "type_id": "shape_voxel",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "shape voxel x {x} y {y} z {z} as {shape}",
+      "slots": [
+        {"name": "x", "type": "int", "default": 0},
+        {"name": "y", "type": "int", "default": 0},
+        {"name": "z", "type": "int", "default": 0},
+        {"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post", "stair south", "stair west", "stair north", "stair east", "ramp south", "ramp west", "ramp north", "ramp east"], "default": "slab"}
+      ],
+      "command": "shape_voxel",
+      "help": "Makes a solid cell a slab, top slab, post, stair or ramp (rising towards the side named) or a whole cube; air stays air."
+    },
+    {
+      "type_id": "fill_voxels",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "fill voxels from x {x1} y {y1} z {z1} to x {x2} y {y2} z {z2} with {material}",
+      "slots": [
+        {"name": "x1", "type": "int", "default": 0},
+        {"name": "y1", "type": "int", "default": 0},
+        {"name": "z1", "type": "int", "default": 0},
+        {"name": "x2", "type": "int", "default": 0},
+        {"name": "y2", "type": "int", "default": 0},
+        {"name": "z2", "type": "int", "default": 0},
+        {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}
+      ],
+      "command": "fill_voxels"
+    },
+    {
+      "type_id": "voxel_sphere",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "voxel sphere at x {x} y {y} z {z} radius {radius} of {material}",
+      "slots": [
+        {"name": "x", "type": "int", "default": 0},
+        {"name": "y", "type": "int", "default": 0},
+        {"name": "z", "type": "int", "default": 0},
+        {"name": "radius", "type": "number", "min": 0, "max": 512, "default": 3},
+        {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "air"}
+      ],
+      "command": "voxel_sphere",
+      "help": "Air carves a hole, any other material builds a ball."
+    },
+    {
+      "type_id": "generate_terrain",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "generate {preset} terrain with seed {seed}",
+      "slots": [
+        {"name": "preset", "type": "choice", "options": ["island", "caves", "flat", "empty"], "default": "island"},
+        {"name": "seed", "type": "int", "min": -2147483648, "max": 2147483647, "default": 1337}
+      ],
+      "command": "generate_terrain"
+    },
+    {
+      "type_id": "voxel_at",
+      "kind": "reporter",
+      "category": "Voxels",
+      "label": "voxel at x {x} y {y} z {z}",
+      "slots": [
+        {"name": "x", "type": "int", "default": 0},
+        {"name": "y", "type": "int", "default": 0},
+        {"name": "z", "type": "int", "default": 0}
+      ],
+      "returns": {"type": "int"},
+      "command": "voxel_at",
+      "help": "The material id there: 0 is air, 1 stone, 2 dirt, 3 grass, 4 sand, 5 wood, 6 leaves, 7 glow."
+    },
+    {
+      "type_id": "ground_height",
+      "kind": "reporter",
+      "category": "Voxels",
+      "label": "ground height at x {x} z {z}",
+      "slots": [
+        {"name": "x", "type": "int", "default": 0},
+        {"name": "z", "type": "int", "default": 0}
+      ],
+      "returns": {"type": "int"},
+      "command": "ground_height",
+      "help": "The highest solid cell in that column, or -1 when it is all air."
+    },
+    {
+      "type_id": "break_voxel",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "break voxel from x {x} y {y} z {z} toward x {dx} y {dy} z {dz} within {reach}",
+      "slots": [
+        {"name": "x", "type": "number", "default": 0},
+        {"name": "y", "type": "number", "default": 0},
+        {"name": "z", "type": "number", "default": 0},
+        {"name": "dx", "type": "number", "default": 0},
+        {"name": "dy", "type": "number", "default": -1},
+        {"name": "dz", "type": "number", "default": 0},
+        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8}
+      ],
+      "command": "break_voxel",
+      "help": "Removes the first solid cube the ray meets; the chunk is redrawn."
+    },
+    {
+      "type_id": "place_voxel",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "place {material} from x {x} y {y} z {z} toward x {dx} y {dy} z {dz} within {reach}",
+      "slots": [
+        {"name": "x", "type": "number", "default": 0},
+        {"name": "y", "type": "number", "default": 0},
+        {"name": "z", "type": "number", "default": 0},
+        {"name": "dx", "type": "number", "default": 0},
+        {"name": "dy", "type": "number", "default": -1},
+        {"name": "dz", "type": "number", "default": 0},
+        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8},
+        {"name": "material", "type": "choice", "options": ["stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}
+      ],
+      "command": "place_voxel",
+      "help": "Builds in the empty cell in front of the first solid cube the ray meets."
+    },
+    {
+      "type_id": "voxel_distance",
+      "kind": "reporter",
+      "category": "Voxels",
+      "label": "distance to voxel from x {x} y {y} z {z} toward x {dx} y {dy} z {dz} within {reach}",
+      "slots": [
+        {"name": "x", "type": "number", "default": 0},
+        {"name": "y", "type": "number", "default": 0},
+        {"name": "z", "type": "number", "default": 0},
+        {"name": "dx", "type": "number", "default": 0},
+        {"name": "dy", "type": "number", "default": -1},
+        {"name": "dz", "type": "number", "default": 0},
+        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8}
+      ],
+      "returns": {"type": "number"},
+      "command": "voxel_distance",
+      "help": "How far the first solid cube is along the ray, in world units, or -1 when the ray meets none."
+    }
+  ]
+}

@@ -71,6 +71,12 @@ pub enum Trigger {
     UiClicked(String),
     /// An input element was changed, by its id.
     UiChanged(String),
+    /// A plugin fired one of its events. Empty `args` entries match anything.
+    Plugin {
+        plugin: String,
+        event: String,
+        args: Vec<String>,
+    },
 }
 
 impl Trigger {
@@ -349,6 +355,13 @@ pub enum Action {
     FadeScreen {
         color: Value,
     },
+    /// A plugin block: the editor runs the block's command with `args` in the
+    /// schema's slot order.
+    PluginCall {
+        plugin: String,
+        block: String,
+        args: Vec<Value>,
+    },
     /// Grabs or frees the pointer; window-global, like gravity.
     SetMouseLocked(bool),
     /// Rumbles connected gamepads: 0-100 strength for seconds.
@@ -618,6 +631,16 @@ pub fn compile(graph: &ActorGraph) -> Program {
             InstructionKind::WhenUiChanged { element } => {
                 Some(Trigger::UiChanged(element.trim().to_string()))
             }
+            InstructionKind::WhenPlugin {
+                plugin,
+                event,
+                args,
+                ..
+            } => Some(Trigger::Plugin {
+                plugin: plugin.clone(),
+                event: event.clone(),
+                args: args.iter().map(|a| a.trim().to_string()).collect(),
+            }),
             InstructionKind::BlockHeader { .. } => None,
             // Not a header at all: a loose stack nothing can start.
             _ => continue,
@@ -865,6 +888,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
             values
         }
         Action::RumbleGamepad { strength, duration } => vec![strength, duration],
+        Action::PluginCall { args, .. } => args.iter().collect(),
         Action::BindAction { action, binding } => vec![action, binding],
         Action::SwitchScene { scene, transition } => vec![scene, transition],
         Action::SetVariable { value, .. } | Action::ChangeVariable { value, .. } => vec![value],
@@ -1297,6 +1321,15 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
             strength: lift_one(strength, ctx),
             duration: lift_one(duration, ctx),
         },
+        Action::PluginCall {
+            plugin,
+            block,
+            args,
+        } => Action::PluginCall {
+            plugin,
+            block,
+            args: args.into_iter().map(|v| lift_one(v, ctx)).collect(),
+        },
         Action::BindAction { action, binding } => Action::BindAction {
             action: lift_one(action, ctx),
             binding: lift_one(binding, ctx),
@@ -1573,6 +1606,7 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenUiEvent { .. }
         | K::WhenUiClicked { .. }
         | K::WhenUiChanged { .. }
+        | K::WhenPlugin { .. }
         | K::BlockHeader { .. } => {}
 
         K::Move { steps: amount } => steps.push(Step::Action(Action::Move(amount.clone()))),
@@ -2281,6 +2315,15 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             args: args.clone(),
         }),
         K::Return { value } => steps.push(Step::Return(value.clone())),
+        K::PluginBlock {
+            plugin,
+            block,
+            args,
+        } => steps.push(Step::Action(Action::PluginCall {
+            plugin: plugin.clone(),
+            block: block.clone(),
+            args: args.clone(),
+        })),
         K::StopAll => steps.push(Step::StopAll),
         K::EscapeLoop => steps.push(Step::Break),
         K::ContinueLoop => steps.push(Step::Continue),

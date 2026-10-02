@@ -1,0 +1,19 @@
+[package]
+name = "blockloom-plugin-gpu"
+version.workspace = true
+edition.workspace = true
+description = "Checks plugin compute kernels and runs them on host-owned GPU buffers."
+
+[dependencies]
+blockloom-plugin-api = { path = "../blockloom-plugin-api" }
+naga.workspace = true
+# The engine takes a wgpu device the caller owns; the checker needs none.
+wgpu = { version = "30", optional = true, default-features = false, features = ["wgsl"] }
+
+[features]
+engine = ["dep:wgpu"]
+
+[dev-dependencies]
+pollster = "0.4"
+# Tests open a real device, so they need a backend.
+wgpu = "30"

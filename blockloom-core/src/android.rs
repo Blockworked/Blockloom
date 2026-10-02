@@ -3180,7 +3180,7 @@ fn runtime_stamp_path(so: &Path) -> PathBuf {
 fn runtime_stamp_wanted(config: &AppConfig, triple: &str, linker: &Path) -> Result<String, String> {
     let toolchain = script::toolchain_version()?;
     Ok(format!(
-        "runtime {}\n{}\ntriple {triple}\nlinker {}\nndk {}\nfeatures no-default lib release\n",
+        "runtime {}\n{}\ntriple {triple}\nlinker {}\nndk {}\nfeatures no-default plugins lib release\n",
         abi_stamp(),
         toolchain,
         linker.display(),
@@ -3319,6 +3319,9 @@ pub fn build_runtime_so(config: &AppConfig, triple: &str) -> Result<PathBuf, Str
         .arg("blockloom-runtime")
         .arg("--lib")
         .arg("--no-default-features")
+        // Portable plugin modules run in wasmi, which needs no native code.
+        .arg("--features")
+        .arg("plugins")
         // Release disables incremental by default; the dev loop wants it
         // back so a touched engine crate rebuilds fast instead of whole.
         .arg("--config")

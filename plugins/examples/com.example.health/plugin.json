@@ -1,0 +1,16 @@
+{
+  "contributions": [
+    "schemas/health.json"
+  ],
+  "description": "A declarative example: a Health component, a Difficulty resource, a block and three commands. No code, so it runs on every platform.",
+  "engine": ">=0.0.1",
+  "files": {
+    "schemas/health.json": "a0cb366266b4079f8c36b5335a6e67ccd56cf034065beda1ee76b2fc69a50f0d"
+  },
+  "format": 1,
+  "id": "com.example.health",
+  "license": "MIT",
+  "name": "Health",
+  "tier": "declarative",
+  "version": "1.0.0"
+}

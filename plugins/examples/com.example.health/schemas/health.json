@@ -1,0 +1,68 @@
+{
+  "components": [
+    {
+      "type_id": "Health",
+      "display_name": "Health",
+      "version": 2,
+      "fields": [
+        {"name": "hp", "type": "int", "min": 0, "max": 1000, "default": 100},
+        {"name": "armour", "type": "number", "min": 0, "max": 1, "default": 0},
+        {"name": "bar_color", "type": "color", "default": "#44cc55"}
+      ],
+      "migrations": [
+        {"from": 1, "ops": [
+          {"op": "rename_field", "from": "hitpoints", "to": "hp"},
+          {"op": "set_default", "name": "armour", "value": 0}
+        ]}
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "type_id": "Difficulty",
+      "display_name": "Difficulty",
+      "fields": [
+        {"name": "damage_scale", "type": "number", "min": 0, "max": 10, "default": 1}
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "name": "give_health",
+      "summary": "Give an actor a Health component with the given hit points.",
+      "args": [
+        {"name": "actor", "type": "actor"},
+        {"name": "hp", "type": "int", "min": 0, "max": 1000, "default": 100}
+      ],
+      "action": {"do": "add_component", "component": "Health"}
+    },
+    {
+      "name": "set_hp",
+      "summary": "Set the hit points of an actor's Health component.",
+      "args": [
+        {"name": "actor", "type": "actor"},
+        {"name": "value", "type": "int", "min": 0, "max": 1000}
+      ],
+      "action": {"do": "set_field", "component": "Health", "field": "hp"}
+    },
+    {
+      "name": "set_difficulty",
+      "summary": "Set how hard damage hits.",
+      "args": [{"name": "damage_scale", "type": "number", "min": 0, "max": 10}],
+      "action": {"do": "set_resource", "resource": "Difficulty"}
+    }
+  ],
+  "blocks": [
+    {
+      "type_id": "set_hp",
+      "kind": "statement",
+      "category": "Health",
+      "label": "set {actor} health to {value}",
+      "slots": [
+        {"name": "actor", "type": "actor"},
+        {"name": "value", "type": "int", "min": 0, "max": 1000, "default": 100}
+      ],
+      "command": "set_hp"
+    }
+  ]
+}

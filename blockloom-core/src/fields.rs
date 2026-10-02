@@ -169,6 +169,7 @@ pub enum FieldId {
     SceneTransition,
     ReturnValue,
     CallArg(usize),
+    PluginArg(usize),
 }
 
 impl FieldId {
@@ -383,6 +384,7 @@ impl std::fmt::Display for FieldId {
             FieldId::SceneTransition => write!(f, "SceneTransition"),
             FieldId::ReturnValue => write!(f, "ReturnValue"),
             FieldId::CallArg(i) => write!(f, "CallArg:{i}"),
+            FieldId::PluginArg(i) => write!(f, "PluginArg:{i}"),
         }
     }
 }
@@ -393,6 +395,9 @@ impl FromStr for FieldId {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some(index) = s.strip_prefix("CallArg:") {
             return index.parse().map(FieldId::CallArg).map_err(|_| ());
+        }
+        if let Some(index) = s.strip_prefix("PluginArg:") {
+            return index.parse().map(FieldId::PluginArg).map_err(|_| ());
         }
         Ok(match s {
             "MoveSteps" => FieldId::MoveSteps,
@@ -814,6 +819,7 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::BindAction { binding, .. }, F::ActionBinding) => Some(binding),
         (K::Return { value }, F::ReturnValue) => Some(value),
         (K::CallBlock { args, .. }, F::CallArg(i)) => args.get_mut(i),
+        (K::PluginBlock { args, .. }, F::PluginArg(i)) => args.get_mut(i),
         _ => None,
     }
 }
@@ -896,6 +902,7 @@ mod tests {
             FieldId::VolumeWeight,
             FieldId::Condition,
             FieldId::CallArg(3),
+            FieldId::PluginArg(2),
             FieldId::AnimTrigger,
             FieldId::RigSlot,
             FieldId::IkY,

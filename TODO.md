@@ -1488,7 +1488,53 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 ### Phase 7 - Scale and ecosystem, do last
 - [ ] Multiplayer: headless server, replication, lobbies, rollback.
 - [ ] Deploy: Web/WASM (see Phase 8 player and Phase 9 editor), Android signing (see Phase 6.5), Windows Store signing (see Phase 6.6), iOS signing, console path, auto-updater/DLC/addressables.
-- [ ] Ecosystem: analytics/crash, achievements/IAP hooks, plugin API, asset store, collab/VCS, docs/LTS.
+- [ ] Ecosystem: analytics/crash, achievements/IAP hooks, asset store, collab/VCS, docs/LTS.
+- [ ] Plugin platform (`docs/plugin-system-and-voxel-plan.md`; decisions in `docs/plugin-adr-0001.md`):
+    - [x] Phase 0/1: api and host crates, manifests, resolver, lock file, immutable cache, transactional install/rollback/sync/gc, folder registries, C ABI v1 with measured call cost, sealed proof package.
+    - [x] Phase 2 data path: namespaced records on actors and the project (lossless when the plugin is missing), schema validation and migrations, declarative components/resources/commands, shell and MCP access, Play/Build preflight, pack v2 plugin payload.
+    - [x] Plugin Manager dialog in QML (list, install with preview, update, remove, sync, undo, cache clean, record issues, commands).
+    - [x] Schema-generated inspectors for plugin components (every field type, lists, missing/migration notes, Add component) and plugin settings in the Plugin Manager.
+    - [x] Declarative inspector layout: field `ui` hints (label, slider, multiline, unit, step, `visible_when`) and component `inspector` groups.
+    - [x] Declarative plugin panels (text, resource forms, command buttons) in a top bar dialog.
+    - [x] Trusted editor modules: `editor.modules` QML loaded at run time behind a per-user trust ledger bound to the package hash (window-only `plugin_trust`), a `host` bridge, the Plugin editors dialog and `plugins/examples/com.example.notes`.
+    - [x] Plugin-drawn inspector sections: `editor.inspectors` trusted QML replaces the schema form for one component (`com.example.notes` sticky).
+    - [ ] Native compiled editor modules: left out on purpose (host-level code in the Qt process, no bounding ABI); trusted QML covers custom UI.
+    - [x] Native modules load in the editor for `module` commands (`Modules` cache, run-log output, panic containment).
+    - [x] Portable (WASM) executor in the editor: wasmi, linear-memory ABI, memory and work limits, stop-and-reload on a fault.
+    - [x] Plugin SDK crate (`blockloom-plugin-sdk`): one `Plugin` trait and `export_plugin!` for native and WebAssembly, `NativeModule::from_entry`, and the `plugins/examples/tally` example (`just example-plugin`).
+    - [x] Native and portable modules in the running game world: loadout sent before Play, `world.start`/`world.stop` lifecycle, staged hooks, module-op blocks run in the world, effects (`say`, `broadcast`, `error`).
+    - [x] Modules in the built desktop player: the build ships each plugin's manifest and files, the player verifies them against the pack and hosts the loadout; module-op blocks, reporters and hats build.
+    - [x] A browser host for portable modules: the host crate builds for wasm32 (wasmi, no dlopen), `files::set_reader` reads shipped plugins from the page's mounted files, the web build ships and records portable plugins, the web player hosts the loadout. Checked by an in-memory load test and the wasm32 clippy; no browser run yet.
+    - [x] Android plugin code: portable modules only, plugins ship in the APK assets, runtime built with `--features plugins` (compile-checked, not run on a device).
+    - [ ] Browser proof (`just web-build` with a plugin project, `just web-smoke`) and a faster host on the browser's own WebAssembly (needs a fuel substitute).
+    - [x] Plugin statement blocks in the VM: `PluginBlock` instruction, `Effect::PluginCall`, the editor runs the block's command, `plugin-run-block`, Play preflight; codegen emits them (`Act::PluginCall`, `ACT_PLUGIN_CALL`, logic ABI 34) and Build is refused for a statement whose command runs in the editor.
+    - [x] Plugin statement blocks in the palette and on the canvas (one `PluginBlock` row whose head follows the schema label; needs blockstitch's function `head` and `index` pieces).
+    - [x] Plugin reporters and hats: `PluginRead` values answered on demand by the world's modules, `WhenPlugin` hats started by `event` effects; palette, canvas, preflight, tally example (needs blockstitch's operator `layout`).
+    - [x] Per-plugin MCP tools: `plugin-commands` becomes one typed tool per command (`plugin-id__name`), kept in step after install, remove, open and undo.
+    - [x] Codegen for plugin statements, reporters and hats, held against the VM in `tests/codegen.rs` and through the player boundary in `logic.rs`.
+    - [x] The script ABI for plugin blocks: `plugin_call`, `plugin_number`/`plugin_text`, `Event::Plugin` (`ABI_VERSION` 36), tested through a built script.
+    - [x] Importer/build hooks: schema `importers`/`build`, byte-framed module ops with host-mediated IO and a per-call budget, `<file>.imported/` outputs tracked in `.blockloom/imports.json`, auto-import on asset import, `plugin-importers`/`plugin-imports`/`plugin-import`, build hooks staged into `game/plugins/<id>/cooked/`, `plugins/examples/palette`.
+    - [x] Importer follow-ups: asset tray import badges and re-import, `plugin-reimport` (also run before Play and Build), build hook files in Android builds.
+    - [x] HTTP registry transport (`HttpRegistry`, https or loopback, index read once, archives verified against the index hash); revision bump so attached copies follow package changes.
+    - [x] Mesh submission service: `mesh`/`remove_mesh` effects become named 3D entities with an optional trimesh collider.
+    - [x] Voxel plugin first slice (`plugins/voxel`): finite cube world, seeded terrain presets, greedy chunk mesher, glowing materials, live set/fill/sphere/generate, reporters, rays (distance, break, place), schema and sealed package (`just voxel-plugin`).
+    - [x] Scene-view preview: a plugin with `editor.preview` is hosted while nothing plays (`plugins::preview`), the voxel world shows in the editor without Play.
+    - [x] Voxel edit persistence: saved `edits` lines on the `world` resource, `add_voxel_edit`/`clear_voxel_edits`, and a general `set_resource_field` command action.
+    - [x] Voxel shaped cells: slab, top slab, post, stairs and ramps (four facings), `shape_voxel`, and a `shape` saved-edit line.
+    - [x] Plugin scene tools: a package's `tools` (cast op, command, `$hit`/`$option` argument sources, typed options) are toolbar tools in the 3D scene view; a click casts the pointer ray through the hosted preview module and runs the command (`plugin-run-tool`). Voxel paint, erase, ball and shape tools, and `paint_voxel*` template commands, use it.
+    - [x] Scene tool follow-ups: `drag` strokes (one undo step, batched hits) and `outline` boxes under the pointer; voxel tools use both (`PROTOCOL_VERSION` 28).
+    - [x] Host services hub (`host.*`, `rng.*`, `storage.*`, `save.*`, `diag.*`, `jobs.*`, plus chained providers) with atomic project and player-save stores.
+    - [x] Jobs (sliced, prioritised, cancellable, event on end) and node-graph generation (`nodes`, `graph.evaluate`, tile cache with margins).
+    - [x] Physics and navigation services for plugins (`physics.ray|overlap_point|overlap_sphere`, `nav.available|path`, `nav_dirty` effect, collider kinds).
+    - [x] Diagnostics: per-plugin counters, timings, errors and faults in the Plugin Manager, shell (`plugin-diagnostics`) and profiler.
+    - [x] Editor surfaces: plugin menus, shortcuts and scene overlays (`PROTOCOL_VERSION` 29), and plugin conflicts (`conflicts`, shared services, hook orders) that block Play and Build.
+    - [x] Rendering service: instanced plugin meshes and plugin WESL shader modules (`blockloom::plugin_<id>_<name>`).
+    - [x] Reliability: live reload of portable modules (`world.save`/`world.restore`), process isolation of native libraries (`blockloom-plugin-worker`, `BLOCKLOOM_PLUGIN_ISOLATION`), wall-clock call limits.
+    - [x] Authoring kit: SDK `testing` harness, `plugin-new` scaffolds (tested), `docs/plugin-api.md`, CI steps for the kit and isolation.
+    - [x] Plugin follow-ups (twenty-third batch): GPU compute kernels (host-owned buffers, validated and loop-bounded WGSL, per-frame budget, async reads; `gpu-compute` capability, `blockloom-plugin-gpu`), web persistence of plugin saves (localStorage `KvStore`), `plugin-data-gc`, native template and `plugin-add-native`, and the plugin worker packaged beside the editor.
+    - [ ] Plugin follow-ups left: a published SDK crate, QML and real-GPU runs of the new surfaces, instancing and compute (the GPU half was run on lavapipe only), WESL imports and textures for kernels, a plugin kernel inside a running game.
+    - [ ] Voxel next: smooth terrain, streaming/LOD, instancing, GPU meshing, fracture.
+    - [ ] Phases 4-7 (procedural graph, GPU path, fracture, ecosystem).
 
 ### Phase 8 - Web player via WebGPU (single-file build, do before Phase 9)
 

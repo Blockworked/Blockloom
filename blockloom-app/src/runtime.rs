@@ -261,6 +261,9 @@ impl Backend {
             RuntimeMessage::PointerLock { locked } => {
                 s.pointer_locked = locked;
             }
+            RuntimeMessage::PluginDiagnostics { snapshot } => {
+                s.plugin_diagnostics = snapshot;
+            }
             RuntimeMessage::RayTracing(status) => {
                 s.ray_tracing = Some(status);
             }
@@ -313,6 +316,61 @@ impl Backend {
                     tile,
                     serial,
                 });
+            }
+            RuntimeMessage::PluginTool {
+                plugin,
+                tool,
+                hits,
+                options,
+            } => {
+                drop(s);
+                // Run outside the lock: the command takes it itself.
+                if let Err(message) = crate::commands::plugins::run_tool(
+                    &self.state,
+                    &self.app,
+                    &plugin,
+                    &tool,
+                    &hits,
+                    &options,
+                ) {
+                    let line = LogLine {
+                        kind: "error".to_string(),
+                        actor: "Blockloom".to_string(),
+                        text: message,
+                    };
+                    if let Ok(s) = self.state.lock() {
+                        self.publish_log(s, line);
+                    }
+                }
+                return;
+            }
+            RuntimeMessage::PluginCall {
+                actor,
+                plugin,
+                block,
+                args,
+            } => {
+                let who = name_of(&actor);
+                drop(s);
+                // Run outside the lock: the command takes it itself.
+                if let Err(message) = crate::commands::plugins::run_block(
+                    &self.state,
+                    &self.app,
+                    &actor,
+                    &plugin,
+                    &block,
+                    args,
+                ) {
+                    let line = LogLine {
+                        kind: "error".to_string(),
+                        actor: who,
+                        text: message,
+                    };
+                    if let Ok(s) = self.state.lock() {
+                        self.publish_log(s, line);
+                    }
+                }
+                return;
             }
             RuntimeMessage::Fatal { message } => {
                 s.running = false;

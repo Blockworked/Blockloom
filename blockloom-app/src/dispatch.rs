@@ -35,6 +35,14 @@ fn instructions_arg(args: &Value, name: &str) -> Result<Vec<Instruction>, String
     wire::from_wire(value).map_err(|e| format!("invalid argument '{name}': {e}"))
 }
 
+/// A tool run's hits: a list as `hits`, else the one `hit`.
+fn tool_hits(args: &Value) -> Result<Vec<Value>, String> {
+    match args.get("hits").filter(|v| !v.is_null()) {
+        Some(_) => arg(args, "hits"),
+        None => Ok(vec![arg(args, "hit")?]),
+    }
+}
+
 fn to_json<T: serde::Serialize>(value: T) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|e| e.to_string())
 }
@@ -434,6 +442,155 @@ impl Backend {
                 app,
                 arg(&args, "actorId")?,
                 arg(&args, "name")?,
+            )?),
+            // ── Plugins ────────────────────────────────────────────────────
+            "plugin_list" => to_json(commands::plugins::plugin_list(state)?),
+            "plugin_check" => to_json(commands::plugins::plugin_check(state)?),
+            "plugin_diagnostics" => to_json(commands::plugins::plugin_diagnostics(state)?),
+            "plugin_commands" => to_json(commands::plugins::plugin_commands(state)?),
+            "plugin_install" => to_json(commands::plugins::plugin_install(
+                state,
+                app,
+                commands::plugins::InstallRequest {
+                    id: arg(&args, "id")?,
+                    version: arg(&args, "version")?,
+                    source: arg(&args, "source")?,
+                    features: arg(&args, "features").unwrap_or_default(),
+                    dry_run: arg(&args, "dryRun").unwrap_or_default(),
+                    offline: arg(&args, "offline").unwrap_or_default(),
+                },
+            )?),
+            "plugin_remove" => to_json(commands::plugins::plugin_remove(
+                state,
+                app,
+                arg(&args, "id")?,
+                arg(&args, "dryRun").unwrap_or_default(),
+            )?),
+            "plugin_update" => to_json(commands::plugins::plugin_update(
+                state,
+                app,
+                arg(&args, "ids").unwrap_or_default(),
+                arg(&args, "dryRun").unwrap_or_default(),
+                arg(&args, "offline").unwrap_or_default(),
+            )?),
+            "plugin_pin" => to_json(commands::plugins::plugin_pin(
+                state,
+                app,
+                arg(&args, "id")?,
+                arg(&args, "version")?,
+                arg(&args, "offline").unwrap_or_default(),
+            )?),
+            "plugin_sync" => to_json(commands::plugins::plugin_sync(
+                state,
+                app,
+                arg(&args, "dryRun").unwrap_or_default(),
+                arg(&args, "offline").unwrap_or_default(),
+            )?),
+            "plugin_rollback" => to_json(commands::plugins::plugin_rollback(state, app)?),
+            "plugin_registry" => to_json(commands::plugins::plugin_registry(
+                state,
+                app,
+                arg(&args, "name")?,
+                arg(&args, "path")?,
+            )?),
+            "plugin_data_gc" => to_json(commands::plugins::plugin_data_gc(
+                state,
+                arg(&args, "dryRun").unwrap_or_default(),
+            )?),
+            "plugin_gc" => to_json(commands::plugins::plugin_gc(state)?),
+            "plugin_inspect" => to_json(commands::plugins::plugin_inspect(arg(&args, "path")?)?),
+            "plugin_new" => to_json(commands::plugins::plugin_new(
+                arg(&args, "path")?,
+                arg(&args, "id")?,
+                arg(&args, "name")?,
+                arg(&args, "template")?,
+                arg(&args, "sdk")?,
+            )?),
+            "plugin_add_native" => to_json(commands::plugins::plugin_add_native(
+                arg(&args, "path")?,
+                arg(&args, "target")?,
+                arg(&args, "library")?,
+            )?),
+            "plugin_seal" => to_json(commands::plugins::plugin_seal(arg(&args, "path")?)?),
+            "plugin_publish" => to_json(commands::plugins::plugin_publish(
+                arg(&args, "path")?,
+                arg(&args, "registry")?,
+            )?),
+            "plugin_migrate" => to_json(commands::plugins::plugin_migrate(
+                state,
+                app,
+                arg(&args, "id")?,
+                arg(&args, "dryRun").unwrap_or_default(),
+            )?),
+            "plugin_importers" => to_json(commands::plugins::plugin_importers(state)?),
+            "plugin_imports" => to_json(commands::plugins::plugin_imports(state)?),
+            "plugin_import" => to_json(commands::plugins::plugin_import(
+                state,
+                app,
+                arg(&args, "path")?,
+                arg(&args, "importer").ok(),
+            )?),
+            "plugin_reimport" => to_json(commands::plugins::plugin_reimport(
+                state,
+                app,
+                arg(&args, "path").ok(),
+            )?),
+            "plugin_call" => to_json(commands::plugins::plugin_call(
+                state,
+                app,
+                arg(&args, "command")?,
+                arg(&args, "args").unwrap_or(Value::Null),
+            )?),
+            "plugin_run_block" => to_json(commands::plugins::run_block(
+                state,
+                app,
+                &arg::<String>(&args, "actor").unwrap_or_default(),
+                &arg::<String>(&args, "plugin")?,
+                &arg::<String>(&args, "block")?,
+                arg(&args, "args").unwrap_or_default(),
+            )?),
+            "plugin_trust" => to_json(commands::plugins::plugin_trust(
+                state,
+                app,
+                &arg::<String>(&args, "id")?,
+            )?),
+            "plugin_untrust" => to_json(commands::plugins::plugin_untrust(
+                state,
+                app,
+                &arg::<String>(&args, "id")?,
+            )?),
+            "plugin_run_tool" => to_json(commands::plugins::run_tool(
+                state,
+                app,
+                &arg::<String>(&args, "plugin")?,
+                &arg::<String>(&args, "tool")?,
+                &tool_hits(&args)?,
+                &arg(&args, "options").unwrap_or(Value::Null),
+            )?),
+            "add_plugin_component" => to_json(commands::plugins::add_plugin_component(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "component")?,
+                arg(&args, "payload")?,
+            )?),
+            "set_plugin_component" => to_json(commands::plugins::set_plugin_component(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "component")?,
+                arg(&args, "payload")?,
+            )?),
+            "set_plugin_resource" => to_json(commands::plugins::set_plugin_resource(
+                state,
+                app,
+                arg(&args, "resource")?,
+                arg(&args, "payload")?,
+            )?),
+            "remove_plugin_resource" => to_json(commands::plugins::remove_plugin_resource(
+                state,
+                app,
+                arg(&args, "resource")?,
             )?),
             // ── Assets ─────────────────────────────────────────────────────
             "list_assets" => to_json(commands::list_assets(

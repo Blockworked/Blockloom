@@ -1548,6 +1548,34 @@ impl Actor {
         );
     }
 
+    /// Runs a plugin block's command as the block would. `args` follow the
+    /// block's slots in order; a whole number goes over as an integer.
+    pub fn plugin_call(&self, plugin: &str, block: &str, args: &[PluginArg]) {
+        let json = plugin_args_json(args);
+        self.act(
+            ACT_PLUGIN_CALL,
+            Str::borrow(plugin),
+            Str::borrow(block),
+            Str::borrow(&json),
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// A plugin reporter's answer as a number, or `None` when the game isn't
+    /// running, the plugin has no such reading, or it doesn't read as one.
+    pub fn plugin_number(&self, plugin: &str, block: &str, args: &[PluginArg]) -> Option<f64> {
+        let asked = format!("{block}{PLUGIN_SEP}{}", plugin_args_json(args));
+        self.number(READ_PLUGIN, Str::borrow(plugin), Str::borrow(&asked), 0.0)
+    }
+
+    /// The same reporter's answer as text.
+    pub fn plugin_text(&self, plugin: &str, block: &str, args: &[PluginArg]) -> Option<String> {
+        let asked = format!("{block}{PLUGIN_SEP}{}", plugin_args_json(args));
+        self.text(TEXT_PLUGIN, Str::borrow(plugin), Str::borrow(&asked))
+    }
+
     /// Every scene's name, in project order. What `scene names` reports.
     pub fn scene_names(&self) -> Option<String> {
         self.text(TEXT_SCENE_NAMES, Str::EMPTY, Str::EMPTY)
@@ -2564,10 +2592,94 @@ pub enum Event {
     CutsceneSignal(String),
     /// The playing cutscene reached its end marker, by name.
     CutsceneEnded(String),
+    /// A plugin raised an event: its id, the event, and the text of each
+    /// slot it carried.
+    Plugin {
+        plugin: String,
+        event: String,
+        args: Vec<String>,
+    },
     /// The newly loaded scene finished warming up.
     SceneStarted,
     /// The outgoing scene is about to unload.
     SceneEnded,
+}
+
+/// One slot value of a plugin block: what `plugin_call` and the plugin
+/// readers take, so `&["Hero".into(), 5.0.into()]` spells two.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PluginArg {
+    Number(f64),
+    Text(String),
+    Bool(bool),
+}
+
+impl From<f64> for PluginArg {
+    fn from(value: f64) -> Self {
+        PluginArg::Number(value)
+    }
+}
+impl From<f32> for PluginArg {
+    fn from(value: f32) -> Self {
+        PluginArg::Number(value as f64)
+    }
+}
+impl From<i32> for PluginArg {
+    fn from(value: i32) -> Self {
+        PluginArg::Number(value as f64)
+    }
+}
+impl From<bool> for PluginArg {
+    fn from(value: bool) -> Self {
+        PluginArg::Bool(value)
+    }
+}
+impl From<&str> for PluginArg {
+    fn from(value: &str) -> Self {
+        PluginArg::Text(value.to_string())
+    }
+}
+impl From<String> for PluginArg {
+    fn from(value: String) -> Self {
+        PluginArg::Text(value)
+    }
+}
+
+/// Slot values as a JSON array, a whole number as an integer.
+fn plugin_args_json(args: &[PluginArg]) -> String {
+    let mut out = String::from("[");
+    for (i, arg) in args.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        match arg {
+            PluginArg::Number(n) if !n.is_finite() => out.push_str("null"),
+            PluginArg::Number(n) if n.fract() == 0.0 && n.abs() < 9.0e15 => {
+                out.push_str(&(*n as i64).to_string())
+            }
+            PluginArg::Number(n) => out.push_str(&format!("{n:?}")),
+            PluginArg::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+            PluginArg::Text(text) => {
+                out.push('"');
+                for ch in text.chars() {
+                    match ch {
+                        '"' => out.push_str("\\\""),
+                        '\\' => out.push_str("\\\\"),
+                        '\n' => out.push_str("\\n"),
+                        '\r' => out.push_str("\\r"),
+                        '\t' => out.push_str("\\t"),
+                        ch if (ch as u32) < 0x20 => {
+                            out.push_str(&format!("\\u{:04x}", ch as u32))
+                        }
+                        ch => out.push(ch),
+                    }
+                }
+                out.push('"');
+            }
+        }
+    }
+    out.push(']');
+    out
 }
 
 /// Which particle event an [`Event::Particles`] is.
@@ -2623,6 +2735,15 @@ impl Event {
             EVENT_WEATHER => Event::Weather(subject),
             EVENT_CUTSCENE_SIGNAL => Event::CutsceneSignal(subject),
             EVENT_CUTSCENE_ENDED => Event::CutsceneEnded(subject),
+            EVENT_PLUGIN => {
+                let detail = word("detail");
+                let mut parts = detail.split(PLUGIN_SEP).map(str::to_string);
+                Event::Plugin {
+                    plugin: parts.next().unwrap_or_default(),
+                    event: subject,
+                    args: parts.collect(),
+                }
+            }
             EVENT_SCENE_STARTED => Event::SceneStarted,
             EVENT_SCENE_ENDED => Event::SceneEnded,
             _ => return None,

@@ -512,7 +512,15 @@ impl Sensors {
     }
 }
 
+/// Answers a plugin reporter: the plugin, the block and its slot values in.
+pub type PluginReader =
+    dyn FnMut(&str, &str, &[crate::value::Evaluated]) -> Result<crate::value::Evaluated, String>;
+
 thread_local! {
+    /// What answers plugin reporters on this thread: the world installs it
+    /// while a run has plugin code open, and the editor has none.
+    static PLUGIN_READER: RefCell<Option<Box<PluginReader>>> = const { RefCell::new(None) };
+
     /// The snapshot this thread published. Thread-local rather than global
     /// because the VM is `!Send` and always runs on the same thread that
     /// publishes for it - the renderer's main thread - so a lock here would
@@ -617,6 +625,30 @@ pub fn publish_shape(id: &str, shape: ColliderShape) {
 /// Who entered which room this fixed tick, for a script's `entered_room`.
 pub fn publish_entered(entered: HashMap<String, String>) {
     SENSORS.with(|slot| slot.borrow_mut().level.entered = entered);
+}
+
+/// Installs (or, with `None`, removes) this thread's plugin reporter answerer.
+pub fn set_plugin_reader(reader: Option<Box<PluginReader>>) {
+    PLUGIN_READER.with(|slot| *slot.borrow_mut() = reader);
+}
+
+/// Reads a plugin reporter through whatever answers for this thread.
+pub fn plugin_read(
+    plugin: &str,
+    block: &str,
+    args: &[crate::value::Evaluated],
+) -> Result<crate::value::Evaluated, String> {
+    PLUGIN_READER.with(|slot| {
+        let mut slot = slot
+            .try_borrow_mut()
+            .map_err(|_| "a plugin reporter was read while another was being read".to_string())?;
+        match slot.as_mut() {
+            Some(reader) => reader(plugin, block, args),
+            None => Err(format!(
+                "{plugin}/{block} only answers while the game is running"
+            )),
+        }
+    })
 }
 
 /// Reads the published snapshot. `f` sees a default-empty one before the

@@ -292,12 +292,12 @@ fn deserialize_edit_layout<'de, D: serde::Deserializer<'de>>(
         "absolute",
         "row_height",
     ];
-    if let Some(object) = value.as_object() {
-        if let Some(key) = object.keys().find(|key| !fields.contains(&key.as_str())) {
-            return Err(serde::de::Error::custom(format!(
-                "Unknown layout property: {key}"
-            )));
-        }
+    if let Some(object) = value.as_object()
+        && let Some(key) = object.keys().find(|key| !fields.contains(&key.as_str()))
+    {
+        return Err(serde::de::Error::custom(format!(
+            "Unknown layout property: {key}"
+        )));
     }
     serde_json::from_value(value)
         .map(Some)

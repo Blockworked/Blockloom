@@ -32,6 +32,23 @@ Rectangle {
         IconButton { iconName: "upload"; tip: "Import a project"; onClicked: importFile.open() }
         IconButton { iconName: "download"; tip: "Export this project"; onClicked: root.app.invoke("export_file_name", {}, name => { const base = root.appState.default_export_location || root.appState.default_project_location; exportFile.currentFile = root.app.toFileUrl(base + "/" + name); exportFile.open(); }) }
         IconButton { iconName: "package"; tip: "Build a standalone game"; onClicked: buildDialog.open() }
+        IconButton { iconName: "plug-zap"; tip: "Plugins"; onClicked: pluginManager.open() }
+        IconButton {
+            iconName: "panel-left"; tip: "Plugin panels"
+            visible: !!(root.appState.plugins && root.appState.plugins.panels && root.appState.plugins.panels.length > 0)
+            onClicked: pluginPanels.open()
+        }
+        IconButton {
+            id: pluginMenuButton
+            iconName: "list"; tip: "Plugin menu"
+            visible: root.pluginMenus.length > 0
+            onClicked: pluginMenu.popup(pluginMenuButton, 0, pluginMenuButton.height)
+        }
+        IconButton {
+            iconName: "app-window"; tip: "Plugin editors"
+            visible: !!(root.appState.plugins && root.appState.plugins.editorModules && root.appState.plugins.editorModules.length > 0)
+            onClicked: pluginEditors.open()
+        }
         IconButton { iconName: "settings"; tip: "Project settings"; onClicked: settingsDialog.open() }
         IconButton { iconName: "smartphone"; tip: "App settings (Android SDK)"; onClicked: appSettings.open() }
         Item { Layout.fillWidth: true }
@@ -301,7 +318,24 @@ Rectangle {
         nameFilters: ["Blockloom project (*.blockloom)"]
         onAccepted: root.report("export_project", { path: root.app.fromFileUrl(selectedFile) })
     }
+    // Menu items plugins add, grouped under their plugin and each item's own heading.
+    readonly property var pluginMenus: appState.plugins && appState.plugins.surfaces ? appState.plugins.surfaces.menus : []
+    BwMenu {
+        id: pluginMenu
+        Repeater {
+            model: root.pluginMenus
+            delegate: BwMenuItem {
+                required property var modelData
+                iconName: "plug-zap"
+                text: (modelData.group ? modelData.group + ": " : "") + modelData.title + (modelData.shortcut ? "    " + modelData.shortcut : "")
+                onTriggered: root.app.invoke("plugin_call", { command: modelData.command, args: modelData.args })
+            }
+        }
+    }
     BuildDialog { id: buildDialog; app: root.app }
+    PluginManagerDialog { id: pluginManager; app: root.app }
+    PluginPanelDialog { id: pluginPanels; app: root.app }
+    PluginEditorsDialog { id: pluginEditors; app: root.app }
     ProjectSettingsDialog { id: settingsDialog; app: root.app }
     AppSettingsDialog { id: appSettings; app: root.app }
 }

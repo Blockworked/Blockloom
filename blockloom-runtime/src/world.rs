@@ -44,6 +44,7 @@ use blockloom_protocol::{
     ActorStatus, EditorMessage, RenderMetric, RuntimeMessage, Status, VariableValue,
 };
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// The one camera the project controls.
 #[derive(Component)]
@@ -57,7 +58,7 @@ pub struct WorldLight;
 /// geometry changes. `None` falls back to a straight step at the target.
 #[derive(Resource, Default)]
 pub struct NavMesh {
-    pub mesh: Option<polyanya::Mesh>,
+    pub mesh: Option<Arc<polyanya::Mesh>>,
     pub mode: Mode,
     pub settings: nav::NavSettings,
     signature: Vec<(String, [f32; 3], Visual)>,
@@ -94,7 +95,10 @@ pub fn sync_navmesh(
         signature.push((id, transform.translation.to_array(), visual));
     }
     signature.sort_by(|a, b| a.0.cmp(b.0));
-    let unchanged = signature.len() == navmesh.signature.len()
+    // A plugin that changed the ground asks for a rebake whatever the actors say.
+    let dirty = engine.plugins.nav_dirty.replace(false);
+    let unchanged = !dirty
+        && signature.len() == navmesh.signature.len()
         && signature
             .iter()
             .zip(&navmesh.signature)
@@ -119,9 +123,11 @@ pub fn sync_navmesh(
     project.actors = actors;
     navmesh.mesh = nav::build_mesh(&project, nav::DEFAULT_AGENT_RADIUS)
         .map_err(|error| tracing::warn!("navmesh rebake failed: {error}"))
-        .ok();
+        .ok()
+        .map(Arc::new);
     navmesh.mode = project.world.mode;
     navmesh.settings = project.world.navigation.clone();
+    crate::plugins::publish_nav(&navmesh);
 }
 
 /// The systems that advance the simulation itself, kept apart from the input
@@ -299,6 +305,19 @@ pub fn pump_editor(
                 if let Some(scene) = scene.as_mut() {
                     scene.loaded = true;
                 }
+                crate::plugins::preview(&mut engine);
+            }
+            EditorMessage::Plugins { loadout } => {
+                if engine.plugins.loadout.shaders != loadout.shaders {
+                    engine.plugins.shaders_serial += 1;
+                }
+                #[cfg(feature = "plugins")]
+                if engine.plugins.loadout.kernels != loadout.kernels {
+                    engine.plugins.kernels_serial += 1;
+                }
+                let old = std::mem::replace(&mut engine.plugins.loadout, loadout);
+                crate::plugins::reload(&mut engine, &old);
+                crate::plugins::preview(&mut engine);
             }
             EditorMessage::InterfaceDesign { design: request } => {
                 if let Some(design) = design.as_mut() {
@@ -452,6 +471,7 @@ pub fn pump_editor(
 /// Ends the run and puts the world back as the document authored it, so
 /// the editor's Game view never keeps what the run did to it.
 pub fn end_run(engine: &mut Engine, manager: &mut crate::ui::UiManager) {
+    crate::plugins::end(engine);
     engine.stop_program();
     engine.speech.clear();
     engine.pending_scene = None;
@@ -462,6 +482,7 @@ pub fn end_run(engine: &mut Engine, manager: &mut crate::ui::UiManager) {
     engine.paused = false;
     engine.pause_began = None;
     engine.rebuild = true;
+    crate::plugins::preview(engine);
 }
 
 /// Presses the green flag: the run's clock starts now.
@@ -469,18 +490,19 @@ pub fn begin_run(engine: &mut Engine, now: f64) {
     engine.starting = false;
     engine.running = true;
     engine.started_at = now;
+    crate::plugins::begin(engine);
     engine.fire(Event::Started);
 }
 
 /// Where this run's saves live. Desktop uses the data dir; an APK's assets
 /// are read-only, so Android uses the app's internal data dir instead.
 #[cfg(target_os = "android")]
-fn save_path_for(project_id: &str) -> std::path::PathBuf {
+pub(crate) fn save_path_for(project_id: &str) -> std::path::PathBuf {
     crate::android::save_path(project_id)
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
-fn save_path_for(project_id: &str) -> std::path::PathBuf {
+pub(crate) fn save_path_for(project_id: &str) -> std::path::PathBuf {
     blockloom_core::save::path(project_id)
 }
 
@@ -894,9 +916,11 @@ pub fn rebuild_world(
     if let Some(nav) = navmesh.as_deref_mut() {
         nav.mesh = nav::build_mesh(&project, nav::DEFAULT_AGENT_RADIUS)
             .map_err(|error| tracing::warn!("navmesh bake failed: {error}"))
-            .ok();
+            .ok()
+            .map(Arc::new);
         nav.mode = project.world.mode;
         nav.settings = project.world.navigation.clone();
+        crate::plugins::publish_nav(nav);
     }
     open_scripts(&mut engine, &project);
     // A built game answers to nobody, so it says what it built in its own
@@ -2176,6 +2200,23 @@ pub fn step_vm(
                 actor: actor.clone(),
                 message: message.clone(),
             }),
+            Effect::PluginCall {
+                actor,
+                plugin,
+                block,
+                args,
+            } => {
+                // A block whose command is a module op runs here, in the
+                // plugin's world module; the editor runs the rest.
+                if !crate::plugins::run_block(&mut engine, actor, plugin, block, args) {
+                    bridge::send(&RuntimeMessage::PluginCall {
+                        actor: actor.clone(),
+                        plugin: plugin.clone(),
+                        block: block.clone(),
+                        args: args.clone(),
+                    });
+                }
+            }
             Effect::SwitchScene {
                 actor,
                 scene,
@@ -3926,6 +3967,13 @@ pub fn report_status(
             });
         }
     }
+    for (name, value) in crate::plugins::report(&mut engine) {
+        render_metrics.push(RenderMetric {
+            name,
+            value,
+            unit: "plugin".into(),
+        });
+    }
     if let Some(state) = destruction {
         for (name, mut value) in state.metrics() {
             if name == "destruction/shard_budget" {
@@ -4472,6 +4520,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetUiTheme { .. }
         | Effect::SetPaused { .. }
         | Effect::SaveVariable { .. }
+        | Effect::PluginCall { .. }
         | Effect::SetParent { .. }
         | Effect::CreateClone { .. }
         | Effect::CreateActor { .. }

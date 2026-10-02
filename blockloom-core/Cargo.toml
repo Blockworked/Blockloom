@@ -6,6 +6,7 @@ description = "Blockloom's engine library: the project document, block vocabular
 
 [dependencies]
 blockstitch-core.workspace = true
+blockloom-plugin-api = { path = "../blockloom-plugin-api" }
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
