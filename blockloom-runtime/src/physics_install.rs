@@ -26,6 +26,9 @@ use std::collections::HashMap;
 pub struct PhysicsLayers {
     pub settings: LayerSettings,
     pub mode: Option<Mode>,
+    /// The filter of each actor's first collider, which a query made by that
+    /// actor asks with.
+    pub askers: HashMap<String, ColliderFilter>,
 }
 
 /// A rigid body this module installed.
@@ -72,12 +75,15 @@ fn caps_depenetration(
 /// A collider entity this module installed.
 #[derive(Component, Debug, Clone)]
 pub struct PlannedCollider {
-    /// Read by the Phase 3 queries and the inspector, not yet by the runtime.
-    #[allow(dead_code)]
     pub id: ColliderId,
     /// The actor the collider component lives on.
     pub actor: String,
+    /// The actor whose Rigidbody carries it; `None` for scenery.
+    pub body: Option<String>,
     pub filter: ColliderFilter,
+    pub trigger: bool,
+    /// Whether queries (rays, casts, overlaps) see it.
+    pub queryable: bool,
 }
 
 /// A 3D collider's surface, for the stick and slip hook.
@@ -113,9 +119,19 @@ pub fn install_with(
 ) {
     let mode = project.world.mode;
     let plan = PhysicsPlan::build_with(&project.actors, mode, &project.physics, lookup);
+    let mut askers = HashMap::new();
+    for collider in &plan.colliders {
+        askers
+            .entry(collider.actor.clone())
+            .or_insert(collider.filter);
+        if let Some(body) = &collider.body_actor {
+            askers.entry(body.clone()).or_insert(collider.filter);
+        }
+    }
     commands.insert_resource(PhysicsLayers {
         settings: project.physics.layers.clone(),
         mode: Some(mode),
+        askers,
     });
     for issue in &plan.issues {
         if issue.is_error() {
@@ -376,7 +392,10 @@ pub mod d3 {
                 PlannedCollider {
                     id: planned.collider.clone(),
                     actor: planned.actor.clone(),
+                    body: planned.body_actor.clone(),
                     filter: planned.filter,
+                    trigger: planned.trigger,
+                    queryable: planned.queryable,
                 },
                 Surface3(material),
             ));
@@ -756,7 +775,10 @@ pub mod d2 {
                 PlannedCollider {
                     id: planned.collider.clone(),
                     actor: planned.actor.clone(),
+                    body: planned.body_actor.clone(),
                     filter: planned.filter,
+                    trigger: planned.trigger,
+                    queryable: planned.queryable,
                 },
             ));
             if planned.one_way {
@@ -869,13 +891,13 @@ mod tests {
     use blockloom_core::scene::Visual;
     use std::time::Duration;
 
-    fn project() -> Project {
+    pub(super) fn project() -> Project {
         let mut project = Project::starter("Fixtures", Mode::ThreeD);
         project.active_scene_mut().actors.clear();
         project
     }
 
-    fn add(project: &mut Project, name: &str, at: [f32; 3]) -> String {
+    pub(super) fn add(project: &mut Project, name: &str, at: [f32; 3]) -> String {
         let id = project.add_actor(Actor::new(
             name,
             Visual::Cuboid {
@@ -890,7 +912,7 @@ mod tests {
         id
     }
 
-    fn body(project: &mut Project, id: &str, spec: RigidbodySpec, shapes: Vec<ColliderSpec>) {
+    pub(super) fn body(project: &mut Project, id: &str, spec: RigidbodySpec, shapes: Vec<ColliderSpec>) {
         let library = project.physics.materials.clone();
         let scene = project.active_scene_mut();
         scene.set_rigidbody(id, spec, &library).unwrap();
@@ -899,7 +921,7 @@ mod tests {
         }
     }
 
-    fn scenery(project: &mut Project, id: &str, shape: ColliderShape) -> ColliderId {
+    pub(super) fn scenery(project: &mut Project, id: &str, shape: ColliderShape) -> ColliderId {
         let library = project.physics.materials.clone();
         project
             .active_scene_mut()
@@ -907,11 +929,11 @@ mod tests {
             .unwrap()
     }
 
-    fn world(project: &Project) -> (App, HashMap<String, Entity>) {
+    pub(super) fn world(project: &Project) -> (App, HashMap<String, Entity>) {
         world_with(project, &blockloom_core::physics::cook::NoCollisionData)
     }
 
-    fn world_with(
+    pub(super) fn world_with(
         project: &Project,
         lookup: &dyn CollisionLookup,
     ) -> (App, HashMap<String, Entity>) {
@@ -939,21 +961,21 @@ mod tests {
         (app, ids)
     }
 
-    fn run(app: &mut App, steps: usize) {
+    pub(super) fn run(app: &mut App, steps: usize) {
         for _ in 0..steps {
             app.update();
         }
     }
 
-    fn at(app: &App, entity: Entity) -> Vec3 {
+    pub(super) fn at(app: &App, entity: Entity) -> Vec3 {
         app.world().get::<Transform>(entity).unwrap().translation
     }
 
-    fn ball() -> ColliderSpec {
+    pub(super) fn ball() -> ColliderSpec {
         ColliderSpec::new(ColliderShape::Sphere { radius: 0.5 })
     }
 
-    fn floor(project: &mut Project) -> String {
+    pub(super) fn floor(project: &mut Project) -> String {
         let id = add(project, "Floor", [0.0, -0.5, 0.0]);
         scenery(
             project,
@@ -977,7 +999,7 @@ mod tests {
         assert!((y - 0.5).abs() < 0.05, "resting height {y}");
     }
 
-    fn mesh_folder(tag: &str) -> std::path::PathBuf {
+    pub(super) fn mesh_folder(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("blockloom-cook-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("assets")).unwrap();
@@ -1946,13 +1968,13 @@ mod tests_2d {
     use blockloom_core::scene::Visual;
     use std::time::Duration;
 
-    fn project() -> Project {
+    pub(super) fn project() -> Project {
         let mut project = Project::starter("Flat", Mode::TwoD);
         project.active_scene_mut().actors.clear();
         project
     }
 
-    fn add(project: &mut Project, name: &str, at: [f32; 2]) -> String {
+    pub(super) fn add(project: &mut Project, name: &str, at: [f32; 2]) -> String {
         let id = project.add_actor(Actor::new(
             name,
             Visual::Rect {
@@ -1967,7 +1989,7 @@ mod tests_2d {
         id
     }
 
-    fn body(project: &mut Project, id: &str, spec: RigidbodySpec, shapes: Vec<ColliderSpec>) {
+    pub(super) fn body(project: &mut Project, id: &str, spec: RigidbodySpec, shapes: Vec<ColliderSpec>) {
         let library = project.physics.materials.clone();
         let scene = project.active_scene_mut();
         scene.set_rigidbody(id, spec, &library).unwrap();
@@ -1976,7 +1998,7 @@ mod tests_2d {
         }
     }
 
-    fn world(project: &Project) -> (App, HashMap<String, Entity>) {
+    pub(super) fn world(project: &Project) -> (App, HashMap<String, Entity>) {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.add_plugins(TransformPlugin);
@@ -2001,21 +2023,21 @@ mod tests_2d {
         (app, ids)
     }
 
-    fn run(app: &mut App, steps: usize) {
+    pub(super) fn run(app: &mut App, steps: usize) {
         for _ in 0..steps {
             app.update();
         }
     }
 
-    fn y(app: &App, entity: Entity) -> f32 {
+    pub(super) fn y(app: &App, entity: Entity) -> f32 {
         app.world().get::<Transform>(entity).unwrap().translation.y
     }
 
-    fn circle() -> ColliderSpec {
+    pub(super) fn circle() -> ColliderSpec {
         ColliderSpec::new(ColliderShape::Circle { radius: 0.5 })
     }
 
-    fn ground(project: &mut Project) {
+    pub(super) fn ground(project: &mut Project) {
         let id = add(project, "Ground", [0.0, -0.5]);
         let library = project.physics.materials.clone();
         project
@@ -2392,5 +2414,487 @@ mod tests_2d {
             .linear
             .length();
         assert!(speed <= 200.0 + 1e-2, "{speed}");
+    }
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::tests::*;
+    use super::*;
+    use crate::queries::d3::World3;
+    use bevy::ecs::system::RunSystemOnce;
+    use blockloom_core::physics::query::{
+        QueryFilter, QueryOutcome, QueryRequest, QueryService, QueryShape, TriggerPolicy,
+    };
+    use blockloom_core::physics::{ColliderShape, ColliderSpec, RigidbodySpec};
+
+    fn ask(app: &mut App, request: QueryRequest, filter: QueryFilter, limit: usize) -> QueryOutcome {
+        app.world_mut()
+            .run_system_once(move |world: World3| world.service().run(&request, &filter, limit))
+            .unwrap()
+    }
+
+    fn down(x: f32, from: f32, to: f32, all: bool) -> QueryRequest {
+        QueryRequest::Ray {
+            from: [x, from, 0.0],
+            to: [x, to, 0.0],
+            all,
+        }
+    }
+
+    fn slab(project: &mut Project, name: &str, at: [f32; 3], size: [f32; 3]) -> String {
+        let id = add(project, name, at);
+        scenery(project, &id, ColliderShape::Box { size });
+        id
+    }
+
+    fn settle(app: &mut App) {
+        run(app, 3);
+    }
+
+    #[test]
+    fn a_ray_hits_invisible_scenery_with_its_full_identity() {
+        let mut p = project();
+        let floor_id = floor(&mut p);
+        let (mut app, _) = world(&p);
+        settle(&mut app);
+        let found = ask(&mut app, down(2.0, 5.0, -5.0, false), QueryFilter::default(), 8);
+        assert!(found.error.is_none(), "{:?}", found.error);
+        let hit = &found.hits[0];
+        assert_eq!(hit.actor, floor_id);
+        assert_eq!(hit.body, None);
+        assert!((hit.distance - 5.0).abs() < 1e-3, "{}", hit.distance);
+        assert!((hit.fraction - 0.5).abs() < 1e-3);
+        assert!((hit.point[1]).abs() < 1e-3);
+        assert!((hit.normal[1] - 1.0).abs() < 1e-3, "{:?}", hit.normal);
+        assert!(!hit.started_inside && !hit.trigger);
+        assert!(!hit.collider.is_empty());
+    }
+
+    #[test]
+    fn all_hits_come_back_nearest_first_and_a_small_buffer_reports_overflow() {
+        let mut p = project();
+        slab(&mut p, "Low", [0.0, 0.0, 0.0], [4.0, 1.0, 4.0]);
+        slab(&mut p, "Mid", [0.0, 3.0, 0.0], [4.0, 1.0, 4.0]);
+        slab(&mut p, "High", [0.0, 6.0, 0.0], [4.0, 1.0, 4.0]);
+        let (mut app, _) = world(&p);
+        settle(&mut app);
+        let all = ask(&mut app, down(0.0, 10.0, -10.0, true), QueryFilter::default(), 8);
+        // Each slab is crossed on entry and the ray ends outside all of them.
+        let order: Vec<f32> = all.hits.iter().map(|h| h.distance).collect();
+        assert_eq!(order.len(), 3, "{order:?}");
+        assert!(order.windows(2).all(|w| w[0] <= w[1]));
+        assert!(!all.overflow);
+        let small = ask(&mut app, down(0.0, 10.0, -10.0, true), QueryFilter::default(), 2);
+        assert_eq!(small.hits.len(), 2);
+        assert!(small.overflow);
+        let first = ask(&mut app, down(0.0, 10.0, -10.0, false), QueryFilter::default(), 8);
+        assert_eq!(first.hits.len(), 1);
+        assert!((first.hits[0].distance - all.hits[0].distance).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_ray_that_starts_inside_reports_it_at_distance_zero() {
+        let mut p = project();
+        slab(&mut p, "Block", [0.0, 0.0, 0.0], [4.0, 4.0, 4.0]);
+        let (mut app, _) = world(&p);
+        settle(&mut app);
+        let found = ask(&mut app, down(0.0, 0.5, -10.0, false), QueryFilter::default(), 8);
+        let hit = &found.hits[0];
+        assert!(hit.started_inside);
+        assert_eq!(hit.distance, 0.0);
+        assert!(hit.normal[1] > 0.99, "opposes the direction: {:?}", hit.normal);
+    }
+
+    #[test]
+    fn a_zero_length_ray_finds_what_contains_the_point() {
+        let mut p = project();
+        let block = slab(&mut p, "Block", [0.0, 0.0, 0.0], [4.0, 4.0, 4.0]);
+        let (mut app, _) = world(&p);
+        settle(&mut app);
+        let inside = ask(&mut app, down(0.0, 1.0, 1.0, true), QueryFilter::default(), 8);
+        assert_eq!(inside.hits.len(), 1);
+        assert_eq!(inside.hits[0].actor, block);
+        let outside = ask(&mut app, down(0.0, 9.0, 9.0, true), QueryFilter::default(), 8);
+        assert!(outside.hits.is_empty());
+    }
+
+    #[test]
+    fn triggers_follow_the_policy() {
+        let mut p = project();
+        let zone = add(&mut p, "Zone", [0.0, 0.0, 0.0]);
+        let library = p.physics.materials.clone();
+        let mut trigger = ColliderSpec::new(ColliderShape::Box {
+            size: [2.0, 2.0, 2.0],
+        });
+        trigger.trigger = true;
+        p.active_scene_mut()
+            .add_collider(&zone, trigger, &library)
+            .unwrap();
+        let (mut app, _) = world(&p);
+        settle(&mut app);
+        for (policy, expected) in [
+            (TriggerPolicy::UseGlobal, 1),
+            (TriggerPolicy::Include, 1),
+            (TriggerPolicy::Ignore, 0),
+        ] {
+            let filter = QueryFilter {
+                triggers: policy,
+                ..QueryFilter::default()
+            };
+            let found = ask(&mut app, down(0.0, 5.0, -5.0, false), filter, 8);
+            assert_eq!(found.hits.len(), expected, "{policy:?}");
+            if expected == 1 {
+                assert!(found.hits[0].trigger);
+            }
+        }
+    }
+
+    #[test]
+    fn the_asker_skips_itself_and_its_body_and_follows_the_layer_matrix() {
+        let mut p = project();
+        let floor_id = add(&mut p, "Floor", [0.0, -0.5, 0.0]);
+        let library = p.physics.materials.clone();
+        let mut slab = ColliderSpec::new(ColliderShape::Box {
+            size: [40.0, 1.0, 40.0],
+        });
+        slab.layer = 3;
+        p.active_scene_mut()
+            .add_collider(&floor_id, slab, &library)
+            .unwrap();
+        let walker = add(&mut p, "Walker", [0.0, 2.0, 0.0]);
+        let mut feet = ball();
+        feet.layer = 4;
+        body(
+            &mut p,
+            &walker,
+            RigidbodySpec {
+                use_gravity: false,
+                ..Default::default()
+            },
+            vec![feet],
+        );
+        let (mut app, _) = world(&p);
+        settle(&mut app);
+        // From inside the walker, straight down: only the floor, never itself.
+        let ask_as = |app: &mut App, asker: &str| {
+            ask(
+                app,
+                down(0.0, 2.0, -5.0, true),
+                QueryFilter::as_actor(asker),
+                8,
+            )
+        };
+        let found = ask_as(&mut app, &walker);
+        assert_eq!(found.hits.len(), 1, "{found:?}");
+        assert_eq!(found.hits[0].actor, floor_id);
+        // Nobody asking sees the walker too.
+        let anyone = ask(&mut app, down(0.0, 2.0, -5.0, true), QueryFilter::default(), 8);
+        assert_eq!(anyone.hits.len(), 2);
+        // With layers 3 and 4 not colliding, the walker's own query misses the floor.
+        let mut p2 = p.clone();
+        p2.physics
+            .layers
+            .set_collides(Mode::ThreeD, 3, 4, false)
+            .unwrap();
+        let (mut app2, _) = world(&p2);
+        settle(&mut app2);
+        assert!(ask_as(&mut app2, &walker).hits.is_empty());
+        // A layer mask narrows any query.
+        let only_four = QueryFilter {
+            layers: 1 << 3,
+            ..QueryFilter::default()
+        };
+        let masked = ask(&mut app, down(0.0, 2.0, -5.0, true), only_four, 8);
+        assert_eq!(masked.hits.len(), 1);
+        assert_eq!(masked.hits[0].actor, walker);
+    }
+
+    #[test]
+    fn a_collider_that_is_not_queryable_or_is_disabled_is_not_found() {
+        let mut p = project();
+        let hidden = add(&mut p, "Hidden", [0.0, 0.0, 0.0]);
+        let library = p.physics.materials.clone();
+        let mut spec = ColliderSpec::new(ColliderShape::Box {
+            size: [2.0, 2.0, 2.0],
+        });
+        spec.queryable = false;
+        p.active_scene_mut()
+            .add_collider(&hidden, spec, &library)
+            .unwrap();
+        let off = add(&mut p, "Off", [10.0, 0.0, 0.0]);
+        let mut spec = ColliderSpec::new(ColliderShape::Box {
+            size: [2.0, 2.0, 2.0],
+        });
+        spec.enabled = false;
+        p.active_scene_mut()
+            .add_collider(&off, spec, &library)
+            .unwrap();
+        let (mut app, _) = world(&p);
+        settle(&mut app);
+        assert!(ask(&mut app, down(0.0, 5.0, -5.0, true), QueryFilter::default(), 8)
+            .hits
+            .is_empty());
+        assert!(ask(&mut app, down(10.0, 5.0, -5.0, true), QueryFilter::default(), 8)
+            .hits
+            .is_empty());
+    }
+
+    #[test]
+    fn a_ball_cast_stops_at_the_surface_and_a_ball_overlap_lists_what_it_touches() {
+        let mut p = project();
+        let floor_id = floor(&mut p);
+        let (mut app, _) = world(&p);
+        settle(&mut app);
+        let cast = QueryRequest::Cast {
+            shape: QueryShape::Ball { radius: 0.5 },
+            from: [0.0, 5.0, 0.0],
+            to: [0.0, -5.0, 0.0],
+        };
+        let found = ask(&mut app, cast, QueryFilter::default(), 8);
+        let hit = &found.hits[0];
+        assert_eq!(hit.actor, floor_id);
+        // The ball's centre travels 4.5 before it touches the floor.
+        assert!((hit.distance - 4.5).abs() < 1e-2, "{}", hit.distance);
+        assert!(hit.point[1].abs() < 1e-2);
+        assert!(hit.normal[1] > 0.99);
+        let overlap = |y: f32| QueryRequest::Overlap {
+            shape: QueryShape::Ball { radius: 0.5 },
+            at: [0.0, y, 0.0],
+        };
+        assert_eq!(ask(&mut app, overlap(0.25), QueryFilter::default(), 8).hits.len(), 1);
+        assert!(ask(&mut app, overlap(2.0), QueryFilter::default(), 8).hits.is_empty());
+        let boxed = QueryRequest::Overlap {
+            shape: QueryShape::Box {
+                half: [0.5; 3],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+            },
+            at: [0.0, 0.25, 0.0],
+        };
+        assert_eq!(ask(&mut app, boxed, QueryFilter::default(), 8).hits.len(), 1);
+        let capsule = QueryRequest::Overlap {
+            shape: QueryShape::Capsule {
+                radius: 0.3,
+                half_height: 0.5,
+                rotation: [0.0, 0.0, 0.0, 1.0],
+            },
+            at: [0.0, 0.7, 0.0],
+        };
+        assert_eq!(ask(&mut app, capsule, QueryFilter::default(), 8).hits.len(), 1);
+    }
+
+    #[test]
+    fn the_closest_collider_is_found_within_the_distance() {
+        let mut p = project();
+        let floor_id = floor(&mut p);
+        let (mut app, _) = world(&p);
+        settle(&mut app);
+        let near = ask(
+            &mut app,
+            QueryRequest::Closest {
+                point: [3.0, 2.0, 0.0],
+                max_distance: 5.0,
+            },
+            QueryFilter::default(),
+            8,
+        );
+        let hit = &near.hits[0];
+        assert_eq!(hit.actor, floor_id);
+        assert!((hit.distance - 2.0).abs() < 1e-3);
+        assert!((hit.point[0] - 3.0).abs() < 1e-3 && hit.point[1].abs() < 1e-3);
+        let far = ask(
+            &mut app,
+            QueryRequest::Closest {
+                point: [3.0, 20.0, 0.0],
+                max_distance: 5.0,
+            },
+            QueryFilter::default(),
+            8,
+        );
+        assert!(far.hits.is_empty());
+    }
+
+    #[test]
+    fn a_moving_body_is_found_where_the_last_step_left_it() {
+        let mut p = project();
+        floor(&mut p);
+        let ball_id = add(&mut p, "Ball", [0.0, 3.0, 0.0]);
+        body(&mut p, &ball_id, RigidbodySpec::default(), vec![ball()]);
+        let (mut app, _) = world(&p);
+        run(&mut app, 240);
+        let found = ask(&mut app, down(0.0, 5.0, -1.0, false), QueryFilter::default(), 8);
+        let hit = &found.hits[0];
+        assert_eq!(hit.actor, ball_id);
+        assert_eq!(hit.body.as_deref(), Some(ball_id.as_str()));
+        // The ball rests with its centre 0.5 up, so its top is at y = 1.
+        assert!((hit.point[1] - 1.0).abs() < 0.06, "{}", hit.point[1]);
+    }
+
+    #[test]
+    fn ray_hits_match_the_surfaces_of_cooked_meshes() {
+        use blockloom_core::physics::cook::{FolderCollision, Source};
+        let dir = mesh_folder("query");
+        let mut p = project();
+        let ground = add(&mut p, "Ground", [0.0, 0.0, 0.0]);
+        scenery(
+            &mut p,
+            &ground,
+            ColliderShape::TriangleMesh {
+                mesh: "assets/ground.obj".into(),
+            },
+        );
+        let crate_id = add(&mut p, "Crate", [0.0, 3.0, 0.0]);
+        body(
+            &mut p,
+            &crate_id,
+            RigidbodySpec::default(),
+            vec![ColliderSpec::new(ColliderShape::ConvexHull {
+                mesh: "assets/cube.obj".into(),
+            })],
+        );
+        let lookup = FolderCollision::new(&dir, Source::Cook);
+        let (mut app, _) = world_with(&p, &lookup);
+        run(&mut app, 240);
+        let from_above = ask(&mut app, down(0.0, 5.0, -2.0, true), QueryFilter::default(), 8);
+        let _ = std::fs::remove_dir_all(&dir);
+        let actors: Vec<&str> = from_above.hits.iter().map(|h| h.actor.as_str()).collect();
+        assert_eq!(actors, [crate_id.as_str(), ground.as_str()], "{from_above:?}");
+        // The crate's top face is at y = 1 and the ground's triangles at y = 0.
+        assert!((from_above.hits[0].point[1] - 1.0).abs() < 0.08);
+        assert!(from_above.hits[1].point[1].abs() < 0.02);
+    }
+}
+
+#[cfg(test)]
+mod query_tests_2d {
+    use super::tests_2d::*;
+    use super::*;
+    use crate::queries::d2::World2;
+    use bevy::ecs::system::RunSystemOnce;
+    use blockloom_core::physics::query::{
+        QueryFilter, QueryOutcome, QueryRequest, QueryService, QueryShape, TriggerPolicy,
+    };
+    use blockloom_core::physics::{ColliderShape, ColliderSpec, RigidbodySpec};
+
+    fn ask(app: &mut App, request: QueryRequest, filter: QueryFilter) -> QueryOutcome {
+        app.world_mut()
+            .run_system_once(move |world: World2| world.service().run(&request, &filter, 8))
+            .unwrap()
+    }
+
+    fn down(x: f32, from: f32, to: f32, all: bool) -> QueryRequest {
+        QueryRequest::Ray {
+            from: [x, from, 0.0],
+            to: [x, to, 0.0],
+            all,
+        }
+    }
+
+    #[test]
+    fn a_2d_ray_hits_invisible_ground_with_identity_and_ignores_z() {
+        let mut p = project();
+        ground(&mut p);
+        let (mut app, _) = world(&p);
+        run(&mut app, 3);
+        // A wild z changes nothing: the world is flat.
+        let request = QueryRequest::Ray {
+            from: [2.0, 5.0, 40.0],
+            to: [2.0, -5.0, -40.0],
+            all: false,
+        };
+        let found = ask(&mut app, request, QueryFilter::default());
+        assert!(found.error.is_none(), "{:?}", found.error);
+        let hit = &found.hits[0];
+        assert!((hit.distance - 5.0).abs() < 1e-3, "{}", hit.distance);
+        assert!(hit.point[1].abs() < 1e-3 && hit.point[2] == 0.0);
+        assert!((hit.normal[1] - 1.0).abs() < 1e-3, "{:?}", hit.normal);
+        assert!((hit.fraction - 0.5).abs() < 1e-3);
+        assert_eq!(hit.body, None);
+    }
+
+    #[test]
+    fn a_2d_trigger_asker_and_layers_follow_the_same_rules() {
+        let mut p = project();
+        ground(&mut p);
+        let zone = add(&mut p, "Zone", [0.0, 2.0]);
+        let library = p.physics.materials.clone();
+        let mut trigger = ColliderSpec::new(ColliderShape::Rect { size: [2.0, 2.0] });
+        trigger.trigger = true;
+        p.active_scene_mut()
+            .add_collider(&zone, trigger, &library)
+            .unwrap();
+        let walker = add(&mut p, "Walker", [0.0, 6.0]);
+        body(
+            &mut p,
+            &walker,
+            RigidbodySpec {
+                use_gravity: false,
+                ..Default::default()
+            },
+            vec![circle()],
+        );
+        let (mut app, _) = world(&p);
+        run(&mut app, 3);
+        let all = ask(&mut app, down(0.0, 6.0, -5.0, true), QueryFilter::as_actor(&walker));
+        let ground_id = p
+            .actors
+            .iter()
+            .find(|a| a.name == "Ground")
+            .unwrap()
+            .id
+            .clone();
+        let actors: Vec<_> = all.hits.iter().map(|h| h.actor.as_str()).collect();
+        assert_eq!(actors, [zone.as_str(), ground_id.as_str()], "{all:?}");
+        assert!(all.hits[0].trigger);
+        let solid = ask(
+            &mut app,
+            down(0.0, 6.0, -5.0, true),
+            QueryFilter {
+                triggers: TriggerPolicy::Ignore,
+                as_actor: Some(walker.clone()),
+                ..QueryFilter::default()
+            },
+        );
+        assert_eq!(solid.hits.len(), 1);
+        assert!(!solid.hits[0].trigger);
+    }
+
+    #[test]
+    fn a_2d_cast_overlap_and_closest_points_find_the_ground() {
+        let mut p = project();
+        ground(&mut p);
+        let (mut app, _) = world(&p);
+        run(&mut app, 3);
+        let cast = QueryRequest::Cast {
+            shape: QueryShape::Ball { radius: 0.5 },
+            from: [0.0, 5.0, 0.0],
+            to: [0.0, -5.0, 0.0],
+        };
+        let found = ask(&mut app, cast, QueryFilter::default());
+        assert!((found.hits[0].distance - 4.5).abs() < 1e-2, "{}", found.hits[0].distance);
+        let overlap = |y: f32, shape: QueryShape| QueryRequest::Overlap {
+            shape,
+            at: [0.0, y, 0.0],
+        };
+        let ball = QueryShape::Ball { radius: 0.5 };
+        assert_eq!(ask(&mut app, overlap(0.25, ball.clone()), QueryFilter::default()).hits.len(), 1);
+        assert!(ask(&mut app, overlap(2.0, ball), QueryFilter::default()).hits.is_empty());
+        // A box turned a quarter about z still reaches down by its half width.
+        let quarter = (std::f32::consts::FRAC_PI_4).sin_cos();
+        let turned = QueryShape::Box {
+            half: [1.0, 0.1, 0.0],
+            rotation: [0.0, 0.0, quarter.0, quarter.1],
+        };
+        assert_eq!(ask(&mut app, overlap(0.8, turned.clone()), QueryFilter::default()).hits.len(), 1);
+        assert!(ask(&mut app, overlap(1.4, turned), QueryFilter::default()).hits.is_empty());
+        let near = ask(
+            &mut app,
+            QueryRequest::Closest {
+                point: [3.0, 2.0, 0.0],
+                max_distance: 5.0,
+            },
+            QueryFilter::default(),
+        );
+        assert!((near.hits[0].distance - 2.0).abs() < 1e-3);
     }
 }

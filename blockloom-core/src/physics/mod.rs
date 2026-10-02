@@ -23,6 +23,7 @@ pub mod migrate;
 pub mod ops;
 pub mod ownership;
 pub mod plan;
+pub mod query;
 pub mod spec;
 pub mod validate;
 
