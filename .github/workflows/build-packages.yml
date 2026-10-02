@@ -1,0 +1,107 @@
+name: Build packages
+
+on:
+  workflow_call:
+    inputs:
+      shipping:
+        type: boolean
+        default: false
+      tag:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  packages:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: linux_gcc_64
+          - os: windows-2022
+            arch: win64_msvc2022_64
+          - os: macos-14
+            arch: clang_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: '0'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Linux build and deployment dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev \
+            libudev-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev \
+            libvulkan-dev libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 \
+            libxcb-shape0 libxcb-xinerama0 patchelf
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.12.0'
+          arch: ${{ matrix.arch }}
+          modules: qtmultimedia qtshadertools
+          cache: true
+      - name: Configure Qt
+        run: |
+          python -c "import os, shutil; print('QMAKE=' + shutil.which('qmake'))" >> "$GITHUB_ENV"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-linux-android x86_64-linux-android
+      - run: just prepare-patched-deps
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: packages-${{ matrix.os }}-${{ inputs.shipping }}
+      - name: Concurrent editor, native player and web player builds
+        env:
+          SHIPPING: ${{ inputs.shipping }}
+        run: |
+          if [ "$SHIPPING" = true ]; then
+            python scripts/ci-build.py --shipping
+          else
+            python scripts/ci-build.py
+          fi
+      - name: Service and packaging tests
+        run: |
+          python scripts/test-hub.py
+          python scripts/test-hub-download.py
+          python scripts/test-hub-github.py
+          python scripts/test-package-release.py
+      - name: Qt Hub smoke tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: python scripts/test-hub-ui.py
+      - name: Package portable editor and Hub
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          if [ -n "$RELEASE_TAG" ]; then
+            python scripts/package-release.py --tag "$RELEASE_TAG"
+          else
+            python scripts/package-release.py
+          fi
+      - uses: actions/upload-artifact@v6
+        with:
+          name: packages-${{ matrix.os }}
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14

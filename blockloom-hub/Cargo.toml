@@ -1,0 +1,15 @@
+[package]
+name = "blockloom-hub"
+version.workspace = true
+edition.workspace = true
+description = "Manage Blockloom projects and editor installations."
+build = "build.rs"
+
+[dependencies]
+cxx-qt = "0.10"
+cxx-qt-lib = { version = "0.10", features = ["qt_full"] }
+
+[build-dependencies]
+cxx-qt-build = { version = "0.10", features = ["link_qt_object_files"] }
+qt-build-utils = { version = "0.10", features = ["qt_minimal"] }
+qt-version = { version = "0.1.5", features = ["qt_version_at_least_6_12"] }

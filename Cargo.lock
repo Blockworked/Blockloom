@@ -2474,6 +2474,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "blockloom-hub"
+version = "0.0.1"
+dependencies = [
+ "cxx-qt",
+ "cxx-qt-build",
+ "cxx-qt-lib",
+ "qt-build-utils",
+ "qt-version",
+]
+
+[[package]]
 name = "blockloom-protocol"
 version = "0.0.1"
 dependencies = [

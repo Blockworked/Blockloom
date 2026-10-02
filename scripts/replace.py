@@ -132,6 +132,9 @@ def _enable_vt():
 
 def build_command(recipe):
     command = [just_exe(), "--no-deps", recipe]
+    if recipe == "build" and os.environ.get("BLOCKLOOM_INSTALL_DIR"):
+        # The running Hub may be this checkout's binary, which Windows locks.
+        command.extend(["--exclude", "blockloom-hub"])
     if recipe == "web-player":
         command.append(os.environ.get("BLOCKLOOM_WEB_PROFILE", "release"))
     return command

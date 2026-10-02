@@ -179,5 +179,11 @@ class RunnerTests(unittest.TestCase):
         self.assertFalse(any("uninstall" in call or "install" in call for call in calls))
 
 
+class HubBuildCommandTests(unittest.TestCase):
+    def test_hub_build_does_not_relink_its_running_launcher(self):
+        with patch.dict(os.environ, {"BLOCKLOOM_INSTALL_DIR": "private-slot"}), patch.object(replace, "just_exe", return_value="just"):
+            self.assertEqual(replace.build_command("build"), ["just", "--no-deps", "build", "--exclude", "blockloom-hub"])
+
+
 if __name__ == "__main__":
     unittest.main()

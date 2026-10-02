@@ -27,8 +27,8 @@ Use a separate Qt Quick executable for the shipping desktop UI, sharing the
 editor's visual style but not linking Bevy or starting the editor backend. Keep
 installation operations behind an independently testable service. The first
 milestone is a Python standard-library service and CLI, alongside the existing
-Python build tooling. The Qt shell can invoke its commands on worker processes
-and consume JSON; package the service runtime with the Hub rather than requiring
+Python build tooling. The Qt shell invokes its commands on worker processes
+and consumes JSON; package the service runtime with the Hub rather than requiring
 end users to install Python.
 
 The editor's existing `blockloom/projects.json` remains the project list. The Hub
@@ -136,15 +136,126 @@ libraries under `tools/rust/lib/rustlib/<host>/lib`, with a manifest entry such 
 `aarch64-linux-android` and `x86_64-linux-android`). Selected directory components
 live under `tools/<name>`. Unselected components are omitted from the imported
 installation. Developer rebuilds copy the checkout's pinned rustup toolchain into
-the development slot. Optional tool downloads and graphical checkboxes are part
-of milestone 3, not the initial CLI.
+the development slot. Development builds first prepare a candidate, then open
+an installation options dialog. The desktop window provides graphical checkboxes for
+bundle import. Optional tool downloads remain part of milestone 3.
 Directory components must declare a `version` in their manifest entries. Rust
 still needs a working host linker: shipping must bundle or provision the matching
 platform linker and libraries, especially MSVC on Windows, and test scripts on a
-machine without an existing developer environment. Until process tracking is
-implemented, close editors using a development slot before rebuilding it.
+machine without an existing developer environment.
 
 `bind` records a selection only. Existing projects without a selection are
 shown as unassigned and must be explicitly assigned before `open`. The first
 milestone does not offer project creation, backup/migration UI, automatic release
-discovery, removal or a graphical Hub window yet.
+discovery or removal.
+
+## Desktop shell started
+
+`blockloom-hub` is a separate Qt Quick workspace member. It does not link the
+editor backend or Bevy. Run `just hub-run` to build the workspace and open it,
+or run `target/release/blockloom-hub` directly (`.exe` on Windows) after building.
+The window provides searchable projects, explicit editor selection and launch,
+prepared release bundle import with optional tool checkboxes, local repository
+registration and a Build/Rebuild button. Builds use an asynchronous worker
+process with a bounded, dark operation log, selectable text, wrapping and optional
+following of output. Automatic refresh preserves that log. Build stdout/stderr
+are also saved to `Hub/logs/<installation>-build.log`.
+
+Adding a project remembers its folder in the Hub's own `projects.json`, merged
+with the editor registry when listing. Canonical paths prevent duplicate rows;
+the editor registry remains read-only. The service sources are embedded in the
+Hub executable and extracted to a temporary directory for worker imports.
+Development requires Python 3.11+ on PATH, or `BLOCKLOOM_HUB_PYTHON` pointing to
+its executable. A packaged runtime at `python/python.exe` (Windows) or
+`python/bin/python3` (Unix), next to the Hub executable, takes precedence over
+PATH. Runtime packaging is still shipping work.
+
+The window refuses ordinary close requests while a worker is running. A Cancel
+button requests cooperative worker cancellation; the worker stops its child
+build tree and exits through normal staging and lock cleanup. Windows assigns a
+waiting bootstrap to a Job Object before permitting it to spawn build children;
+Unix checks owned descendants, including replacement builds' separate sessions.
+Cancellation during tool copying or staging stops before installation promotion.
+The atomic promotion itself finishes once started.
+
+Hub launches are recorded in `running.json` with process birth identifiers, so
+stale PID records do not mistake a reused PID for the same editor. Live project
+owner locks also block editor selection, repeat launch and development replacement.
+The window refreshes usage indicators while idle. This is best-effort coordination
+with externally launched editors, whose own locks do not share the Hub's operation
+lock. Editor stdout/stderr go to `Hub/logs/<installation>-editor.log`
+so they cannot corrupt the service's JSON responses.
+
+The development Build button uses `prepare-dev`: it keeps the current installation
+and saves a candidate under `Hub/pending/<installation>`. When the build finishes,
+the Hub opens Install development build. Rust is required; Java, SDK and NDK can
+be copied from local folders chosen in the dialog. Saved editor Android paths and
+`JAVA_HOME` provide initial folder suggestions. These folders must contain
+version metadata and required binaries. SDK copying excludes its NDK folder so
+the NDK checkbox remains independent. Missing Android Rust targets are fetched
+from the exact pinned Rust distribution into the private installation candidate,
+with official manifest and component checksum validation. Cancelling the options dialog leaves the current installation
+intact; Install prepared build reopens it without rebuilding. `install-dev`
+performs the final validated transaction. The dialog's build ID rejects a candidate
+changed by another Hub between preparation and installation.
+
+`rebuild` remains a CLI convenience that prepares and installs with Rust only.
+Hub replacement builds exclude the companion Hub target to avoid relinking the
+running launcher on Windows; they still build the editor, runtime and players.
+
+Validation: `python scripts/test-hub.py` covers the installation service;
+`python scripts/test-hub-ui.py` runs the built Hub offscreen against isolated
+fixtures and captures Projects, Installations, tool selection and editor
+selection under `target/hub-ui-smoke`. Windows smoke tests load an OS font
+explicitly because the offscreen plugin does not discover native fonts.
+The UI smoke test also selects a release and verifies its saved project binding.
+It checks the operation log, prepared-build options and development installation.
+`python scripts/test-hub-process.py` checks real child-tree cancellation and
+process birth identity; service tests cover active-owner refusal, stale locks,
+optional tool selection and failed/cancelled installation preservation.
+
+## Downloads and build workflows
+
+Get a release supports HTTPS catalogs and a persisted GitHub CLI source setting,
+default repository `Blockworked/Blockloom`. GitHub CLI uses the existing
+`gh auth login` session to list the latest 100 releases and retrieve each release's
+`blockloom-catalog.json`. Downloads use `gh release download` for private assets;
+the Hub never reads or saves the login token. Draft releases are hidden.
+Rechecking a release validates the selected checksum again before downloading.
+
+Catalog schema 1 contains a `releases` array. Each entry declares `version`,
+Rust host `target`, HTTPS `url`, hex `sha256`, compressed `size`, `unpacked_size`,
+and `format` (`zip`, `tar.gz`, or `tar.xz`). Optional `tools` drives available
+checkboxes. GitHub catalogs also declare the release asset basename in `asset`.
+Archive extraction rejects links, special files, escaping paths and duplicate
+paths, checks size/member limits and preserves executable permissions. Successful
+downloads use the same immutable installation rules as local bundle import.
+
+Rust preparation copies compiler binaries, libraries, linker helpers and config,
+skipping the tens of thousands of HTML documentation files and Rust sources.
+Progress reports copied files and MiB. Prepared candidates and final private
+payloads are promoted by rename instead of copying the entire installation again.
+The candidate is retained during final installation for retry after failures.
+
+`build-artifacts.yml` and `release.yml` share `build-packages.yml`. Each platform
+builds the editor and web player concurrently using `replace.run_builds`. Shipping
+also builds the native player concurrently with `dist`; web uses `dist` too.
+Dependencies and wasm-bindgen are fetched before compilation, then builds run
+offline. CI never performs a system installation. Windows, Linux and macOS jobs
+run independently. Artifacts include Qt and the pinned Rust toolchain, including
+wasm and optional Android targets. The Hub archive requires Python 3.11+ on PATH.
+Linux packages require Ubuntu 24.04-compatible system libraries; macOS packages
+are unsigned for distribution (ad hoc signing only). Broader platform baselines,
+developer signing and a bundled Hub Python runtime remain shipping work.
+
+The release workflow validates its existing tag against the workspace version,
+waits for all platform packages, verifies their archive checksums and merges their
+catalogs. It creates a draft, uploads complete assets, then publishes. Prerelease
+tags are marked as prereleases. An interrupted publish can leave a draft for
+manual cleanup; it does not overwrite an existing release.
+
+Protocol references: [GitHub CLI release downloads](https://cli.github.com/manual/gh_release_download)
+and [Rust distribution manifests](https://forge.rust-lang.org/infra/channel-layout.html).
+`test-hub-download.py`, `test-hub-github.py` and `test-package-release.py` use
+controlled fixtures to verify downloads, private release discovery, archives and
+CI profile selection. Real hosted workflow execution remains to be verified.

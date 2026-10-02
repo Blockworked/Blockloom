@@ -43,6 +43,32 @@ The first build needs network access for Rust dependencies, the pinned
 `blockstitch` Git dependency, and patched dependency archives. A sibling
 `blockstitch` checkout is not required.
 
+### Blockloom Hub
+
+`just hub-run` builds the workspace and opens the separate Hub window. It lists
+projects, saves each project's chosen editor, imports prepared release bundles
+and builds local repositories into its per-user installations directory. Release
+versions remain separate and projects change versions only through an explicit
+selection. Rust is required in each release bundle; Java, Android SDK, NDK and
+Android Rust targets have optional import checkboxes.
+
+The development Hub requires Python 3.11+ on PATH, or
+`BLOCKLOOM_HUB_PYTHON` set to the Python executable. Get a release accepts an
+HTTPS catalog or the GitHub CLI setting for private `Blockworked/Blockloom`
+releases using your `gh auth login` session. Shipping Python runtime packaging
+is still pending. Local builds open an
+installation options dialog before replacing their current editor. The Hub can
+cancel builds, keeps build logs, and blocks rebuilding installations or changing
+projects that are in use. See
+[the Hub plan](docs/hub-plan.md) for current behavior and remaining work.
+
+Build artifacts runs the editor and players concurrently on Windows, Linux and
+macOS. Release runs for `vX.Y.Z` tags matching the workspace version, or a manual
+existing-tag dispatch. It builds native and web players with the `dist` profile,
+then publishes editor/Hub archives and `blockloom-catalog.json`. Editor archives
+include Qt, the pinned Rust compiler, web support and optional Android Rust targets.
+The Hub archive currently requires Python 3.11+ installed separately.
+
 ### Editor And Runtime
 
 Run from the repository root:

@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag, matching Cargo.toml (vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-packages.yml
+    with:
+      shipping: true
+      tag: ${{ inputs.tag || github.ref_name }}
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: packages-*
+          path: artifacts
+          merge-multiple: true
+      - name: Combine release catalogs
+        run: python scripts/release-catalog.py artifacts
+      - name: Publish complete release
+        run: |
+          args=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then args+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" --verify-tag --draft --generate-notes "${args[@]}"
+          gh release upload "$RELEASE_TAG" artifacts/*.zip artifacts/blockloom-catalog.json
+          gh release edit "$RELEASE_TAG" --draft=false

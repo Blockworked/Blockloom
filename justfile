@@ -70,6 +70,10 @@ run: build
 hub *args:
     {{if os() == "windows" { "python" } else { "python3" }}} scripts/hub.py {{args}}
 
+# Build the workspace and open the separate Hub window.
+hub-run: build
+    target/release/blockloom-hub{{if os() == "windows" { ".exe" } else { "" }}}
+
 # Build the editor and runtime, then watch QML edits through Qt 6.12.
 qml-preview *args: prepare-patched-deps
     {{if os() == "windows" { "python" } else { "python3" }}} scripts/qml-preview.py {{args}}

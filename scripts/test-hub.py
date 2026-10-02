@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -58,6 +59,43 @@ class HubTests(unittest.TestCase):
             hub_install.stage(self.bundle, self.service.slot(first["id"]), replace=True)
         self.assertEqual(self.service.installations(), [first])
 
+    def test_prepared_payload_promotes_without_copying(self):
+        destination = self.base / "promoted"
+        with patch.object(hub_install.shutil, "copytree", side_effect=AssertionError("Unexpected copy")):
+            hub_install.promote(self.bundle, destination, {"kind": "dev"})
+        self.assertFalse(self.bundle.exists())
+        self.assertTrue((destination / hub_install.editor_name()).exists())
+
+    def test_failed_promotion_restores_previous_installation(self):
+        destination = self.base / "promoted"
+        hub_install.stage(self.bundle, destination, {"kind": "dev", "version": "old"})
+        rename = Path.rename
+
+        def fail_source(path, target):
+            if path == self.bundle:
+                raise OSError("Fixture rename failure")
+            return rename(path, target)
+
+        with patch.object(Path, "rename", fail_source), self.assertRaises(OSError):
+            hub_install.promote(self.bundle, destination, {"kind": "dev"}, replace=True)
+        self.assertEqual(hub.read_json(destination / hub.MANIFEST)["version"], "old")
+        self.assertTrue(self.bundle.exists())
+
+    def test_rust_bundle_keeps_runtime_and_skips_documentation(self):
+        import hub_process
+        source = hub.tool_path(self.bundle, "rust")
+        for name in ("share/doc/rust/html/index.html", "lib/rustlib/src/rust/library/std.rs", "libexec/rust-analyzer-proc-macro-srv"):
+            path = source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("fixture")
+        target = self.base / "bundled-rust"
+        hub_process.bundle_rust(source, target, "1.98.1")
+        self.assertTrue((target / "bin" / ("rustc.exe" if os.name == "nt" else "rustc")).exists())
+        self.assertTrue((target / "libexec/rust-analyzer-proc-macro-srv").exists())
+        self.assertTrue((target / "lib/rustlib" / hub.host_target() / "lib").exists())
+        self.assertFalse((target / "share").exists())
+        self.assertFalse((target / "lib/rustlib/src").exists())
+
     def test_new_version_does_not_change_project_binding(self):
         self.service.install(self.bundle)
         self.service.bind(self.project, "release-0.1.0")
@@ -68,6 +106,35 @@ class HubTests(unittest.TestCase):
         before = (self.project / "project.blockloom").read_bytes()
         self.service.bind(self.project, "release-0.2.0")
         self.assertEqual((self.project / "project.blockloom").read_bytes(), before)
+
+    def test_private_release_download_verifies_and_keeps_project_binding(self):
+        import hashlib
+        import zipfile
+        self.service.install(self.bundle)
+        self.service.bind(self.project, "release-0.1.0")
+        self.manifest["version"] = "0.2.0"
+        self.save_manifest()
+        archive = self.base / "remote.zip"
+        (hub.tool_path(self.bundle, "rust") / "lib/rustlib" / hub.host_target() / "lib/libstd.rlib").write_bytes(b"std")
+        with zipfile.ZipFile(archive, "w") as data:
+            for file in self.bundle.rglob("*"):
+                if file.is_file():
+                    data.write(file, file.relative_to(self.bundle).as_posix())
+        checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+        entry = {"version": "0.2.0", "size": archive.stat().st_size, "unpacked_size": 10000,
+                 "format": "zip", "sha256": checksum, "github": {"repo": "Blockworked/Blockloom", "tag": "v0.2.0", "asset": "editor.zip"}}
+
+        def asset(repo, tag, name, destination):
+            destination.write_bytes(archive.read_bytes())
+
+        self.service.release_settings("github-cli", repo="Blockworked/Blockloom")
+        self.assertEqual(self.service.release_settings()["source"], "github-cli")
+        with patch.object(hub.hub_github, "catalog", return_value=[entry]), patch.object(hub.hub_github, "asset", side_effect=asset):
+            with self.assertRaisesRegex(ValueError, "catalog changed"):
+                self.service.download_release("0.2.0", sha256="0" * 64)
+            installed = self.service.download_release("0.2.0", sha256=checksum)
+        self.assertEqual(installed["id"], "release-0.2.0")
+        self.assertEqual(self.service.project(self.project)["installation"], "release-0.1.0")
 
     def test_project_binding_survives_folder_move(self):
         self.service.install(self.bundle)
@@ -92,6 +159,23 @@ class HubTests(unittest.TestCase):
         self.save_manifest()
         with self.assertRaisesRegex(ValueError, "pinned Rust"):
             self.service.install(self.bundle)
+
+    def test_remember_is_idempotent_and_does_not_write_editor_registry(self):
+        hub.write_json(self.service.registry, {"projects": [{"path": str(self.project), "opened_at": 123}]})
+        before = self.service.registry.read_bytes()
+        self.service.remember(self.project)
+        self.service.remember(self.project / ".")
+        self.assertEqual(len(self.service.projects()), 1)
+        self.assertEqual(self.service.projects()[0]["opened_at"], 123)
+        self.assertEqual(len(hub.read_json(self.service.root / "projects.json")["projects"]), 1)
+        self.assertEqual(self.service.registry.read_bytes(), before)
+
+    def test_remember_without_editor_registry_and_invalid_project(self):
+        with self.assertRaises(OSError):
+            self.service.remember(self.base / "missing")
+        self.assertFalse((self.service.root / "projects.json").exists())
+        result = self.service.remember(self.project)
+        self.assertEqual(self.service.projects()[0]["path"], result["path"])
         self.assertEqual(self.service.installations(), [])
 
     def test_components_are_optional_and_filter_payload(self):
@@ -164,7 +248,7 @@ class HubTests(unittest.TestCase):
         directory = self.service.slot(dev["id"])
         hub_install.stage(self.bundle, directory, {**dev, "status": "ready", "tools": self.manifest["tools"]}, replace=True)
         before = (directory / hub.MANIFEST).read_bytes()
-        with patch.object(hub.subprocess, "run", side_effect=subprocess.CalledProcessError(3, "just")):
+        with patch.object(hub, "run", side_effect=subprocess.CalledProcessError(3, "just")):
             with self.assertRaises(subprocess.CalledProcessError):
                 self.service.rebuild(dev["id"])
         self.assertEqual((directory / hub.MANIFEST).read_bytes(), before)
@@ -182,8 +266,10 @@ class HubTests(unittest.TestCase):
             self.binary(output, "blockloom-runtime")
 
         rustc = hub.tool_path(self.bundle, "rust") / "bin" / ("rustc.exe" if os.name == "nt" else "rustc")
-        with patch.object(hub.subprocess, "run", build), patch.object(hub.subprocess, "check_output", return_value=str(rustc)):
-            result = self.service.rebuild(dev["id"], 2)
+        with patch.object(hub, "run", build), patch.object(hub.subprocess, "check_output", return_value=str(rustc)):
+            prepared = self.service.prepare_dev(dev["id"], 2)
+        self.assertEqual(self.service.installation(dev["id"])["status"], "unbuilt")
+        result = self.service.install_dev(dev["id"], build_id=prepared["build_id"])
         self.assertEqual(result["tools"]["rust"]["channel"], "1.98.1")
         self.service.installation(dev["id"], ready=True)
 
@@ -198,6 +284,131 @@ class HubTests(unittest.TestCase):
         self.assertEqual(result["pid"], 42)
         self.assertTrue(kwargs["env"]["PATH"].startswith(str(self.service.slot("release-0.1.0") / "tools" / "rust" / "bin")))
         self.assertNotIn("shell", kwargs)
+        self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
+        self.assertEqual(kwargs["stderr"], subprocess.STDOUT)
+        self.assertEqual(Path(kwargs["stdout"].name).parent, self.service.root / "logs")
+
+    def prepare_fake_dev(self):
+        dev = self.service.add_dev(self.repo())
+        manifest = {**dev, "status": "ready", "tools": self.manifest["tools"],
+                    "sources": {}, "android_targets_available": False}
+        hub_install.stage(self.bundle, self.service.candidate_path(dev["id"]), manifest)
+        return dev
+
+    def test_prepared_build_requires_explicit_install_and_can_retry(self):
+        dev = self.prepare_fake_dev()
+        self.assertEqual(self.service.installation(dev["id"])["status"], "unbuilt")
+        self.assertTrue(self.service.installations()[0]["prepared"])
+        result = self.service.install_dev(dev["id"])
+        self.assertEqual(result["status"], "ready")
+        self.assertNotIn("sources", result)
+        self.service.installation(dev["id"], ready=True)
+        self.assertEqual(self.service.install_dev(dev["id"]), result)
+
+    def test_dev_optional_tools_use_selected_local_sources(self):
+        dev = self.prepare_fake_dev()
+        sources = {}
+        for name in hub.OPTIONAL_TOOLS:
+            directory = self.base / name
+            directory.mkdir()
+            if name == "java":
+                self.binary(directory / "bin", "java")
+                (directory / "release").write_text('JAVA_VERSION="21.0.9"\n')
+            elif name == "android-sdk":
+                self.binary(directory / "platform-tools", "adb")
+                (directory / "platform-tools" / "source.properties").write_text("Pkg.Revision=36.0.0\n")
+                (directory / "ndk").mkdir()
+                (directory / "ndk" / "should-not-ship").touch()
+            else:
+                (directory / "source.properties").write_text("Pkg.Revision = 29.0.1\n")
+            sources[name] = str(directory)
+        result = self.service.install_dev(dev["id"], hub.OPTIONAL_TOOLS, sources=sources)
+        self.assertEqual(result["tools"]["java"]["version"], "21.0.9")
+        self.assertEqual(result["tools"]["android-ndk"]["version"], "29.0.1")
+        self.assertFalse((self.service.slot(dev["id"]) / "tools/android-sdk/ndk").exists())
+        self.service.install_dev(dev["id"])
+        self.assertFalse((self.service.slot(dev["id"]) / "tools/java").exists())
+
+    def test_failed_dev_configuration_keeps_previous_install(self):
+        dev = self.prepare_fake_dev()
+        self.service.install_dev(dev["id"])
+        before = (self.service.slot(dev["id"]) / hub.MANIFEST).read_bytes()
+        with self.assertRaisesRegex(ValueError, "complete local"):
+            self.service.install_dev(dev["id"], ["java"], sources={"java": str(self.base / "absent")})
+        self.assertEqual((self.service.slot(dev["id"]) / hub.MANIFEST).read_bytes(), before)
+        self.assertFalse((self.service.root / ".operation-lock").exists())
+
+    def test_changed_candidate_requires_reviewing_new_build(self):
+        dev = self.prepare_fake_dev()
+        with self.assertRaisesRegex(ValueError, "newer development build"):
+            self.service.install_dev(dev["id"], build_id="previous-build")
+        self.assertEqual(self.service.installation(dev["id"])["status"], "unbuilt")
+
+    def test_dev_android_targets_are_selected_independently(self):
+        dev = self.prepare_fake_dev()
+        candidate = self.service.candidate_path(dev["id"])
+        for target in hub.ANDROID_TARGETS:
+            (candidate / "tools/rust/lib/rustlib" / target / "lib").mkdir(parents=True)
+        manifest = hub.read_json(candidate / hub.MANIFEST)
+        manifest["android_targets_available"] = True
+        hub.write_json(candidate / hub.MANIFEST, manifest)
+        selected = self.service.install_dev(dev["id"], android_rust_targets=True)
+        self.assertEqual(set(selected["tools"]["android-rust-targets"]), set(hub.ANDROID_TARGETS))
+        for target in hub.ANDROID_TARGETS:
+            self.assertTrue((self.service.slot(dev["id"]) / "tools/rust/lib/rustlib" / target / "lib").is_dir())
+        self.service.install_dev(dev["id"])
+        for target in hub.ANDROID_TARGETS:
+            self.assertFalse((self.service.slot(dev["id"]) / "tools/rust/lib/rustlib" / target / "lib").exists())
+
+    def test_unavailable_android_targets_keep_current_install(self):
+        dev = self.prepare_fake_dev()
+        with patch.object(hub.hub_download, "install_rust_targets", side_effect=ValueError("Download failed")):
+            with self.assertRaisesRegex(ValueError, "Download failed"):
+                self.service.install_dev(dev["id"], android_rust_targets=True)
+        self.assertEqual(self.service.installation(dev["id"])["status"], "unbuilt")
+
+    def test_running_editor_prevents_rebuild_and_duplicate_launch(self):
+        dev = self.prepare_fake_dev()
+        self.service.install_dev(dev["id"])
+        self.service.bind(self.project, dev["id"])
+        self.service.remember(self.project)
+        with patch.object(hub.subprocess, "Popen") as launch, patch.object(hub, "process_token", return_value="birth"), patch.object(hub, "running", return_value=True):
+            launch.return_value.pid = 42
+            self.service.launch(self.project)
+            self.assertTrue(self.service.projects()[0]["active"])
+            self.assertEqual(self.service.installations()[0]["running"], 1)
+            with self.assertRaisesRegex(ValueError, "Close"):
+                self.service.prepare_dev(dev["id"])
+            with self.assertRaisesRegex(ValueError, "Close"):
+                self.service.bind(self.project, dev["id"])
+            with self.assertRaisesRegex(ValueError, "Close"):
+                self.service.launch(self.project)
+        with patch.object(hub, "running", return_value=False):
+            self.assertFalse(self.service.project_active(self.project))
+
+    def test_external_owner_blocks_binding_and_stale_lock_does_not(self):
+        self.service.install(self.bundle)
+        hub.write_json(self.project / ".blockloom" / "lock.json", {
+            "pid": os.getpid(), "heartbeat": time.time(), "session": "editor", "app": "editor"})
+        with self.assertRaisesRegex(ValueError, "Close"):
+            self.service.bind(self.project, "release-0.1.0")
+        with patch.object(hub, "process_token", return_value=None):
+            with self.assertRaisesRegex(ValueError, "Close"):
+                self.service.bind(self.project, "release-0.1.0")
+            hub.write_json(self.project / ".blockloom" / "lock.json", {"pid": 123, "heartbeat": 0})
+            self.service.bind(self.project, "release-0.1.0")
+
+    def test_cancelled_dev_install_preserves_slot_and_releases_lock(self):
+        dev = self.prepare_fake_dev()
+        self.service.install_dev(dev["id"])
+        before = (self.service.slot(dev["id"]) / hub.MANIFEST).read_bytes()
+        cancel = self.base / "cancel"
+        cancel.touch()
+        with patch.dict(os.environ, {"BLOCKLOOM_HUB_CANCEL_FILE": str(cancel)}):
+            with self.assertRaises(hub.Cancelled):
+                self.service.install_dev(dev["id"])
+        self.assertEqual((self.service.slot(dev["id"]) / hub.MANIFEST).read_bytes(), before)
+        self.assertFalse((self.service.root / ".operation-lock").exists())
 
     def test_stage_copy_failure_preserves_existing_payload(self):
         destination = self.base / "dev-payload"
