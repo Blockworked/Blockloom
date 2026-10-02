@@ -46,8 +46,16 @@ jobs:
         if: runner.os == 'Windows'
         with:
           arch: x64
-          # The action accepts VS's numeric version before its year alias is added.
-          vsversion: '18.0'
+          # Let vswhere select the newest installation on the VS 2026 runner.
+      - name: Verify Visual Studio 2026
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (!$env:VisualStudioVersion -or ([version]$env:VisualStudioVersion).Major -ne 18) {
+            throw "Visual Studio 2026 (18.x) is required; found '$env:VisualStudioVersion'"
+          }
+          Write-Host "Visual Studio $env:VisualStudioVersion at $env:VSINSTALLDIR"
+          (Get-Command cl.exe -ErrorAction Stop).Source
       - name: Configure macOS 27 SDK
         if: runner.os == 'macOS'
         run: |
