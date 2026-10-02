@@ -61,6 +61,7 @@ Hub/
       blockloom-installation.json
       ...
   .operation-lock/
+  backups/<canonical-project-hash>/<timestamp>-<id>.zip
 ```
 
 Release payloads have a manifest with a version and host target. They must be
@@ -120,6 +121,8 @@ just hub rebuild dev-<id>
 just hub install "path/to/portable-bundle"
 just hub install "path/to/portable-bundle" --java --android-sdk --android-ndk --android-rust-targets
 just hub bind "path/to/project" release-0.1.0
+just hub bind "path/to/project" release-0.2.0 --backup
+just hub backup-project "path/to/project"
 just hub open "path/to/project"
 ```
 
@@ -146,7 +149,7 @@ machine without an existing developer environment.
 
 `bind` records a selection only. Existing projects without a selection are
 shown as unassigned and must be explicitly assigned before `open`. The first
-milestone does not offer project creation, backup/migration UI, automatic release
+milestone does not offer project creation, format migration, automatic release
 discovery or removal.
 
 ## Desktop shell started
@@ -210,6 +213,16 @@ selection under `target/hub-ui-smoke`. Windows smoke tests load an OS font
 explicitly because the offscreen plugin does not discover native fonts.
 The UI smoke test also selects a release and verifies its saved project binding.
 It checks the operation log, prepared-build options and development installation.
+
+Changing an existing editor selection offers a backup checkbox, enabled by
+default. The Hub creates a ZIP under `Hub/backups` before saving the new selection,
+including assets, empty folders and the old `.blockloom/hub.json`. Generated
+`.blockloom/build` caches, owner locks and version control metadata are excluded.
+Projects in use, links and special files are refused. Cancellation, unreadable
+files or changes detected during copying discard the partial ZIP and preserve the
+selection. Show backup opens the saved archive's folder. Restoring a snapshot is
+manual; switching editors alone does not undo a format migration.
+
 `python scripts/test-hub-process.py` checks real child-tree cancellation and
 process birth identity; service tests cover active-owner refusal, stale locks,
 optional tool selection and failed/cancelled installation preservation.

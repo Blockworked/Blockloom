@@ -143,6 +143,90 @@ class HubTests(unittest.TestCase):
         self.project.rename(renamed)
         self.assertEqual(self.service.project(renamed)["installation"], "release-0.1.0")
 
+    def prepare_upgrade(self):
+        self.service.install(self.bundle)
+        self.service.bind(self.project, "release-0.1.0")
+        self.manifest["version"] = "0.2.0"
+        self.save_manifest()
+        self.service.install(self.bundle)
+
+    def test_editor_upgrade_backs_up_before_binding(self):
+        import zipfile
+        self.prepare_upgrade()
+        assets = self.project / "assets"
+        assets.mkdir()
+        (assets / "picture.png").write_bytes(b"game asset")
+        (assets / "empty").mkdir()
+        cache = self.project / ".blockloom/build"
+        cache.mkdir()
+        (cache / "cache.dll").write_bytes(b"generated")
+        before = (self.project / "project.blockloom").read_bytes()
+        result = self.service.bind(self.project, "release-0.2.0", backup=True)
+        with zipfile.ZipFile(result["backup"]["path"]) as archive:
+            self.assertEqual(archive.read("project.blockloom"), before)
+            self.assertEqual(archive.read("assets/picture.png"), b"game asset")
+            self.assertEqual(json.loads(archive.read(".blockloom/hub.json"))["installation"], "release-0.1.0")
+            self.assertIn("assets/empty/", archive.namelist())
+            self.assertFalse(any(name.startswith(".blockloom/build") for name in archive.namelist()))
+        self.assertEqual(self.service.project(self.project)["installation"], "release-0.2.0")
+        self.assertEqual((self.project / "project.blockloom").read_bytes(), before)
+
+    def test_failed_or_cancelled_backup_keeps_binding_and_removes_partial(self):
+        self.prepare_upgrade()
+        for error in (OSError("disk full"), hub.Cancelled("cancelled")):
+            with patch.object(hub.hub_backup.zipfile.ZipFile, "open", side_effect=error):
+                with self.assertRaises(type(error)):
+                    self.service.bind(self.project, "release-0.2.0", backup=True)
+            self.assertEqual(self.service.project(self.project)["installation"], "release-0.1.0")
+            self.assertEqual(list((self.service.root / "backups").glob("*/*.zip")), [])
+            self.assertFalse((self.service.root / ".operation-lock").exists())
+
+    def test_backup_refuses_an_active_project(self):
+        self.prepare_upgrade()
+        hub.write_json(self.project / ".blockloom/lock.json", {"pid": os.getpid(), "heartbeat": time.time()})
+        with self.assertRaisesRegex(ValueError, "Close"):
+            self.service.bind(self.project, "release-0.2.0", backup=True)
+        self.assertFalse((self.service.root / "backups").exists())
+
+    def test_project_changes_during_backup_keep_old_binding(self):
+        self.prepare_upgrade()
+        original = hub.hub_backup.inventory
+        count = 0
+
+        def inventory(project):
+            nonlocal count
+            count += 1
+            if count == 2:
+                (project / "new-file").write_text("changed during backup")
+            return original(project)
+
+        with patch.object(hub.hub_backup, "inventory", side_effect=inventory):
+            with self.assertRaisesRegex(ValueError, "changed during backup"):
+                self.service.bind(self.project, "release-0.2.0", backup=True)
+        self.assertEqual(self.service.project(self.project)["installation"], "release-0.1.0")
+        self.assertEqual(list((self.service.root / "backups").glob("*/*.zip")), [])
+
+    def test_backup_cannot_write_inside_project(self):
+        self.service.root = self.project / "Hub"
+        with self.assertRaisesRegex(ValueError, "outside"):
+            self.service.backup_project(self.project)
+
+    def test_standalone_backups_are_unique_and_skip_owner_locks(self):
+        import zipfile
+        hub.write_json(self.project / ".blockloom/lock.json", {"pid": 12345, "heartbeat": 0})
+        with patch.object(hub, "process_token", return_value=None):
+            first = self.service.backup_project(self.project)
+            second = self.service.backup_project(self.project)
+        self.assertNotEqual(first["path"], second["path"])
+        with zipfile.ZipFile(first["path"]) as archive:
+            self.assertNotIn(".blockloom/lock.json", archive.namelist())
+
+    def test_same_editor_selection_does_not_create_backup(self):
+        self.prepare_upgrade()
+        result = self.service.bind(self.project, "release-0.1.0", backup=True)
+        self.assertNotIn("backup", result)
+        self.assertFalse((self.service.root / "backups").exists())
+
     def test_registry_is_read_only_and_retains_missing_projects(self):
         hub.write_json(self.service.registry, {"projects": [
             {"path": str(self.project), "opened_at": 100},

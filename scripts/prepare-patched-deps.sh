@@ -7,6 +7,12 @@ fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output="${BLOCKLOOM_PATCHED_DEPS_DIR:-$root/.patched-deps}"
 cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]]; then
+    # GNU tar treats drive-letter archive paths as remote hosts.
+    root="$(cygpath -u "$root")"
+    output="$(cygpath -u "$output")"
+    cargo_home="$(cygpath -u "$cargo_home")"
+fi
 mode="${1:-prepare}"
 if [[ "$mode" != prepare && "$mode" != --check ]]; then
     echo "Usage: bash scripts/prepare-patched-deps.sh [--check]" >&2

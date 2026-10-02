@@ -61,6 +61,9 @@ installation options dialog before replacing their current editor. The Hub can
 cancel builds, keeps build logs, and blocks rebuilding installations or changing
 projects that are in use. See
 [the Hub plan](docs/hub-plan.md) for current behavior and remaining work.
+Changing a project's editor offers a ZIP backup, enabled by default. Backups
+preserve the old editor selection and project files under the Hub's `backups`
+folder; Show backup opens that folder after the change.
 
 Build artifacts runs the editor and players concurrently on Windows, Linux and
 macOS. Release runs for `X.Y.Z` tags matching the workspace version, or a manual

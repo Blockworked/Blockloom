@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import zipfile
 
 sys.dont_write_bytecode = True
 import hub
@@ -63,7 +64,9 @@ def main():
             env["PATH"] = str(kit / "bin") + os.pathsep + env.get("PATH", "")
             env["QT_PLUGIN_PATH"] = str(kit / "plugins")
             env["QML_IMPORT_PATH"] = str(kit / "qml")
-        for page in ("projects", "installations", "install", "version", "bind", "log", "releases", "dev-options", "checkbox-hover", "checkbox-checked", "dev-install"):
+        for page in ("projects", "installations", "install", "version", "bind", "log", "releases", "upgrade", "upgrade-bind", "dev-options", "checkbox-hover", "checkbox-checked", "dev-install"):
+            if page in ("upgrade", "upgrade-bind"):
+                hub.write_json(project / ".blockloom/hub.json", {"schema": 1, "installation": "release-0.0.1"})
             result = subprocess.run([str(binary), "--smoke-test", "--smoke-page", page,
                                      "--smoke-output", str(screenshots / (page + ".png"))],
                                     env=env, capture_output=True, text=True, encoding="utf-8", timeout=30)
@@ -74,6 +77,12 @@ def main():
             print(f"PASS: {page}")
         if hub.read_json(project / ".blockloom" / "hub.json")["installation"] != "release-0.1.0":
             raise RuntimeError("The UI did not persist the selected installation")
+        backups = list((root / "backups").glob("*/*.zip"))
+        if len(backups) != 1:
+            raise RuntimeError("The UI did not create the requested upgrade backup")
+        with zipfile.ZipFile(backups[0]) as backup:
+            if json.loads(backup.read(".blockloom/hub.json"))["installation"] != "release-0.0.1":
+                raise RuntimeError("The backup did not retain the previous editor selection")
         installed = hub.read_json(root / "installations" / identity / hub.MANIFEST)
         if installed["status"] != "ready" or "sources" in installed:
             raise RuntimeError("The UI did not install the prepared development editor")

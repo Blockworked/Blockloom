@@ -162,6 +162,7 @@ ApplicationWindow {
     property var installations: []
     property string error: ""
     property string notice: ""
+    property string lastBackup: ""
     property var selectedProject: ({})
     property bool smokeBindingDone: false
     property bool smokeDevStarted: false
@@ -176,7 +177,7 @@ ApplicationWindow {
         notice = ""
         service.run(command, args || [])
     }
-    function refresh() { perform("installations", []) }
+    function refresh() { service.run("installations", []) }
     function label(installation) {
         return installation.kind === "dev"
             ? "Development: " + installation.name + " (" + installation.version + ")"
@@ -225,16 +226,20 @@ ApplicationWindow {
                 } else if (command === "projects") {
                     window.projects = result
                     if (service.smokeTest()) {
-                        if (service.smokePage() === "bind" && !window.smokeBindingDone && result.length > 0) {
+                        if ((service.smokePage() === "bind" || service.smokePage() === "upgrade-bind") && !window.smokeBindingDone && result.length > 0) {
                             window.smokeBindingDone = true
                             window.choose(result[0])
-                            versionChooser.currentIndex = 0
+                            versionChooser.currentIndex = versionDialog.choices.findIndex(i => i.id === "release-0.1.0")
                             versionDialog.accept()
                             return
                         }
                         if (service.smokePage() === "installations") tabs.currentIndex = 1
                         if (service.smokePage() === "install") installDialog.open()
                         if (service.smokePage() === "version" && result.length > 0) window.choose(result[0])
+                        if (service.smokePage() === "upgrade" && result.length > 0) {
+                            window.choose(result[0])
+                            versionChooser.currentIndex = versionDialog.choices.findIndex(i => i.id === "release-0.1.0")
+                        }
                         if (service.smokePage() === "log") logDialog.open()
                         if (service.smokePage() === "releases") {
                             releaseDialog.open()
@@ -260,8 +265,10 @@ ApplicationWindow {
                     window.choose(result)
                     window.refresh()
                 } else {
+                    if (command === "bind" && result.backup) window.lastBackup = result.backup.path
+                    if (command === "bind") logDialog.close()
                     window.notice = command === "open" ? "Editor launched."
-                        : command === "bind" ? "Project editor selection saved."
+                        : command === "bind" ? "Project editor selection saved." + (result.backup ? " Backup: " + result.backup.path : "")
                         : "Installation saved."
                     window.refresh()
                 }
@@ -293,6 +300,11 @@ ApplicationWindow {
                 Label { text: "Blockloom Hub"; font.pixelSize: 30; font.bold: true }
             }
             Item { Layout.fillWidth: true }
+            HubButton {
+                text: "Show backup"
+                visible: window.lastBackup.length > 0
+                onClicked: if (!service.showBackup(window.lastBackup)) window.error = "The backup folder could not be opened."
+            }
             HubButton { text: "Refresh"; enabled: !service.busy; onClicked: refresh() }
         }
         TabBar {
@@ -486,10 +498,16 @@ ApplicationWindow {
         standardButtons: Dialog.Save | Dialog.Cancel
         property var choices: window.installations.filter(i => i.status === "ready")
         onOpened: {
+            backupBeforeChange.checked = true
             for (let n = 0; n < choices.length; ++n)
                 if (choices[n].id === window.selectedProject.installation) versionChooser.currentIndex = n
         }
-        onAccepted: perform("bind", [window.selectedProject.path, choices[versionChooser.currentIndex].id])
+        onAccepted: {
+            let args = [window.selectedProject.path, choices[versionChooser.currentIndex].id]
+            if (backupBeforeChange.checked && backupBeforeChange.visible) args.push("--backup")
+            perform("bind", args)
+            if (args.includes("--backup")) logDialog.open()
+        }
         Component.onCompleted: standardButton(Dialog.Save).enabled = Qt.binding(() => versionChooser.currentIndex >= 0 && !service.busy)
         ColumnLayout {
             anchors.fill: parent
@@ -498,6 +516,13 @@ ApplicationWindow {
                 id: versionChooser
                 Layout.fillWidth: true
                 model: versionDialog.choices.map(i => window.label(i))
+            }
+            HubCheck {
+                id: backupBeforeChange
+                text: "Back up project before changing editor"
+                checked: true
+                visible: !!window.selectedProject.installation && versionChooser.currentIndex >= 0
+                    && versionDialog.choices[versionChooser.currentIndex].id !== window.selectedProject.installation
             }
             Label {
                 text: versionDialog.choices.length === 0 ? "Install or build an editor first."

@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]]; then
+    export PATH="/usr/bin:$PATH"
+fi
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fixture="$(mktemp -d)"
+if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]]; then
+    fixture="$(cygpath -u "$fixture")"
+fi
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/scripts" "$fixture/patches/example" \
     "$fixture/source/example-1.0.0/src" "$fixture/cargo/registry/cache/test"
@@ -19,6 +25,11 @@ fi
 printf 'example 1.0.0 %s example\n' "$checksum" > "$fixture/patches/dependencies.txt"
 export CARGO_HOME="$fixture/cargo"
 export BLOCKLOOM_PATCHED_DEPS_DIR="$fixture/.patched-deps"
+if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]]; then
+    # Exercise the drive-letter paths supplied by Windows CI and Cargo.
+    export CARGO_HOME="$(cygpath -w "$fixture/cargo")"
+    export BLOCKLOOM_PATCHED_DEPS_DIR="$(cygpath -m "$fixture/.patched-deps")"
+fi
 prepare() { bash "$fixture/scripts/prepare-patched-deps.sh" "$@"; }
 expect_failure() {
     if prepare "$@" > "$fixture/failure.log" 2>&1; then

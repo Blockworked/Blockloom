@@ -16,6 +16,7 @@ qml-preview = []
 
 [dependencies]
 blockloom-app = { path = "../blockloom-app" }
+blockloom-protocol = { path = "../blockloom-protocol" }
 blockstitch-qml.workspace = true
 cxx = "1.0"
 cxx-qt = "0.10"
@@ -31,13 +32,11 @@ tracing-subscriber.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 blockloom-runtime = { path = "../blockloom-runtime" }
 blockloom-core = { path = "../blockloom-core" }
-blockloom-protocol = { path = "../blockloom-protocol" }
 
 # Windows shares Vulkan images with Qt through Win32 memory handles.
 [target.'cfg(target_os = "windows")'.dependencies]
 blockloom-runtime = { path = "../blockloom-runtime" }
 blockloom-core = { path = "../blockloom-core" }
-blockloom-protocol = { path = "../blockloom-protocol" }
 
 [build-dependencies]
 cxx-qt-build = { version = "0.10", features = ["link_qt_object_files"] }

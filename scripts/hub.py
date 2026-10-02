@@ -17,6 +17,7 @@ import tomllib
 import uuid
 import hub_download
 import hub_github
+import hub_backup
 
 from hub_install import MANIFEST, editor_name, promote, stage, validate_payload
 from replace import host_target, just_exe
@@ -363,15 +364,35 @@ class Hub:
                 raise ValueError("Downloaded bundle does not match the selected release")
             return self.install(bundles[0], components, android_rust_targets)
 
-    def bind(self, project, identity):
+    def bind(self, project, identity, backup=False):
         with self.mutation():
             self.installation(identity, ready=True)
             result = self.project(project)
             self.require_idle(result["path"])
+            if backup and result["installation"] != identity:
+                snapshot = self._backup_project(result)
+                result["backup"] = snapshot
+                self.require_idle(result["path"])
+            checkpoint()
             write_json(Path(result["path"]) / ".blockloom" / "hub.json",
                        {"schema": 1, "installation": identity})
             result["installation"] = identity
             return result
+
+    def _backup_project(self, project):
+        source = Path(project["path"])
+        key = hashlib.sha256(os.path.normcase(str(source)).encode()).hexdigest()[:16]
+        directory = self.root / "backups" / key
+        if directory.resolve().is_relative_to(source):
+            raise ValueError("Project backups must be stored outside the project folder")
+        directory.mkdir(parents=True, exist_ok=True)
+        name = time.strftime("%Y%m%d-%H%M%S", time.gmtime()) + "-" + uuid.uuid4().hex[:8] + ".zip"
+        snapshot = hub_backup.create(source, directory / name, lambda: self.require_idle(source))
+        return {**snapshot, "project": str(source), "installation": project["installation"]}
+
+    def backup_project(self, project):
+        with self.mutation():
+            return self._backup_project(self.project(project))
 
     def rebuild(self, identity, jobs=None):
         self.prepare_dev(identity, jobs)
@@ -534,6 +555,7 @@ def main(argv=None):
     for name, argument in (("add-dev", "repo"), ("open", "project"), ("remember", "project")):
         commands.add_parser(name).add_argument(argument)
     commands.add_parser("dev-options").add_argument("installation")
+    commands.add_parser("backup-project").add_argument("project")
     commands.add_parser("check-releases").add_argument("url", nargs="?")
     settings = commands.add_parser("release-settings")
     settings.add_argument("--source", choices=("https", "github-cli"))
@@ -553,6 +575,7 @@ def main(argv=None):
     bind = commands.add_parser("bind", help="Explicitly select an editor; does not migrate project data")
     bind.add_argument("project")
     bind.add_argument("installation")
+    bind.add_argument("--backup", action="store_true", help="Back up the project before changing its editor")
     for name in ("rebuild", "prepare-dev"):
         rebuild = commands.add_parser(name)
         rebuild.add_argument("installation")
@@ -588,7 +611,9 @@ def main(argv=None):
             components = [name for name in OPTIONAL_TOOLS if getattr(args, name.replace("-", "_"))]
             result = hub.download_release(args.version, components, args.android_rust_targets, args.sha256)
         elif args.command == "bind":
-            result = hub.bind(args.project, args.installation)
+            result = hub.bind(args.project, args.installation, args.backup)
+        elif args.command == "backup-project":
+            result = hub.backup_project(args.project)
         elif args.command == "rebuild":
             result = hub.rebuild(args.installation, args.jobs)
         elif args.command == "prepare-dev":

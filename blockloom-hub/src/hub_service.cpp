@@ -4,12 +4,14 @@
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QProcessEnvironment>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QTimer>
 #include <QtCore/QUrl>
 #include <QtGui/QGuiApplication>
+#include <QtGui/QDesktopServices>
 #include <QtGui/QFontDatabase>
 #include <QtQuick/QQuickWindow>
 #include <cstdio>
@@ -28,7 +30,7 @@ HubService::HubService(QObject *parent) : QObject(parent)
         QTimer::singleShot(20000, this, [] { QCoreApplication::exit(2); });
     }
     // Extract the embedded service so imports work without a source checkout.
-    for (const auto &name : {"hub.py", "hub_install.py", "hub_process.py", "hub_download.py", "hub_github.py", "replace.py"}) {
+    for (const auto &name : {"hub.py", "hub_install.py", "hub_process.py", "hub_download.py", "hub_github.py", "hub_backup.py", "replace.py"}) {
         if (!m_scripts.isValid() || !QFile::copy(QString(":/hub-service/") + name,
                 m_scripts.filePath(name))) {
             m_setupError = "Could not prepare the Hub installation service.";
@@ -55,7 +57,7 @@ HubService::HubService(QObject *parent) : QObject(parent)
             m_errorOutput += text;
             appendLog(text);
             if (m_cancelRequested && code == 130)
-                finish(false, "Operation cancelled. Previous installation kept.");
+                finish(false, "Operation cancelled.");
             else finish(code == 0 && status == QProcess::NormalExit);
         });
 }
@@ -68,7 +70,14 @@ QString HubService::localPath(const QUrl &url) const
 bool HubService::canCancel() const
 {
     return m_busy && (m_command == "prepare-dev" || m_command == "rebuild" || m_command == "install-dev"
-        || m_command == "check-releases" || m_command == "download-release" || m_command == "install");
+        || m_command == "check-releases" || m_command == "download-release" || m_command == "install"
+        || m_command == "bind" || m_command == "backup-project");
+}
+
+bool HubService::showBackup(const QString &path) const
+{
+    const QFileInfo file(path);
+    return file.isFile() && QDesktopServices::openUrl(QUrl::fromLocalFile(file.absolutePath()));
 }
 
 void HubService::cancel()
