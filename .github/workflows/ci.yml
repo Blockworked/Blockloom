@@ -48,6 +48,7 @@ jobs:
           -p blockloom-core -p blockloom-protocol -p blockloom-app -p blockloom-runtime
           -p blockloom-plugin-api -p blockloom-plugin-host -p blockloom-plugin-gpu
           -p blockloom-plugin-sdk -p blockloom-example-tally -p blockloom-example-palette -p blockloom-voxel
+          -p blockloom-physics-probes
       # GPU tests are #[ignore]d and stay manual. Tests that only start the
       # renderer run on lavapipe, Mesa's software Vulkan.
       - name: Test
@@ -59,6 +60,7 @@ jobs:
           -p blockloom-core -p blockloom-protocol -p blockloom-app -p blockloom-runtime
           -p blockloom-plugin-api -p blockloom-plugin-host -p blockloom-plugin-gpu
           -p blockloom-plugin-sdk -p blockloom-example-tally -p blockloom-example-palette -p blockloom-voxel
+          -p blockloom-physics-probes
       # The harness, the scaffold's source and process isolation sit behind features.
       - name: Test (plugin kit and isolation)
         run: |

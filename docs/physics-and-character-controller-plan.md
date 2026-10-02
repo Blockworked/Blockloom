@@ -1,6 +1,6 @@
 # Physics, collision and character controller overhaul
 
-Status: proposed implementation plan. No runtime changes are included in this document.
+Status: proposed implementation plan. Phase 0 (probes and the compatibility ledger) is done for 3D: see `physics-compatibility-ledger.md` and the `blockloom-physics-probes` crate. Its open rows (2D, joints, cooking, per-body solver overrides) carry into the phases that own them. No runtime changes yet.
 
 Date: 2026-10-01.
 

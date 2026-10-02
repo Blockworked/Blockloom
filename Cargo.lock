@@ -2512,6 +2512,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "blockloom-physics-probes"
+version = "0.0.1"
+dependencies = [
+ "rapier2d",
+ "rapier3d",
+]
+
+[[package]]
 name = "blockloom-plugin-api"
 version = "0.0.1"
 dependencies = [

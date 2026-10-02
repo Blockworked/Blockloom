@@ -10,6 +10,7 @@ members = [
     "blockloom-plugin-host",
     "blockloom-plugin-sdk",
     "blockloom-plugin-gpu",
+    "blockloom-physics-probes",
     "plugins/examples/tally",
     "plugins/examples/palette",
     "plugins/voxel",

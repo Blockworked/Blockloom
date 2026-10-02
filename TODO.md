@@ -268,6 +268,17 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         from World.surface, volumes and the run's overrides.
 - [x] Particle/trail blocks (burst, emitter dials), plus ghost trails for custom-shaded and tilemap actors.
 - [x] Advanced physics: fixed, hinge and rope joints, character controller, one-way platforms, and ragdoll chains built from hinged bodies.
+- [ ] Physics, collision and character controller overhaul (`docs/physics-and-character-controller-plan.md`, ledger in `docs/physics-compatibility-ledger.md`):
+  - [x] Phase 0: probes against pinned Rapier for materials, compounds, events, queries, CCD and the controller; compatibility ledger.
+  - [ ] Phase 0 leftovers: 2D probes, joints, mesh cooking, per-body solver overrides, a platform-carry backend switch, Unity-editor confirmation of the documented values.
+  - [ ] Phase 1: document and ownership foundation.
+  - [ ] Phase 2: bodies, geometry and solver policy.
+  - [ ] Phase 3: events, queries and cooking.
+  - [ ] Phase 4: character controllers.
+  - [ ] Phase 5: reusable motors and input.
+  - [ ] Phase 6: cameras, presets and authoring.
+  - [ ] Phase 7: joints and full integration.
+  - [ ] Phase 8: compatibility and shipping.
 - [x] AI: live polyanya rebake, navigation cost areas and layer masks, off-mesh links, crowd separation, steering, behavior trees and sight perception.
 - [ ] Performance foundation (do before Phase 5 needs it): engine-wide footing for
       the Phase 5 environment stack; Phase 5 adds the rendering budgets on top.

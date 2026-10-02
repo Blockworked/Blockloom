@@ -224,6 +224,24 @@ uploads those bytes as an image. Elsewhere it is a child process.
 - **`blockloom-plugin-api`**, **`blockloom-plugin-host`**, **`blockloom-plugin-sdk`**, **`blockloom-plugin-gpu`** - the plugin platform:
   manifests, schemas, records and the C ABI (api, wasm-safe), resolver, cache,
   install transactions and the native loader (host). See Plugins below.
+- **`blockloom-physics-probes`** - not part of the game: Phase 0 of the physics
+  and character controller plan (`docs/physics-and-character-controller-plan.md`).
+  Test-only probes against the pinned Rapier (`rapier2d`/`rapier3d` at the rev
+  `bevy_rapier3d` uses) answering the rows of `docs/physics-compatibility-ledger.md`:
+  `materials.rs` (static/dynamic friction through a `modify_solver_contacts` hook),
+  `compounds.rs` (ownership, mass), `events.rs` (the Unity pair matrix, per-step
+  event delivery), `queries.rs`, `ccd.rs` (what each CCD flag set holds) and
+  `controller.rs` (Rapier's `KinematicCharacterController` against Unity's skin
+  width, step offset, slopes, overlap recovery and platform carry). Findings to
+  keep in mind before touching physics: queries are stale until
+  `detect_collisions` runs, and syncing a never-stepped velocity-based kinematic
+  body freezes it until `wake_up`; Rapier's `offset` is Unity's skin width but its
+  autostep is not the step offset, and overlap recovery is capped per call; parry's
+  capsule-vs-box `intersect_shape`/`contact` flicker within a centimetre of touching
+  (use `distance`); Rapier's own kinematic carry lags and double counts with an
+  explicit one. Unity values come from Unity's documentation, not an editor. CI
+  runs it with the rest of the workspace; `cargo test -p blockloom-physics-probes
+  -- --nocapture` prints the quoted numbers.
 - **`blockstitch-core`** (sibling repo, see above) - the shared block-editor
   backend. `value` is the `Value`/`Op` expression system, extended by an app
   through `register_operators` (Blockloom registers its sensing reporters in
