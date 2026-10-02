@@ -12,21 +12,28 @@
 //! contacts, sleeping) never appears here.
 
 pub mod edit;
+pub mod geometry;
 pub mod ids;
+pub mod layers;
 pub mod material;
 pub mod meta;
 pub mod migrate;
+pub mod ops;
 pub mod ownership;
+pub mod plan;
 pub mod spec;
 pub mod validate;
 
 pub use ids::{ColliderId, ComponentId};
+pub use layers::{ColliderFilter, LayerSettings, layer_bit, needs_exact, pair_collides};
 pub use material::{
     CombineMode, MaterialBody, MaterialDef, MaterialLibrary, MaterialOverrides, MaterialRef,
     PhysicsMaterial, PhysicsMaterial2D,
 };
 pub use migrate::{ActorMigration, shape_from_look};
+pub use ops::{ForceMode, world_inertia};
 pub use ownership::{BodyEntry, ColliderOwnership, LocalPose, PhysicsOwnership};
+pub use plan::{BodyPlan, ColliderPlan, ExtraMass, PhysicsPlan, PlannedMaterial, PlannedShape};
 pub use spec::{
     Axis, BodyType, ColliderGeometry, ColliderShape, ColliderSpec, CollisionDetection, Constraints,
     Interpolation, LayerOverrides, MassSource, RigidbodySpec,
@@ -61,6 +68,8 @@ pub struct PhysicsSettings {
     pub profile: CompatibilityProfile,
     #[serde(default)]
     pub materials: MaterialLibrary,
+    #[serde(default)]
+    pub layers: LayerSettings,
 }
 
 impl PhysicsSettings {

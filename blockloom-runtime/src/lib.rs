@@ -64,6 +64,7 @@ mod overlay;
 mod passes;
 mod pbr_patch;
 mod performance;
+mod physics_install;
 pub mod player;
 #[cfg(feature = "plugins")]
 mod plugin_compute;
@@ -391,6 +392,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     }));
     app.init_resource::<model::ModelCache>();
     app.init_resource::<lights::LightMasks>();
+    app.init_resource::<physics_install::PhysicsLayers>();
     app.add_plugins(
         bevy_rapier2d::prelude::RapierPhysicsPlugin::<dim2::OneWayHooks>::pixels_per_meter(
             dim2::PIXELS_PER_METER,
@@ -398,9 +400,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         .in_fixed_schedule(),
     );
     app.add_plugins(
-        bevy_rapier3d::prelude::RapierPhysicsPlugin::<bevy_rapier3d::prelude::NoUserData>::default(
-        )
-        .in_fixed_schedule(),
+        bevy_rapier3d::prelude::RapierPhysicsPlugin::<physics_install::d3::Hooks3>::default()
+            .in_fixed_schedule(),
     );
     // The veil and the audio scale follow the live scene, not the launch
     // mode, so they run once outside the gated dimension blocks.
@@ -611,6 +612,17 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .chain(),
             )
                 .chain(),
+        )
+        .add_systems(
+            FixedUpdate,
+            (
+                physics_install::d2::clamp_velocities.run_if(is_2d),
+                physics_install::d3::clamp_velocities.run_if(is_3d),
+                physics_install::d2::refresh_masses.run_if(is_2d),
+                physics_install::d3::refresh_masses.run_if(is_3d),
+            )
+                .before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend)
+                .before(bevy_rapier3d::prelude::PhysicsSet::SyncBackend),
         )
         .configure_sets(
             FixedUpdate,

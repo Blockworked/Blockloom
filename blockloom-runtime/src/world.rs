@@ -905,6 +905,8 @@ pub fn rebuild_world(
             }
         }
     }
+    // Rigidbody and Collider components become rapier bodies and child shapes.
+    crate::physics_install::install(&mut commands, &project, &engine.entities);
     // The dimension's own effect system owns the physics pipeline, so gravity
     // is set the same way a `set gravity` block would set it.
     effects.0.push(Effect::SetGravity {
@@ -4551,9 +4553,13 @@ pub fn forward_of(transform: &Transform, mode: Mode) -> Vec3 {
 
 /// True when the physics engine owns this actor's movement.
 pub fn is_dynamic(engine: &Engine, actor: &str) -> bool {
-    engine
-        .actor(actor)
-        .is_some_and(|actor| actor.physics().body == BodyKind::Dynamic)
+    engine.actor(actor).is_some_and(|actor| {
+        actor.physics().body == BodyKind::Dynamic
+            || actor.components.rigidbody().is_some_and(|body| {
+                body.simulated
+                    && body.body_type == blockloom_core::physics::BodyType::Dynamic
+            })
+    })
 }
 
 pub fn is_character(engine: &Engine, actor: &str) -> bool {

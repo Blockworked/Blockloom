@@ -481,6 +481,21 @@ impl Backend {
                 app,
                 arg(&args, "profile")?,
             )?),
+            "set_physics_layer_name" => to_json(commands::physics::set_physics_layer_name(
+                state,
+                app,
+                arg(&args, "layer")?,
+                arg(&args, "name")?,
+            )?),
+            "set_layer_collision" => to_json(commands::physics::set_layer_collision(
+                state,
+                app,
+                arg(&args, "mode")?,
+                arg(&args, "a")?,
+                arg(&args, "b")?,
+                arg(&args, "collides")?,
+            )?),
+            "physics_plan" => to_json(commands::physics::physics_plan(state)?),
             "add_physics_material" => to_json(commands::physics::add_physics_material(
                 state,
                 app,

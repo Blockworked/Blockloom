@@ -1453,6 +1453,59 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "set-physics-layer-name",
+        cmd: "set_physics_layer_name",
+        aliases: &[],
+        summary: "Name one of the 32 collision layers; an empty name goes back to \"Layer N\".",
+        args: &[
+            ArgSpec {
+                name: "layer",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "set-layer-collision",
+        cmd: "set_layer_collision",
+        aliases: &[],
+        summary: "Switch collisions between two layers on or off in the 2D or 3D matrix. Layers are 1 to 32; everything collides until a pair is switched off.",
+        args: &[
+            ArgSpec {
+                name: "mode",
+                ty: "TwoD|ThreeD",
+                required: true,
+            },
+            ArgSpec {
+                name: "a",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "b",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "collides",
+                ty: "bool",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "physics-plan",
+        cmd: "physics_plan",
+        aliases: &[],
+        summary: "What Play would install for the active scene: each body's mass split, each shape's pose, material and filter groups, and every problem (errors stop Play and Build).",
+        args: &[],
+    },
+    CommandSpec {
         name: "add-physics-material",
         cmd: "add_physics_material",
         aliases: &[],

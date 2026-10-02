@@ -2152,6 +2152,7 @@ pub(crate) fn run_project(
     };
     // Missing plugin data is a report, not a game that quietly does less.
     plugins::preflight_run(&s)?;
+    physics::preflight(&project, "Play")?;
     auto_save(&s);
     // Built before the world is handed over, so a script that won't compile
     // shows its errors in the log instead of silently doing nothing.
@@ -2766,6 +2767,7 @@ pub(crate) fn run_build_game(
         }
     }
 
+    physics::preflight(&project, "the build")?;
     blockloom_core::build_control::step("Refreshing imports")?;
     plugins::refresh_imports(state, app);
     let options = build::BuildOptions {

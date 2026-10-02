@@ -41,7 +41,7 @@ pub struct PhysicsIssue {
 }
 
 impl PhysicsIssue {
-    fn error(message: impl Into<String>) -> Self {
+    pub(super) fn error(message: impl Into<String>) -> Self {
         Self {
             severity: Severity::Error,
             actor: None,
@@ -51,24 +51,24 @@ impl PhysicsIssue {
         }
     }
 
-    fn warning(message: impl Into<String>) -> Self {
+    pub(super) fn warning(message: impl Into<String>) -> Self {
         Self {
             severity: Severity::Warning,
             ..Self::error(message)
         }
     }
 
-    fn on(mut self, actor: &str) -> Self {
+    pub(super) fn on(mut self, actor: &str) -> Self {
         self.actor = Some(actor.to_string());
         self
     }
 
-    fn of(mut self, component: &str) -> Self {
+    pub(super) fn of(mut self, component: &str) -> Self {
         self.component = Some(component.to_string());
         self
     }
 
-    fn field(mut self, field: &str) -> Self {
+    pub(super) fn field(mut self, field: &str) -> Self {
         self.field = Some(field.to_string());
         self
     }

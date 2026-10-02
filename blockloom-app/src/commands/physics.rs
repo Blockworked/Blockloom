@@ -16,6 +16,7 @@ use blockloom_core::physics::{
     PhysicsOwnership, RigidbodySpec, Severity, meta,
 };
 use blockloom_core::project::{Project, Scene};
+use blockloom_core::scene::Mode;
 use serde_json::{Value, json};
 
 /// Runs `edit` on the open project; on success files an undo step (coalesced
@@ -167,6 +168,32 @@ pub(crate) fn set_physics_profile(
     })
 }
 
+/// Names a collision layer (1 to 32); an empty name goes back to "Layer N".
+pub(crate) fn set_physics_layer_name(
+    state: &SharedState,
+    app: &AppHandle,
+    layer: u8,
+    name: String,
+) -> Result<(), String> {
+    edit(state, app, None, |project| {
+        project.physics.layers.set_name(layer, &name)
+    })
+}
+
+/// Switches collisions between two layers on or off for one dimension.
+pub(crate) fn set_layer_collision(
+    state: &SharedState,
+    app: &AppHandle,
+    mode: Mode,
+    a: u8,
+    b: u8,
+    collides: bool,
+) -> Result<(), String> {
+    edit(state, app, None, |project| {
+        project.physics.layers.set_collides(mode, a, b, collides)
+    })
+}
+
 pub(crate) fn add_physics_material(
     state: &SharedState,
     app: &AppHandle,
@@ -221,10 +248,9 @@ pub(crate) fn remove_physics_material(
 pub(crate) fn physics_check(state: &SharedState) -> Result<Value, String> {
     let s = lock(state)?;
     let project = s.project().ok_or("No project is open")?;
-    let library = &project.physics.materials;
     let mut issues = Vec::new();
     for scene in &project.scenes {
-        for issue in scene.physics_issues(library) {
+        for issue in scene.physics_plan(&project.physics).issues {
             let mut value = serde_json::to_value(&issue).map_err(|e| e.to_string())?;
             value["scene"] = json!(scene.name);
             issues.push((issue.severity, value));
@@ -242,6 +268,50 @@ pub(crate) fn physics_check(state: &SharedState) -> Result<Value, String> {
         "schemaVersion": project.physics.schema_version,
         "profile": project.physics.profile,
         "issues": issues.into_iter().map(|(_, value)| value).collect::<Vec<_>>(),
+    }))
+}
+
+/// Refuses Play or Build while the scene that would run has a physics error.
+pub(crate) fn preflight(project: &Project, action: &str) -> Result<(), String> {
+    let plan = project.active_scene().physics_plan(&project.physics);
+    let errors: Vec<String> = plan
+        .errors()
+        .map(|issue| match &issue.actor {
+            Some(actor) => format!("{actor}: {}", issue.message),
+            None => issue.message.clone(),
+        })
+        .collect();
+    if errors.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "Physics problems stop {action}:\n- {}",
+        errors.join("\n- ")
+    ))
+}
+
+/// `physics-plan`: what Play would install for the active scene (bodies with
+/// their mass split, shapes with their poses, materials and filter groups).
+pub(crate) fn physics_plan(state: &SharedState) -> Result<Value, String> {
+    let s = lock(state)?;
+    let project = s.project().ok_or("No project is open")?;
+    let scene = project.active_scene();
+    let plan = scene.physics_plan(&project.physics);
+    let mode = scene.world.mode;
+    Ok(json!({
+        "scene": scene.name,
+        "runnable": plan.is_runnable(),
+        "exactFiltering": plan.exact_filtering,
+        "bodies": plan.bodies,
+        "colliders": plan.colliders,
+        "layers": {
+            "names": (1..=32u8).map(|n| project.physics.layers.name(n)).collect::<Vec<_>>(),
+            "disabled": match mode {
+                Mode::ThreeD => &project.physics.layers.disabled_3d,
+                Mode::TwoD => &project.physics.layers.disabled_2d,
+            },
+        },
+        "issues": plan.issues,
     }))
 }
 

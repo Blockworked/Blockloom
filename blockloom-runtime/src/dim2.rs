@@ -36,9 +36,28 @@ pub struct OneWayPlatform;
 pub struct OneWayHooks<'w, 's> {
     platforms: Query<'w, 's, &'static OneWayPlatform>,
     velocities: Query<'w, 's, &'static rp::Velocity>,
+    layers: Res<'w, crate::physics_install::PhysicsLayers>,
+    colliders: Query<'w, 's, &'static crate::physics_install::PlannedCollider>,
 }
 
 impl rp::BevyPhysicsHooks for OneWayHooks<'_, '_> {
+    fn filter_contact_pair(&self, context: rp::PairFilterContextView) -> Option<rp::SolverFlags> {
+        crate::physics_install::pair_allowed(
+            &self.layers,
+            self.colliders.get(context.collider1()).ok(),
+            self.colliders.get(context.collider2()).ok(),
+        )
+        .then_some(rp::SolverFlags::COMPUTE_RIGID_IMPULSES)
+    }
+
+    fn filter_intersection_pair(&self, context: rp::PairFilterContextView) -> bool {
+        crate::physics_install::pair_allowed(
+            &self.layers,
+            self.colliders.get(context.collider1()).ok(),
+            self.colliders.get(context.collider2()).ok(),
+        )
+    }
+
     fn modify_solver_contacts(&self, mut context: rp::ContactModificationContextView) {
         let a = context.collider1();
         let b = context.collider2();
@@ -46,14 +65,19 @@ impl rp::BevyPhysicsHooks for OneWayHooks<'_, '_> {
         let Some(normal) = context.normal() else {
             return;
         };
-        let (other, up) = if self.platforms.get(a).is_ok() {
-            (b, normal.y)
+        // A collider on its own entity carries the velocity itself; a planned
+        // one hangs off its body.
+        let (other, up, other_body) = if self.platforms.get(a).is_ok() {
+            (b, normal.y, context.rigid_body2())
         } else if self.platforms.get(b).is_ok() {
-            (a, -normal.y)
+            (a, -normal.y, context.rigid_body1())
         } else {
             return;
         };
-        let rising = self.velocities.get(other).is_ok_and(|v| v.linear.y > 0.0);
+        let rising = self
+            .velocities
+            .get(other_body.unwrap_or(other))
+            .is_ok_and(|v| v.linear.y > 0.0);
         if (up < 0.5 || rising)
             && let Some(contacts) = context.solver_contacts_mut()
         {
@@ -979,6 +1003,7 @@ pub fn apply_effects(
 pub fn relay_collisions(
     mut messages: MessageReader<rp::CollisionEvent>,
     mut engine: NonSendMut<Engine>,
+    planned: Query<&crate::physics_install::PlannedCollider>,
 ) {
     if !engine.running || engine.paused {
         messages.clear();
@@ -989,6 +1014,12 @@ pub fn relay_collisions(
             rp::CollisionEvent::Started(a, b, _) => (*a, *b, true),
             rp::CollisionEvent::Stopped(a, b, _) => (*a, *b, false),
         };
+        // A planned collider is its own entity; the touch is the actor's.
+        let owner = |entity: Entity| match planned.get(entity) {
+            Ok(shape) => engine.entities.get(&shape.actor).copied().unwrap_or(entity),
+            Err(_) => entity,
+        };
+        let (a, b) = (owner(a), owner(b));
         crate::world::note_contact(&mut engine, a, b, started);
     }
 }
@@ -1075,6 +1106,7 @@ mod tests {
         app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
             Duration::from_secs_f32(1.0 / 60.0),
         ));
+        app.init_resource::<crate::physics_install::PhysicsLayers>();
         app.add_plugins(rp::RapierPhysicsPlugin::<OneWayHooks>::default());
         app.world_mut().spawn((
             rp::RigidBody::Fixed,

@@ -326,8 +326,10 @@ old `follow` onto its actor as a camera component.
 ### Physics document (Rigidbody, Collider)
 
 Phase 1 of the physics plan, `blockloom-core/src/physics/`. It is the saved model
-and its rules only: **the runtime still plays the legacy `Body` component**, and
-nothing converts a project until a later phase wires migration into the editor.
+and its rules. **Actors with a legacy `Body` still play through the old path**
+(unchanged, byte for byte); actors with Rigidbody/Collider components play through
+the Phase 2 installer below. Nothing converts a project until a later phase wires
+migration into the editor, and an actor may not have both.
 
 - `ActorComponent::Rigidbody { rigidbody }` (`RigidbodySpec`: body type, mass
   or density, damping, gravity, interpolation, collision detection, constraints,
@@ -372,11 +374,80 @@ nothing converts a project until a later phase wires migration into the editor.
   `physics-migration-preview`. A refused edit leaves no undo step. The generic
   `add|set-actor-component` refuse these two components and point at the typed
   commands. The wire spelling is `{"kind": "Shape", "shape": {"kind": "Sphere", ...}}`.
-- Not yet: any UI (the inspector shows an empty card for these components), the
-  runtime reading them, and verified Unity defaults for the Blockloom-chosen values
+- Not yet: any UI (the inspector shows an empty card for these components) and
+  verified Unity defaults for the Blockloom-chosen values
   (`DEFAULT_MAX_LINEAR_VELOCITY` and the sleep and solver defaults).
   Tests: `cargo test -p blockloom-core physics` (`tests/physics_gate.rs` holds the
   gate fixtures) and `cargo test -p blockloom-app --test physics`.
+
+### Physics runtime (bodies, shapes, filtering)
+
+Phase 2 of the physics plan. Core decides, the runtime installs.
+
+- **Core** (`blockloom-core/src/physics/`): `plan.rs` `PhysicsPlan::build(actors,
+  mode, settings)` (also `Scene::physics_plan`) turns a scene into `BodyPlan`s and
+  `ColliderPlan`s and carries every problem (`issues`, a superset of
+  `validate_scene`). `geometry.rs` applies Unity's scale rules (a box scales per axis, a
+  sphere by its largest axis, a capsule's radius by the larger of the two axes across it
+  and its length by its own axis; negative scale only mirrors) and never turns a
+  primitive into a hull. `layers.rs` is the 32-layer matrix per dimension
+  (`LayerSettings`, saved on `PhysicsSettings.layers`, written only when changed) plus
+  `ColliderFilter`/`pair_collides`: a collider's include/exclude overrides decide first
+  (exclude beats include, the higher priority wins between two, a tie excludes),
+  then the matrix, then each side's legacy mask. `needs_exact` says when two group
+  masks cannot say it (an include, or an exclude with a priority) and the plan sets
+  `exact_filtering`. `ops.rs` is the `ForceMode` math (every mode reduces to an
+  impulse for one fixed step, so a force never lingers).
+- **Mass**: shapes carry it. An explicit body mass becomes density `mass / volume`
+  over the shapes that count (enabled, not triggers, with volume), so the total is exact
+  whatever the shape count and COM and inertia come from the shapes. A body with
+  nothing to carry it holds its own mass (`ExtraMass`; default 1 kg). A custom
+  inertia (or center of mass, which needs an inertia too, else an error) moves the whole
+  mass onto the body. Static and kinematic bodies carry no density.
+- **Positions**: a collider's pose is solved in its frame actor's space (the body actor,
+  or its own actor for scenery) from the same world matrices ownership uses, in
+  metres (`position`) and as the local translation under the frame entity (`local`,
+  which bevy_rapier multiplies by the frame's scale). A rotated shape under a stretched
+  frame would shear and is an error. Zero scale is an error.
+- **Unsupported on purpose** (errors, not silent): convex hull, triangle mesh,
+  terrain and tilemap colliders (Phase 3: cooking), a polygon that is not convex, a
+  shape for the other dimension, a concave solid on a dynamic body, a custom center of
+  mass without an inertia. Open: `contact_offset`, `queryable`, `interpolation`,
+  `solver_iterations` and `max_depenetration_velocity` are stored and validated but
+  have no runtime effect yet (the world renderer already interpolates every actor).
+- **Runtime** (`blockloom-runtime/src/physics_install.rs`): `install` runs at the end
+  of `rebuild_world` for the scene's plan (an erroring plan installs nothing and logs).
+  A body gets `RigidBody`, `Velocity`, `ExternalImpulse`, gravity scale (Use Gravity off is
+  scale 0), damping, `LockedAxes`, `Sleeping`, CCD, extra mass and
+  `RigidBodyDisabled` for Simulated off. **Each collider is its own child entity**
+  of its frame entity (`PlannedCollider`), with `ColliderScale::Absolute` (the shape is
+  built at its final size), density, `Friction`/`Restitution`, collision groups, `Sensor`
+  for triggers (`ActiveCollisionTypes::all() - STATIC_STATIC`), `ColliderDisabled`, and
+  one-way (2D). Removing a collider entity is how a shape goes away;
+  `refresh_masses` nudges every planned body so the mass totals again (Rapier keeps
+  the old one otherwise). Contacts on a collider entity are relayed as touches on the
+  actor that owns the component.
+- **Hooks**: 3D uses `Hooks3` (`RapierPhysicsPlugin::<Hooks3>`) for the stick/slip
+  friction (static friction below `STICK_SPEED` of sliding at the contact point,
+  dynamic above; only on colliders whose two coefficients differ) and the exact pair test;
+  2D reuses `OneWayHooks` (now also the pair test). 2D friction is Rapier's geometric
+  mean and bounce its maximum, set per collider. `PhysicsLayers` is the resource the
+  hooks read. Velocity caps and frozen axes are enforced by `clamp_velocities` before
+  each step (a 2D body has no angular cap; Unity 2D has none comparable).
+- **CCD**: Discrete and Continuous both leave Rapier's own sweep against fixed colliders
+  (a true Discrete would need `max_ccd_substeps = 0`, a world switch, so it is not
+  applied while legacy bodies exist); Continuous Dynamic is `Ccd`; Speculative is
+  `SoftCcd` with a 0.5 m prediction. See the ledger's CCD table for what each holds.
+- **Legacy effects**: `world::is_dynamic` also recognizes a simulated dynamic
+  Rigidbody, so `push`, `set velocity` and the like act on planned bodies. The navmesh
+  and fracture still read the legacy `Body` only.
+- **Commands**: `set-physics-layer-name`, `set-layer-collision`, `physics-plan`;
+  `physics-check` now includes plan-level errors, and Play and Build refuse a scene
+  with a physics error (`commands::physics::preflight`).
+- Tests: `cargo test -p blockloom-core physics`, `cargo test -p blockloom-runtime
+  --lib physics_install` (headless mini-apps with a real Rapier world: resting, mass
+  totals and removal, modes, triggers, layers, exact filtering, stick/slip on a slope,
+  CCD, one-way, caps), `cargo test -p blockloom-app --test physics`.
 
 ### Actors that come and go
 

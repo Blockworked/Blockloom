@@ -204,3 +204,72 @@ fn the_migration_preview_changes_nothing() {
     );
     assert!(b.dispatch("physics_properties", json!({})).unwrap()["collider"].is_array());
 }
+
+#[test]
+fn layers_are_named_and_switched_with_undo_and_the_plan_reports_them() {
+    let (b, _root) = backend("layers");
+    b.dispatch(
+        "set_physics_layer_name",
+        json!({"layer": 3, "name": "Enemies"}),
+    )
+    .unwrap();
+    b.dispatch(
+        "set_layer_collision",
+        json!({"mode": "ThreeD", "a": 4, "b": 3, "collides": false}),
+    )
+    .unwrap();
+    let plan = b.dispatch("physics_plan", json!({})).unwrap();
+    assert_eq!(plan["layers"]["names"][2], "Enemies");
+    assert_eq!(plan["layers"]["disabled"], json!([[3, 4]]));
+    assert_eq!(plan["runnable"], true);
+
+    assert!(
+        b.dispatch(
+            "set_layer_collision",
+            json!({"mode": "ThreeD", "a": 0, "b": 3, "collides": false}),
+        )
+        .is_err()
+    );
+    b.dispatch("undo", json!({})).unwrap();
+    let plan = b.dispatch("physics_plan", json!({})).unwrap();
+    assert_eq!(plan["layers"]["disabled"], json!([]));
+    assert_eq!(plan["layers"]["names"][2], "Enemies");
+}
+
+#[test]
+fn the_plan_lists_bodies_and_refuses_what_it_cannot_build() {
+    let (b, _root) = backend("plan");
+    let id = actor(&b, "Sphere", "Crate");
+    b.dispatch(
+        "set_rigidbody",
+        json!({"actorId": id, "rigidbody": {"mass": {"mode": "Explicit", "mass": 3.0}}}),
+    )
+    .unwrap();
+    b.dispatch("add_collider", json!({"actorId": id, "collider": sphere()}))
+        .unwrap();
+    let plan = b.dispatch("physics_plan", json!({})).unwrap();
+    let body = plan["bodies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|body| body["actor"] == id.as_str())
+        .unwrap();
+    assert!((body["total_mass"].as_f64().unwrap() - 3.0).abs() < 1e-3);
+
+    b.dispatch(
+        "add_collider",
+        json!({"actorId": id, "collider": {"geometry": {"kind": "Shape", "shape": {"kind": "ConvexHull", "mesh": "rock.glb"}}}}),
+    )
+    .unwrap();
+    let plan = b.dispatch("physics_plan", json!({})).unwrap();
+    assert_eq!(plan["runnable"], false);
+    let check = b.dispatch("physics_check", json!({})).unwrap();
+    assert_eq!(check["ok"], false);
+    assert!(
+        check["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|issue| issue["message"].as_str().unwrap().contains("mesh cooking"))
+    );
+}
