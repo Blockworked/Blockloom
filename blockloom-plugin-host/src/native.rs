@@ -7,8 +7,10 @@
 //! prevents layout coupling, not crashes. Fault isolation is the process
 //! runtime mode.
 
+#[cfg(not(target_arch = "wasm32"))]
+use blockloom_plugin_api::abi::ENTRY_SYMBOL;
 use blockloom_plugin_api::abi::{
-    ABI_VERSION, Buffer, ENTRY_SYMBOL, EntryFn, HostApi, LOG_ERROR, PluginApi, Slice, Status,
+    ABI_VERSION, Buffer, EntryFn, HostApi, LOG_ERROR, PluginApi, Slice, Status,
 };
 use blockloom_plugin_api::manifest::Capability;
 #[cfg(not(target_arch = "wasm32"))]
@@ -136,13 +138,15 @@ impl NativeModule {
         #[cfg(target_arch = "wasm32")]
         {
             let _ = (capabilities, services);
-            return Err(format!(
+            Err(format!(
                 "{}: a browser can't load a native library",
                 path.display()
-            ));
+            ))
         }
         #[cfg(not(target_arch = "wasm32"))]
-        Self::open(path, capabilities, services)
+        {
+            Self::open(path, capabilities, services)
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -271,7 +275,7 @@ impl Drop for NativeModule {
             let _ = catch_unwind(AssertUnwindSafe(|| unsafe { shutdown(self.api.handle) }));
         }
         // Only now, with nothing able to call in or out, unload.
-        drop(self.library.take());
+        let _unload = self.library.take();
     }
 }
 

@@ -255,7 +255,7 @@ impl LoadedLogic {
             } => self.fire_raw(
                 "Plugin",
                 actor.as_deref().unwrap_or(""),
-                &codegen::plugin_detail(&plugin, &event, &args),
+                &blockloom_core::codegen::plugin_detail(&plugin, &event, &args),
                 "",
             ),
         }
