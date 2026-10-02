@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 jobs:
-  packages:
+  platforms:
     strategy:
       fail-fast: false
       matrix:
@@ -26,116 +26,10 @@ jobs:
           - os: xcode-27
             arch: clang_64
             deployment-target: '27.0'
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 180
-    env:
-      CARGO_TERM_COLOR: always
-      CARGO_INCREMENTAL: '0'
-      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment-target }}
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.tag || github.ref }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows'
-        with:
-          arch: x64
-          # Let vswhere select the newest installation on the VS 2026 runner.
-      - name: Verify Visual Studio 2026
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          if (!$env:VisualStudioVersion -or ([version]$env:VisualStudioVersion).Major -ne 18) {
-            throw "Visual Studio 2026 (18.x) is required; found '$env:VisualStudioVersion'"
-          }
-          Write-Host "Visual Studio $env:VisualStudioVersion at $env:VSINSTALLDIR"
-          $compiler = (Get-Command cl.exe -ErrorAction Stop).Source
-          $linker = Join-Path (Split-Path $compiler) 'link.exe'
-          if (!(Test-Path -LiteralPath $linker -PathType Leaf)) {
-            throw "MSVC linker not found at '$linker'"
-          }
-          Write-Host "MSVC linker: $linker"
-          # Git Bash puts its unrelated link.exe ahead of MSVC on PATH.
-          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Configure macOS 27 SDK
-        if: runner.os == 'macOS'
-        run: |
-          sdk_version=$(xcrun --sdk macosx --show-sdk-version)
-          echo "macOS SDK: $sdk_version"
-          [ "${sdk_version%%.*}" -ge 27 ] || { echo 'macOS 27 SDK is required'; exit 1; }
-          echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
-      - name: Linux build and deployment dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev \
-            libudev-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev \
-            libvulkan-dev libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 \
-            libxcb-shape0 libxcb-xinerama0 patchelf
-      - uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.12.0'
-          arch: ${{ matrix.arch }}
-          modules: qtmultimedia qtshadertools
-          setup-python: false
-          # Qt 6.11+ splits Windows packages into compiler-specific repositories.
-          aqtsource: git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7
-          py7zrversion: '==1.1.3'
-          cache: true
-          cache-key-prefix: qt-6.12-aqt-076e1659
-      - name: Configure Qt
-        run: |
-          python -c "import os, shutil; print('QMAKE=' + shutil.which('qmake'))" >> "$GITHUB_ENV"
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: just
-      - name: Install pinned Rust
-        run: |
-          rustup toolchain install
-          rustup target add aarch64-linux-android x86_64-linux-android
-      - run: just prepare-patched-deps
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: packages-${{ matrix.os }}-${{ inputs.shipping }}
-      - name: Concurrent editor, native player and web player builds
-        env:
-          SHIPPING: ${{ inputs.shipping }}
-        run: |
-          if [ "$SHIPPING" = true ]; then
-            python scripts/ci-build.py --shipping
-          else
-            python scripts/ci-build.py
-          fi
-      - name: Service and packaging tests
-        run: |
-          python scripts/test-replace.py
-          python scripts/test-hub.py
-          python scripts/test-hub-download.py
-          python scripts/test-hub-github.py
-          python scripts/test-package-release.py
-      - name: Qt Hub smoke tests
-        env:
-          QT_QPA_PLATFORM: offscreen
-          QT_QUICK_BACKEND: software
-        run: python scripts/test-hub-ui.py
-      - name: Package portable editor and Hub
-        env:
-          RELEASE_TAG: ${{ inputs.tag }}
-        run: |
-          if [ -n "$RELEASE_TAG" ]; then
-            python scripts/package-release.py --tag "$RELEASE_TAG"
-          else
-            python scripts/package-release.py
-          fi
-      - uses: actions/upload-artifact@v6
-        with:
-          name: packages-${{ matrix.os }}
-          path: artifacts/*
-          if-no-files-found: error
-          retention-days: 14
+    uses: ./.github/workflows/build-platform.yml
+    with:
+      os: ${{ matrix.os }}
+      qt-arch: ${{ matrix.arch }}
+      deployment-target: ${{ matrix.deployment-target || '' }}
+      shipping: ${{ inputs.shipping }}
+      tag: ${{ inputs.tag }}

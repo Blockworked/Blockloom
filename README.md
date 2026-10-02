@@ -65,8 +65,10 @@ Changing a project's editor offers a ZIP backup, enabled by default. Backups
 preserve the old editor selection and project files under the Hub's `backups`
 folder; Show backup opens that folder after the change.
 
-Build artifacts runs the editor and players concurrently on Windows, Linux and
-macOS. Release runs for `X.Y.Z` tags matching the workspace version, or a manual
+Build artifacts runs the editor/workspace, native player and web player on
+separate runners for each of Windows, Linux and macOS, then collects their
+outputs in a packaging job per platform. Each build has its own Cargo cache.
+Release runs for `X.Y.Z` tags matching the workspace version, or a manual
 existing-tag dispatch. It builds native and web players with the `dist` profile,
 then publishes editor/Hub archives and `blockloom-catalog.json`. Editor archives
 include Qt, the pinned Rust compiler, web support and optional Android Rust targets.

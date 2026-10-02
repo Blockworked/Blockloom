@@ -1,0 +1,119 @@
+name: Build platform packages
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        type: string
+        required: true
+      qt-arch:
+        type: string
+        required: true
+      deployment-target:
+        type: string
+        default: ''
+      shipping:
+        type: boolean
+        default: false
+      tag:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+  MACOSX_DEPLOYMENT_TARGET: ${{ inputs.deployment-target }}
+
+jobs:
+  compile:
+    name: Build ${{ matrix.component }}
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [editor, native, web]
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: ./.github/actions/package-setup
+        with:
+          qt-arch: ${{ matrix.component == 'editor' && inputs.qt-arch || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: packages-${{ inputs.os }}-${{ matrix.component }}-${{ inputs.shipping }}
+      - name: Build component
+        env:
+          SHIPPING: ${{ inputs.shipping }}
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          args=()
+          if [ "$SHIPPING" = true ]; then args+=(--shipping); fi
+          python scripts/ci-build.py --component "$COMPONENT" "${args[@]}"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: build-${{ inputs.os }}-${{ matrix.component }}
+          path: build-output.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  packages:
+    name: Package editor and Hub
+    needs: compile
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: ./.github/actions/package-setup
+        with:
+          qt-arch: ${{ inputs.qt-arch }}
+      - name: Install bundled Android Rust targets
+        run: rustup target add aarch64-linux-android x86_64-linux-android
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: build-${{ inputs.os }}-*
+          path: build-outputs
+      - name: Collect compiled outputs
+        run: |
+          for component in editor native web; do
+            tar -xf "build-outputs/build-${{ inputs.os }}-$component/build-output.tar"
+          done
+      - name: Service and packaging tests
+        run: |
+          python scripts/test-replace.py
+          python scripts/test-hub.py
+          python scripts/test-hub-download.py
+          python scripts/test-hub-github.py
+          python scripts/test-package-release.py
+      - name: Qt Hub smoke tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: python scripts/test-hub-ui.py
+      - name: Package portable editor and Hub
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          if [ -n "$RELEASE_TAG" ]; then
+            python scripts/package-release.py --tag "$RELEASE_TAG"
+          else
+            python scripts/package-release.py
+          fi
+      - uses: actions/upload-artifact@v6
+        with:
+          name: packages-${{ inputs.os }}
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14

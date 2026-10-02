@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Check packaged archive integrity and the concurrent CI build profiles."""
+"""Check packaged archive integrity and isolated CI build components."""
 
 import importlib.util
 import json
 import os
 from pathlib import Path
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -44,13 +45,56 @@ class PackageTests(unittest.TestCase):
 
     def test_ci_profiles_and_no_system_install(self):
         for shipping in (False, True):
-            with patch.dict(os.environ, {"BLOCKLOOM_INSTALL_DIR": "system"}), patch("sys.argv", ["ci-build", *( ["--shipping"] if shipping else [])]), \
-                    patch.object(build.subprocess, "run") as commands, patch.object(build.replace, "host_target", return_value="fixture"), patch.object(build.replace, "run_builds", return_value=0) as concurrent:
-                self.assertEqual(build.main(), 0)
-                self.assertEqual(os.environ["BLOCKLOOM_WEB_PROFILE"], "dist" if shipping else "release")
-                self.assertNotIn("BLOCKLOOM_INSTALL_DIR", os.environ)
-                concurrent.assert_called_once_with("dist" if shipping else "release")
-                self.assertFalse(any("install" in call.args[0] or "uninstall" in call.args[0] for call in commands.call_args_list))
+            for component in ("editor", "native", "web"):
+                with self.subTest(shipping=shipping, component=component), \
+                        patch.dict(os.environ, {"BLOCKLOOM_INSTALL_DIR": "system", "CARGO_BUILD_JOBS": "4"}), \
+                        patch("sys.argv", ["ci-build", "--component", component, *(["--shipping"] if shipping else [])]), \
+                        patch.object(build.subprocess, "run") as commands, \
+                        patch.object(build.replace, "just_exe", return_value="just"), \
+                        patch.object(build.replace, "host_target", return_value="fixture"), \
+                        patch.object(build, "archive_outputs") as archive:
+                    self.assertEqual(build.main(), 0)
+                    self.assertEqual(os.environ["CARGO_BUILD_JOBS"], "4")
+                    self.assertNotIn("BLOCKLOOM_INSTALL_DIR", os.environ)
+                    archive.assert_called_once_with(component)
+                    calls = [call.args[0] for call in commands.call_args_list]
+                    expected = {"editor": ["just", "build"],
+                                "native": ["just", "player" if shipping else "_stage-release-player"],
+                                "web": ["just", "web-player", "dist" if shipping else "release"]}
+                    self.assertIn(expected[component], calls)
+                    self.assertEqual(any("web-tools" in call for call in calls), component == "web")
+                    self.assertEqual(any("-p" in call for call in calls), component == "native" and not shipping)
+                    self.assertFalse(any("install" in call or "uninstall" in call for call in calls))
+
+    def test_component_artifacts_preserve_paths_and_modes(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(build.replace, "host_target", return_value="fixture"):
+            previous = Path.cwd()
+            try:
+                os.chdir(temporary)
+                directory = Path("target/release")
+                directory.mkdir(parents=True)
+                suffix = ".exe" if os.name == "nt" else ""
+                for name in ("blockloom", "blockloom-hub", "blockloom-runtime", "blockloom-shell"):
+                    binary = directory / (name + suffix)
+                    binary.write_bytes(b"exe")
+                    binary.chmod(0o755)
+                (directory / "unused.rlib").write_bytes(b"cache")
+                for target in ("fixture", "wasm32-unknown-unknown"):
+                    player = directory / "players" / target
+                    player.mkdir(parents=True)
+                    (player / "payload").write_bytes(b"player")
+                for component in ("editor", "native", "web"):
+                    build.archive_outputs(component)
+                    with tarfile.open("build-output.tar") as archive:
+                        names = archive.getnames()
+                        if component == "editor":
+                            self.assertEqual(len(names), 4)
+                            self.assertEqual(archive.getmember("target/release/blockloom" + suffix).mode & 0o111, 0o111)
+                        else:
+                            target = "fixture" if component == "native" else "wasm32-unknown-unknown"
+                            self.assertEqual(names, [f"target/release/players/{target}", f"target/release/players/{target}/payload"])
+            finally:
+                os.chdir(previous)
 
     def test_catalog_merge_requires_all_platforms_and_checksums(self):
         with tempfile.TemporaryDirectory() as temporary:
