@@ -29,18 +29,18 @@ def release_dir():
     return path / "release"
 
 
-def install_root():
+def install_root(name="Blockloom"):
     local = os.environ.get("LOCALAPPDATA")
     if not local:
         sys.exit("install: LOCALAPPDATA is not set")
-    return Path(local) / "Programs" / "Blockloom"
+    return Path(local) / "Programs" / name
 
 
-def shortcut_path():
+def shortcut_path(name="Blockloom"):
     appdata = os.environ.get("APPDATA")
     if not appdata:
         sys.exit("install: APPDATA is not set")
-    return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Blockloom.lnk"
+    return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / (name + ".lnk")
 
 
 def remove_tree(path):
@@ -185,13 +185,25 @@ def uninstall():
     print(f"Removed {root}")
 
 
+def install_hub():
+    binary = release_dir() / "blockloom-hub.exe"
+    if not binary.is_file():
+        sys.exit(f"install: {binary} is missing - run just hub-build first")
+    root = install_root("Blockloom Hub")
+    install_file(binary, root / binary.name)
+    create_shortcut(root / binary.name, shortcut_path("Blockloom Hub"))
+    add_path_entry(root)
+    print(f"Installed Blockloom Hub to {root}")
+
+
 def main(argv):
-    if argv != ["install"] and argv != ["uninstall"]:
-        print("usage: install-windows.py install|uninstall", file=sys.stderr)
+    commands = {"install": install, "uninstall": uninstall, "hub-install": install_hub}
+    if len(argv) != 1 or argv[0] not in commands:
+        print("usage: install-windows.py install|uninstall|hub-install", file=sys.stderr)
         return 2
     if os.name != "nt":
         sys.exit("install-windows.py only runs on Windows")
-    install() if argv == ["install"] else uninstall()
+    commands[argv[0]]()
     return 0
 
 

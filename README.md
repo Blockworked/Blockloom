@@ -82,6 +82,7 @@ Run from the repository root:
 
 ```bash
 just build                  # release build of the entire workspace
+just hub-replace            # rebuild and reinstall only the Hub
 ./target/release/blockloom   # Windows: target\release\blockloom.exe
 just run                    # build, then launch the editor
 ```

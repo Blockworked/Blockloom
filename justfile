@@ -74,6 +74,25 @@ hub *args:
 hub-run: build
     target/release/blockloom-hub{{if os() == "windows" { ".exe" } else { "" }}}
 
+# Rebuild and reinstall only the Hub. The optional argument limits Cargo jobs.
+hub-replace jobs="": (hub-build jobs) hub-install
+
+hub-build jobs="": prepare-patched-deps
+    {{if os() == "windows" { "python" } else { "python3" }}} scripts/prune-target.py --run cargo build --release -p blockloom-hub {{if jobs == "" { "" } else { "--jobs " + jobs }}}
+
+[linux]
+hub-install:
+    sudo install -Dm0755 target/release/blockloom-hub /usr/lib/blockloom-hub/blockloom-hub
+    sudo ln -sf /usr/lib/blockloom-hub/blockloom-hub /usr/bin/blockloom-hub
+
+[windows]
+hub-install:
+    python scripts/install-windows.py hub-install
+
+[macos]
+hub-install:
+    @echo 'Hub build is in target/release/blockloom-hub - run it from there.'
+
 # Build the editor and runtime, then watch QML edits through Qt 6.12.
 qml-preview *args: prepare-patched-deps
     {{if os() == "windows" { "python" } else { "python3" }}} scripts/qml-preview.py {{args}}
