@@ -1565,6 +1565,41 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[],
     },
     CommandSpec {
+        name: "physics-cook",
+        cmd: "physics_cook",
+        aliases: &[],
+        summary: "Make (or reuse) the collision data of every mesh collider in the project and answer each mesh's kind and statistics (vertices, triangles, hulls, worst error). A mesh that cannot cook is an error here, in Play and in a build.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "set-physics-cooking",
+        cmd: "set_physics_cooking",
+        aliases: &[],
+        summary: "Change how meshes become collision: the weld distance, the most points a hull keeps and, with mesh, a decomposition ({max_hulls, max_hull_vertices, concavity, resolution}, or null to forget it) so a concave mesh can be a solid shape on a dynamic body.",
+        args: &[
+            ArgSpec {
+                name: "weld",
+                ty: "number",
+                required: false,
+            },
+            ArgSpec {
+                name: "maxHullVertices",
+                ty: "number",
+                required: false,
+            },
+            ArgSpec {
+                name: "mesh",
+                ty: "asset path",
+                required: false,
+            },
+            ArgSpec {
+                name: "decompose",
+                ty: "object {...}",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
         name: "physics-ownership",
         cmd: "physics_ownership",
         aliases: &[],

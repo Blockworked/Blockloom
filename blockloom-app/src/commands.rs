@@ -2152,7 +2152,7 @@ pub(crate) fn run_project(
     };
     // Missing plugin data is a report, not a game that quietly does less.
     plugins::preflight_run(&s)?;
-    physics::preflight(&project, "Play")?;
+    physics::preflight(&project, s.project_dir(), "Play")?;
     auto_save(&s);
     // Built before the world is handed over, so a script that won't compile
     // shows its errors in the log instead of silently doing nothing.
@@ -2767,7 +2767,7 @@ pub(crate) fn run_build_game(
         }
     }
 
-    physics::preflight(&project, "the build")?;
+    physics::preflight(&project, Some(Path::new(&dir)), "the build")?;
     blockloom_core::build_control::step("Refreshing imports")?;
     plugins::refresh_imports(state, app);
     let options = build::BuildOptions {
@@ -2777,7 +2777,12 @@ pub(crate) fn run_build_game(
         key_pass,
         remember_passwords,
         plugins: plugins::payloads(&dir, &project, target)?,
-        extras: plugins::run_build_hooks(state, app, &dir, &project, target)?,
+        extras: {
+            let mut extras = plugins::run_build_hooks(state, app, &dir, &project, target)?;
+            blockloom_core::build_control::step("Cooking collision")?;
+            extras.extend(physics::collision_extras(&project, Path::new(&dir))?);
+            extras
+        },
     };
     let built = build::build(
         &project,

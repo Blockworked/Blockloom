@@ -270,6 +270,74 @@ fn the_plan_lists_bodies_and_refuses_what_it_cannot_build() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|issue| issue["message"].as_str().unwrap().contains("mesh cooking"))
+            .any(|issue| issue["message"].as_str().unwrap().contains("rock.glb"))
     );
+}
+
+const CUBE_OBJ: &str = "v -0.5 -0.5 -0.5\nv 0.5 -0.5 -0.5\nv 0.5 0.5 -0.5\nv -0.5 0.5 -0.5\n\
+v -0.5 -0.5 0.5\nv 0.5 -0.5 0.5\nv 0.5 0.5 0.5\nv -0.5 0.5 0.5\n\
+f 1 3 2\nf 1 4 3\nf 5 6 7\nf 5 7 8\nf 1 2 6\nf 1 6 5\nf 4 7 3\nf 4 8 7\nf 1 5 8\nf 1 8 4\nf 2 3 7\nf 2 7 6\n";
+
+fn project_folder(root: &std::path::Path, name: &str) -> PathBuf {
+    root.join("projects").join(name)
+}
+
+#[test]
+fn cooking_makes_collision_from_a_model_and_reports_it() {
+    let (b, root) = backend("cook");
+    std::fs::write(
+        project_folder(&root, "cook").join("assets/crate.obj"),
+        CUBE_OBJ,
+    )
+    .unwrap();
+    let id = actor(&b, "Sphere", "Crate");
+    b.dispatch(
+        "set_rigidbody",
+        json!({"actorId": id, "rigidbody": {"mass": {"mode": "Explicit", "mass": 3.0}}}),
+    )
+    .unwrap();
+    b.dispatch(
+        "add_collider",
+        json!({"actorId": id, "collider": {"geometry": {"kind": "Shape", "shape": {"kind": "ConvexHull", "mesh": "assets/crate.obj"}}}}),
+    )
+    .unwrap();
+
+    let plan = b.dispatch("physics_plan", json!({})).unwrap();
+    assert_eq!(plan["runnable"], true, "{plan}");
+    let cook = b.dispatch("physics_cook", json!({})).unwrap();
+    assert_eq!(cook["ok"], true, "{cook}");
+    let meshes = cook["meshes"].as_array().unwrap();
+    assert_eq!(meshes.len(), 1);
+    assert_eq!(meshes[0]["kind"], "hull");
+    assert_eq!(meshes[0]["stats"]["vertices"], 8);
+
+    // A concave mesh can only be solid on a dynamic body once it decomposes.
+    b.dispatch(
+        "set_physics_cooking",
+        json!({"mesh": "assets/crate.obj", "decompose": {"max_hulls": 4}}),
+    )
+    .unwrap();
+    let state = b.dispatch("get_state", json!({})).unwrap();
+    assert_eq!(
+        state["project"]["physics"]["cooking"]["decompose"]["assets/crate.obj"]["max_hulls"],
+        4
+    );
+    let bad = b.dispatch("set_physics_cooking", json!({"maxHullVertices": 2}));
+    assert!(bad.is_err());
+}
+
+#[test]
+fn a_mesh_that_cannot_cook_stops_the_check_and_the_cook() {
+    let (b, _root) = backend("cookfail");
+    let id = actor(&b, "Sphere", "Rock");
+    b.dispatch(
+        "add_collider",
+        json!({"actorId": id, "collider": {"geometry": {"kind": "Shape", "shape": {"kind": "TriangleMesh", "mesh": "assets/missing.obj"}}}}),
+    )
+    .unwrap();
+    let cook = b.dispatch("physics_cook", json!({})).unwrap();
+    assert_eq!(cook["ok"], false);
+    assert!(cook["errors"][0].as_str().unwrap().contains("missing.obj"));
+    let check = b.dispatch("physics_check", json!({})).unwrap();
+    assert_eq!(check["ok"], false);
 }

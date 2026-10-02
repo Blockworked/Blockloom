@@ -515,6 +515,15 @@ impl Backend {
                 arg(&args, "id")?,
             )?),
             "physics_check" => to_json(commands::physics::physics_check(state)?),
+            "physics_cook" => to_json(commands::physics::physics_cook(state)?),
+            "set_physics_cooking" => to_json(commands::physics::set_physics_cooking(
+                state,
+                app,
+                arg(&args, "weld").ok(),
+                arg(&args, "maxHullVertices").ok(),
+                arg(&args, "mesh").ok(),
+                args.get("decompose").cloned(),
+            )?),
             "physics_ownership" => to_json(commands::physics::physics_ownership(state)?),
             "physics_properties" => to_json(commands::physics::physics_properties()),
             "physics_migration_preview" => {
