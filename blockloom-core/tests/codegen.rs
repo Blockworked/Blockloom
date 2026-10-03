@@ -49,6 +49,8 @@ const MY_POSITION: [f32; 3] = [3.0, 7.0, 0.0];
 const MY_LOCAL_POSITION: [f64; 3] = [1.0, 2.0, 0.0];
 const OTHER_POSITION: [f32; 3] = [10.0, -2.0, 0.0];
 const OTHER_LOCAL_POSITION: [f64; 3] = [4.0, -1.0, 0.0];
+const CAMERA_POSITION: [f32; 3] = [9.0, 8.0, 7.0];
+const CAMERA_DIRECTION: [f32; 3] = [0.0, 0.6, -0.8];
 const MOUSE_DELTA: [f32; 2] = [24.0, -9.0];
 
 fn publish_world() {
@@ -111,6 +113,10 @@ fn publish_world() {
         },
     );
     sensors.ui_focus = "name".to_string();
+    sensors.camera = blockloom_core::sense::CameraSense {
+        position: CAMERA_POSITION,
+        forward: CAMERA_DIRECTION,
+    };
     sensors.mouse_buttons.insert("right".to_string());
     sensors.actions.insert(
         "Jump".to_string(),
@@ -461,6 +467,13 @@ impl Host for Recorder {
             "CurrentFrame" => Ok(Val::Num(3.0)),
             "AnimationPlaying" => Ok(Val::Bool(true)),
             "MyPosition" => Ok(Val::Num(axis_of(&args[0], [3.0, 7.0, 0.0]))),
+            "CameraPosition" => Ok(Val::Num(axis_of(&args[0], [9.0, 8.0, 7.0]))),
+            // The same f32 maths the snapshot's own field does, so the two
+            // halves print the same digits.
+            "CameraDirection" => Ok(Val::Num(axis_of(
+                &args[0],
+                [0.0, 0.6f32 as f64, -0.8f32 as f64],
+            ))),
             "MyLocalPosition" => Ok(Val::Num(axis_of(&args[0], [1.0, 2.0, 0.0]))),
             "ActorPosition" => {
                 let name = args[0].as_text();
@@ -2577,6 +2590,12 @@ fn sensing_reads_the_same_world() {
                     "ActorPosition",
                     vec![Value::text("Nobody"), Value::text("X")],
                 ),
+            },
+            K::Say {
+                text: op("CameraPosition", vec![Value::text("Y")]),
+            },
+            K::Say {
+                text: op("CameraDirection", vec![Value::text("Z")]),
             },
         ],
         &[],

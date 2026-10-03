@@ -1592,6 +1592,18 @@ pub fn publish_sensors(
     // same gate the pointer delta keeps.
     let mut touch_points: Vec<TouchSense> = Vec::new();
     let mut touch_started = false;
+    // The world camera's live pose, so aim blocks can read the view itself
+    // instead of tracking one by hand. First camera wins, the way the
+    // motor's camera-relative steering reads it.
+    let camera = cameras.iter().next().map(|(_, pose)| {
+        let view = pose.compute_transform();
+        let at = view.translation.to_array();
+        let ahead = view.forward().to_array();
+        blockloom_core::sense::CameraSense {
+            position: at,
+            forward: ahead,
+        }
+    });
     if focused {
         for touch in touches.iter() {
             if let Some(point) = screen_to_world(dimension.0, touch.position(), &cameras) {
@@ -1622,6 +1634,7 @@ pub fn publish_sensors(
         gamepad_axes: pad_axes,
         gamepad_buttons: pad_buttons,
         actors: senses,
+        camera: camera.unwrap_or_default(),
         ui: manager.senses(),
         ui_focus: manager.focus().unwrap_or_default().to_string(),
         sounds: sound.playing(),

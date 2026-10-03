@@ -22,13 +22,13 @@ pub struct Group {
 }
 
 /// A rectangle of one material on one plane, in cells.
-struct Quad {
-    axis: usize,
-    sign: i32,
-    plane: i32,
-    at: [i32; 2],
-    size: [i32; 2],
-    color: [f32; 3],
+pub(crate) struct Quad {
+    pub(crate) axis: usize,
+    pub(crate) sign: i32,
+    pub(crate) plane: i32,
+    pub(crate) at: [i32; 2],
+    pub(crate) size: [i32; 2],
+    pub(crate) color: [f32; 3],
 }
 
 impl Group {
@@ -167,6 +167,21 @@ pub(crate) fn mesh_cubes(
     material_at: impl Fn([i32; 3]) -> u8,
 ) -> BTreeMap<Option<u8>, Group> {
     let mut groups: BTreeMap<Option<u8>, Group> = BTreeMap::new();
+    cube_quads(palette, base, extent, material_at, |quad, material| {
+        let look = palette.get(material).unwrap();
+        let key = (look.emission > 0.0).then_some(material);
+        groups.entry(key).or_default().push(&quad, voxel);
+    });
+    groups
+}
+
+pub(crate) fn cube_quads(
+    palette: &Palette,
+    base: [i32; 3],
+    extent: [i32; 3],
+    material_at: impl Fn([i32; 3]) -> u8,
+    mut emit: impl FnMut(Quad, u8),
+) {
     for axis in 0..3 {
         let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
         for sign in [1, -1] {
@@ -213,9 +228,8 @@ pub(crate) fn mesh_cubes(
                             mask[row * n + i..row * n + i + w].fill(0);
                         }
                         if let Some(look) = palette.get(material) {
-                            let key = (look.emission > 0.0).then_some(material);
-                            groups.entry(key).or_default().push(
-                                &Quad {
+                            emit(
+                                Quad {
                                     axis,
                                     sign,
                                     plane: slice + i32::from(sign > 0),
@@ -223,7 +237,7 @@ pub(crate) fn mesh_cubes(
                                     size: [w as i32, h as i32],
                                     color: look.color,
                                 },
-                                voxel,
+                                material,
                             );
                         }
                         i += w;
@@ -232,7 +246,6 @@ pub(crate) fn mesh_cubes(
             }
         }
     }
-    groups
 }
 
 pub(crate) fn mesh_shapes(

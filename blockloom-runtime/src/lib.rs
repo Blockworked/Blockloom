@@ -74,7 +74,10 @@ mod physics_install;
 pub mod player;
 #[cfg(feature = "plugins")]
 mod plugin_compute;
+#[cfg(feature = "plugins")]
+mod plugin_lod;
 mod plugin_meshes;
+mod plugin_quads;
 #[cfg(feature = "plugins")]
 mod plugin_services;
 mod plugins;
@@ -316,11 +319,21 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     sprites::register(app);
     app.init_resource::<anim2d::RigCache>()
         .init_resource::<plugin_meshes::PluginMeshes>()
-        .add_systems(Update, plugin_meshes::sync.run_if(is_3d));
+        .add_systems(Update, plugin_meshes::sync.run_if(is_3d))
+        .add_systems(
+            PostUpdate,
+            plugin_meshes::crossfade
+                .after(bevy::transform::TransformSystems::Propagate)
+                .before(bevy::camera::visibility::VisibilitySystems::CheckVisibility)
+                .run_if(is_3d),
+        );
     #[cfg(feature = "plugins")]
     app.add_systems(PostUpdate, plugin_meshes::publish_poses.run_if(is_3d));
     #[cfg(feature = "plugins")]
     plugin_compute::register(app);
+    #[cfg(feature = "plugins")]
+    plugin_lod::register(app);
+    plugin_quads::register(app);
     passes::register(app);
     hdr::register(app);
     luminance::register(app);

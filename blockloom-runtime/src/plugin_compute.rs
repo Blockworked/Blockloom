@@ -83,6 +83,9 @@ impl ComputeLink {
         );
     }
 
+    pub(crate) fn bound_assets(&self) -> HashSet<AssetId<Mesh>> {
+        self.0.lock().unwrap().meshes.keys().copied().collect()
+    }
     pub fn unbind_mesh(&self, asset: AssetId<Mesh>) {
         self.0.lock().unwrap().meshes.remove(&asset);
     }
@@ -155,6 +158,7 @@ fn run(
     allocator: Res<MeshAllocator>,
     meshes: Res<RenderAssets<RenderMesh>>,
     visible: Res<VisibleMeshes>,
+    depth: Option<Res<crate::plugin_lod::DepthRequests>>,
     mut copied: Local<HashSet<AssetId<Mesh>>>,
     mut failed: Local<HashSet<String>>,
 ) {
@@ -216,6 +220,7 @@ fn run(
         .iter()
         .filter(|(id, binding)| {
             visible.0.contains(id)
+                && depth.as_ref().is_none_or(|depth| depth.allows(id))
                 && !copied.contains(id)
                 && !failed.contains(&binding.plugin)
                 && !failed.contains("")
@@ -401,11 +406,13 @@ mod tests {
                 origin: [0.; 3],
                 emission: None,
                 roughness: 0.9,
+                transition_ms: 0,
                 collider: false,
                 collider_kind: ColliderKind::Trimesh,
                 gpu: Some(GpuVertices {
                     buffer: "out".into(),
                     vertices: 3,
+                    quads: None,
                 }),
                 body: None,
             },
@@ -414,6 +421,7 @@ mod tests {
             .init_resource::<crate::plugin_meshes::PluginMeshes>()
             .add_systems(Update, crate::plugin_meshes::sync);
         register(&mut app);
+        crate::plugin_lod::register(&mut app);
         let image = app
             .world_mut()
             .resource_mut::<Assets<Image>>()
@@ -427,6 +435,9 @@ mod tests {
             .world_mut()
             .spawn((
                 Camera3d::default(),
+                bevy::core_pipeline::prepass::DepthPrepass,
+                bevy::render::occlusion_culling::OcclusionCulling,
+                Msaa::Off,
                 bevy::camera::RenderTarget::from(image),
                 Transform::from_xyz(1.5, 0.5, 5.0).looking_at(Vec3::new(1.5, 0.5, 0.0), Vec3::Y),
             ))

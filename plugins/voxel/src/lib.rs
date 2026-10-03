@@ -139,7 +139,7 @@ struct World {
     serial: u64,
     fragments: BTreeMap<u64, fracture::Fragment>,
     next_fragment: u64,
-    gpu_buffers: BTreeMap<[i32; 3], Vec<(String, u32)>>,
+    gpu_buffers: BTreeMap<[i32; 3], Vec<(Option<String>, u32)>>,
     /// The mesh names each chunk has drawn, so a remesh can retire the ones
     /// it no longer makes.
     published: BTreeMap<[i32; 3], BTreeSet<String>>,
@@ -491,7 +491,9 @@ impl World {
         let mut effects = Vec::new();
         for gone in self.visible.difference(&next) {
             for (buffer, _) in self.gpu_buffers.remove(gone).unwrap_or_default() {
-                effects.push(blockloom_plugin_sdk::gpu::free(&buffer));
+                if let Some(buffer) = buffer {
+                    effects.push(blockloom_plugin_sdk::gpu::free(&buffer));
+                }
             }
             for name in self.published.remove(gone).unwrap_or_default() {
                 effects.push(json!({"effect":"remove_mesh","name":name}));
@@ -693,7 +695,9 @@ impl World {
         }
         for chunk in work {
             for (buffer, _) in self.gpu_buffers.remove(&chunk).unwrap_or_default() {
-                effects.push(blockloom_plugin_sdk::gpu::free(&buffer));
+                if let Some(buffer) = buffer {
+                    effects.push(blockloom_plugin_sdk::gpu::free(&buffer));
+                }
             }
             self.pending.remove(&chunk);
             if self.settings.streamed {
@@ -745,6 +749,7 @@ impl World {
                                 origin,
                                 emission,
                                 roughness: 0.9,
+                                transition_ms: 0,
                                 collider: self.solid,
                                 collider_kind: ColliderKind::Trimesh,
                                 gpu,
@@ -1314,7 +1319,9 @@ impl Plugin for Voxel {
                         effects.push(json!({"effect":"remove_mesh","name":fracture::name(*id)}));
                     }
                     for (buffer, _) in world.gpu_buffers.values().flatten() {
-                        effects.push(blockloom_plugin_sdk::gpu::free(buffer));
+                        if let Some(buffer) = buffer {
+                            effects.push(blockloom_plugin_sdk::gpu::free(buffer));
+                        }
                     }
                 }
                 self.invokers.clear();
@@ -1406,6 +1413,7 @@ impl Plugin for Voxel {
                             .and_then(|m| world.palette.get(m))
                             .map(|m| m.color.map(|c| c * m.emission)),
                         roughness: 0.9,
+                        transition_ms: 0,
                         collider: false,
                         collider_kind: ColliderKind::Trimesh,
                         gpu: None,

@@ -234,7 +234,10 @@ fn sparse_gpu_meshes_allocate_only_faces_and_retire_output_on_edits() {
             mesh.check().unwrap();
         }
         let count = a.call_json("count", &json!({})).unwrap();
-        assert_eq!(count["gpu_allocated_bytes"], u64::from(vertices) * 40);
+        assert_eq!(
+            count["gpu_allocated_bytes"],
+            u64::from(vertices) / 6 * 48 + if vertices == 60 { 32 } else { 16 }
+        );
     }
     a.call_json("set", &json!({"x":5,"y":4,"z":4,"material":"air"}))
         .unwrap();
@@ -242,6 +245,47 @@ fn sparse_gpu_meshes_allocate_only_faces_and_retire_output_on_edits() {
         a.call_json("count", &json!({})).unwrap()["gpu_allocated_bytes"],
         0
     );
+}
+
+#[test]
+fn gpu_cube_quads_merge_boxes_and_keep_material_boundaries() {
+    let a = module(Arc::new(MemoryStore::new()));
+    start(
+        &a,
+        json!({"preset":"empty","size":[16,16,16],"gpu_meshing":true}),
+    );
+    let box_args = json!({"x1":0,"y1":0,"z1":0,"x2":15,"y2":15,"z2":15,"material":"stone"});
+    let answer = a.call_json("fill", &box_args).unwrap();
+    let mesh = answer["effects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["effect"] == "mesh")
+        .unwrap();
+    assert_eq!(mesh["gpu"]["vertices"], 36);
+    assert_eq!(
+        a.call_json("count", &json!({})).unwrap()["gpu_allocated_bytes"],
+        304
+    );
+    // A different material splits the merged rectangles while the interior stays hidden.
+    let answer = a
+        .call_json(
+            "fill",
+            &json!({"x1":8,"y1":0,"z1":0,"x2":15,"y2":15,"z2":15,"material":"dirt"}),
+        )
+        .unwrap();
+    let mesh: blockloom_plugin_api::mesh::MeshData = serde_json::from_value(
+        answer["effects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["effect"] == "mesh")
+            .unwrap()
+            .clone(),
+    )
+    .unwrap();
+    assert_eq!(mesh.gpu.as_ref().unwrap().vertices, 60);
+    assert_eq!(mesh.indices.len(), 60);
 }
 
 #[test]
@@ -256,7 +300,7 @@ fn gpu_mesh_effects_are_bounded_and_ship_checked_kernels() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|e| e["effect"] == "gpu_dispatch")
+            .any(|e| e["effect"] == "mesh" && e["gpu"]["quads"].is_object())
     );
     assert!(
         result["effects"]
@@ -274,7 +318,7 @@ fn gpu_mesh_effects_are_bounded_and_ship_checked_kernels() {
     let data: blockloom_plugin_api::mesh::MeshData = serde_json::from_value(mesh.clone()).unwrap();
     data.check().unwrap();
     let vertices = data.gpu.unwrap().vertices;
-    assert!(vertices >= data.indices.len() as u32);
+    assert_eq!(vertices, data.indices.len() as u32);
     assert!(
         vertices < 147456 / 4,
         "flat terrain should pack its active faces"

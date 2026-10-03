@@ -361,31 +361,61 @@ Storage, reduction, coarse mesh production and selection are implemented in
   CPU fallback geometry remains available until each whole-mesh copy completes.
   Completed copies are retained across visibility changes and retired on removal.
   This bounds GPU-to-GPU copies, not compute dispatches, CPU asset preparation,
-  allocated vertex capacity or draw count. No depth occlusion traversal is added.
+  allocated vertex capacity or draw count. Depth feedback now further qualifies
+  pending copies as described below.
 
-- Fine GPU meshing now packs output using a CPU prefix sum over sampled topology.
-  Cubes reserve six vertices per exposed face in the requested emission group;
-  smooth cells reserve three or six vertices for each active tetrahedron using
-  the extractor's negative-density and first-inside-material rules. GPU work
-  still computes interpolated positions and normals. Empty cells, hidden faces
-  and other emission groups reserve no output space. Each cell owns a disjoint
-  output span, with no atomics or production GPU readback.
-- Output buffers, GPU-to-GPU copies and Bevy's raster vertex allocations use
-  the packed vertex count. A lone cube in a 16-cubed tile now needs 1440 output
-  bytes rather than the previous 5898240 bytes. Offset buffers are temporary and
-  freed after dispatch. Dispatch still visits bounded tile anchors, and smooth
-  zero-density degeneracies can leave zero triangles within active spans. Cube
-  output still uses individual faces rather than the CPU mesher's greedy quads.
-  The existing 64 MiB output budget and CPU collision/fallback meshes remain.
-  Visual LOD meshes still use their compacted CPU geometry and seam path.
+- Fine cube meshes use the CPU greedy rectangle scan and submit persistent
+  eight-byte records. Cube visual LOD tiles also pack rectangular triangle pairs,
+  including integer clipped seams; fractional shapes and nonrectangular polygons
+  retain their CPU mesh. Byte coordinates cover tiles through level four (128
+  cells), and a palette index retains each quad's linear color. The PBR extension
+  decodes positions, normals and colors in forward, depth, motion, shadow and
+  deferred vertex stages. Records and palettes remain in renderer-owned storage
+  assets shared by instances until their meshes/materials are retired. Bevy stores
+  four vertex IDs and six indices per quad, without expanded vertex attributes.
+  One quad uses 48 bytes of records/IDs/indices, plus 16 bytes per palette color;
+  a six-quad box with one color uses 304 bytes rather than 1440 expanded bytes.
+  This is direct quad rendering, not an indirect draw or a suballocated quad arena.
+- Smooth GPU meshes retain topology prefix sums and disjoint packed triangle
+  spans. Interpolation and normals stay on the GPU, and temporary samples,
+  palettes and offsets retire after dispatch. The fine output allocation budget
+  remains 64 MiB; cube accounting includes records, vertex IDs, indices and palette.
+  CPU arrays remain authoritative for collision and fallback. LOD geometry stays
+  under its separate 2 MiB cut budget.
+- Complete visual cuts crossfade for 150 ms with complementary screen-space
+  dither masks. The old visual entities remain until the fade ends; collision
+  never fades. At most one previous cut is retained, and a subsequent cut finishes
+  the earlier retirement before starting another fade. Initial publication,
+  explicit fallback and multiple-camera rendering switch immediately. The generic
+  visual-only mesh API accepts transition durations up to 500 ms. Standard and
+  compact materials share Bevy's visibility-range dithering and depth prepasses.
+  This smooths temporal resolution switches, not the geometric step at a seam.
+- The renderer traverses a balanced GPU BVH of up to 2048 visible GPU-backed mesh
+  instances against Bevy's conservative reverse-Z depth pyramid. A bounded stack
+  and 4095 visits generate at most 512 deduplicated source-asset upload requests.
+  Two asynchronous readbacks may be in flight. Epoch/camera mismatches, expired
+  feedback, queue overflow, absent pyramids and multiple cameras retain CPU
+  visibility scheduling. Hidden compute buffers and CPU fallback meshes remain
+  available. Existing Bevy draw occlusion also applies to compact meshes.
+  This request queue controls triangle-buffer uploads, not voxel sampling,
+  tile selection or meshing. The CPU voxel selector and publisher still own those
+  jobs; missing-tile GPU requests and geometry residency need a typed plugin bridge.
+- Qualification covers quad CPU geometry parity, native/WASM effects, shared
+  instance lifecycle, transition retirement bounds, complementary halfway-fade
+  rendering with depth/motion prepasses, depth rejection, duplicate requests,
+  queue overflow and stale feedback. Run GPU runtime tests serially:
+  `cargo test -p blockloom-runtime plugin_ --lib -- --include-ignored --test-threads=1`.
 
 These are planar, watertight step joins, not interpolated density transitions.
 Smooth joins can retain a visible crease or flat ledge where reductions disagree.
 As with existing coarse geometry, overlapping shape proxies and density surfaces
 can retain internal faces inside the solid union. Visual LOD remains opt-in;
 all gameplay queries and collision stay canonical.
-The plugin compute API still needs renderer services for depth traversal,
-visibility queues and compact quad draw allocation beyond packed triangle buffers.
+Interpolated density transition collars are still unfinished: an implicit collar
+prototype exceeded work limits and failed watertightness checks, so it was removed.
+Joint corners, world-edge contours and topology changes need a closed transition
+extractor before this can replace planar seams. GPU voxel traversal/missing-tile
+requests and a persistent suballocated quad arena also remain.
 
 ### Implementation order and qualification
 
@@ -395,8 +425,10 @@ Camera inputs and coherent complete-cut publication now connect the selector
 to coarse jobs. Dependency-based tile reuse now avoids rebuilding the entire cut
 for unrelated edits. Mixed-resolution boundaries now have planar solid-difference
 joins. Renderer copies now use camera visibility and bounded FIFO scheduling;
-GPU triangle buffers now pack active topology. Next improve transition appearance,
-add depth visibility services and a compact quad draw path.
+GPU triangle buffers pack active topology, cube tiles draw persistent compact
+records, cut changes crossfade and depth traversal qualifies upload requests.
+Next implement closed interpolated density seams, expose typed GPU voxel tile
+requests and qualify persistent geometry residency/indirect allocation.
 
 Qualification includes non-multiple heights (1, 31, 33, 100), old checkpoints,
 column and section borders, thin structures, caves, shape proxies, smooth

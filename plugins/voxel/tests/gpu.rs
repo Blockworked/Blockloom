@@ -16,7 +16,7 @@ fn engine() -> ComputeEngine {
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
     ComputeEngine::new(device, queue)
 }
-fn run(surface: &str, size: [i32; 3], centre: [i32; 3], material: &str) {
+fn run(surface: &str, size: [i32; 3], centre: [i32; 3], material: &str, brush: &str) {
     let native = unsafe {
         NativeModule::from_entry(
             blockloom_voxel::blockloom_plugin_entry_v1,
@@ -29,8 +29,12 @@ fn run(surface: &str, size: [i32; 3], centre: [i32; 3], material: &str) {
     native.call_json("world.start", &args).unwrap();
     let answer = native
         .call_json(
-            "sphere",
-            &json!({"x":centre[0],"y":centre[1],"z":centre[2],"radius":if centre[0] == 7 { 3.0 } else { 3.2 },"material":material}),
+            brush,
+            &if brush == "fill" {
+                json!({"x1":0,"y1":0,"z1":0,"x2":size[0]-1,"y2":size[1]-1,"z2":size[2]-1,"material":material})
+            } else {
+                json!({"x":centre[0],"y":centre[1],"z":centre[2],"radius":if centre[0] == 7 { 3.0 } else { 3.2 },"material":material})
+            },
         )
         .unwrap();
     let contributions: Contributions =
@@ -60,6 +64,44 @@ fn run(surface: &str, size: [i32; 3], centre: [i32; 3], material: &str) {
             gpu.vertices < 36 * 16 * 16 * 16,
             "sparse geometry should be packed"
         );
+        if let Some(quads) = &gpu.quads {
+            let mut output = Vec::new();
+            for [r, material] in &quads.records {
+                let face = (r >> 24) & 7;
+                let axis = face / 2;
+                let u = (axis + 1) % 3;
+                let v = (axis + 2) % 3;
+                let order = if face % 2 == 1 {
+                    [0, 1, 2, 0, 2, 3]
+                } else {
+                    [0, 2, 1, 0, 3, 2]
+                };
+                for corner in order {
+                    let mut p = [0.0; 3];
+                    p[axis as usize] = (r & 255) as f32;
+                    p[u as usize] = ((r >> 8) & 255) as f32
+                        + if corner == 1 || corner == 2 {
+                            (material & 255) as f32
+                        } else {
+                            0.0
+                        };
+                    p[v as usize] = ((r >> 16) & 255) as f32
+                        + if corner >= 2 {
+                            ((material >> 8) & 255) as f32
+                        } else {
+                            0.0
+                        };
+                    let mut n = [0.0; 3];
+                    n[axis as usize] = if face % 2 == 1 { 1.0 } else { -1.0 };
+                    output.extend(p.map(|p| p * quads.voxel));
+                    output.extend(n);
+                    output.extend(&quads.palette[((material >> 16) & 255) as usize][..3]);
+                    output.push(1.0);
+                }
+            }
+            check_geometry(surface, &mesh, output);
+            continue;
+        }
         engine
             .submit(
                 "p",
@@ -94,6 +136,22 @@ fn run(surface: &str, size: [i32; 3], centre: [i32; 3], material: &str) {
 }
 
 fn check_geometry(surface: &str, mesh: &blockloom_plugin_api::mesh::MeshData, output: Vec<f32>) {
+    if surface == "cubes" {
+        assert_eq!(output.len(), mesh.indices.len() * 10);
+        for (v, index) in output.as_chunks::<10>().0.iter().zip(&mesh.indices) {
+            let i = *index as usize;
+            let expected: Vec<f32> = mesh.positions[i * 3..i * 3 + 3]
+                .iter()
+                .chain(&mesh.normals[i * 3..i * 3 + 3])
+                .chain(&mesh.colors[i * 4..i * 4 + 4])
+                .copied()
+                .collect();
+            assert!(
+                v.iter().zip(&expected).all(|(a, b)| (a - b).abs() < 2e-5),
+                "cube vertex differs: {v:?} vs {expected:?}"
+            );
+        }
+    }
     let mut actual = Vec::new();
     let mut area = 0.0;
     for tri in output.as_chunks::<30>().0 {
@@ -171,8 +229,12 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
 fn gpu_cube_and_smooth_surfaces_match_cpu_geometry() {
     for surface in ["cubes", "smooth"] {
         for material in ["stone", "glow"] {
-            run(surface, [16; 3], [7; 3], material);
-            run(surface, [33; 3], [31; 3], material);
+            run(surface, [16; 3], [7; 3], material, "sphere");
+            run(surface, [33; 3], [31; 3], material, "sphere");
+            if surface == "cubes" {
+                run(surface, [16; 3], [0; 3], material, "fill");
+                run(surface, [33, 1, 31], [0; 3], material, "fill");
+            }
         }
     }
 }

@@ -95,6 +95,15 @@ pub struct ShapePart {
 /// One touch point, as the touch reporters see it: where it is in world
 /// units, in the same frame as `mouse`.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CameraSense {
+    /// Where the world camera stands, in world units.
+    pub position: [f32; 3],
+    /// Where it looks, unit length in world units while a game runs.
+    /// What the middle of the screen points at.
+    pub forward: [f32; 3],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct TouchSense {
     pub id: u64,
     pub position: [f32; 2],
@@ -153,6 +162,10 @@ pub struct Sensors {
     /// Held gamepad buttons by canonical name (`south`, `dpadup`, ...).
     pub gamepad_buttons: HashSet<String>,
     pub actors: HashMap<String, ActorSense>,
+    /// The world camera's pose as of this frame. What `camera position` and
+    /// `camera direction` read, so aim blocks can use the live view itself
+    /// instead of tracking one by hand.
+    pub camera: CameraSense,
     /// Every interface element the blocks have made, by id.
     pub ui: HashMap<String, UiSense>,
     /// The text input holding the keyboard, by id, or empty for none.

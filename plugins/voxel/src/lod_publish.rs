@@ -303,6 +303,11 @@ impl Publisher {
                     key.level,
                     glow.map_or(String::new(), |m| format!("/glow{m}"))
                 );
+                let gpu = if world.settings.gpu_meshing && world.surface == crate::Surface::Cubes {
+                    crate::gpu_mesh::visual(&group, world.voxel)
+                } else {
+                    None
+                };
                 let mesh = MeshData {
                     name: name.clone(),
                     positions: group.positions,
@@ -314,9 +319,10 @@ impl Publisher {
                         .and_then(|m| world.palette.get(m))
                         .map(|m| m.color.map(|c| c * m.emission)),
                     roughness: 0.9,
+                    transition_ms: 150,
                     collider: false,
                     collider_kind: ColliderKind::Trimesh,
-                    gpu: None,
+                    gpu,
                     body: None,
                 };
                 mesh.check()?;
@@ -393,6 +399,40 @@ mod tests {
         }
         panic!("visual cut did not finish");
     }
+    #[test]
+    fn cube_lod_cuts_submit_persistent_records_and_bounded_crossfades() {
+        let mut world = world();
+        world.settings.gpu_meshing = true;
+        world.surface = Surface::Cubes;
+        let mut publisher = Publisher::default();
+        let effects = finish(
+            &mut publisher,
+            &mut world,
+            &[Key {
+                level: 3,
+                tile: [0; 3],
+            }],
+        );
+        let meshes: Vec<_> = effects
+            .iter()
+            .filter(|effect| effect["effect"] == "mesh")
+            .map(|effect| serde_json::from_value::<MeshData>(serde_json::to_value(effect).unwrap()))
+            .collect();
+        assert!(!meshes.is_empty());
+        for mesh in meshes {
+            let mesh = mesh.unwrap();
+            mesh.check().unwrap();
+            assert!(!mesh.collider);
+            assert_eq!(mesh.transition_ms, 150);
+            assert!(!mesh.gpu.unwrap().quads.unwrap().records.is_empty());
+        }
+        assert!(
+            effects
+                .iter()
+                .all(|effect| effect["effect"] != "gpu_dispatch")
+        );
+    }
+
     #[test]
     fn refinement_waits_for_all_children_and_revalidates_edits() {
         let mut world = world();

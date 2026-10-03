@@ -1080,9 +1080,17 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   Renderer GPU mesh copies wait for a visible entity or instance, retaining hidden
   fine buffers and colliders. Ready copies use FIFO order under 64-mesh/10-MiB
   per-frame limits; CPU fallback remains until a whole-mesh copy completes.
-  Fine GPU meshing uses sampled topology prefix sums for packed triangle spans;
-  output allocation and raster vertex counts omit empty cells and hidden faces.
-  Temporary offsets are freed after dispatch; interpolation stays on the GPU.
+  GPU cubes and rectangular cube LOD seams draw persistent eight-byte records
+  through `plugin_quads.rs` (PBR/depth/shadow/motion/deferred), retaining only four
+  vertex IDs and six indices per quad. Byte coordinates cover 128-cell LOD tiles;
+  fractional/nonrectangular geometry keeps the CPU path. Smooth GPU meshes retain
+  prefix sums and packed triangle spans; interpolation stays on the GPU.
+  Visual cuts use 150 ms complementary dither crossfades, retaining one old cut.
+  `plugin_lod.rs` traverses at most 2048 GPU-backed instances against the depth
+  pyramid, requesting up to 512 deduplicated triangle uploads with two asynchronous
+  readbacks. Stale/unsupported/overflow feedback falls back to CPU visibility.
+  This does not select voxel tiles or request missing mesh jobs. Interpolated density
+  seam collars and GPU voxel job requests remain unfinished. Run GPU tests serially.
   See `docs/voxel-lod-research.md` for the LOD implementation stages.
   Its manifest asks for `editor.preview`, `project-storage` and `gpu-compute`;
   preview does not load or write player saves. Saved edits are the `world` resource's

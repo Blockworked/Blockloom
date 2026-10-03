@@ -302,7 +302,8 @@ pub fn caps(
                         let gradient = (0..3)
                             .map(|i| {
                                 cofactors[i][axis]
-                                    * (values[tet[i + 1]].density - values[tet[0]].density) as f64
+                                    * (values[tet[i + 1]].density as f64
+                                        - values[tet[0]].density as f64)
                             })
                             .sum::<f64>()
                             / det;
@@ -321,7 +322,7 @@ pub fn caps(
                                 let p =
                                     uv.map(|k| points[a][k] + t * (points[b][k] - points[a][k]));
                                 let mut d = values[a].density as f64
-                                    + t * (values[b].density - values[a].density) as f64;
+                                    + t * (values[b].density as f64 - values[a].density as f64);
                                 // A zero face belongs to the solid on its interior side.
                                 if d.abs() < EPS {
                                     d = if gradient * inward < 0.0 { -EPS } else { EPS };

@@ -27,6 +27,9 @@ pub struct ComputeLink;
 impl ComputeLink {
     fn bind_mesh(&self, _: AssetId<Mesh>, _: &str, _: &str, _: u32) {}
     fn unbind_mesh(&self, _: AssetId<Mesh>) {}
+    fn available(&self) -> Option<bool> {
+        Some(false)
+    }
 }
 
 /// Marks the entity a plugin's mesh became.
@@ -37,15 +40,75 @@ pub struct PluginMesh;
 #[derive(Component)]
 pub struct PluginInstance;
 
+#[derive(Component)]
+pub struct Crossfade {
+    elapsed: f32,
+    duration: f32,
+    retire: bool,
+}
+
+pub fn crossfade(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut state: ResMut<PluginMeshes>,
+    cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    mut meshes: Query<(Entity, &GlobalTransform, &mut Crossfade)>,
+) {
+    let mut cameras = cameras.iter().filter(|(camera, _)| camera.is_active);
+    let camera = cameras.next().map(|(_, pose)| pose.translation());
+    let camera = if cameras.next().is_none() {
+        camera
+    } else {
+        None
+    };
+    for (entity, pose, mut fade) in &mut meshes {
+        fade.elapsed += time.delta_secs();
+        if fade.elapsed >= fade.duration || camera.is_none() {
+            if fade.retire {
+                state.retired.retain(|old| *old != entity);
+                commands.entity(entity).despawn();
+            } else {
+                commands
+                    .entity(entity)
+                    .remove::<(Crossfade, bevy::camera::visibility::VisibilityRange)>();
+            }
+            continue;
+        }
+        let progress = (fade.elapsed / fade.duration).clamp(0.0, 1.0);
+        let distance = pose.translation().distance(camera.unwrap());
+        let range = distance - progress..distance + 1.0 - progress;
+        commands
+            .entity(entity)
+            .insert(bevy::camera::visibility::VisibilityRange {
+                start_margin: if fade.retire { 0.0..0.0 } else { range.clone() },
+                end_margin: if fade.retire {
+                    range
+                } else {
+                    f32::MAX..f32::MAX
+                },
+                use_aabb: false,
+            });
+    }
+}
+
 /// Which entity holds each (plugin, name), and the materials in use.
 #[derive(Resource, Default)]
 pub struct PluginMeshes {
     live: HashMap<(String, String), Entity>,
+    transitions: HashMap<(String, String), u16>,
+    retired: Vec<Entity>,
     hidden: HashSet<(String, String)>,
     /// What each mesh draws with, so a set of copies can share it.
     assets: HashMap<(String, String), (Handle<Mesh>, Handle<StandardMaterial>)>,
     instances: HashMap<(String, String), Vec<Entity>>,
     materials: HashMap<[u32; 4], Handle<StandardMaterial>>,
+    quads: HashMap<
+        (String, String),
+        (
+            Handle<crate::plugin_quads::QuadMaterial>,
+            bevy::camera::primitives::Aabb,
+        ),
+    >,
 }
 
 #[cfg(test)]
@@ -83,6 +146,9 @@ fn raster_mesh(data: &MeshData) -> Mesh {
     let Some(gpu) = &data.gpu else {
         return bevy_mesh(data);
     };
+    if gpu.quads.is_some() {
+        return bevy_mesh(data);
+    }
     let count = gpu.vertices as usize;
     let mut positions = vec![[0.0; 3]; count];
     let mut normals = vec![[0.0; 3]; count];
@@ -142,15 +208,55 @@ pub fn sync(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     link: Option<Res<ComputeLink>>,
+    mut quad_materials: Option<ResMut<Assets<crate::plugin_quads::QuadMaterial>>>,
+    mut buffers: Option<ResMut<Assets<bevy::render::storage::ShaderBuffer>>>,
 ) {
     if engine.plugins.meshes.is_empty() {
         return;
     }
-    for op in std::mem::take(&mut engine.plugins.meshes) {
+    let operations = std::mem::take(&mut engine.plugins.meshes);
+    let incoming: HashSet<_> = operations
+        .iter()
+        .filter_map(|op| match op {
+            MeshOp::Put { plugin, mesh } if mesh.transition_ms > 0 => Some(plugin.clone()),
+            _ => None,
+        })
+        .collect();
+    let transitioning: HashSet<_> = operations
+        .iter()
+        .filter_map(|op| {
+            let (plugin, name) = match op {
+                MeshOp::Remove { plugin, name } => (plugin, name),
+                MeshOp::Put { plugin, mesh } => (plugin, &mesh.name),
+                _ => return None,
+            };
+            (incoming.contains(plugin)
+                && state
+                    .transitions
+                    .get(&(plugin.clone(), name.clone()))
+                    .is_some_and(|ms| *ms > 0))
+            .then(|| plugin.clone())
+        })
+        .collect();
+    if !transitioning.is_empty() {
+        for entity in state.retired.drain(..) {
+            commands.entity(entity).despawn();
+        }
+    }
+    for op in operations {
         match op {
             MeshOp::Put { plugin, mesh } => {
                 if let Some(old) = state.live.remove(&(plugin.clone(), mesh.name.clone())) {
-                    commands.entity(old).despawn();
+                    if transitioning.contains(&plugin) && mesh.transition_ms > 0 {
+                        commands.entity(old).insert(Crossfade {
+                            elapsed: 0.0,
+                            duration: mesh.transition_ms as f32 / 1000.0,
+                            retire: true,
+                        });
+                        state.retired.push(old);
+                    } else {
+                        commands.entity(old).despawn();
+                    }
                 }
                 let emission = mesh.emission.unwrap_or([0.0; 3]);
                 let key = [
@@ -176,8 +282,38 @@ pub fn sync(
                 {
                     link.unbind_mesh(old.id());
                 }
-                let handle = meshes.add(raster_mesh(&mesh));
+                state.quads.remove(&(plugin.clone(), mesh.name.clone()));
+                let compact = mesh
+                    .gpu
+                    .as_ref()
+                    .and_then(|g| g.quads.as_ref())
+                    .filter(|_| {
+                        link.as_ref()
+                            .is_none_or(|link| link.available() != Some(false))
+                    });
+                let compact = compact.zip(quad_materials.as_mut()).zip(buffers.as_mut());
+                let quad = compact.map(|((q, materials), buffers)| {
+                    let base = StandardMaterial {
+                        base_color: Color::WHITE,
+                        perceptual_roughness: mesh.roughness.clamp(0.05, 1.0),
+                        emissive: LinearRgba::rgb(emission[0], emission[1], emission[2]),
+                        ..default()
+                    };
+                    (
+                        crate::plugin_quads::mesh(q),
+                        materials.add(crate::plugin_quads::QuadMaterial {
+                            base,
+                            extension: crate::plugin_quads::surface(q, buffers),
+                        }),
+                        crate::plugin_quads::bounds(&mesh),
+                    )
+                });
+                let handle = meshes.add(
+                    quad.as_ref()
+                        .map_or_else(|| raster_mesh(&mesh), |q| q.0.clone()),
+                );
                 if let Some(gpu) = &mesh.gpu
+                    && gpu.quads.is_none()
                     && let Some(link) = &link
                 {
                     link.bind_mesh(handle.id(), &plugin, &gpu.buffer, gpu.vertices);
@@ -197,6 +333,14 @@ pub fn sync(
                     MeshMaterial3d(material),
                     Transform::from_translation(Vec3::from(mesh.origin)),
                 ));
+                if let Some((_, material, bounds)) = quad {
+                    entity
+                        .remove::<MeshMaterial3d<StandardMaterial>>()
+                        .insert((MeshMaterial3d(material.clone()), bounds));
+                    state
+                        .quads
+                        .insert((plugin.clone(), mesh.name.clone()), (material, bounds));
+                }
                 if let Some(body) = &mesh.body {
                     entity.insert(Transform {
                         translation: Vec3::from(mesh.origin),
@@ -221,6 +365,16 @@ pub fn sync(
                         entity.insert((rp::RigidBody::Fixed, shape));
                     }
                 }
+                if transitioning.contains(&plugin) && mesh.transition_ms > 0 {
+                    entity.insert(Crossfade {
+                        elapsed: 0.0,
+                        duration: mesh.transition_ms as f32 / 1000.0,
+                        retire: false,
+                    });
+                }
+                state
+                    .transitions
+                    .insert((plugin.clone(), mesh.name.clone()), mesh.transition_ms);
                 state.live.insert((plugin, mesh.name), entity.id());
             }
             MeshOp::Visibility {
@@ -243,14 +397,26 @@ pub fn sync(
                 }
             }
             MeshOp::Remove { plugin, name } => {
+                state.quads.remove(&(plugin.clone(), name.clone()));
                 state.hidden.remove(&(plugin.clone(), name.clone()));
                 if let Some((old, _)) = state.assets.remove(&(plugin.clone(), name.clone()))
                     && let Some(link) = &link
                 {
                     link.unbind_mesh(old.id());
                 }
-                if let Some(old) = state.live.remove(&(plugin, name)) {
-                    commands.entity(old).despawn();
+                let key = (plugin.clone(), name);
+                let duration = state.transitions.remove(&key).unwrap_or(0);
+                if let Some(old) = state.live.remove(&key) {
+                    if transitioning.contains(&plugin) && duration > 0 {
+                        commands.entity(old).insert(Crossfade {
+                            elapsed: 0.0,
+                            duration: duration as f32 / 1000.0,
+                            retire: true,
+                        });
+                        state.retired.push(old);
+                    } else {
+                        commands.entity(old).despawn();
+                    }
                 }
             }
             MeshOp::Instances { plugin, set } => {
@@ -272,20 +438,25 @@ pub fn sync(
                 let copies: Vec<Entity> = (0..set.count())
                     .map(|i| {
                         let at = &set.positions[i * 3..i * 3 + 3];
-                        commands
-                            .spawn((
-                                PluginInstance,
-                                Mesh3d(mesh.clone()),
-                                MeshMaterial3d(material.clone()),
-                                Transform {
-                                    translation: Vec3::new(at[0], at[1], at[2]),
-                                    rotation: Quat::from_rotation_y(
-                                        set.yaw.get(i).copied().unwrap_or(0.0),
-                                    ),
-                                    scale: Vec3::splat(set.scales.get(i).copied().unwrap_or(1.0)),
-                                },
-                            ))
-                            .id()
+                        let mut copy = commands.spawn((
+                            PluginInstance,
+                            Mesh3d(mesh.clone()),
+                            MeshMaterial3d(material.clone()),
+                            Transform {
+                                translation: Vec3::new(at[0], at[1], at[2]),
+                                rotation: Quat::from_rotation_y(
+                                    set.yaw.get(i).copied().unwrap_or(0.0),
+                                ),
+                                scale: Vec3::splat(set.scales.get(i).copied().unwrap_or(1.0)),
+                            },
+                        ));
+                        if let Some((material, bounds)) =
+                            state.quads.get(&(plugin.clone(), set.mesh.clone()))
+                        {
+                            copy.remove::<MeshMaterial3d<StandardMaterial>>()
+                                .insert((MeshMaterial3d(material.clone()), *bounds));
+                        }
+                        copy.id()
                     })
                     .collect();
                 state.instances.insert(key, copies);
@@ -309,9 +480,14 @@ pub fn sync(
                         link.unbind_mesh(mesh.id());
                     }
                 }
+                for entity in state.retired.drain(..) {
+                    commands.entity(entity).despawn();
+                }
+                state.transitions.clear();
                 state.hidden.clear();
                 state.assets.clear();
                 state.materials.clear();
+                state.quads.clear();
             }
         }
     }
@@ -346,6 +522,7 @@ mod tests {
             origin,
             emission: None,
             roughness: 0.9,
+            transition_ms: 0,
             collider,
             collider_kind: ColliderKind::Trimesh,
             gpu: None,
@@ -388,6 +565,150 @@ mod tests {
     }
 
     #[test]
+    fn cut_crossfades_keep_one_previous_cut_and_clear_retired_entities() {
+        let mut app = app();
+        let mut a = cube("visual/coarse", [0.0; 3], false);
+        a.transition_ms = 150;
+        push(&mut app, vec![put(a)]);
+        assert_eq!(count::<With<Crossfade>>(&mut app), 0);
+        let mut b = cube("visual/fine", [0.0; 3], false);
+        b.transition_ms = 150;
+        push(
+            &mut app,
+            vec![
+                put(b.clone()),
+                MeshOp::Remove {
+                    plugin: "p".into(),
+                    name: "visual/coarse".into(),
+                },
+            ],
+        );
+        assert_eq!(count::<With<PluginMesh>>(&mut app), 2);
+        assert_eq!(count::<With<Crossfade>>(&mut app), 2);
+        b.name = "visual/next".into();
+        push(
+            &mut app,
+            vec![
+                put(b),
+                MeshOp::Remove {
+                    plugin: "p".into(),
+                    name: "visual/fine".into(),
+                },
+            ],
+        );
+        assert_eq!(count::<With<PluginMesh>>(&mut app), 2);
+        assert_eq!(app.world().resource::<PluginMeshes>().retired.len(), 1);
+        push(&mut app, vec![MeshOp::Clear]);
+        assert_eq!(count::<With<PluginMesh>>(&mut app), 0);
+        assert!(app.world().resource::<PluginMeshes>().retired.is_empty());
+    }
+
+    #[test]
+    fn crossfade_masks_are_complementary_and_retire_after_the_duration() {
+        let mut app = app();
+        let mut coarse = cube("coarse", [0.0; 3], false);
+        coarse.transition_ms = 150;
+        push(&mut app, vec![put(coarse)]);
+        let mut fine = cube("fine", [0.0; 3], false);
+        fine.transition_ms = 150;
+        push(
+            &mut app,
+            vec![
+                put(fine),
+                MeshOp::Remove {
+                    plugin: "p".into(),
+                    name: "coarse".into(),
+                },
+            ],
+        );
+        app.insert_resource(Time::<()>::default())
+            .add_systems(PostUpdate, crossfade);
+        app.world_mut().spawn((
+            Camera3d::default(),
+            GlobalTransform::from_translation(Vec3::new(0.0, 0.0, 5.0)),
+        ));
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(75));
+        app.update();
+        let mut ranges = app
+            .world_mut()
+            .query::<(&Crossfade, &bevy::camera::visibility::VisibilityRange)>();
+        let ranges: Vec<_> = ranges
+            .iter(app.world())
+            .map(|(fade, range)| {
+                (
+                    fade.retire,
+                    if fade.retire {
+                        range.end_margin.clone()
+                    } else {
+                        range.start_margin.clone()
+                    },
+                )
+            })
+            .collect();
+        assert_eq!(ranges.len(), 2);
+        assert!(
+            ranges.iter().all(
+                |(_, range)| (range.start - 4.5).abs() < 1e-5 && (range.end - 5.5).abs() < 1e-5
+            )
+        );
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(75));
+        app.update();
+        assert_eq!(count::<With<Crossfade>>(&mut app), 0);
+        assert_eq!(count::<With<PluginMesh>>(&mut app), 1);
+        assert!(app.world().resource::<PluginMeshes>().retired.is_empty());
+    }
+
+    #[test]
+    fn compact_assets_share_records_with_instances_and_release_on_clear() {
+        let mut app = app();
+        app.init_resource::<Assets<crate::plugin_quads::QuadMaterial>>()
+            .init_resource::<Assets<bevy::render::storage::ShaderBuffer>>();
+        let mut data = cube("quad", [0.0; 3], true);
+        data.gpu = Some(blockloom_plugin_api::mesh::GpuVertices {
+            buffer: "unused".into(),
+            vertices: 6,
+            quads: Some(blockloom_plugin_api::mesh::CompactQuads {
+                records: vec![[2u32 << 24 | 1, 1 | 1 << 8]],
+                palette: vec![[1.0; 4]],
+                voxel: 1.0,
+            }),
+        });
+        push(
+            &mut app,
+            vec![
+                put(data),
+                MeshOp::Instances {
+                    plugin: "p".into(),
+                    set: InstanceData {
+                        name: "copies".into(),
+                        mesh: "quad".into(),
+                        positions: vec![2.0, 0.0, 0.0],
+                        yaw: vec![],
+                        scales: vec![],
+                    },
+                },
+            ],
+        );
+        assert_eq!(
+            count::<With<MeshMaterial3d<crate::plugin_quads::QuadMaterial>>>(&mut app),
+            2
+        );
+        assert_eq!(count::<With<rp::Collider>>(&mut app), 1);
+        let state = app.world().resource::<PluginMeshes>();
+        let mesh = &state.assets[&("p".into(), "quad".into())].0;
+        let mesh = app.world().resource::<Assets<Mesh>>().get(mesh).unwrap();
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_POSITION).is_none());
+        assert_eq!(mesh.count_vertices(), 4);
+        push(&mut app, vec![MeshOp::Clear]);
+        assert_eq!(count::<With<Mesh3d>>(&mut app), 0);
+        assert!(app.world().resource::<PluginMeshes>().quads.is_empty());
+    }
+
+    #[test]
     fn moving_meshes_have_mass_and_pose_and_gpu_fallback_has_the_fixed_capacity() {
         use blockloom_plugin_api::mesh::{GpuVertices, MeshBody};
         let mut app = app();
@@ -404,6 +725,7 @@ mod tests {
         mesh.gpu = Some(GpuVertices {
             buffer: "vertices1".into(),
             vertices: 24,
+            quads: None,
         });
         mesh.check().unwrap();
         let raster = raster_mesh(&mesh);

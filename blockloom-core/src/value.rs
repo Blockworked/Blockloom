@@ -505,6 +505,37 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "CameraPosition",
+        op: "CameraPosition",
+        arity: 1,
+        default_args: || vec![text("X")],
+        // Where the world camera stands this frame. Needs no actor, so it
+        // answers in the editor as zeros, and in a game straight from the
+        // published snapshot - the same numbers the view renders from.
+        eval: |args| {
+            let axis = axis_of(args.first());
+            Ok(Evaluated::Number(
+                sense::read(|sensors| sensors.camera.position[axis.index()]) as f64,
+            ))
+        },
+    },
+    ExtOperator {
+        kind: "CameraDirection",
+        op: "CameraDirection",
+        arity: 1,
+        default_args: || vec![text("X")],
+        // Where the world camera looks this frame, unit length. What the
+        // middle of the screen points at, read live - an aim block built
+        // from these three numbers cannot drift from the view the way a
+        // hand-tracked yaw can.
+        eval: |args| {
+            let axis = axis_of(args.first());
+            Ok(Evaluated::Number(
+                sense::read(|sensors| sensors.camera.forward[axis.index()]) as f64,
+            ))
+        },
+    },
+    ExtOperator {
         kind: "Touching",
         op: "Touching",
         arity: 1,
@@ -1340,6 +1371,10 @@ mod tests {
             time: 4.5,
             mouse_delta: [12.0, -7.0],
             mouse_locked: true,
+            camera: crate::sense::CameraSense {
+                position: [1.0, 2.0, 3.0],
+                forward: [0.0, 0.0, -1.0],
+            },
             ..Default::default()
         };
         sensors.keys.insert("space".to_string());
@@ -1365,6 +1400,16 @@ mod tests {
         assert_eq!(delta_y.eval(), Ok(Evaluated::Number(-7.0)));
         let locked = Value::op(Op::from_name("MouseLocked"), vec![]);
         assert_eq!(locked.eval(), Ok(Evaluated::Bool(true)));
+
+        // The camera reporters need no actor: they read the world camera's
+        // published pose, so they answer outside a script too.
+        let cam_x = Value::op(Op::from_name("CameraPosition"), vec![Value::text("X")]);
+        assert_eq!(cam_x.eval(), Ok(Evaluated::Number(1.0)));
+        let cam_dz = Value::op(Op::from_name("CameraDirection"), vec![Value::text("Z")]);
+        assert_eq!(cam_dz.eval(), Ok(Evaluated::Number(-1.0)));
+        sense::with_actor("a1", || {
+            assert_eq!(cam_x.eval(), Ok(Evaluated::Number(1.0)));
+        });
 
         let my_y = Value::op(Op::from_name("MyPosition"), vec![Value::text("Y")]);
         // Outside a script there's no actor, so "my y position" is an error,

@@ -1,4 +1,4 @@
-// CPU topology counts give each cell a disjoint packed output span.
+// Cube records hold merged quads; smooth offsets hold disjoint triangle spans.
 @group(0) @binding(0) var<storage, read> samples: array<i32>;
 @group(0) @binding(1) var<storage, read> palette: array<f32>;
 @group(0) @binding(2) var<storage, read> params: array<f32>;
@@ -40,37 +40,34 @@ fn vertex(slot:u32, p:vec3<f32>, n:vec3<f32>, m:u32) {
     vertices[i+6u]=palette[m*4u];vertices[i+7u]=palette[m*4u+1u];vertices[i+8u]=palette[m*4u+2u];vertices[i+9u]=1.0;
 }
 @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) id:vec3<u32>) {
+    if id.x>=u32(params[12]) { return; }
+    if params[11]==0.0 {
+        let record=offsets[id.x*2u]; let dimensions=offsets[id.x*2u+1u];let m=(dimensions>>16u)&255u;
+        let face=(record>>24u)&7u;
+        let axis=face/2u; let sign=select(-1,1,(face%2u)==1u);
+        let u=(axis+1u)%3u; let v=(axis+2u)%3u;
+        var p=vec3(0.0);
+        p[axis]=f32(record&255u);
+        p[u]=f32((record>>8u)&255u);p[v]=f32((record>>16u)&255u);
+        let width=f32(dimensions&255u);let height=f32((dimensions>>8u)&255u);
+        var quad:array<vec3<f32>,4>;quad[0]=p;quad[1]=p;quad[1][u]+=width;quad[2]=quad[1];quad[2][v]+=height;quad[3]=p;quad[3][v]+=height;
+        var n=vec3(0.0);n[axis]=f32(sign);
+        let order=array<u32,6>(0u,1u,2u,0u,2u,3u);
+        for(var i=0u;i<6u;i=i+1u) {
+            var q=order[i];if sign<0 {q=order[(i/3u)*3u+select(i%3u,3u-i%3u,i%3u!=0u)];}
+            vertex(id.x*6u+i,quad[q],n,m);
+        }
+        return;
+    }
     let dims=vec3<u32>(u32(params[4]),u32(params[5]),u32(params[6]));
-    if id.x>=dims.x*dims.y*dims.z { return; }
     let at=vec3<i32>(i32(id.x%dims.x),i32((id.x/dims.x)%dims.y),i32(id.x/(dims.x*dims.y)))+vec3(1);
-    let start=offsets[id.x];
-    let end=offsets[id.x+1u];
+    let start=offsets[id.x];let end=offsets[id.x+1u];
     if start==end { return; }
     for(var w=0u;w<360u;w=w+1u) {
         if w>=(end-start)*10u { break; }
         vertices[start*10u+w]=0.0;
     }
     var cursor=start;
-    if params[11]==0.0 {
-        let m=material(at);
-        if m==0u || palette[m*4u+3u]!=params[7] { return; }
-        for(var face=0u;face<6u;face=face+1u) {
-            let axis=face/2u; let sign=select(-1,1,(face%2u)==1u);
-            var delta=vec3(0);delta[axis]=sign;
-            if material(at+delta)!=0u { continue; }
-            let u=(axis+1u)%3u; let v=(axis+2u)%3u;
-            var p=point(at)-vec3(0.5);p[axis]+=select(0.0,1.0,sign>0);
-            var quad:array<vec3<f32>,4>;quad[0]=p;quad[1]=p;quad[1][u]+=1.0;quad[2]=quad[1];quad[2][v]+=1.0;quad[3]=p;quad[3][v]+=1.0;
-            var n=vec3(0.0);n[axis]=f32(sign);
-            let order=array<u32,6>(0u,1u,2u,0u,2u,3u);
-            for(var i=0u;i<6u;i=i+1u) {
-                var q=order[i];if sign<0 {q=order[(i/3u)*3u+select(i%3u,3u-i%3u,i%3u!=0u)];}
-                vertex(cursor+i,quad[q],n,m);
-            }
-            cursor+=6u;
-        }
-        return;
-    }
     for(var t=0u;t<6u;t=t+1u) {
         var inside:array<vec3<i32>,4>;var outside:array<vec3<i32>,4>;var ni=0u;var no=0u;
         for(var c=0u;c<4u;c=c+1u) {

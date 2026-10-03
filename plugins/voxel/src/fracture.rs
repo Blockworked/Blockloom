@@ -97,6 +97,7 @@ impl Fragment {
             origin: self.origin,
             emission: (glowing > 0).then_some(emission),
             roughness: 0.9,
+            transition_ms: 0,
             collider: true,
             collider_kind: ColliderKind::ConvexHull,
             gpu: None,

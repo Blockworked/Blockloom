@@ -45,6 +45,9 @@ pub struct MeshData {
     /// The surface's roughness.
     #[serde(default = "default_roughness")]
     pub roughness: f32,
+    /// Dither crossfade duration for replacing or retiring visual-only meshes.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub transition_ms: u16,
     /// Whether the mesh is solid: a fixed collider over exactly these
     /// triangles.
     #[serde(default)]
@@ -52,7 +55,7 @@ pub struct MeshData {
     /// The shape of that collider; a trimesh unless the plugin says otherwise.
     #[serde(default)]
     pub collider_kind: ColliderKind,
-    /// Compute output: packed position, normal, rgba (10 f32 words per vertex).
+    /// Compute triangle output or persistent compact quads for direct rendering.
     /// CPU arrays remain the collision mesh and the rendering fallback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpu: Option<GpuVertices>,
@@ -62,8 +65,22 @@ pub struct MeshData {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GpuVertices {
+    /// Compute buffer name; ignored when `quads` supplies persistent records.
     pub buffer: String,
     pub vertices: u32,
+    /// Persistent quad records for direct raster decoding; CPU arrays still collide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quads: Option<CompactQuads>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Two words per axis-aligned quad in a tile of at most 128 cells. Word zero
+/// packs plane/u/v in three bytes, then axis*2+positive in three bits. Word one
+/// packs width/height/palette index in three bytes; coordinates scale by `voxel`.
+pub struct CompactQuads {
+    pub records: Vec<[u32; 2]>,
+    pub palette: Vec<[f32; 4]>,
+    pub voxel: f32,
 }
 
 /// A movable mesh. Fixed meshes omit this field.
@@ -76,6 +93,10 @@ pub struct MeshBody {
     pub angular_velocity: [f32; 3],
     #[serde(default = "identity_rotation")]
     pub rotation: [f32; 4],
+}
+
+fn is_zero(value: &u16) -> bool {
+    *value == 0
 }
 
 fn identity_rotation() -> [f32; 4] {
@@ -94,11 +115,41 @@ impl MeshData {
     /// Whether the arrays agree with each other and the world can draw them.
     pub fn check(&self) -> Result<(), String> {
         let name = &self.name;
+        if self.transition_ms > 500
+            || (self.transition_ms > 0 && (self.collider || self.body.is_some()))
+        {
+            return Err(format!(
+                "mesh {name}: transitions require a visual-only mesh and at most 500 ms"
+            ));
+        }
         if name.is_empty() {
             return Err("a mesh needs a name".to_string());
         }
         if let Some(gpu) = &self.gpu {
             crate::id::validate_type_id(&gpu.buffer)?;
+            if let Some(quads) = &gpu.quads {
+                if quads.records.len() * 6 != gpu.vertices as usize
+                    || quads.palette.is_empty()
+                    || quads.palette.len() > 256
+                    || !quads.voxel.is_finite()
+                    || quads.voxel <= 0.0
+                    || quads.palette.iter().flatten().any(|v| !v.is_finite())
+                    || quads.records.iter().any(|[r, m]| {
+                        r >> 27 != 0
+                            || m >> 24 != 0
+                            || (r >> 24) & 7 > 5
+                            || [0, 8, 16].iter().any(|s| (r >> s) & 255 > 128)
+                            || [0, 8]
+                                .iter()
+                                .any(|s| !(1..=128).contains(&((m >> s) & 255)))
+                            || ((r >> 8) & 255) + (m & 255) > 128
+                            || ((r >> 16) & 255) + ((m >> 8) & 255) > 128
+                            || ((m >> 16) & 255) as usize >= quads.palette.len()
+                    })
+                {
+                    return Err(format!("mesh {name}: invalid compact quads"));
+                }
+            }
             if gpu.vertices as usize > MAX_VERTICES
                 || (gpu.vertices as usize) < self.indices.len()
                 || gpu.vertices == 0
@@ -175,6 +226,7 @@ mod tests {
             origin: [0.; 3],
             emission: None,
             roughness: 0.9,
+            transition_ms: 0,
             collider: false,
             collider_kind: ColliderKind::Trimesh,
             gpu: None,
@@ -185,6 +237,34 @@ mod tests {
     #[test]
     fn a_consistent_mesh_passes() {
         assert_eq!(triangle().check(), Ok(()));
+    }
+
+    #[test]
+    fn quad_packets_and_visual_transition_limits_are_checked() {
+        let mut mesh = triangle();
+        mesh.gpu = Some(GpuVertices {
+            buffer: "quads".into(),
+            vertices: 6,
+            quads: Some(CompactQuads {
+                records: vec![[0, 1 | 1 << 8]],
+                palette: vec![[1.0; 4]],
+                voxel: 1.0,
+            }),
+        });
+        assert!(mesh.check().is_ok());
+        let mut bad = mesh.clone();
+        bad.gpu.as_mut().unwrap().quads.as_mut().unwrap().records[0][0] |= 128 << 8;
+        assert!(bad.check().is_err());
+        let mut bad = mesh.clone();
+        bad.gpu.as_mut().unwrap().quads.as_mut().unwrap().records[0][1] |= 1 << 16;
+        assert!(bad.check().is_err());
+        mesh.transition_ms = 150;
+        assert!(mesh.check().is_ok());
+        mesh.collider = true;
+        assert!(mesh.check().is_err());
+        mesh.collider = false;
+        mesh.transition_ms = 501;
+        assert!(mesh.check().is_err());
     }
 
     #[test]
@@ -209,6 +289,7 @@ mod tests {
         mesh.gpu = Some(GpuVertices {
             buffer: "vertices".into(),
             vertices: 2,
+            quads: None,
         });
         assert!(mesh.check().is_err());
         mesh.gpu.as_mut().unwrap().vertices = 3;
