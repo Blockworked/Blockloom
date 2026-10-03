@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 import re
 import shutil
+import sys
 import tempfile
+import threading
 
 from hub_process import run, checkpoint
 
@@ -35,7 +37,7 @@ def capture(arguments, limit=4 * 1024**2):
     return json.loads(data)
 
 
-def asset(repo, tag, name, destination):
+def asset(repo, tag, name, destination, size=None):
     repository(repo)
     if not isinstance(tag, str) or not tag or tag.startswith("-"):
         raise ValueError("Invalid GitHub release tag")
@@ -43,9 +45,46 @@ def asset(repo, tag, name, destination):
         raise ValueError("Invalid GitHub asset name")
     if destination.exists():
         raise ValueError("Asset download destination already exists")
-    run([cli(), "release", "download", tag, "--repo", repo, "--pattern", name,
-         "--output", str(destination)])
+    if size is not None:
+        print(f"Downloading {name} via GitHub CLI ({size / 1024**2:.0f} MiB expected)...",
+              file=sys.stderr, flush=True)
+    else:
+        print(f"Downloading {name} via GitHub CLI...", file=sys.stderr, flush=True)
+    # `gh release download` reports no byte progress itself, so poll the
+    # growing file while it runs. Without this a 693 MiB editor download
+    # leaves the Hub operation log empty for minutes.
+    done = threading.Event()
+
+    def watch():
+        last = 0
+        while not done.wait(1.0):
+            try:
+                current = destination.stat().st_size if destination.exists() else 0
+            except OSError:
+                current = 0
+            if current != last and current > 0:
+                if size:
+                    print(f"Downloading: {current / 1024**2:.1f} MiB / {size / 1024**2:.1f} MiB",
+                          file=sys.stderr, flush=True)
+                else:
+                    print(f"Downloading: {current / 1024**2:.1f} MiB",
+                          file=sys.stderr, flush=True)
+                last = current
+
+    watcher = threading.Thread(target=watch, daemon=True)
+    watcher.start()
+    try:
+        run([cli(), "release", "download", tag, "--repo", repo, "--pattern", name,
+             "--output", str(destination)])
+    finally:
+        done.set()
+        watcher.join(timeout=5)
     checkpoint()
+    try:
+        final = destination.stat().st_size
+    except OSError:
+        final = 0
+    print(f"Downloaded {name} ({final / 1024**2:.1f} MiB).", file=sys.stderr, flush=True)
 
 
 def catalog(repo, target):

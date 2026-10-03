@@ -26,6 +26,18 @@ class DownloadTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
 
+    def test_default_android_pins_match_android_rs(self):
+        repo = Path(__file__).resolve().parent.parent
+        self.assertEqual(downloads.default_android_versions(), downloads.android_versions(repo))
+
+    def test_catalog_rejects_non_json_with_actionable_errors(self):
+        html = b"<!DOCTYPE html><html><body>not a catalog</body></html>"
+        with patch.object(downloads, "read_remote", return_value=html):
+            with self.assertRaisesRegex(ValueError, "GitHub repository page"):
+                downloads.catalog("https://github.com/Blockworked/Blockloom", "fixture")
+            with self.assertRaisesRegex(ValueError, "did not return a release catalog"):
+                downloads.catalog("https://example.org/catalog.json", "fixture")
+
     def test_download_checks_hash_and_size(self):
         value = b"archive bytes"
         path = self.root / "archive"

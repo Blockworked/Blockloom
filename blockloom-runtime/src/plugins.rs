@@ -54,6 +54,11 @@ pub enum MeshOp {
         plugin: String,
         name: String,
     },
+    Visibility {
+        plugin: String,
+        name: String,
+        visible: bool,
+    },
     /// Draws copies of a mesh the plugin already submitted.
     Instances {
         plugin: String,
@@ -139,6 +144,11 @@ enum Applied {
         plugin: String,
         name: String,
     },
+    MeshVisibility {
+        plugin: String,
+        name: String,
+        visible: bool,
+    },
     NavDirty,
     Instances {
         plugin: String,
@@ -181,6 +191,11 @@ fn applied(outcomes: Vec<Outcome>) -> Vec<Applied> {
                 },
                 Effect::Mesh(mesh) => Applied::Mesh { plugin, mesh },
                 Effect::RemoveMesh { name } => Applied::RemoveMesh { plugin, name },
+                Effect::MeshVisibility { name, visible } => Applied::MeshVisibility {
+                    plugin,
+                    name,
+                    visible,
+                },
                 Effect::NavDirty { .. } => Applied::NavDirty,
                 Effect::Instances(set) => Applied::Instances { plugin, set },
                 Effect::RemoveInstances { name } => Applied::RemoveInstances { plugin, name },
@@ -222,6 +237,7 @@ fn apply(engine: &mut Engine, outcomes: Vec<Applied>) {
                 actor,
             }),
             Applied::Mesh { .. }
+            | Applied::MeshVisibility { .. }
             | Applied::RemoveMesh { .. }
             | Applied::Instances { .. }
             | Applied::RemoveInstances { .. }
@@ -235,6 +251,15 @@ fn apply(engine: &mut Engine, outcomes: Vec<Applied>) {
             Applied::Mesh { plugin, mesh } => {
                 engine.plugins.meshes.push(MeshOp::Put { plugin, mesh })
             }
+            Applied::MeshVisibility {
+                plugin,
+                name,
+                visible,
+            } => engine.plugins.meshes.push(MeshOp::Visibility {
+                plugin,
+                name,
+                visible,
+            }),
             Applied::RemoveMesh { plugin, name } => {
                 engine.plugins.meshes.push(MeshOp::Remove { plugin, name })
             }
@@ -826,12 +851,34 @@ pub fn run_block(
 #[cfg(feature = "plugins")]
 const JOB_BUDGET_MS: f64 = 4.0;
 
+#[cfg(feature = "plugins")]
+fn perspective_view(
+    pose: &GlobalTransform,
+    projection: &PerspectiveProjection,
+    size: Vec2,
+) -> Value {
+    json!({"position":pose.translation().to_array(),"forward":pose.forward().to_array(),
+        "up":pose.up().to_array(),"viewport_width":size.x,"viewport_height":size.y,
+        "fov_y":projection.fov.to_degrees()})
+}
+
 /// The system that runs one stage's hooks. Hooks wait while the game is
 /// paused or not yet running, except the two stages that follow frames.
 pub fn stage(
     stage: Stage,
-) -> impl FnMut(NonSendMut<Engine>, Res<Time>, crate::queries::QueryAccess) {
-    move |mut engine: NonSendMut<Engine>, time: Res<Time>, queries: crate::queries::QueryAccess| {
+) -> impl FnMut(
+    NonSendMut<Engine>,
+    Res<Time>,
+    crate::queries::QueryAccess,
+    Query<(&GlobalTransform, &Projection, &Camera), With<crate::world::WorldCamera>>,
+) {
+    move |mut engine: NonSendMut<Engine>,
+          time: Res<Time>,
+          queries: crate::queries::QueryAccess,
+          cameras: Query<
+        (&GlobalTransform, &Projection, &Camera),
+        With<crate::world::WorldCamera>,
+    >| {
         #[cfg(feature = "plugins")]
         {
             if engine.plugins.previewing.is_some() {
@@ -861,13 +908,30 @@ pub fn stage(
             let Some(world) = engine.plugins.world.clone() else {
                 return;
             };
+            let view = if stage == Stage::Presentation {
+                cameras
+                    .iter()
+                    .find_map(|(pose, projection, camera)| {
+                        let Projection::Perspective(projection) = projection else {
+                            return None;
+                        };
+                        let size = camera.logical_viewport_size()?;
+                        if !camera.is_active || size.x <= 0.0 || size.y <= 0.0 {
+                            return None;
+                        }
+                        Some(perspective_view(pose, projection, size))
+                    })
+                    .unwrap_or(Value::Null)
+            } else {
+                Value::Null
+            };
             let outcomes = queries.scope(engine.contact_ticks, || {
                 let mut world = world.borrow_mut();
                 // What a reporter answered last step may have moved.
                 if matches!(stage, Stage::Input | Stage::Presentation) {
                     world.forget_reads();
                 }
-                let mut outcomes = world.run_stage(stage, tick, dt);
+                let mut outcomes = world.run_stage_with_view(stage, tick, dt, view);
                 // Jobs get their slices once per fixed tick, after the hooks.
                 if stage == Stage::FixedSimulation {
                     outcomes.extend(world.run_jobs(JOB_BUDGET_MS));
@@ -877,7 +941,7 @@ pub fn stage(
             apply(&mut engine, applied(outcomes));
         }
         #[cfg(not(feature = "plugins"))]
-        let _ = (&mut engine, &time, &queries, stage);
+        let _ = (&mut engine, &time, &queries, &cameras, stage);
     }
 }
 
@@ -885,6 +949,21 @@ pub fn stage(
 mod tests {
     use super::*;
     use blockloom_core::scene::Mode;
+    #[test]
+    #[cfg(feature = "plugins")]
+    fn perspective_hooks_receive_world_pose_and_logical_viewport() {
+        let pose = GlobalTransform::from(Transform::from_translation(Vec3::new(1.0, 2.0, 3.0)));
+        let projection = PerspectiveProjection {
+            fov: 60.0_f32.to_radians(),
+            ..default()
+        };
+        let view = perspective_view(&pose, &projection, Vec2::new(1280.0, 720.0));
+        assert_eq!(view["position"], json!([1.0, 2.0, 3.0]));
+        assert_eq!(view["forward"], json!([0.0, 0.0, -1.0]));
+        assert_eq!(view["up"], json!([0.0, 1.0, 0.0]));
+        assert_eq!(view["viewport_width"], 1280.0);
+        assert!((view["fov_y"].as_f64().unwrap() - 60.0).abs() < 0.001);
+    }
 
     fn engine() -> Engine {
         let (_tx, rx) = std::sync::mpsc::channel();

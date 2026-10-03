@@ -104,8 +104,11 @@ state. Failed builds leave the previous development installation intact.
    support retry/cancellation and preserve working installs on failure. Feed URL
    and release credentials are release infrastructure decisions, not guessed here.
    Bundle Rust by default, and show Java, SDK, NDK and Android Rust target
-   checkboxes with sizes, pinned versions and dependencies. Allow adding optional
-   tools later to the same editor slot without replacing its editor binaries.
+   checkboxes with sizes, pinned versions and dependencies. Missing optional
+   tools can be added later to the same editor slot (`add-tools`, the
+   installation's Components button) without replacing its editor binaries.
+   Installations can be deleted (refused while projects use them or their
+   editor runs) and their folder opened from the installations list.
    Launch uses the slot's Rust and Java on PATH and its SDK/NDK paths through
    Hub-specific overrides, preserving the user's Android settings. Android license
    acceptance stays explicit. NDK and Android Rust targets are both needed for
@@ -243,8 +246,9 @@ optional tool selection and failed/cancelled installation preservation.
 
 ## Downloads and build workflows
 
-Get a release supports HTTPS catalogs and a persisted GitHub CLI source setting,
-default repository `Blockworked/Blockloom`. GitHub CLI uses the existing
+Get a release uses the GitHub CLI source by default (persisted setting,
+default repository `Blockworked/Blockloom`) and falls back to HTTPS catalogs.
+GitHub CLI uses the existing
 `gh auth login` session to list the latest 100 releases and retrieve each release's
 `blockloom-catalog.json`. Downloads use `gh release download` for private assets;
 the Hub never reads or saves the login token. Draft releases are hidden.

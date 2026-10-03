@@ -701,13 +701,31 @@ fn smooth_worlds_match_native_and_portable_execution() {
             "cast",
             json!({"x":16.5,"y":30,"z":16.5,"dx":0,"dy":-1,"dz":0,"reach":100}),
         ),
+        (
+            "lod_select",
+            json!({"position":[16,16,-50],"forward":[0,0,1],"up":[0,1,0],
+            "viewport_width":1280,"viewport_height":720,"fov_y":60,"render_distance":256,
+            "split_pixels":160,"merge_pixels":120}),
+        ),
         ("lod_sample", json!({"level":4,"x":1,"y":0,"z":1})),
         ("set", json!({"x":31,"y":1,"z":31,"material":"glow"})),
+        (
+            "lod_select",
+            json!({"position":[16,16,-50],"forward":[0,0,1],"up":[0,1,0],
+            "viewport_width":1280,"viewport_height":720,"fov_y":60,"render_distance":256,
+            "split_pixels":160,"merge_pixels":120}),
+        ),
         ("lod_sample", json!({"level":4,"x":1,"y":0,"z":1})),
         ("lod_sample", json!({"level":1,"x":15,"y":0,"z":15})),
         ("lod_mesh", json!({"level":1,"x":1,"y":0,"z":1})),
         ("count", json!({})),
         ("generate", json!({"preset":"empty","seed":3})),
+        (
+            "lod_select",
+            json!({"position":[16,16,-50],"forward":[0,0,1],"up":[0,1,0],
+            "viewport_width":1280,"viewport_height":720,"fov_y":60,"render_distance":256,
+            "split_pixels":160,"merge_pixels":120}),
+        ),
         ("lod_sample", json!({"level":4,"x":1,"y":0,"z":1})),
         ("lod_mesh", json!({"level":4,"x":0,"y":0,"z":0})),
         ("set", json!({"x":31,"y":1,"z":31,"material":"glow"})),
@@ -723,6 +741,140 @@ fn smooth_worlds_match_native_and_portable_execution() {
             native.call_json(op, &args).unwrap(),
             portable.call_json(op, &args).unwrap(),
             "{op}"
+        );
+    }
+}
+
+#[test]
+fn visual_lod_publication_matches_native_and_portable_execution() {
+    let wasm = build_wasm();
+    let Some(wasm) = wasm else {
+        return;
+    };
+    let native = module();
+    let entry = PortableEntry {
+        module: "portable/voxel.wasm".into(),
+        memory_limit_mib: 256,
+        call_limit_ms: 10000,
+    };
+    let mut portable = portable(&wasm, &entry);
+    let start = json!({"resources":[{"type_id":"world","payload":{"size":[32,16,16],"preset":"flat","surface":"smooth","visual_lod":true}}]});
+    assert_eq!(
+        native.call_json("world.start", &start).unwrap(),
+        portable.call_json("world.start", &start).unwrap()
+    );
+    for z in [-200, -5] {
+        let frame = json!({"view":{"position":[16,8,z],"forward":[0,0,1],"up":[0,1,0],"viewport_width":800,"viewport_height":800,"fov_y":90}});
+        let mut ready = false;
+        for _ in 0..150 {
+            let response = native.call_json("hook.stream", &frame).unwrap();
+            assert_eq!(response, portable.call_json("hook.stream", &frame).unwrap());
+            let count = native.call_json("count", &json!({})).unwrap();
+            assert_eq!(count, portable.call_json("count", &json!({})).unwrap());
+            if count["visual_lod_active"] == true && count["visual_lod_pending"] == 0 {
+                ready = true;
+                break;
+            }
+        }
+        assert!(ready);
+    }
+    let edit = json!({"x":4,"y":4,"z":4,"material":"glow"});
+    assert_eq!(
+        native.call_json("set", &edit).unwrap(),
+        portable.call_json("set", &edit).unwrap()
+    );
+    let frame = json!({"view":{"position":[16,8,-5],"forward":[0,0,1],"up":[0,1,0],"viewport_width":800,"viewport_height":800,"fov_y":90}});
+    let mut ready = false;
+    for _ in 0..150 {
+        let response = native.call_json("hook.stream", &frame).unwrap();
+        assert_eq!(response, portable.call_json("hook.stream", &frame).unwrap());
+        let count = native.call_json("count", &json!({})).unwrap();
+        assert_eq!(count, portable.call_json("count", &json!({})).unwrap());
+        if count["visual_lod_pending"] == 0
+            && count["visual_lod_revision"] == count["voxel_revision"]
+        {
+            ready = true;
+            break;
+        }
+    }
+    assert!(ready);
+    for (op, args) in [("hook.stream", json!({})), ("world.stop", json!({}))] {
+        assert_eq!(
+            native.call_json(op, &args).unwrap(),
+            portable.call_json(op, &args).unwrap()
+        );
+    }
+}
+
+#[test]
+fn mixed_resolution_seams_and_edits_match_native_and_portable_execution() {
+    let Some(wasm) = build_wasm() else { return };
+    let native = module();
+    let entry = PortableEntry {
+        module: "portable/voxel.wasm".into(),
+        memory_limit_mib: 256,
+        call_limit_ms: 10000,
+    };
+    let mut portable = portable(&wasm, &entry);
+    for surface in ["cubes", "smooth"] {
+        let start = json!({"resources":[{"type_id":"world","payload":{"size":[64,16,16],"preset":"flat","surface":surface,"visual_lod":true,"lod_split_pixels":450,"lod_merge_pixels":350}}]});
+        assert_eq!(
+            native.call_json("world.start", &start).unwrap(),
+            portable.call_json("world.start", &start).unwrap()
+        );
+        let view = json!({"position":[0,8,-5],"forward":[1,0,1],"up":[0,1,0],"viewport_width":800,"viewport_height":800,"fov_y":90});
+        let mut inspect = view.clone();
+        inspect["render_distance"] = json!(256);
+        inspect["split_pixels"] = json!(450);
+        inspect["merge_pixels"] = json!(350);
+        let selection = native.call_json("lod_select", &inspect).unwrap();
+        assert_eq!(
+            selection,
+            portable.call_json("lod_select", &inspect).unwrap()
+        );
+        let levels: std::collections::BTreeSet<_> = selection["selection"]["leaves"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v["level"].as_u64().unwrap())
+            .collect();
+        assert!(levels.len() > 1, "fixture needs a mixed cut: {selection}");
+        let frame = json!({"view":view});
+        for edited in [false, true] {
+            if edited {
+                let args = json!({"x":32,"y":4,"z":4,"material":"glow"});
+                assert_eq!(
+                    native.call_json("set", &args).unwrap(),
+                    portable.call_json("set", &args).unwrap()
+                );
+            }
+            let mut ready = false;
+            for _ in 0..400 {
+                let response = native.call_json("hook.stream", &frame).unwrap();
+                assert_eq!(response, portable.call_json("hook.stream", &frame).unwrap());
+                assert!(
+                    !response["effects"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|e| e["effect"] == "error"),
+                    "{response}"
+                );
+                let count = native.call_json("count", &json!({})).unwrap();
+                assert_eq!(count, portable.call_json("count", &json!({})).unwrap());
+                if count["visual_lod_active"] == true
+                    && count["visual_lod_pending"] == 0
+                    && count["visual_lod_revision"] == count["voxel_revision"]
+                {
+                    ready = true;
+                    break;
+                }
+            }
+            assert!(ready);
+        }
+        assert_eq!(
+            native.call_json("world.stop", &json!({})).unwrap(),
+            portable.call_json("world.stop", &json!({})).unwrap()
         );
     }
 }

@@ -101,6 +101,41 @@ impl Shape {
         }
     }
 
+    pub(crate) fn solids(self) -> Vec<Vec<Face>> {
+        let (parts, facing) = match self {
+            Shape::Cube => (vec![boxes_faces(&[([0.0; 3], [1.0; 3])])], Facing::South),
+            Shape::Slab => (
+                vec![boxes_faces(&[([0.0; 3], [1.0, 0.5, 1.0])])],
+                Facing::South,
+            ),
+            Shape::TopSlab => (
+                vec![boxes_faces(&[([0.0, 0.5, 0.0], [1.0; 3])])],
+                Facing::South,
+            ),
+            Shape::Post => (
+                vec![boxes_faces(&[([0.25, 0.0, 0.25], [0.75, 1.0, 0.75])])],
+                Facing::South,
+            ),
+            Shape::Stair(f) => (
+                vec![
+                    boxes_faces(&[([0.0; 3], [1.0, 0.5, 0.5])]),
+                    boxes_faces(&[([0.0, 0.0, 0.5], [1.0; 3])]),
+                ],
+                f,
+            ),
+            Shape::Ramp(f) => (vec![wedge_faces()], f),
+        };
+        parts
+            .into_iter()
+            .map(|faces| {
+                faces
+                    .into_iter()
+                    .map(|face| turned(face, facing.turns()))
+                    .collect()
+            })
+            .collect()
+    }
+
     /// The faces to draw, before any neighbour hides one.
     pub fn faces(self) -> Vec<Face> {
         let (faces, facing) = match self {

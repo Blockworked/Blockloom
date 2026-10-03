@@ -192,6 +192,8 @@ ApplicationWindow {
     property var preparedDev: ({})
     property var availableReleases: []
     property var selectedRelease: ({})
+    property var toolsTarget: ({})
+    property var deleteTarget: ({})
 
     function perform(command, args) {
         error = ""
@@ -230,6 +232,7 @@ ApplicationWindow {
         onCompleted: function(command, ok, response) {
             if (!ok) {
                 if (command === "release-settings") window.checkAfterSettings = false
+                if (command === "check-releases") window.availableReleases = []
                 if (response.startsWith("Operation cancelled")) window.notice = response
                 else window.error = response
                 return
@@ -237,16 +240,15 @@ ApplicationWindow {
             try {
                 const result = JSON.parse(response)
                 if (command === "release-settings") {
-                    githubReleases.checked = result.source === "github-cli"
-                    githubRepo.text = result.repo
-                    catalogUrl.text = result.url
+                    settingsGithub.checked = result.source === "github-cli"
+                    settingsRepo.text = result.repo
+                    settingsUrl.text = result.url
                     if (window.checkAfterSettings) {
                         window.checkAfterSettings = false
                         perform("check-releases", [])
                     }
                 } else if (command === "check-releases") {
                     window.availableReleases = result.releases
-                    catalogUrl.text = result.url
                 } else if (command === "installations") {
                     window.installations = result
                     service.run("projects", [])
@@ -269,8 +271,8 @@ ApplicationWindow {
                         }
                         if (service.smokePage().startsWith("log")) logDialog.open()
                         if (service.smokePage() === "releases") {
-                            releaseDialog.open()
-                            githubReleases.checked = true
+                            settingsDialog.open()
+                            settingsGithub.checked = true
                         }
                         if ((service.smokePage().startsWith("dev-") || service.smokePage() === "checkbox-hover" || service.smokePage() === "checkbox-checked") && !window.smokeDevStarted) {
                             window.smokeDevStarted = true
@@ -299,6 +301,8 @@ ApplicationWindow {
                     if (command === "bind") logDialog.close()
                     window.notice = command === "open" ? "Editor launched."
                         : command === "bind" ? "Project editor selection saved." + (result.backup ? " Backup: " + result.backup.path : "")
+                        : command === "uninstall" ? "Installation deleted."
+                        : command === "add-tools" ? "Components added."
                         : "Installation saved."
                     window.refresh()
                 }
@@ -308,7 +312,7 @@ ApplicationWindow {
     Timer {
         interval: 5000
         repeat: true
-        running: !service.busy && !service.smokeTest() && !versionDialog.visible && !devDialog.visible && !installDialog.visible
+        running: !service.busy && !service.smokeTest() && !versionDialog.visible && !devDialog.visible && !installDialog.visible && !settingsDialog.visible && !toolsDialog.visible && !deleteDialog.visible
         onTriggered: service.run("installations", [])
     }
     Component.onCompleted: refresh()
@@ -335,6 +339,7 @@ ApplicationWindow {
                 visible: window.lastBackup.length > 0
                 onClicked: if (!service.showBackup(window.lastBackup)) window.error = "The backup folder could not be opened."
             }
+            HubButton { text: "Settings"; enabled: !service.busy; onClicked: settingsDialog.open() }
             HubButton { text: "Refresh"; enabled: !service.busy; onClicked: refresh() }
         }
         TabBar {
@@ -415,7 +420,7 @@ ApplicationWindow {
             ColumnLayout {
                 spacing: 12
                 RowLayout {
-                    HubButton { text: "Get a release"; enabled: !service.busy; onClicked: { releaseDialog.open(); service.run("release-settings", []) } }
+                    HubButton { text: "Get a release"; enabled: !service.busy; onClicked: { releaseDialog.open(); perform("check-releases", []) } }
                     HubButton { text: "Import release bundle"; enabled: !service.busy; onClicked: { window.selectedRelease = {}; installDialog.open() } }
                     HubButton { text: "Add local repository"; enabled: !service.busy; onClicked: repoFolder.open() }
                 }
@@ -473,19 +478,39 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                 }
                             }
-                            HubButton {
-                                visible: !!modelData.prepared
-                                text: "Install prepared build"
-                                enabled: !service.busy && !modelData.running
-                                onClicked: perform("dev-options", [modelData.id])
-                            }
-                            HubButton {
-                                visible: modelData.kind === "dev"
-                                text: modelData.status === "ready" ? "Rebuild" : "Build"
-                                enabled: !service.busy && !modelData.running
-                                onClicked: {
-                                    perform("prepare-dev", [modelData.id])
-                                    logDialog.open()
+                            ColumnLayout {
+                                HubButton {
+                                    visible: !!modelData.prepared
+                                    text: "Install prepared build"
+                                    enabled: !service.busy && !modelData.running
+                                    onClicked: perform("dev-options", [modelData.id])
+                                }
+                                HubButton {
+                                    visible: modelData.kind === "dev"
+                                    text: modelData.status === "ready" ? "Rebuild" : "Build"
+                                    enabled: !service.busy && !modelData.running
+                                    onClicked: {
+                                        perform("prepare-dev", [modelData.id])
+                                        logDialog.open()
+                                    }
+                                }
+                                RowLayout {
+                                    HubButton {
+                                        visible: modelData.status === "ready"
+                                        text: "Components"
+                                        enabled: !service.busy && !modelData.running
+                                        onClicked: { window.toolsTarget = modelData; toolsDialog.open() }
+                                    }
+                                    HubButton {
+                                        text: "Folder"
+                                        enabled: !!modelData.path
+                                        onClicked: { if (!service.showFolder(modelData.path)) window.error = "The installation folder could not be opened." }
+                                    }
+                                    HubButton {
+                                        text: "Delete"
+                                        enabled: !service.busy && !modelData.running
+                                        onClicked: { window.deleteTarget = modelData; deleteDialog.open() }
+                                    }
                                 }
                             }
                         }
@@ -568,19 +593,16 @@ ApplicationWindow {
         ColumnLayout {
             anchors.fill: parent
             spacing: 12
-            HubCheck { id: githubReleases; text: "Use GitHub CLI for private releases"; enabled: !service.busy }
-            HubField { id: githubRepo; text: "Blockworked/Blockloom"; visible: githubReleases.checked; placeholderText: "GitHub owner/repo"; Layout.fillWidth: true }
-            Label { text: "Uses your gh auth login session."; visible: githubReleases.checked; color: "#a7b0c4" }
             RowLayout {
-                HubField { id: catalogUrl; visible: !githubReleases.checked; placeholderText: "HTTPS release catalog URL"; Layout.fillWidth: true }
                 HubButton {
-                    text: "Save and check"
+                    text: "Check for releases"
                     enabled: !service.busy
-                    onClicked: {
-                        window.checkAfterSettings = true
-                        service.run("release-settings", ["--source", githubReleases.checked ? "github-cli" : "https",
-                            "--repo", githubRepo.text.trim(), "--url", catalogUrl.text.trim()])
-                    }
+                    onClicked: perform("check-releases", [])
+                }
+                HubButton {
+                    text: "Settings"
+                    enabled: !service.busy
+                    onClicked: settingsDialog.open()
                 }
             }
             Label { text: window.error || window.notice; visible: text.length > 0; color: window.error ? "#ffaaaa" : "#b7e4c5"; wrapMode: Text.Wrap; Layout.fillWidth: true; maximumLineCount: 3; elide: Text.ElideRight }
@@ -618,6 +640,41 @@ ApplicationWindow {
         }
     }
     HubDialog {
+        id: settingsDialog
+        anchors.centerIn: parent
+        width: Math.min(window.width - 60, 550)
+        title: "Hub settings"
+        modal: true
+        standardButtons: Dialog.Save | Dialog.Cancel
+        onOpened: if (!service.busy) service.run("release-settings", [])
+        onAccepted: {
+            window.checkAfterSettings = true
+            service.run("release-settings", ["--source", settingsGithub.checked ? "github-cli" : "https",
+                "--repo", settingsRepo.text.trim(), "--url", settingsUrl.text.trim()])
+        }
+        Component.onCompleted: {
+            standardButton(Dialog.Save).text = "Save"
+            standardButton(Dialog.Save).enabled = Qt.binding(() => !service.busy)
+        }
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 12
+            Label { text: "Blockloom releases"; font.bold: true }
+            HubCheck { id: settingsGithub; text: "Use GitHub CLI for private releases"; checked: true; enabled: !service.busy }
+            HubField { id: settingsRepo; visible: settingsGithub.checked; placeholderText: "GitHub owner/repo"; Layout.fillWidth: true }
+            Label { text: "Uses your gh auth login session."; visible: settingsGithub.checked; color: "#a7b0c4" }
+            HubField { id: settingsUrl; visible: !settingsGithub.checked; placeholderText: "HTTPS release catalog URL"; Layout.fillWidth: true }
+            Label {
+                text: "The catalog URL must serve the release catalog JSON, not a repository page."
+                visible: !settingsGithub.checked
+                color: "#a7b0c4"
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+            Label { text: window.error || window.notice; visible: text.length > 0; color: window.error ? "#ffaaaa" : "#b7e4c5"; wrapMode: Text.Wrap; Layout.fillWidth: true; maximumLineCount: 3; elide: Text.ElideRight }
+        }
+    }
+    HubDialog {
         id: installDialog
         anchors.centerIn: parent
         width: Math.min(window.width - 60, 550)
@@ -647,13 +704,83 @@ ApplicationWindow {
                 HubButton { text: "Browse"; onClicked: bundleFolder.open() }
             }
             HubCheck { text: "Rust toolchain (required)"; checked: true; enabled: false }
-            HubCheck { id: javaCheck; text: "Java"; enabled: !window.selectedRelease.version || !!(window.selectedRelease.tools || {}).java }
-            HubCheck { id: sdkCheck; text: "Android SDK"; enabled: !window.selectedRelease.version || !!(window.selectedRelease.tools || {})["android-sdk"] }
-            HubCheck { id: ndkCheck; text: "Android NDK"; enabled: !window.selectedRelease.version || !!(window.selectedRelease.tools || {})["android-ndk"] }
-            HubCheck { id: targetsCheck; text: "Android Rust targets (ARM64 and x86-64)"; enabled: !window.selectedRelease.version || !!(window.selectedRelease.tools || {})["android-rust-targets"] }
+            HubCheck { id: javaCheck; text: "Java"; enabled: true }
+            HubCheck { id: sdkCheck; text: "Android SDK"; enabled: true }
+            HubCheck { id: ndkCheck; text: "Android NDK"; enabled: true }
+            HubCheck { id: targetsCheck; text: "Android Rust targets (ARM64 and x86-64)"; enabled: true }
             Label {
-                text: "Selected tools must be included in the bundle. APK builds need Java and the SDK; native Android builds also need the NDK and Rust targets."
+                text: window.selectedRelease.version
+                    ? "Selected tools are downloaded with this release. APK builds need Java and the SDK; native Android builds also need the NDK and Rust targets."
+                    : "Selected tools must be included in the bundle. APK builds need Java and the SDK; native Android builds also need the NDK and Rust targets."
                 color: "#a7b0c4"
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+        }
+    }
+    HubDialog {
+        id: toolsDialog
+        anchors.centerIn: parent
+        width: Math.min(window.width - 60, 550)
+        title: "Add components"
+        modal: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        function has(tool) { return !!((toolsDialog.target.tools || {})[tool]) }
+        onOpened: {
+            addJava.checked = has("java"); addJava.enabled = !has("java")
+            addSdk.checked = has("android-sdk"); addSdk.enabled = !has("android-sdk")
+            addNdk.checked = has("android-ndk"); addNdk.enabled = !has("android-ndk")
+            addTargets.checked = has("android-rust-targets"); addTargets.enabled = !has("android-rust-targets")
+        }
+        onAccepted: {
+            let args = [toolsDialog.target.id]
+            if (addJava.checked && addJava.enabled) args.push("--java")
+            if (addSdk.checked && addSdk.enabled) args.push("--android-sdk")
+            if (addNdk.checked && addNdk.enabled) args.push("--android-ndk")
+            if (addTargets.checked && addTargets.enabled) args.push("--android-rust-targets")
+            perform("add-tools", args)
+            logDialog.open()
+        }
+        Component.onCompleted: {
+            standardButton(Dialog.Ok).text = "Download and add"
+            standardButton(Dialog.Ok).enabled = Qt.binding(() => !service.busy && !!toolsDialog.target.id
+                && ((addJava.checked && addJava.enabled) || (addSdk.checked && addSdk.enabled)
+                    || (addNdk.checked && addNdk.enabled) || (addTargets.checked && addTargets.enabled)))
+        }
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 10
+            Label { text: window.label(toolsDialog.target); font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: "Installed components are checked and cannot be changed. New components are downloaded with the versions this editor pins."; color: "#a7b0c4"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            HubCheck { id: addJava; text: "Java" }
+            HubCheck { id: addSdk; text: "Android SDK" }
+            HubCheck { id: addNdk; text: "Android NDK" }
+            HubCheck { id: addTargets; text: "Android Rust targets (ARM64 and x86-64)" }
+            Label {
+                text: "Everything is already installed."
+                visible: !addJava.enabled && !addSdk.enabled && !addNdk.enabled && !addTargets.enabled
+                color: "#b7e4c5"
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+        }
+    }
+    HubDialog {
+        id: deleteDialog
+        anchors.centerIn: parent
+        width: Math.min(window.width - 60, 550)
+        title: "Delete installation"
+        modal: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: perform("uninstall", [window.deleteTarget.id])
+        Component.onCompleted: {
+            standardButton(Dialog.Ok).text = "Delete"
+            standardButton(Dialog.Ok).enabled = Qt.binding(() => !!window.deleteTarget.id && !service.busy)
+        }
+        ColumnLayout {
+            anchors.fill: parent
+            Label {
+                text: "Delete " + window.label(window.deleteTarget) + "? Projects using it must be assigned another editor first. This cannot be undone."
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
             }

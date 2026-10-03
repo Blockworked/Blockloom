@@ -771,3 +771,144 @@ fn coarse_mesh_previews_preserve_gameplay_and_reset_after_restore() {
             > restored["generation"].as_u64().unwrap()
     );
 }
+
+#[test]
+fn camera_selection_preserves_gameplay_and_restarts_after_generation() {
+    let module = module(Arc::new(MemoryStore::new()));
+    start(
+        &module,
+        json!({"size":[128,128,128],"streamed":true,"preset":"empty","max_pages":1}),
+    );
+    module
+        .call_json("set", &json!({"x":63,"y":64,"z":65,"material":"glow"}))
+        .unwrap();
+    let before = module.call_json("count", &json!({})).unwrap();
+    let camera = |z| {
+        json!({"position":[64,64,z],"forward":[0,0,1],"up":[0,1,0],
+        "viewport_width":800,"viewport_height":800,"fov_y":90,"render_distance":10000,
+        "split_pixels":160,"merge_pixels":120})
+    };
+    let first = module.call_json("lod_select", &camera(-540)).unwrap();
+    assert!(
+        first["selection"]["leaves"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|v| v["level"] != 4)
+    );
+    assert!(first.get("effects").is_none());
+    let split = module.call_json("lod_select", &camera(-640)).unwrap();
+    assert!(
+        split["selection"]["leaves"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|v| v["level"] != 4)
+    );
+    let mut invalid = camera(-640);
+    invalid["up"] = json!([0, 0, 1]);
+    assert!(module.call_json("lod_select", &invalid).is_err());
+    assert_eq!(
+        module.call_json("lod_select", &camera(-640)).unwrap(),
+        split
+    );
+    assert_eq!(module.call_json("count", &json!({})).unwrap(), before);
+    assert_eq!(material(&module, [63, 64, 65])["material"], 7);
+    module
+        .call_json("generate", &json!({"preset":"empty","seed":2}))
+        .unwrap();
+    let reset = module.call_json("lod_select", &camera(-640)).unwrap();
+    assert_eq!(reset["selection"]["leaves"][0]["level"], 4);
+    assert!(reset["generation"].as_u64().unwrap() > first["generation"].as_u64().unwrap());
+}
+
+#[test]
+fn visual_lod_swaps_complete_cuts_and_falls_back_without_removing_collision() {
+    let module = module(Arc::new(MemoryStore::new()));
+    start(
+        &module,
+        json!({"size":[32,16,16],"preset":"empty","visual_lod":true}),
+    );
+    module
+        .call_json("set", &json!({"x":4,"y":4,"z":4,"material":"glow"}))
+        .unwrap();
+    let frame = |z| json!({"view":{"position":[16,8,z],"forward":[0,0,1],"up":[0,1,0],"viewport_width":800,"viewport_height":800,"fov_y":90}});
+    let first = module.call_json("hook.stream", &frame(-200)).unwrap();
+    let effects = first["effects"].as_array().unwrap();
+    assert!(effects.iter().any(|e| e["effect"] == "mesh"
+        && e["name"].as_str().unwrap().starts_with("visual/")
+        && e["collider"] == false));
+    assert!(
+        effects
+            .iter()
+            .any(|e| e["effect"] == "mesh_visibility" && e["visible"] == false)
+    );
+    assert!(!effects.iter().any(|e| e["effect"] == "remove_mesh"));
+    let old = effects.iter().find(|e| e["effect"] == "mesh").unwrap()["name"].clone();
+    let mut bad = frame(-200);
+    bad["view"]["up"] = json!([0, 0, 1]);
+    let rejected = module.call_json("hook.stream", &bad).unwrap();
+    assert!(
+        rejected["effects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["effect"] == "error")
+    );
+    assert_eq!(
+        module.call_json("count", &json!({})).unwrap()["visual_lod_active"],
+        true
+    );
+    assert!(
+        module.call_json("hook.stream", &bad).unwrap()["effects"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let pending = module.call_json("hook.stream", &frame(-5)).unwrap();
+    assert!(pending["effects"].as_array().unwrap().is_empty());
+    module
+        .call_json("set", &json!({"x":4,"y":4,"z":4,"material":"stone"}))
+        .unwrap();
+    let mut committed = false;
+    for _ in 0..100 {
+        let response = module.call_json("hook.stream", &frame(-5)).unwrap();
+        let effects = response["effects"].as_array().unwrap();
+        if effects
+            .iter()
+            .any(|e| e["effect"] == "remove_mesh" && e["name"] == old)
+        {
+            assert!(
+                effects.iter().any(|e| e["effect"] == "mesh"
+                    && e["name"].as_str().unwrap().starts_with("visual/0/"))
+            );
+            assert!(
+                !effects
+                    .iter()
+                    .any(|e| e["name"].as_str().is_some_and(|n| n.ends_with("glow7"))
+                        && e["effect"] == "mesh")
+            );
+            committed = true;
+            break;
+        }
+        assert!(
+            !effects.iter().any(
+                |e| e["effect"] == "mesh" && e["name"].as_str().unwrap().starts_with("visual/")
+            )
+        );
+    }
+    assert!(committed);
+    assert_eq!(material(&module, [4, 4, 4])["material"], 1);
+    let fallback = module.call_json("hook.stream", &json!({})).unwrap();
+    assert!(
+        fallback["effects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["effect"] == "mesh_visibility" && e["visible"] == true)
+    );
+    assert_eq!(
+        module.call_json("count", &json!({})).unwrap()["visual_lod_active"],
+        false
+    );
+}

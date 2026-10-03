@@ -1,7 +1,8 @@
 # Voxy LOD research and Blockloom design
 
 Research date: 2026-10-03. This is a source review and implementation design;
-storage and derived mip samples are implemented, with no visual LOD yet.
+storage, derived mip samples, coarse mesh jobs and camera selection are
+implemented, including opt-in visual publication.
 
 ## Requested chunk dimensions
 
@@ -151,7 +152,8 @@ These are proposed Blockloom decisions, not claims about Voxy:
 
 ### Implementation status
 
-Storage, reduction and coarse mesh production are implemented in `plugins/voxel`:
+Storage, reduction, coarse mesh production and selection are implemented in
+`plugins/voxel`:
 
 - Storage uses sparse 32-cubed sections and distinct X/Z column addresses.
   All world dimensions retain their exact cell bounds. Empty resident sections
@@ -244,11 +246,112 @@ Storage, reduction and coarse mesh production are implemented in `plugins/voxel`
   dependencies, revision and generation identities. Mesh names start with
   `lod/<level>/<x>/<y>/<z>`, with an optional glow suffix. These meshes have no
   collision or GPU allocation and are returned as data, not renderer effects.
-  Existing full-detail meshes continue to provide drawing and gameplay.
+  Full-detail meshes continue to provide gameplay; drawing defaults to full detail.
 
-Camera-driven selection, coherent parent/child replacement and
-cross-resolution seams remain to be implemented.
-There is no distant visual LOD yet; all gameplay queries remain canonical.
+- `lod_select.rs` traverses a perspective view from level 4 roots to level 0
+  tiles. `voxel_lod_select` (`lod_select` op) takes world-space `position`,
+  `forward`, `up`, `viewport_width`, `viewport_height`, vertical `fov_y` in
+  degrees, `render_distance` in world units, and `split_pixels`/`merge_pixels`.
+  Axes are normalized and orthogonalized. A conservative bounding sphere tests
+  the side and eye planes; closest AABB distance tests a spherical render range.
+  The squared projected bounding diameter estimates area. This is conservative
+  screen coverage, not a measured terrain error or depth occlusion query.
+- Previously split tiles use the lower merge threshold; new splits use the
+  higher split threshold. History resets on generation, restore/load and world
+  restart. Invalid requests leave history intact. Selection reads bounds only,
+  leaving canonical cells, residency, mip/mesh jobs and renderer effects alone.
+- Traversal permits at most 512 candidate roots, 512 output leaves and 4096
+  visits. A view exceeding the root budget fails before changing history.
+  A split exceeding either remaining traversal budget retains its parent and
+  reports `budget_limited`. Desired leaves do not overlap, and contain clipped
+  base-cell bounds, level/tile addresses and projected area in squared pixels
+  (reported to three decimal places). Level 0 leaves address 8-cell tiles;
+  original fine/collision tiles still span 16 cells and remain separate.
+  Selection includes empty terrain and does not request or build meshes.
+
+- Presentation hooks now receive an optional `view` snapshot with the active
+  world perspective camera's world pose, logical viewport dimensions and vertical
+  FOV in degrees. Fixed-stage calls receive null. The host's existing `run_stage`
+  remains available without a view. Preview and orthographic views retain fine
+  rendering. No depth or occlusion resources are exposed by this snapshot.
+- Set the voxel world's `visual_lod` to true to enable experimental publication.
+  `lod_distance` defaults to 256 world units; `lod_split_pixels` and
+  `lod_merge_pixels` default to 160 and 120. Runtime selection has its own
+  hysteresis history, separate from inspection. Invokers still determine fine
+  section/collision residency, while camera selection can draw canonical distant
+  terrain without loading those sections. Detached bodies retain their normal
+  rendering and physics.
+- `lod_publish.rs` stages a complete desired cut, advancing at most one tile job
+  per presentation frame. Level-zero jobs use the exact cube/shape or smooth
+  extractor, in 8-cell render tiles. Coarse jobs retain their occupancy proxies.
+  The target cut accounts for at most 2 MiB of geometry and boundary words,
+  independently of the four-tile job cache and renderer allocations. Reused
+  installed tiles count toward that limit; only rebuilt tiles retain full
+  geometry in staging. Installed tiles retain names, dependency bounds derived
+  from their keys, payload size, validity, neighbor layout and solid face caps.
+  Face cap coordinates are f64 (two words per coordinate), retaining no full
+  CPU mesh copy. Scratch, vector/map metadata and capacities, JSON and temporary
+  duplication during publication are outside this payload budget.
+- No staged meshes are sent to the renderer until every tile in the cut is
+  ready and validated. One effect batch replaces the previous visual set and
+  hides fine rendering through `mesh_visibility`, preserving fine colliders and
+  GPU buffers. Visibility persists across replacement of the same named mesh.
+  The runtime applies the batch before the next render. Empty tiles also count
+  as ready, and names absent from the replacement are removed.
+- Edits invalidate installed tiles, staged geometry and partial jobs whose
+  two-sample dependency halos intersect the accumulated edit box. Joined tiles
+  also depend on their neighbor's halo; both sides of a changed join rebuild.
+  Unaffected tiles and queued sampling survive, and the target revision advances after
+  invalidation. Inspection mesh polls and fine flushes broadcast the same changes
+  to both mesh paths. A missing change box forces a conservative full rebuild.
+  Generation changes discard all pending work and installed reuse eligibility,
+  while preserving the installed cover until replacement.
+- Replacement cuts reuse valid installed tiles at the same level/address and
+  neighbor layout, including empty tiles, and send renderer effects only for
+  rebuilt or removed groups.
+  An edit outside all selected halos advances the installed revision without a
+  mesh upload. Shared boundary dependencies still rebuild together; no partial
+  replacement reaches the renderer. Camera changes can reuse matching installed
+  leaves, but abandoned staged leaves are not retained as a second mesh cache.
+  A disjoint root selection cancels old work on teleport;
+  other camera motion lets the captured cut complete before requesting the
+  latest view. This avoids starvation but can temporarily publish an older
+  camera selection. A cut exceeding its payload budget or a rejected camera
+  retains the installed cover and reports an error. Missing camera input removes
+  visual meshes and unhides fine meshes. Stop removes both sets.
+- Fragment publication waits for the source collider pages and the replacement
+  visual cut; the fragment and new visual set are released in one effect batch.
+  `count` reports visual activation, tile/pending counts, installed revision and
+  generation, and the cut word limit. Old visual data may remain visible while
+  edits rebuild, while gameplay queries always use current canonical cells.
+
+- `lod_seam.rs` joins mixed-resolution faces for cubic, shaped and smooth terrain.
+  Visual smooth extraction includes the lower halo and clips triangles to exact
+  logical tile bounds before world-edge projection. Coplanar surface triangles
+  belong to the tile containing the solid, avoiding duplicate boundary faces.
+  Fine collision and inspection meshes retain their existing extraction path.
+- Required boundary caps describe each tile's solid cross-section. Cubic proxies
+  and exact fine shapes use their convex solids; smooth caps intersect the same
+  six tetrahedra and signed densities used by the extractor. Zero-density faces
+  use the interior solid limit. At each mixed face, ordinary coplanar faces are
+  removed and convex polygon differences emit only the area solid on one side.
+  Opposite sides supply opposite outward faces, retaining material and emission.
+  Caps handle multiple fine neighbors, cavities, empty neighbors, all axes and
+  level differences up to four without requiring a balanced selection tree.
+- Caps build from already sampled tile halos, with no extra mip queries or fine
+  residency. Only mixed faces retain caps. After all required tiles are ready,
+  seam clipping advances at most one tile per frame; `visual_lod_pending` includes
+  this phase. Cap construction and stitching each permit at most two million
+  polygon clipping work units per tile. Shared render vertices are compacted.
+  Cap payload and completed seam geometry count toward tile/cut limits; a budget
+  rejection preserves the installed cover. No staged seam reaches the renderer
+  before the complete cut validates against its generation and revision.
+
+These are planar, watertight step joins, not interpolated density transitions.
+Smooth joins can retain a visible crease or flat ledge where reductions disagree.
+As with existing coarse geometry, overlapping shape proxies and density surfaces
+can retain internal faces inside the solid union. Visual LOD remains opt-in;
+all gameplay queries and collision stay canonical.
 The plugin compute API still needs renderer services for depth traversal,
 visibility queues and compact quad draw allocation.
 
@@ -256,9 +359,10 @@ visibility queues and compact quad draw allocation.
 
 First implement column/section addressing and checkpoint migration, then
 bounded meshing for 32-cell sections, then voxel reduction and edit propagation.
-Next add screen-space selection and coherent mesh replacement using the coarse
-mesh jobs and their boundary dependencies.
-Finish seam handling for both surface modes and renderer visibility/compaction.
+Camera inputs and coherent complete-cut publication now connect the selector
+to coarse jobs. Dependency-based tile reuse now avoids rebuilding the entire cut
+for unrelated edits. Mixed-resolution boundaries now have planar solid-difference
+joins. Next improve transition appearance and renderer visibility/compaction.
 
 Qualification includes non-multiple heights (1, 31, 33, 100), old checkpoints,
 column and section borders, thin structures, caves, shape proxies, smooth

@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude as rp;
 use blockloom_plugin_api::mesh::{ColliderKind, MeshData};
 use blockloom_protocol::RuntimeMessage;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[cfg(feature = "plugins")]
 use crate::plugin_compute::ComputeLink;
@@ -41,6 +41,7 @@ pub struct PluginInstance;
 #[derive(Resource, Default)]
 pub struct PluginMeshes {
     live: HashMap<(String, String), Entity>,
+    hidden: HashSet<(String, String)>,
     /// What each mesh draws with, so a set of copies can share it.
     assets: HashMap<(String, String), (Handle<Mesh>, Handle<StandardMaterial>)>,
     instances: HashMap<(String, String), Vec<Entity>>,
@@ -187,6 +188,11 @@ pub fn sync(
                 );
                 let mut entity = commands.spawn((
                     PluginMesh,
+                    if state.hidden.contains(&(plugin.clone(), mesh.name.clone())) {
+                        Visibility::Hidden
+                    } else {
+                        Visibility::Inherited
+                    },
                     Mesh3d(handle),
                     MeshMaterial3d(material),
                     Transform::from_translation(Vec3::from(mesh.origin)),
@@ -217,7 +223,27 @@ pub fn sync(
                 }
                 state.live.insert((plugin, mesh.name), entity.id());
             }
+            MeshOp::Visibility {
+                plugin,
+                name,
+                visible,
+            } => {
+                let key = (plugin, name);
+                if let Some(&entity) = state.live.get(&key) {
+                    if visible {
+                        state.hidden.remove(&key);
+                    } else {
+                        state.hidden.insert(key);
+                    }
+                    commands.entity(entity).insert(if visible {
+                        Visibility::Inherited
+                    } else {
+                        Visibility::Hidden
+                    });
+                }
+            }
             MeshOp::Remove { plugin, name } => {
+                state.hidden.remove(&(plugin.clone(), name.clone()));
                 if let Some((old, _)) = state.assets.remove(&(plugin.clone(), name.clone()))
                     && let Some(link) = &link
                 {
@@ -283,6 +309,7 @@ pub fn sync(
                         link.unbind_mesh(mesh.id());
                     }
                 }
+                state.hidden.clear();
                 state.assets.clear();
                 state.materials.clear();
             }
@@ -423,6 +450,60 @@ mod tests {
         push(&mut app, vec![put(cube("b", [0.0; 3], false))]);
         assert_eq!(count::<With<PluginMesh>>(&mut app), 2);
         assert_eq!(app.world().resource::<PluginMeshes>().len(), 2);
+    }
+
+    #[test]
+    fn visibility_changes_preserve_colliders_and_replacements() {
+        let mut app = app();
+        let visibility = |visible| MeshOp::Visibility {
+            plugin: "p".into(),
+            name: "a".into(),
+            visible,
+        };
+        push(
+            &mut app,
+            vec![put(cube("a", [0.0; 3], true)), visibility(false)],
+        );
+        assert_eq!(count::<With<rp::Collider>>(&mut app), 1);
+        assert_eq!(
+            *app.world_mut()
+                .query_filtered::<&Visibility, With<PluginMesh>>()
+                .single(app.world())
+                .unwrap(),
+            Visibility::Hidden
+        );
+        push(&mut app, vec![put(cube("a", [1.0; 3], true))]);
+        assert_eq!(
+            *app.world_mut()
+                .query_filtered::<&Visibility, With<PluginMesh>>()
+                .single(app.world())
+                .unwrap(),
+            Visibility::Hidden
+        );
+        push(&mut app, vec![visibility(true)]);
+        assert_eq!(count::<With<rp::Collider>>(&mut app), 1);
+        assert_eq!(
+            *app.world_mut()
+                .query_filtered::<&Visibility, With<PluginMesh>>()
+                .single(app.world())
+                .unwrap(),
+            Visibility::Inherited
+        );
+        push(
+            &mut app,
+            vec![
+                visibility(false),
+                MeshOp::Clear,
+                put(cube("a", [0.0; 3], true)),
+            ],
+        );
+        assert_eq!(
+            *app.world_mut()
+                .query_filtered::<&Visibility, With<PluginMesh>>()
+                .single(app.world())
+                .unwrap(),
+            Visibility::Inherited
+        );
     }
 
     #[test]

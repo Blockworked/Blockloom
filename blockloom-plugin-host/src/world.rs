@@ -65,6 +65,8 @@ pub enum Effect {
     Mesh(MeshData),
     /// Takes the plugin's mesh of that name out of the world.
     RemoveMesh { name: String },
+    /// Changes drawing without removing the mesh or its collider.
+    MeshVisibility { name: String, visible: bool },
     /// Draws many copies of one of the plugin's meshes in one batch,
     /// replacing the plugin's set of the same name.
     Instances(InstanceData),
@@ -707,6 +709,17 @@ impl WorldPlugins {
 
     /// Runs every hook registered for `stage`, in order.
     pub fn run_stage(&mut self, stage: Stage, tick: u64, dt: f64) -> Vec<Outcome> {
+        self.run_stage_with_view(stage, tick, dt, Value::Null)
+    }
+
+    /// Supplies the current render view without changing fixed-step hook inputs.
+    pub fn run_stage_with_view(
+        &mut self,
+        stage: Stage,
+        tick: u64,
+        dt: f64,
+        view: Value,
+    ) -> Vec<Outcome> {
         let hooks: Vec<HookRef> = self
             .order
             .iter()
@@ -722,12 +735,15 @@ impl WorldPlugins {
             if hosted.missing_hooks.contains(&key) {
                 continue;
             }
-            let input = json!({
+            let mut input = json!({
                 "stage": stage,
                 "hook": hook.name,
                 "tick": tick,
                 "dt": dt,
             });
+            if !view.is_null() {
+                input["view"] = view.clone();
+            }
             let op = format!("{}{}", ops::HOOK_PREFIX, hook.name);
             let (outcomes, missing) = self.call_op(&hook.plugin, &op, &input, false);
             out.extend(outcomes);
@@ -1091,7 +1107,7 @@ mod tests {
                 }
                 "hook.tick" => answer(
                     out,
-                    json!({"effects": [{"effect": "say", "text": format!("tick {}", input["tick"])}]}),
+                    json!({"effects": [{"effect": "say", "text": if input["view"].is_null() {format!("tick {}", input["tick"])} else {format!("view {}",input["view"])}}]}),
                 ),
                 "hook.late" => answer(
                     out,
@@ -1285,6 +1301,21 @@ mod tests {
             ),
         ])
         .unwrap()
+    }
+
+    #[test]
+    fn render_view_is_forwarded_to_hooks_without_changing_legacy_calls() {
+        let mut world = two_plugins();
+        let view = json!({"position":[1,2,3],"viewport_height":720});
+        let outcomes = world.run_stage_with_view(Stage::FixedSimulation, 7, 0.02, view.clone());
+        assert_eq!(
+            said(&outcomes),
+            [format!("a: view {view}"), format!("b: view {view}")]
+        );
+        assert_eq!(
+            said(&world.run_stage(Stage::FixedSimulation, 8, 0.02)),
+            ["a: tick 8", "b: tick 8"]
+        );
     }
 
     #[test]
@@ -1487,6 +1518,30 @@ mod tests {
                 }
             }]
         );
+    }
+
+    #[test]
+    fn mesh_visibility_effects_require_a_boolean() {
+        let outcomes = effects_of(
+            "p",
+            "hide",
+            &json!({"effects":[
+                {"effect":"mesh_visibility","name":"ground","visible":false},
+                {"effect":"mesh_visibility","name":"ground","visible":"false"}
+            ]}),
+            false,
+        );
+        assert_eq!(
+            outcomes[0],
+            Outcome::Effect {
+                plugin: "p".into(),
+                effect: Effect::MeshVisibility {
+                    name: "ground".into(),
+                    visible: false
+                }
+            }
+        );
+        assert!(matches!(outcomes[1], Outcome::Error { .. }));
     }
 
     #[test]

@@ -57,7 +57,8 @@ class HubTests(unittest.TestCase):
             self.service.install(self.bundle)
         with self.assertRaisesRegex(ValueError, "cannot be replaced"):
             hub_install.stage(self.bundle, self.service.slot(first["id"]), replace=True)
-        self.assertEqual(self.service.installations(), [first])
+        self.assertEqual(self.service.installations(),
+                         [{**first, "path": str(self.service.slot(first["id"]))}])
 
     def test_prepared_payload_promotes_without_copying(self):
         destination = self.base / "promoted"
@@ -124,7 +125,7 @@ class HubTests(unittest.TestCase):
         entry = {"version": "0.2.0", "size": archive.stat().st_size, "unpacked_size": 10000,
                  "format": "zip", "sha256": checksum, "github": {"repo": "Blockworked/Blockloom", "tag": "0.2.0", "asset": "editor.zip"}}
 
-        def asset(repo, tag, name, destination):
+        def asset(repo, tag, name, destination, size=None):
             destination.write_bytes(archive.read_bytes())
 
         self.service.release_settings("github-cli", repo="Blockworked/Blockloom")
@@ -135,6 +136,112 @@ class HubTests(unittest.TestCase):
             installed = self.service.download_release("0.2.0", sha256=checksum)
         self.assertEqual(installed["id"], "release-0.2.0")
         self.assertEqual(self.service.project(self.project)["installation"], "release-0.1.0")
+
+    def test_release_source_defaults_to_github_cli(self):
+        settings = self.service.release_settings()
+        self.assertEqual(settings["source"], "github-cli")
+        self.assertEqual(settings["repo"], "Blockworked/Blockloom")
+
+    def test_installations_list_slot_paths(self):
+        installed = self.service.install(self.bundle)
+        entries = self.service.installations()
+        self.assertEqual(entries[0]["path"], str(self.service.slot(installed["id"])))
+
+    def test_uninstall_refuses_installation_used_by_a_project(self):
+        self.service.install(self.bundle)
+        self.service.remember(self.project)
+        self.service.bind(self.project, "release-0.1.0")
+        with self.assertRaisesRegex(ValueError, "used by projects"):
+            self.service.uninstall("release-0.1.0")
+        self.assertTrue(self.service.slot("release-0.1.0").exists())
+
+    def test_add_tools_downloads_missing_components_into_place(self):
+        (hub.tool_path(self.bundle, "rust") / "lib/rustlib" / hub.host_target() / "lib/libstd.rlib").write_bytes(b"std")
+        self.service.install(self.bundle)
+
+        def tools(directory, versions, components, temporary, cache_dir=None):
+            self.assertEqual(list(components), ["java"])
+            self.assertEqual(versions["JDK_MAJOR"], "25")
+            java = hub.tool_path(Path(directory), "java") / "bin"
+            java.mkdir(parents=True)
+            (java / ("java.exe" if os.name == "nt" else "java")).write_text("fake java", encoding="utf-8")
+            return {"java": {"version": "25.0.1"}}
+
+        with patch.object(hub.hub_download, "install_android_tools", side_effect=tools) as fetch:
+            result = self.service.add_tools("release-0.1.0", ["java"])
+        fetch.assert_called_once()
+        self.assertEqual(result["added"], ["java"])
+        self.assertEqual(result["tools"]["java"], {"version": "25.0.1"})
+        slot = self.service.slot("release-0.1.0")
+        self.assertTrue((slot / "tools/java/bin" / ("java.exe" if os.name == "nt" else "java")).is_file())
+        self.assertTrue((slot / "blockloom").exists())
+        # A second call is a no-op and downloads nothing.
+        with patch.object(hub.hub_download, "install_android_tools",
+                           side_effect=AssertionError("already installed")):
+            again = self.service.add_tools("release-0.1.0", ["java"])
+        self.assertEqual(again["added"], [])
+
+    def test_add_tools_downloads_missing_android_rust_targets(self):
+        (hub.tool_path(self.bundle, "rust") / "lib/rustlib" / hub.host_target() / "lib/libstd.rlib").write_bytes(b"std")
+        self.service.install(self.bundle)
+
+        def targets(rust, channel, wanted, temporary, cache_dir=None):
+            for target in wanted:
+                (Path(rust) / "lib" / "rustlib" / target / "lib").mkdir(parents=True)
+
+        with patch.object(hub.hub_download, "install_rust_targets", side_effect=targets) as fetch:
+            result = self.service.add_tools("release-0.1.0", [], android_rust_targets=True)
+        fetch.assert_called_once()
+        self.assertEqual(result["added"], ["android-rust-targets"])
+        self.assertEqual(set(result["tools"]["android-rust-targets"]), set(hub.ANDROID_TARGETS))
+
+    def test_add_tools_rejects_unknown_components(self):
+        self.service.install(self.bundle)
+        with self.assertRaisesRegex(ValueError, "Unknown component"):
+            self.service.add_tools("release-0.1.0", ["not-a-tool"])
+
+    def test_add_tools_refuses_installation_in_use(self):
+        self.service.install(self.bundle)
+        self.service.remember(self.project)
+        self.service.bind(self.project, "release-0.1.0")
+        hub.write_json(self.project / ".blockloom/lock.json", {"pid": os.getpid(), "heartbeat": time.time()})
+        with self.assertRaisesRegex(ValueError, "Close projects"):
+            self.service.add_tools("release-0.1.0", ["java"])
+        with self.assertRaisesRegex(ValueError, "Close projects"):
+            self.service.uninstall("release-0.1.0")
+
+    def test_release_download_fetches_optional_tools_missing_from_bundle(self):
+        import hashlib
+        import zipfile
+        self.manifest["version"] = "0.2.0"
+        self.save_manifest()
+        archive = self.base / "remote.zip"
+        (hub.tool_path(self.bundle, "rust") / "lib/rustlib" / hub.host_target() / "lib/libstd.rlib").write_bytes(b"std")
+        with zipfile.ZipFile(archive, "w") as data:
+            for file in self.bundle.rglob("*"):
+                if file.is_file():
+                    data.write(file, file.relative_to(self.bundle).as_posix())
+        checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+        entry = {"version": "0.2.0", "size": archive.stat().st_size, "unpacked_size": 10000,
+                 "format": "zip", "sha256": checksum, "github": {"repo": "Blockworked/Blockloom", "tag": "0.2.0", "asset": "editor.zip"}}
+
+        def asset(repo, tag, name, destination, size=None):
+            destination.write_bytes(archive.read_bytes())
+
+        def tools(directory, versions, components, temporary, cache_dir=None):
+            self.assertEqual(list(components), ["java"])
+            self.assertEqual(versions["JDK_MAJOR"], "25")
+            java = hub.tool_path(Path(directory), "java") / "bin"
+            java.mkdir(parents=True)
+            (java / ("java.exe" if os.name == "nt" else "java")).write_text("fake java", encoding="utf-8")
+            return {"java": {"version": "25.0.1"}}
+
+        self.service.release_settings("github-cli", repo="Blockworked/Blockloom")
+        with patch.object(hub.hub_github, "catalog", return_value=[entry]), patch.object(hub.hub_github, "asset", side_effect=asset), \
+                patch.object(hub.hub_download, "install_android_tools", side_effect=tools):
+            installed = self.service.download_release("0.2.0", ["java"], False, checksum)
+        self.assertEqual(installed["tools"]["java"], {"version": "25.0.1"})
+        self.assertTrue((self.service.slot("release-0.2.0") / "tools/java/bin" / ("java.exe" if os.name == "nt" else "java")).is_file())
 
     def test_project_binding_survives_folder_move(self):
         self.service.install(self.bundle)

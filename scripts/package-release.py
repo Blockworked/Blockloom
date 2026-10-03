@@ -225,7 +225,8 @@ def main():
         channel = tomllib.loads(Path("rust-toolchain.toml").read_text())["toolchain"]["channel"]
         bundle_rust(rust, directory / "tools/rust", channel)
         manifest = {"kind": "release", "version": version, "target": target,
-                    "tools": {"rust": {"channel": channel}, "android-rust-targets": list(hub.ANDROID_TARGETS)}}
+                    "tools": {"rust": {"channel": channel}, "android-rust-targets": list(hub.ANDROID_TARGETS)},
+                    "android_versions": hub_download.android_versions(Path(__file__).resolve().parent.parent)}
         hub.validate_tools(directory, manifest["tools"])
         hub.write_json(directory / hub.MANIFEST, manifest)
         deploy_qt(directory, args.qmake)

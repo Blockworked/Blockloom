@@ -125,7 +125,25 @@ def digest(value):
 
 
 def catalog(url, target):
-    return catalog_data(json.loads(read_remote(url)), target)
+    raw = read_remote(url)
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        # Pasting a repository page (https://github.com/owner/repo) is the
+        # common mistake; it returns HTML, and the raw JSON error explains
+        # nothing. Point at the setting that handles it instead.
+        from urllib.parse import urlsplit as _split
+        host = (_split(url).hostname or "").lower()
+        if host in ("github.com", "www.github.com"):
+            raise ValueError(
+                "This looks like a GitHub repository page, not a release catalog. "
+                "In Hub settings, enable 'Use GitHub CLI for private releases' instead."
+            ) from None
+        raise ValueError(
+            "The catalog URL did not return a release catalog "
+            "(JSON with schema 1). Check it in Hub settings."
+        ) from None
+    return catalog_data(data, target)
 
 
 def catalog_data(data, target):
@@ -444,6 +462,16 @@ def android_versions(repo):
             raise ValueError(f"Development repository is missing Android pin: {name}")
         result[name] = match[1] or match[2]
     return result
+
+
+def default_android_versions():
+    """Pinned Android versions for release catalogs that predate android_versions.
+
+    Mirrors blockloom-core/src/android.rs; package-release embeds the same
+    pins into new catalogs, so this is only the fallback for 0.0.1 entries.
+    """
+    return {"JDK_MAJOR": "25", "PLATFORM": "android-35", "BUILD_TOOLS": "35.0.0",
+            "NDK_MAJOR": "27", "EMULATOR_IMAGE": "system-images;android-35;google_apis;x86_64"}
 
 
 def tool_archive(url, checksum, size, temporary, name, algorithm="sha256"):

@@ -26,6 +26,7 @@ public:
     Q_INVOKABLE void run(const QString &command, const QStringList &arguments);
     Q_INVOKABLE QString localPath(const QUrl &url) const;
     Q_INVOKABLE bool showBackup(const QString &path) const;
+    Q_INVOKABLE bool showFolder(const QString &path) const;
     Q_INVOKABLE bool smokeTest() const;
     Q_INVOKABLE QString smokePage() const;
     Q_INVOKABLE void smokeReady(int projects, int installations);

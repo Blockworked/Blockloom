@@ -154,6 +154,7 @@ class Hub:
                    if p.is_dir() and not p.name.startswith(".")]
         active = self.running_editors()
         for entry in entries:
+            entry["path"] = str(self.slot(entry["id"]))
             count = sum(p["installation"] == entry["id"] for p in active)
             if count:
                 entry["running"] = count
@@ -205,6 +206,66 @@ class Hub:
                 shutil.rmtree(candidate)
             hub_tools.collect_garbage(self.root, self.cache_installations())
             return {"id": identity, "kind": manifest.get("kind"), "version": manifest.get("version")}
+
+    def add_tools(self, identity, components=(), android_rust_targets=False):
+        """Download missing optional tools into an existing installation.
+
+        Editor binaries are untouched; only tools/ grows and the manifest's
+        tools entry is extended. Uses the tool cache like install-dev does.
+        """
+        for name in components:
+            if name not in OPTIONAL_TOOLS:
+                raise ValueError(f"Unknown component: {name}")
+        with self.mutation():
+            manifest = self.installation(identity, ready=True)
+            self.require_installation_idle(identity)
+            directory = self.slot(identity)
+            tools = dict(manifest.get("tools", {}))
+            missing = [name for name in components
+                       if name in OPTIONAL_TOOLS and name not in tools]
+            rust_dir = tool_path(directory, "rust")
+            absent_targets = [target for target in ANDROID_TARGETS
+                              if not (rust_dir / "lib" / "rustlib" / target / "lib").is_dir()]
+            have_targets = set(tools.get("android-rust-targets", [])) == set(ANDROID_TARGETS)
+            if not missing and not (android_rust_targets and (absent_targets or not have_targets)):
+                return {**manifest, "added": []}
+            if manifest.get("kind") == "dev" and manifest.get("repo"):
+                try:
+                    versions = (manifest.get("android_versions")
+                                or hub_download.android_versions(Path(manifest["repo"])))
+                except OSError:
+                    versions = hub_download.default_android_versions()
+            else:
+                versions = (manifest.get("android_versions")
+                            or hub_download.default_android_versions())
+            added = []
+            with tempfile.TemporaryDirectory(prefix=".add-tools-", dir=self.root) as temporary:
+                temporary = Path(temporary)
+                cache = self.tool_cache_dir()
+                if missing:
+                    print(f"Downloading optional tools: {', '.join(missing)}...",
+                          file=sys.stderr, flush=True)
+                    selected = hub_download.install_android_tools(
+                        directory, versions, missing, temporary, cache)
+                    tools.update(selected)
+                    added.extend(missing)
+                if android_rust_targets and (absent_targets or not have_targets):
+                    channel = tools.get("rust", {}).get("channel")
+                    print(f"Downloading Android Rust targets: {', '.join(ANDROID_TARGETS)}...",
+                          file=sys.stderr, flush=True)
+                    hub_download.install_rust_targets(rust_dir, channel, ANDROID_TARGETS,
+                                                      temporary, cache)
+                    tools["android-rust-targets"] = list(ANDROID_TARGETS)
+                    added.append("android-rust-targets")
+            manifest["tools"] = tools
+            validate_payload(directory)
+            validate_tools(directory, tools)
+            checkpoint()
+            write_json(directory / MANIFEST, manifest)
+            hub_tools.store_installation(cache, directory, tools, checkpoint)
+            hub_tools.collect_garbage(self.root, self.cache_installations())
+            print("Components added.", file=sys.stderr, flush=True)
+            return {**manifest, "added": added}
 
     def running_editors(self):
         path = self.root / "running.json"
@@ -334,7 +395,7 @@ class Hub:
     def release_settings(self, source=None, url=None, repo=None):
         path = self.root / "catalog.json"
         config = read_json(path) if path.exists() else {}
-        config = {"source": "https", "repo": hub_github.DEFAULT_REPO, "url": "", **config}
+        config = {"source": "github-cli", "repo": hub_github.DEFAULT_REPO, "url": "", **config}
         if source is not None:
             if source not in ("https", "github-cli"):
                 raise ValueError("Invalid release source")
@@ -361,9 +422,10 @@ class Hub:
             write_json(config_path, {**config, "source": "https", "url": url})
         for entry in entries:
             entry["installed"] = self.slot("release-" + entry["version"]).exists()
-        return {"url": url, "releases": entries}
+        return {**config, "source": "https", "url": url, "releases": entries}
 
     def download_release(self, version, components=(), android_rust_targets=False, sha256=None):
+        print(f"Checking releases for Blockloom {version}...", file=sys.stderr, flush=True)
         entries = self.check_releases()["releases"]
         entry = next((item for item in entries if item["version"] == version), None)
         if entry is None:
@@ -375,16 +437,57 @@ class Hub:
         with tempfile.TemporaryDirectory(prefix=".download-", dir=self.root) as temporary:
             temporary = Path(temporary)
             archive = temporary / "release.archive"
+            print(f"Downloading Blockloom {version} ({entry['size'] / 1024**2:.0f} MiB)...",
+                  file=sys.stderr, flush=True)
             if github := entry.get("github"):
-                hub_github.asset(github["repo"], github["tag"], github["asset"], archive)
+                hub_github.asset(github["repo"], github["tag"], github["asset"], archive,
+                                 size=entry["size"])
+                print("Verifying download checksum...", file=sys.stderr, flush=True)
                 hub_download.verify_file(archive, entry["sha256"], entry["size"])
             else:
                 hub_download.download(entry["url"], archive, entry["sha256"], entry["size"])
+            print(f"Extracting Blockloom {version} ({entry['unpacked_size'] / 1024**2:.0f} MiB unpacked)...",
+                  file=sys.stderr, flush=True)
             output = temporary / "release"
             hub_download.extract(archive, output, entry["format"], entry["unpacked_size"])
             bundles = [output] if (output / MANIFEST).is_file() else [p for p in output.iterdir() if p.is_dir() and (p / MANIFEST).is_file()]
             if len(bundles) != 1 or read_json(bundles[0] / MANIFEST).get("version") != version:
                 raise ValueError("Downloaded bundle does not match the selected release")
+            bundle_manifest = read_json(bundles[0] / MANIFEST)
+            # Release bundles ship Rust plus its Android targets; Java and the
+            # Android SDK/NDK are downloaded here like install-dev does, so
+            # the checkboxes stay usable on catalogs (such as 0.0.1) whose
+            # tools entry never listed them.
+            need = [name for name in components
+                    if name in OPTIONAL_TOOLS and name not in bundle_manifest.get("tools", {})]
+            if need:
+                versions = (entry.get("android_versions")
+                            or bundle_manifest.get("android_versions")
+                            or hub_download.default_android_versions())
+                print(f"Downloading optional tools: {', '.join(need)}...",
+                      file=sys.stderr, flush=True)
+                selected = hub_download.install_android_tools(
+                    bundles[0], versions, need, temporary, self.tool_cache_dir())
+                bundle_manifest = read_json(bundles[0] / MANIFEST)
+                tools = bundle_manifest.get("tools", {})
+                tools.update(selected)
+                bundle_manifest["tools"] = tools
+                write_json(bundles[0] / MANIFEST, bundle_manifest)
+            if android_rust_targets:
+                rust_dir = bundles[0] / "tools" / "rust"
+                channel = bundle_manifest.get("tools", {}).get("rust", {}).get("channel")
+                missing = [target for target in ANDROID_TARGETS
+                           if not (rust_dir / "lib" / "rustlib" / target / "lib").is_dir()]
+                if missing:
+                    print(f"Downloading Android Rust targets: {', '.join(missing)}...",
+                          file=sys.stderr, flush=True)
+                    hub_download.install_rust_targets(rust_dir, channel, missing,
+                                                      temporary, self.tool_cache_dir())
+                    bundle_manifest = read_json(bundles[0] / MANIFEST)
+                    tools = bundle_manifest.get("tools", {})
+                    tools["android-rust-targets"] = list(ANDROID_TARGETS)
+                    write_json(bundles[0] / MANIFEST, bundle_manifest)
+            print(f"Installing Blockloom {version}...", file=sys.stderr, flush=True)
             return self.install(bundles[0], components, android_rust_targets)
 
     def bind(self, project, identity, backup=False):
@@ -585,6 +688,11 @@ def main(argv=None):
         commands.add_parser(name)
     commands.add_parser("prune-tools")
     commands.add_parser("uninstall").add_argument("installation")
+    tools_cmd = commands.add_parser("add-tools")
+    tools_cmd.add_argument("installation")
+    for component in OPTIONAL_TOOLS:
+        tools_cmd.add_argument("--" + component, action="store_true")
+    tools_cmd.add_argument("--android-rust-targets", action="store_true")
     for name, argument in (("add-dev", "repo"), ("open", "project"), ("remember", "project")):
         commands.add_parser(name).add_argument(argument)
     commands.add_parser("dev-options").add_argument("installation")
@@ -634,6 +742,9 @@ def main(argv=None):
             result = hub.prune_tools()
         elif args.command == "uninstall":
             result = hub.uninstall(args.installation)
+        elif args.command == "add-tools":
+            components = [name for name in OPTIONAL_TOOLS if getattr(args, name.replace("-", "_"))]
+            result = hub.add_tools(args.installation, components, args.android_rust_targets)
         elif args.command == "add-dev":
             result = hub.add_dev(args.repo)
         elif args.command == "remember":

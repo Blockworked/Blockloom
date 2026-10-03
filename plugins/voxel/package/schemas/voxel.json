@@ -23,6 +23,10 @@
         {"name": "max_pages", "type": "int", "min": 1, "max": 512, "default": 64},
         {"name": "pages_per_tick", "type": "int", "min": 1, "max": 16, "default": 2},
         {"name": "stream_center", "type": "vec3", "default": [0, 0, 0], "description": "Initial stream centre in cell units; invokers follow actor positions."},
+        {"name":"visual_lod","type":"bool","default":false,"description":"Experimental camera-driven visual LOD. Collision stays at full detail; mixed-resolution joins can retain visible creases."},
+        {"name":"lod_distance","type":"number","min":0.001,"max":1000000000,"default":256},
+        {"name":"lod_split_pixels","type":"number","min":0.001,"max":1000000000,"default":160},
+        {"name":"lod_merge_pixels","type":"number","min":0.001,"max":1000000000,"default":120},
         {"name": "gpu_meshing", "type": "bool", "default": false, "description": "Compute geometry into GPU buffers with CPU collision and fallback."},
         {"name": "max_fragments", "type": "int", "min": 0, "max": 128, "default": 16},
         {"name": "max_fragment_cells", "type": "int", "min": 1, "max": 4096, "default": 4096},
@@ -325,6 +329,85 @@
         {"name": "z", "type": "int", "default": 0}
       ],
       "action": {"do": "module", "op": "lod_sample"}
+    },
+    {
+      "name": "voxel_lod_select",
+      "summary": "Inspect camera-driven LOD tile selection with hysteresis. Returns desired coverage without renderer effects.",
+      "args": [
+        {
+          "name": "position",
+          "type": "vec3",
+          "default": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "name": "forward",
+          "type": "vec3",
+          "default": [
+            0,
+            0,
+            -1
+          ]
+        },
+        {
+          "name": "up",
+          "type": "vec3",
+          "default": [
+            0,
+            1,
+            0
+          ]
+        },
+        {
+          "name": "viewport_width",
+          "type": "number",
+          "default": 1280,
+          "min": 1,
+          "max": 32768
+        },
+        {
+          "name": "viewport_height",
+          "type": "number",
+          "default": 720,
+          "min": 1,
+          "max": 32768
+        },
+        {
+          "name": "fov_y",
+          "type": "number",
+          "default": 60,
+          "min": 1,
+          "max": 179
+        },
+        {
+          "name": "render_distance",
+          "type": "number",
+          "default": 256,
+          "min": 0.001,
+          "max": 1000000000.0
+        },
+        {
+          "name": "split_pixels",
+          "type": "number",
+          "default": 160,
+          "min": 0.001,
+          "max": 1000000000.0
+        },
+        {
+          "name": "merge_pixels",
+          "type": "number",
+          "default": 120,
+          "min": 0.001,
+          "max": 1000000000.0
+        }
+      ],
+      "action": {
+        "do": "module",
+        "op": "lod_select"
+      }
     },
     {
       "name": "voxel_lod_mesh",

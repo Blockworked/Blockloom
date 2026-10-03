@@ -10,6 +10,9 @@ mod gpu_mesh;
 mod grid;
 mod lod;
 mod lod_mesh;
+mod lod_publish;
+mod lod_seam;
+mod lod_select;
 mod mesher;
 mod palette;
 mod ray;
@@ -54,6 +57,10 @@ struct Settings {
     pages_per_tick: usize,
     stream_center: [f64; 3],
     gpu_meshing: bool,
+    visual_lod: bool,
+    lod_distance: f64,
+    lod_split_pixels: f64,
+    lod_merge_pixels: f64,
     max_fragments: usize,
     max_fragment_cells: usize,
     anchor_y: i32,
@@ -83,6 +90,10 @@ impl Default for Settings {
             pages_per_tick: 2,
             stream_center: [0.0; 3],
             gpu_meshing: false,
+            visual_lod: false,
+            lod_distance: 256.0,
+            lod_split_pixels: 160.0,
+            lod_merge_pixels: 120.0,
             max_fragments: 16,
             max_fragment_cells: 4096,
             anchor_y: 0,
@@ -109,6 +120,9 @@ enum Surface {
 struct World {
     grid: Grid,
     lod_meshes: lod_mesh::Cache,
+    lod_selector: lod_select::Selector,
+    lod_publisher: lod_publish::Publisher,
+    visual_selector: lod_select::Selector,
     lod_generation: u64,
     palette: Palette,
     voxel: f32,
@@ -359,10 +373,23 @@ impl World {
         {
             return Err("invalid voxel fracture budgets or density".into());
         }
+        if !settings.lod_distance.is_finite()
+            || !(0.001..=1e9).contains(&settings.lod_distance)
+            || !settings.lod_split_pixels.is_finite()
+            || !settings.lod_merge_pixels.is_finite()
+            || settings.lod_merge_pixels <= 0.0
+            || settings.lod_split_pixels <= settings.lod_merge_pixels
+            || settings.lod_split_pixels > 1e9
+        {
+            return Err("invalid visual LOD distance or hysteresis".into());
+        }
         validate_save_slot(&settings.save_slot)?;
         Ok(World {
             grid,
             lod_meshes: lod_mesh::Cache::default(),
+            lod_selector: lod_select::Selector::default(),
+            lod_publisher: lod_publish::Publisher::default(),
+            visual_selector: lod_select::Selector::default(),
             lod_generation: 0,
             palette: Palette::new(&settings.palette_colors, &settings.palette_emission)?,
             voxel: settings.voxel_size as f32,
@@ -388,6 +415,9 @@ impl World {
 
     fn reset_lod_meshes(&mut self) {
         self.lod_meshes = lod_mesh::Cache::default();
+        self.lod_selector = lod_select::Selector::default();
+        self.lod_publisher.reset_jobs();
+        self.visual_selector = lod_select::Selector::default();
         self.lod_generation = self.lod_generation.wrapping_add(1);
     }
 
@@ -596,9 +626,61 @@ impl World {
         }
     }
 
+    fn visual_frame(&mut self, view: &Value) -> Vec<Value> {
+        let mut publisher = std::mem::take(&mut self.lod_publisher);
+        let effects = if !self.settings.visual_lod || view.is_null() {
+            publisher.fallback(self)
+        } else {
+            let mut input = Value::Object(view.as_object().cloned().unwrap_or_default());
+            input["render_distance"] = json!(self.settings.lod_distance);
+            input["split_pixels"] = json!(self.settings.lod_split_pixels);
+            input["merge_pixels"] = json!(self.settings.lod_merge_pixels);
+            let result = serde_json_from::<lod_select::View>(input)
+                .and_then(|view| {
+                    self.visual_selector
+                        .select(self.grid.size(), self.origin, self.voxel, view)
+                })
+                .and_then(|selection| {
+                    let mut keys: Vec<_> = selection
+                        .leaves
+                        .iter()
+                        .map(|v| lod_mesh::Key {
+                            level: v.level,
+                            tile: v.tile,
+                        })
+                        .collect();
+                    keys.sort();
+                    publisher.advance(self, keys)
+                });
+            match result {
+                Ok(effects) => effects,
+                Err(why) => {
+                    let mut effects = Vec::new();
+                    if publisher.error.as_ref() != Some(&why) {
+                        effects
+                            .push(json!({"effect":"error","message":format!("visual LOD: {why}")}));
+                        publisher.error = Some(why);
+                    }
+                    effects
+                }
+            }
+        };
+        self.lod_publisher = publisher;
+        let mut effects = effects;
+        effects.extend(self.release_fragments());
+        effects
+    }
+
+    fn invalidate_lod_changes(&mut self) {
+        let changes = self.grid.take_lod_changes();
+        self.lod_meshes.invalidate(changes);
+        self.lod_publisher
+            .invalidate(changes, self.grid.size(), self.grid.revision());
+    }
+
     /// Meshes every dirty section and says what the game should now draw.
     fn flush(&mut self) -> Vec<Value> {
-        self.lod_meshes.invalidate(self.grid.take_lod_changes());
+        self.invalidate_lod_changes();
         let mut effects = Vec::new();
         self.pending.extend(self.grid.take_dirty());
         if self.settings.streamed {
@@ -671,6 +753,11 @@ impl World {
                             let mut effect = serde_value(&mesh);
                             effect["effect"] = json!("mesh");
                             effects.push(effect);
+                            if self.lod_publisher.active {
+                                effects.push(
+                                    json!({"effect":"mesh_visibility","name":name,"visible":false}),
+                                );
+                            }
                             names.insert(name);
                         }
                     }
@@ -686,6 +773,17 @@ impl World {
                 self.published.insert(chunk, names);
             }
         }
+        effects.extend(self.release_fragments());
+        effects
+    }
+    fn release_fragments(&mut self) -> Vec<Value> {
+        if self.lod_publisher.active
+            && (self.lod_publisher.generation != self.lod_generation
+                || self.lod_publisher.revision != self.grid.revision())
+        {
+            return Vec::new();
+        }
+        let mut effects = Vec::new();
         let ready: Vec<_> = self
             .pending_fragments
             .iter_mut()
@@ -1192,6 +1290,7 @@ impl Plugin for Voxel {
                     world.invoke(&centres)
                 };
                 effects.extend(world.flush());
+                effects.extend(world.visual_frame(&args["view"]));
                 Ok(json!({"effects":effects}))
             }
             "world.stop" => {
@@ -1203,7 +1302,12 @@ impl Plugin for Voxel {
                     {
                         effects.push(json!({"effect":"error","message":format!("voxel stop save failed: {why}")}));
                     }
-                    for name in world.published.values().flatten() {
+                    for name in world
+                        .lod_publisher
+                        .names
+                        .iter()
+                        .chain(world.published.values().flatten())
+                    {
                         effects.push(json!({"effect":"remove_mesh","name":name}));
                     }
                     for id in world.fragments.keys() {
@@ -1244,6 +1348,20 @@ impl Plugin for Voxel {
                     "density_material":sample.density_material,"children":sample.children,
                     "revision":grid.revision(),"reduction_version":lod::REDUCTION_VERSION}))
             }
+            "lod_select" => {
+                let view =
+                    serde_json_from::<lod_select::View>(args).map_err(Error::bad_argument)?;
+                let world = self.world()?;
+                let selection = world
+                    .lod_selector
+                    .select(world.grid.size(), world.origin, world.voxel, view)
+                    .map_err(Error::bad_argument)?;
+                Ok(
+                    json!({"selection":selection, "generation":world.lod_generation,
+                    "revision":world.grid.revision(), "root_limit":lod_select::MAX_ROOTS,
+                    "leaf_limit":lod_select::MAX_LEAVES, "visit_limit":lod_select::MAX_VISITS}),
+                )
+            }
             "lod_mesh" => {
                 let tile = cell(&args)?;
                 let level = int(&args, "level")?;
@@ -1253,6 +1371,7 @@ impl Plugin for Voxel {
                     ));
                 }
                 let world = self.world()?;
+                world.invalidate_lod_changes();
                 let result = world
                     .lod_meshes
                     .poll(
@@ -1328,6 +1447,12 @@ impl Plugin for Voxel {
                     "lod_nodes": world.grid.lod_nodes(),
                     "lod_samples": world.grid.lod_samples(),
                     "lod_sample_limit": lod::MAX_SAMPLES,
+                    "visual_lod_active":world.lod_publisher.active,
+                    "visual_lod_tiles":world.lod_publisher.tiles,
+                    "visual_lod_pending":world.lod_publisher.pending(),
+                    "visual_lod_revision":world.lod_publisher.revision,
+                    "visual_lod_generation":world.lod_publisher.generation,
+                    "visual_lod_word_limit":lod_publish::MAX_CUT_WORDS,
                     "lod_mesh_tiles": world.lod_meshes.len(),
                     "lod_mesh_tile_limit": lod_mesh::MAX_TILES,
                     "lod_generation": world.lod_generation,

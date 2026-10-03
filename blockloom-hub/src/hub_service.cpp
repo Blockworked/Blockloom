@@ -72,7 +72,7 @@ bool HubService::canCancel() const
 {
     return m_busy && (m_command == "prepare-dev" || m_command == "rebuild" || m_command == "install-dev"
         || m_command == "check-releases" || m_command == "download-release" || m_command == "install"
-        || m_command == "bind" || m_command == "backup-project"
+        || m_command == "bind" || m_command == "backup-project" || m_command == "add-tools"
         || m_command == "uninstall" || m_command == "prune-tools");
 }
 
@@ -80,6 +80,12 @@ bool HubService::showBackup(const QString &path) const
 {
     const QFileInfo file(path);
     return file.isFile() && QDesktopServices::openUrl(QUrl::fromLocalFile(file.absolutePath()));
+}
+
+bool HubService::showFolder(const QString &path) const
+{
+    const QFileInfo dir(path);
+    return dir.isDir() && QDesktopServices::openUrl(QUrl::fromLocalFile(dir.absoluteFilePath()));
 }
 
 void HubService::cancel()

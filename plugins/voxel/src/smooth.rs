@@ -6,7 +6,7 @@ use crate::mesher::{Group, mesh_shapes};
 use crate::palette::Palette;
 use std::collections::BTreeMap;
 
-const CORNERS: [[i32; 3]; 8] = [
+pub(crate) const CORNERS: [[i32; 3]; 8] = [
     [0, 0, 0],
     [1, 0, 0],
     [0, 1, 0],
@@ -16,7 +16,7 @@ const CORNERS: [[i32; 3]; 8] = [
     [0, 1, 1],
     [1, 1, 1],
 ];
-const TETS: [[usize; 4]; 6] = [
+pub(crate) const TETS: [[usize; 4]; 6] = [
     [0, 1, 3, 7],
     [0, 3, 2, 7],
     [0, 2, 6, 7],
@@ -166,9 +166,30 @@ pub(crate) fn mesh_samples(
     voxel: f32,
     sample_at: impl Fn([i32; 3]) -> (i16, u8),
 ) -> BTreeMap<Option<u8>, Group> {
+    mesh_samples_inner(palette, base, extent, voxel, false, sample_at)
+}
+
+pub(crate) fn mesh_visual_samples(
+    palette: &Palette,
+    base: [i32; 3],
+    extent: [i32; 3],
+    voxel: f32,
+    sample_at: impl Fn([i32; 3]) -> (i16, u8),
+) -> BTreeMap<Option<u8>, Group> {
+    mesh_samples_inner(palette, base, extent, voxel, true, sample_at)
+}
+
+fn mesh_samples_inner(
+    palette: &Palette,
+    base: [i32; 3],
+    extent: [i32; 3],
+    voxel: f32,
+    visual: bool,
+    sample_at: impl Fn([i32; 3]) -> (i16, u8),
+) -> BTreeMap<Option<u8>, Group> {
     let mut groups = BTreeMap::<Option<u8>, Group>::new();
     let mut vertices = BTreeMap::<Option<u8>, BTreeMap<[u32; 4], u32>>::new();
-    let lo = base.map(|c| if c == 0 { -1 } else { c });
+    let lo = base.map(|c| if visual || c == 0 { c - 1 } else { c });
     let hi = [0, 1, 2].map(|a| base[a] + extent[a]);
     // Read the shared halo once rather than eight times per lattice cube.
     let sample_lo = lo.map(|v| v - 1);

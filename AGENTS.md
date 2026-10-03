@@ -1020,7 +1020,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   carries them out: one entity per (plugin, name) with `Mesh3d`, a standard
   material shared by roughness and emission (vertex colors multiply the base),
   and a fixed trimesh collider when `collider` is set. A same-named mesh
-  replaces the old entity, and `plugins::end` queues `Clear`. These are not
+  replaces the old entity. `mesh_visibility` changes drawing and retains the
+  collider, including on replacement; `plugins::end` queues `Clear`. These are not
   actors: no batching, LOD or occlusion, and nothing else reads them yet.
 - **Voxel plugin** (`plugins/voxel`, `com.blockworked.voxel`, phase 3's first
   slice): a finite world of cubes, SDK-built so one source is a native library
@@ -1065,6 +1066,17 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   tiles, with two-sample halos, edit dependencies, a 65536-base-visit poll budget
   and four cached jobs. `voxel_lod_mesh` polls them until ready; these mesh data
   have no collision and do not replace full-detail renderer meshes yet.
+  `voxel_lod_select` previews bounded perspective tile selection with frustum
+  and distance checks and split/merge hysteresis. Camera inputs are explicit;
+  selection does not publish meshes or change gameplay residency. Optional
+  `visual_lod` uses presentation camera snapshots to stage a complete visual cut
+  before replacing the previous one. Fine meshes are hidden through
+  `mesh_visibility`, retaining their colliders; distant visuals have no collider.
+  Pending cuts have a 2 MiB geometry budget and advance one tile job per frame.
+  Edits invalidate intersecting halos, retaining unrelated tiles and jobs;
+  generation changes restart jobs. `lod_seam.rs` clips visual tiles and emits
+  planar solid-difference joins for mixed cube/shape/smooth resolutions, keeping
+  boundary caps within the cut budget. Seam clipping advances one tile per frame.
   See `docs/voxel-lod-research.md` for the LOD implementation stages.
   Its manifest asks for `editor.preview`, `project-storage` and `gpu-compute`;
   preview does not load or write player saves. Saved edits are the `world` resource's

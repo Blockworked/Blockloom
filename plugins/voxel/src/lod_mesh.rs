@@ -18,6 +18,24 @@ pub struct Key {
     pub tile: [i32; 3],
 }
 
+impl Key {
+    pub fn dependencies(self, size: [i32; 3]) -> ([i32; 3], [i32; 3]) {
+        let scale = 1 << self.level;
+        let base = self.tile.map(|c| c * TILE);
+        let end = [0, 1, 2].map(|a| (base[a] + TILE).min((size[a] + scale - 1) / scale));
+        (
+            base.map(|c| (c - 2) * scale),
+            end.map(|c| (c + 2) * scale - 1),
+        )
+    }
+
+    pub fn affected(self, size: [i32; 3], bounds: ([i32; 3], [i32; 3])) -> bool {
+        let (a, b) = self.dependencies(size);
+        let (lo, hi) = bounds;
+        (0..3).all(|axis| hi[axis] >= a[axis] && lo[axis] <= b[axis])
+    }
+}
+
 pub struct Tile {
     pub key: Key,
     pub base: [i32; 3],
@@ -32,8 +50,8 @@ pub struct Tile {
 
 impl Tile {
     fn new(key: Key, grid: &Grid) -> Result<Self, String> {
-        if !(1..=MAX_LEVEL).contains(&key.level) {
-            return Err("coarse mesh level must be between 1 and 4".into());
+        if key.level > MAX_LEVEL {
+            return Err("mesh job level must be between 0 and 4".into());
         }
         let scale = 1 << key.level;
         let size = grid.size().map(|s| (s + scale - 1) / scale);
@@ -78,6 +96,77 @@ impl Tile {
         self.samples[(c[2] * n[1] + c[1]) * n[0] + c[0]]
     }
 
+    pub fn visual(
+        &self,
+        grid: &Grid,
+        palette: &Palette,
+        surface: Surface,
+        voxel: f32,
+        faces: [bool; 6],
+    ) -> Result<crate::lod_seam::Geometry, String> {
+        let mut groups = self.groups.clone().ok_or("visual tile is not ready")?;
+        let scale = 1 << self.key.level;
+        if surface == Surface::Smooth {
+            groups = smooth::mesh_visual_samples(
+                palette,
+                self.base,
+                self.extent,
+                voxel * scale as f32,
+                |at| {
+                    let s = self.sample(at);
+                    (s.density, s.density_material)
+                },
+            );
+            if self.key.level == 0 {
+                mesher::mesh_shapes(
+                    grid,
+                    palette,
+                    self.base,
+                    self.extent,
+                    voxel,
+                    true,
+                    &mut groups,
+                );
+            } else {
+                let proxies = mesher::mesh_cubes(
+                    palette,
+                    self.base,
+                    self.extent,
+                    voxel * scale as f32,
+                    |at| {
+                        let s = self.sample(at);
+                        if s.opacity > 0 && s.opacity < 255 {
+                            s.material
+                        } else {
+                            0
+                        }
+                    },
+                );
+                for (glow, proxy) in proxies {
+                    append(groups.entry(glow).or_default(), proxy);
+                }
+            }
+        }
+        let (lo, hi) = crate::lod_seam::bounds(self.key, grid.size());
+        let mut groups = crate::lod_seam::clip_groups(
+            groups,
+            [0, 1, 2].map(|a| (hi[a] - lo[a]) as f32 * voxel),
+            lo.map(|c| c == 0),
+            [0, 1, 2].map(|a| hi[a] == grid.size()[a]),
+        );
+        let world_lo = lo.map(|c| -(c as f32) * voxel);
+        let world_hi = [0, 1, 2].map(|a| (grid.size()[a] - lo[a]) as f32 * voxel);
+        for group in groups.values_mut() {
+            *group = clip(group, world_lo, world_hi);
+        }
+        let caps = crate::lod_seam::caps(self.key, grid, surface, faces, |at| self.sample(at))?;
+        let geometry = crate::lod_seam::Geometry { groups, caps };
+        if geometry.words() > MAX_OUTPUT_WORDS {
+            return Err("visual tile exceeds its geometry and boundary budget".into());
+        }
+        Ok(geometry)
+    }
+
     fn advance(
         &mut self,
         grid: &mut Grid,
@@ -113,28 +202,40 @@ impl Tile {
             return Ok(());
         }
         let width = voxel * scale as f32;
-        let mut groups = match surface {
-            Surface::Cubes => mesher::mesh_cubes(palette, self.base, self.extent, width, |at| {
-                self.sample(at).material
-            }),
-            Surface::Smooth => {
-                let mut groups =
-                    smooth::mesh_samples(palette, self.base, self.extent, width, |at| {
-                        let sample = self.sample(at);
-                        (sample.density, sample.density_material)
-                    });
-                let proxies = mesher::mesh_cubes(palette, self.base, self.extent, width, |at| {
-                    let sample = self.sample(at);
-                    if sample.opacity > 0 && sample.opacity < 255 {
-                        sample.material
-                    } else {
-                        0
-                    }
-                });
-                for (glow, proxy) in proxies {
-                    append(groups.entry(glow).or_default(), proxy);
+        let mut groups = if self.key.level == 0 {
+            match surface {
+                Surface::Cubes => mesher::mesh_region(grid, palette, self.base, self.extent, voxel),
+                Surface::Smooth => {
+                    smooth::mesh_region(grid, palette, self.base, self.extent, voxel)
                 }
-                groups
+            }
+        } else {
+            match surface {
+                Surface::Cubes => {
+                    mesher::mesh_cubes(palette, self.base, self.extent, width, |at| {
+                        self.sample(at).material
+                    })
+                }
+                Surface::Smooth => {
+                    let mut groups =
+                        smooth::mesh_samples(palette, self.base, self.extent, width, |at| {
+                            let sample = self.sample(at);
+                            (sample.density, sample.density_material)
+                        });
+                    let proxies =
+                        mesher::mesh_cubes(palette, self.base, self.extent, width, |at| {
+                            let sample = self.sample(at);
+                            if sample.opacity > 0 && sample.opacity < 255 {
+                                sample.material
+                            } else {
+                                0
+                            }
+                        });
+                    for (glow, proxy) in proxies {
+                        append(groups.entry(glow).or_default(), proxy);
+                    }
+                    groups
+                }
             }
         };
         let lo = self.base.map(|c| -(c * scale) as f32 * voxel);
@@ -378,7 +479,7 @@ mod tests {
         assert_eq!(cache.len(), 1);
         assert!(
             cache
-                .poll(key(0, 0), &mut grid, &palette, Surface::Cubes, 1.0)
+                .poll(key(5, 0), &mut grid, &palette, Surface::Cubes, 1.0)
                 .is_err()
         );
         assert!(
