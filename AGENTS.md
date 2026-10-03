@@ -680,6 +680,26 @@ still drives its own movement rather than the motor, collision streaming is not
 separate from visual LOD, no single-step or fixture replay, no pair/contact
 counts in the profiler, QML and GPU paths not run here.
 
+### Upgrade, samples and shipping (Phase 8)
+
+Docs: `docs/physics.md` (creator guide), `docs/physics-api-coverage.md` (what
+each surface does and what is open), `docs/physics-compatibility-ledger.md`.
+
+Upgrading legacy `Body` actors: `physics-migration-preview [actorId]` previews
+across every scene; `migrate-physics [actorId]` converts them (`Scene::migrate_physics`
+or `migrate_actor_physics`) as one undo step and copies `project.blockloom` to
+`.blockloom/backups/` first. A call with nothing to convert files no undo step
+and no backup. QML: `PhysicsUpgradeCard.qml` at the top of the Body card.
+
+Samples: `blockloom_core::physics::sample::build` (`physics-playground`: player
+preset, crates, rope pendulum, motor wheel, 3D door, snapping weld, trigger zone,
+all components). `create-project ... sample=physics-playground` and the New
+Project dialog's "Start from" use it. Tests: core (plans clean in both
+dimensions, pack round trip), app (opens runnable), runtime (plays 240 ticks).
+
+Packs carry the whole `Project`, so physics settings, components, constraints
+and cooked collision data ship in `game.pack` with no extra format.
+
 ### Actors that come and go
 
 An actor's id is what everything keys it by, and a run can mint ids the

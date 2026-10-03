@@ -356,6 +356,7 @@ pub(crate) fn create_project(
     name: String,
     location: Option<String>,
     mode: Mode,
+    sample: Option<String>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
     if name.is_empty() {
@@ -366,7 +367,10 @@ pub(crate) fn create_project(
         .filter(|location| !location.as_os_str().is_empty())
         .unwrap_or_else(project::default_projects_dir);
 
-    let project = Project::starter(name, mode);
+    let project = match sample.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(sample) => blockloom_core::physics::sample::build(sample, &name, mode)?,
+        None => Project::starter(name, mode),
+    };
     let dir = project::create_project(&project, &parent)?;
 
     let mut s = lock(state)?;

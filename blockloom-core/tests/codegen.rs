@@ -535,6 +535,16 @@ impl Host for Recorder {
                     _ => 0.0,
                 }))
             }
+            "JointNumber" => {
+                let field = args[0].as_text();
+                let name = args[1].as_text();
+                Ok(Val::Num(match (name.as_str(), field.as_str()) {
+                    ("hinge", "position") => 12.5,
+                    ("hinge", "broken") => 0.0,
+                    (_, "enabled") => 1.0,
+                    _ => 0.0,
+                }))
+            }
             "ControllerText" => Ok(Val::Text(String::new())),
             "QueryText" => {
                 let field = args[1].as_text();
@@ -4049,6 +4059,51 @@ fn controller_blocks_ask_the_same_things_in_order() {
             },
             K::Say {
                 text: op("ControllerText", vec![number(1.0), Value::text("actor")]),
+            },
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn joint_blocks_ask_the_same_things_in_order() {
+    use blockloom_core::physics::joints::{self, JointStatus, JointVerb};
+    // The VM reads the shared registry the runtime publishes into; the compiled
+    // host below answers the same numbers.
+    joints::reset();
+    joints::register_handles("a1", &["hinge"]);
+    joints::publish(
+        "a1",
+        "hinge",
+        JointStatus {
+            enabled: true,
+            position: 12.5,
+            ..Default::default()
+        },
+    );
+    let read = |field: &str, joint: &str| K::Say {
+        text: op("JointNumber", vec![Value::text(field), Value::text(joint)]),
+    };
+    assert_same(
+        "joints",
+        vec![
+            K::JointAct {
+                action: JointVerb::MotorSpeed,
+                joint: "hinge".into(),
+                value: op("Add", vec![number(30.0), number(60.0)]),
+            },
+            read("position", "hinge"),
+            read("broken", "hinge"),
+            K::JointAct {
+                action: JointVerb::Disable,
+                joint: "hinge".into(),
+                value: number(0.0),
+            },
+            read("enabled", "hinge"),
+            K::JointAct {
+                action: JointVerb::Break,
+                joint: "hinge".into(),
+                value: number(0.0),
             },
         ],
         &[],

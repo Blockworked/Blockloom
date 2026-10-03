@@ -197,12 +197,104 @@ fn the_migration_preview_changes_nothing() {
     let before = b.dispatch("get_state", json!({})).unwrap()["project"].clone();
     let preview = b.dispatch("physics_migration_preview", json!({})).unwrap();
     assert_eq!(preview["applied"], false);
-    assert!(!preview["actors"].as_array().unwrap().is_empty());
+    assert!(preview["total"].as_u64().unwrap() > 0);
+    assert!(
+        !preview["scenes"][0]["actors"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
         before,
         b.dispatch("get_state", json!({})).unwrap()["project"]
     );
     assert!(b.dispatch("physics_properties", json!({})).unwrap()["collider"].is_array());
+}
+
+#[test]
+fn a_sample_project_opens_runnable_in_both_dimensions() {
+    for (mode, name) in [("ThreeD", "sample3"), ("TwoD", "sample2")] {
+        let root = data_root().join(name);
+        let backend = Backend::start(AppHandle::new(|_| {}));
+        backend
+            .dispatch(
+                "create_project",
+                json!({"name": name, "mode": mode, "location": root.join("projects"),
+                    "sample": "physics-playground"}),
+            )
+            .unwrap();
+        let plan = backend.dispatch("physics_plan", json!({})).unwrap();
+        assert_eq!(plan["runnable"], true, "{mode}: {plan}");
+        assert!(
+            plan["constraints"]
+                .as_array()
+                .map_or(true, |c| c.len() >= 3)
+        );
+        let ownership = backend.dispatch("physics_ownership", json!({})).unwrap();
+        assert!(ownership["legacyBodies"].as_array().unwrap().is_empty());
+    }
+    let backend = Backend::start(AppHandle::new(|_| {}));
+    let error = backend
+        .dispatch(
+            "create_project",
+            json!({"name": "nope", "location": data_root().join("nope").join("projects"),
+                "sample": "missing"}),
+        )
+        .unwrap_err();
+    assert!(error.contains("physics-playground"), "{error}");
+}
+
+#[test]
+fn the_physics_upgrade_converts_backs_up_and_undoes() {
+    let (b, root) = backend("upgrade");
+    let legacy = |b: &Backend| {
+        b.dispatch("physics_ownership", json!({})).unwrap()["legacyBodies"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    let before = legacy(&b);
+    assert!(before >= 2);
+    // One actor first: only it converts.
+    let first = b.dispatch("physics_migration_preview", json!({})).unwrap()["scenes"][0]["actors"]
+        [0]["actor"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let one = b
+        .dispatch("physics_migration_preview", json!({"actorId": first}))
+        .unwrap();
+    assert_eq!(one["total"], 1);
+    let done = b
+        .dispatch("migrate_physics", json!({"actorId": first}))
+        .unwrap();
+    assert_eq!(done["applied"], true);
+    assert_eq!(done["total"], 1);
+    assert_eq!(legacy(&b), before - 1);
+    // Then the rest, and a third call has nothing left.
+    let rest = b.dispatch("migrate_physics", json!({})).unwrap();
+    assert_eq!(rest["total"].as_u64().unwrap() as usize, before - 1);
+    assert_eq!(legacy(&b), 0);
+    assert_eq!(
+        b.dispatch("migrate_physics", json!({})).unwrap()["total"],
+        0
+    );
+    // The project plays from components now.
+    assert_eq!(
+        b.dispatch("physics_plan", json!({})).unwrap()["runnable"],
+        true
+    );
+    // The old file was kept aside.
+    let backups = root
+        .join("projects")
+        .join("upgrade")
+        .join(".blockloom")
+        .join("backups");
+    assert!(std::fs::read_dir(&backups).map(|d| d.count()).unwrap_or(0) >= 1);
+    // Undo walks it back one step at a time.
+    b.dispatch("undo", json!({})).unwrap();
+    b.dispatch("undo", json!({})).unwrap();
+    assert_eq!(legacy(&b), before);
 }
 
 #[test]

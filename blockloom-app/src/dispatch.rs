@@ -87,6 +87,7 @@ impl Backend {
                 arg(&args, "name")?,
                 arg(&args, "location").ok().flatten(),
                 arg(&args, "mode").unwrap_or_default(),
+                arg(&args, "sample").ok(),
             )?),
             "close_project" => to_json(commands::close_project(state, app)?),
             "forget_project" => to_json(commands::forget_project(state, app, arg(&args, "path")?)?),
@@ -595,9 +596,15 @@ impl Backend {
             )?),
             "physics_ownership" => to_json(commands::physics::physics_ownership(state)?),
             "physics_properties" => to_json(commands::physics::physics_properties()),
-            "physics_migration_preview" => {
-                to_json(commands::physics::physics_migration_preview(state)?)
-            }
+            "physics_migration_preview" => to_json(commands::physics::physics_migration_preview(
+                state,
+                arg(&args, "actorId").ok(),
+            )?),
+            "migrate_physics" => to_json(commands::physics::migrate_physics(
+                state,
+                app,
+                arg(&args, "actorId").ok(),
+            )?),
             // ── Plugins ────────────────────────────────────────────────────
             "plugin_list" => to_json(commands::plugins::plugin_list(state)?),
             "plugin_check" => to_json(commands::plugins::plugin_check(state)?),

@@ -85,7 +85,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "create-project",
         cmd: "create_project",
         aliases: &["create_project"],
-        summary: "Make a project folder under location and open it.",
+        summary: "Make a project folder under location and open it, empty or from a sample (physics-playground: a player, crates, a pendulum, a motor wheel, a door, a breakable joint and a trigger zone).",
         args: &[
             ArgSpec {
                 name: "name",
@@ -100,6 +100,11 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             ArgSpec {
                 name: "mode",
                 ty: "TwoD|ThreeD",
+                required: false,
+            },
+            ArgSpec {
+                name: "sample",
+                ty: "physics-playground",
                 required: false,
             },
         ],
@@ -1790,8 +1795,23 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "physics-migration-preview",
         cmd: "physics_migration_preview",
         aliases: &[],
-        summary: "What converting each legacy Body in the active scene to a Rigidbody and Collider would store. Changes nothing.",
-        args: &[],
+        summary: "What converting each legacy Body to a Rigidbody and Collider would store, in every scene or for one actor. Changes nothing.",
+        args: &[ArgSpec {
+            name: "actorId",
+            ty: "id",
+            required: false,
+        }],
+    },
+    CommandSpec {
+        name: "migrate-physics",
+        cmd: "migrate_physics",
+        aliases: &[],
+        summary: "Convert legacy Body components to Rigidbody and Collider in every scene, or on one actor. One undo step, and the project file is copied to .blockloom/backups first. Running it again converts nothing.",
+        args: &[ArgSpec {
+            name: "actorId",
+            ty: "id",
+            required: false,
+        }],
     },
     // ── Assets ────────────────────────────────────────────────────────────
     CommandSpec {

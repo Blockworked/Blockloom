@@ -10,6 +10,8 @@ BwDialog {
     id: root
     required property var app
     property string mode: "TwoD"
+    // "" starts empty; "physics-playground" starts from the physics sample.
+    property string sample: ""
     property string error: ""
     property bool busy: false
     title: "New project"
@@ -18,7 +20,7 @@ BwDialog {
     onOpened: {
         nameField.text = "My Game";
         locationField.text = app.appState.default_project_location;
-        mode = "TwoD"; error = ""; busy = false;
+        mode = "TwoD"; sample = ""; error = ""; busy = false;
         nameField.forceActiveFocus(); nameField.selectAll();
     }
     // What the project's own folder will be called: anything a path can't
@@ -36,7 +38,7 @@ BwDialog {
         if (busy) return;
         if (!nameField.text.trim().length) { error = "Give the project a name"; return; }
         busy = true;
-        app.invoke("create_project", { name: nameField.text.trim(), location: locationField.text.trim(), mode: mode },
+        app.invoke("create_project", { name: nameField.text.trim(), location: locationField.text.trim(), mode: mode, sample: sample },
             () => { busy = false; root.close(); }, e => { busy = false; error = String(e); });
     }
 
@@ -61,6 +63,16 @@ BwDialog {
         Text {
             Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
             text: (root.mode === "TwoD" ? "Sprites and flat physics, measured in pixels." : "Meshes and 3D physics, measured in metres.") + " A project can switch later."
+        }
+        Text { text: "Start from"; color: Theme.textDim; font.pixelSize: 12 }
+        RowLayout {
+            spacing: 6
+            BwButton { objectName: "sample-empty"; text: "Empty"; primary: root.sample === ""; onClicked: root.sample = "" }
+            BwButton { objectName: "sample-physics"; text: "Physics playground"; primary: root.sample === "physics-playground"; onClicked: root.sample = "physics-playground" }
+        }
+        Text {
+            visible: root.sample !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
+            text: "A player, a stack of crates, a pendulum on a rope, a motor wheel, a door" + (root.mode === "TwoD" ? " (3D only)" : "") + ", a joint that snaps and a trigger zone, all made of components with no custom code."
         }
         RowLayout {
             Layout.alignment: Qt.AlignRight; Layout.topMargin: 8; spacing: 8

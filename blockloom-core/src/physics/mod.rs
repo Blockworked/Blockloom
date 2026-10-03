@@ -28,6 +28,7 @@ pub mod ownership;
 pub mod plan;
 pub mod presets;
 pub mod query;
+pub mod sample;
 pub mod spec;
 pub mod validate;
 

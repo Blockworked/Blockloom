@@ -800,6 +800,7 @@ Rectangle {
             readonly property var c: parent.c
             readonly property var p: root.physicsOf(c)
             spacing: 6
+            PhysicsUpgradeCard { Layout.fillWidth: true; app: root.app; actorId: root.actor ? root.actor.id : "" }
             InspectorRow { label: "Kind"; Layout.fillWidth: true
                 ChoiceField { options: Blocks.bodyOptions; value: body.p.body; onChosen: v => root.writePhysics(body.c, { body: v }) } }
             ColumnLayout {

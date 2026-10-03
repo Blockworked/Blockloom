@@ -23,6 +23,7 @@ TestCase {
     Component { id: motorFactory; Editor.CharacterMotorForm { app: stubApp; actorId: "a1" } }
     Component { id: cameraFactory; Editor.PlayerCameraForm { app: stubApp; actorId: "a1" } }
     Component { id: setupFactory; Editor.PlayerSetupCard { app: stubApp; actorId: "a1" } }
+    Component { id: upgradeFactory; Editor.PhysicsUpgradeCard { app: stubApp; actorId: "a1" } }
     Component { id: constraintFactory; Editor.ConstraintForm { app: stubApp; actorId: "a1" } }
     Component { id: controllerFactory; Editor.CharacterControllerForm { app: stubApp; actorId: "a1" } }
 
@@ -234,5 +235,19 @@ TestCase {
         const rope = createTemporaryObject(constraintFactory, test, { component: { constraint: { kind: "Distance" } } });
         compare(rope.hasMotor, false);
         compare(rope.hasLimit, false);
+    }
+
+    function test_theUpgradeCardShowsTheNotesAndUpgradesOneActorOrAll() {
+        results = {
+            physics_migration_preview: { applied: false, total: 3, scenes: [{ scene: "S", actors: [{ actor: "a1", notes: ["Keeps following its Look."] }] }] },
+            migrate_physics: { applied: true, total: 1, scenes: [] }
+        };
+        const card = createTemporaryObject(upgradeFactory, test);
+        compare(card.projectTotal, 3);
+        compare(card.actorNotes.length, 1);
+        card.upgrade({ actorId: "a1" });
+        const call = calls.filter(c => c.command === "migrate_physics")[0];
+        compare(call.args.actorId, "a1");
+        compare(card.message, "Upgraded 1 actor.");
     }
 }

@@ -242,9 +242,30 @@ impl Scene {
     /// materials those need in `library`. Returns what was converted; a second
     /// call converts nothing.
     pub fn migrate_physics(&mut self, library: &mut MaterialLibrary) -> Vec<ActorMigration> {
+        self.migrate_physics_where(library, |_| true)
+    }
+
+    /// [`Self::migrate_physics`] for one actor, so a project can opt in actor by
+    /// actor. An actor with no legacy `Body` converts nothing.
+    pub fn migrate_actor_physics(
+        &mut self,
+        actor: &str,
+        library: &mut MaterialLibrary,
+    ) -> Vec<ActorMigration> {
+        self.migrate_physics_where(library, |a| a.id == actor)
+    }
+
+    fn migrate_physics_where(
+        &mut self,
+        library: &mut MaterialLibrary,
+        wanted: impl Fn(&Actor) -> bool,
+    ) -> Vec<ActorMigration> {
         let mode = self.world.mode;
         let mut done = Vec::new();
         for actor in &mut self.actors {
+            if !wanted(actor) {
+                continue;
+            }
             let Some(physics) = actor.components.get("Body").and_then(|c| match c {
                 ActorComponent::Body { physics } => Some(*physics),
                 _ => None,
@@ -538,5 +559,34 @@ mod tests {
         assert_eq!(scene, before);
         let done = scene.migrate_physics(&mut MaterialLibrary::default());
         assert_eq!(preview, done);
+    }
+
+    #[test]
+    fn one_actor_can_be_upgraded_alone() {
+        let mut scene = Scene::new("Test", Mode::ThreeD);
+        let mut first = Actor::new(
+            "First",
+            Visual::Cuboid {
+                color: "#fff".into(),
+                size: [1.0; 3],
+            },
+        );
+        first.components.set_physics(Physics {
+            body: BodyKind::Dynamic,
+            ..Physics::default()
+        });
+        let mut second = first.clone();
+        second.id = "second".into();
+        second.name = "Second".into();
+        let first_id = first.id.clone();
+        scene.actors = vec![first, second];
+        let mut library = MaterialLibrary::default();
+        let done = scene.migrate_actor_physics(&first_id, &mut library);
+        assert_eq!(done.len(), 1);
+        assert!(scene.actors[0].components.get("Body").is_none());
+        assert!(scene.actors[1].components.get("Body").is_some());
+        // The rest still convert later, and the first is not converted twice.
+        assert_eq!(scene.migrate_physics(&mut library).len(), 1);
+        assert!(scene.migrate_physics(&mut library).is_empty());
     }
 }

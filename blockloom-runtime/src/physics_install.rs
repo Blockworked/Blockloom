@@ -3887,6 +3887,51 @@ mod constraint_tests {
     }
 
     #[test]
+    fn the_physics_playground_plays_without_blowing_up() {
+        let project =
+            blockloom_core::physics::sample::build("physics-playground", "P", Mode::ThreeD)
+                .unwrap();
+        let id = |name: &str| {
+            project
+                .active_scene()
+                .actors
+                .iter()
+                .find(|a| a.name == name)
+                .unwrap()
+                .id
+                .clone()
+        };
+        let (mut app, ids) = start(&project);
+        run(&mut app, 240);
+        for (name, entity) in project
+            .active_scene()
+            .actors
+            .iter()
+            .map(|a| (a.name.clone(), ids[&a.id]))
+        {
+            let position = at(&app, entity);
+            assert!(
+                position.is_finite() && position.length() < 100.0,
+                "{name}: {position}"
+            );
+        }
+        // The pendulum hangs within its rope of where it started.
+        let weight = at(&app, ids[&id("Pendulum")]);
+        assert!(
+            (weight - Vec3::new(-3.0, 4.0, 0.0)).length() < 2.7,
+            "{weight}"
+        );
+        // The motor is turning the wheel (the angle itself wraps at a half turn).
+        let wheel = joints::status(&id("Wheel"), "motor").expect("published");
+        assert!(wheel.speed.abs() > 45.0, "speed {}", wheel.speed);
+        // Nothing hit the plank hard enough to snap its weld.
+        assert!(!joints::status(&id("Plank"), "weld").unwrap().broken);
+        // Crates settled on the ground rather than through it.
+        let crate_a = at(&app, ids[&id("Crate A")]);
+        assert!(crate_a.y > 0.2, "{crate_a}");
+    }
+
+    #[test]
     fn one_actor_carries_several_constraints() {
         let mut p = super::tests::project();
         let slab = add(&mut p, "Slab", [0.0, 3.0, 0.0]);

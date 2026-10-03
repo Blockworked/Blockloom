@@ -912,6 +912,27 @@ pub fn extend_plan(plan: &[ConstraintPlan]) {
     });
 }
 
+/// Names constraints an actor carries without a plan behind them, for a host or
+/// test that answers joint blocks itself.
+pub fn register_handles(actor: &str, handles: &[&str]) {
+    REGISTRY.with(|r| {
+        let mut r = r.borrow_mut();
+        for handle in handles {
+            r.names
+                .entry(actor.to_string())
+                .or_default()
+                .push((*handle).to_string());
+            r.status.insert(
+                (actor.to_string(), handle.to_ascii_lowercase()),
+                JointStatus {
+                    enabled: true,
+                    ..Default::default()
+                },
+            );
+        }
+    });
+}
+
 pub fn publish(actor: &str, handle: &str, status: JointStatus) {
     REGISTRY.with(|r| {
         r.borrow_mut()

@@ -750,17 +750,96 @@ pub(crate) fn import_player_profile(state: &SharedState, path: String) -> Result
 }
 
 /// `physics-migration-preview`: what converting each legacy `Body` would
-/// store. Nothing is changed; the runtime still reads `Body`.
-pub(crate) fn physics_migration_preview(state: &SharedState) -> Result<Value, String> {
+/// store, in every scene or for one actor. Nothing is changed.
+pub(crate) fn physics_migration_preview(
+    state: &SharedState,
+    actor: Option<String>,
+) -> Result<Value, String> {
     let s = lock(state)?;
     let project = s.project().ok_or("No project is open")?;
-    let scene = project.active_scene();
-    let migrations = scene.physics_migration_preview(&project.physics.materials);
-    Ok(json!({
-        "scene": scene.name,
-        "applied": false,
-        "actors": migrations,
-    }))
+    let mut scenes = Vec::new();
+    let mut total = 0;
+    for scene in &project.scenes {
+        let mut preview = scene.clone();
+        let mut library = project.physics.materials.clone();
+        let migrations = match &actor {
+            Some(id) => preview.migrate_actor_physics(id, &mut library),
+            None => preview.migrate_physics(&mut library),
+        };
+        if migrations.is_empty() {
+            continue;
+        }
+        total += migrations.len();
+        scenes.push(json!({ "scene": scene.name, "actors": migrations }));
+    }
+    if let Some(id) = &actor
+        && scenes.is_empty()
+        && !project
+            .scenes
+            .iter()
+            .any(|scene| scene.actors.iter().any(|a| &a.id == id))
+    {
+        return Err(format!("No actor \"{id}\""));
+    }
+    Ok(json!({ "applied": false, "total": total, "scenes": scenes }))
+}
+
+/// `migrate-physics`: converts legacy `Body` components to Rigidbody and Collider
+/// in every scene, or on one actor. One undo step; the project file as it was
+/// is copied to `.blockloom/backups` first. A second call converts nothing.
+pub(crate) fn migrate_physics(
+    state: &SharedState,
+    app: &AppHandle,
+    actor: Option<String>,
+) -> Result<Value, String> {
+    // Nothing to convert: no backup, no undo step.
+    let preview = physics_migration_preview(state, actor.clone())?;
+    if preview["total"] == 0 {
+        return Ok(json!({ "applied": true, "total": 0, "scenes": [] }));
+    }
+    {
+        let s = lock(state)?;
+        if let Some(open) = &s.open {
+            backup_project(&open.dir);
+        }
+    }
+    edit(state, app, None, |project| {
+        let mut library = project.physics.materials.clone();
+        let mut scenes = Vec::new();
+        let mut total = 0;
+        for scene in &mut project.scenes {
+            let migrations = match &actor {
+                Some(id) => scene.migrate_actor_physics(id, &mut library),
+                None => scene.migrate_physics(&mut library),
+            };
+            if migrations.is_empty() {
+                continue;
+            }
+            total += migrations.len();
+            scenes.push(json!({ "scene": scene.name, "actors": migrations }));
+        }
+        project.physics.materials = library;
+        Ok(json!({ "applied": true, "total": total, "scenes": scenes }))
+    })
+}
+
+/// Copies the project file aside before an upgrade rewrites it. Best effort: a
+/// failure is logged and the undo history still holds the old project.
+fn backup_project(dir: &std::path::Path) {
+    let from = dir.join(blockloom_core::project::PROJECT_FILE);
+    if !from.is_file() {
+        return;
+    }
+    let backups = dir.join(".blockloom").join("backups");
+    let name = format!(
+        "project.before-physics-upgrade-{}.blockloom",
+        blockloom_core::sync::now_secs()
+    );
+    if let Err(e) =
+        std::fs::create_dir_all(&backups).and_then(|_| std::fs::copy(&from, backups.join(name)))
+    {
+        tracing::warn!("Couldn't back up the project before the physics upgrade: {e}");
+    }
 }
 
 /// The generic component commands address a component by name, which is
