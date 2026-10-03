@@ -1,6 +1,6 @@
 //! Maps a command name plus its JSON arguments onto the matching function in
-//! `commands.rs`. Argument names are camelCase, the spelling the frontend
-//! already uses with Tauri's `invoke`.
+//! `commands.rs`. Argument names are camelCase, the spelling the QML
+//! frontend uses with `invokeCommand`.
 
 use crate::commands;
 use crate::state::{InstrPath, ValueLocation};

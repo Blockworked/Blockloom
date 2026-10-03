@@ -122,8 +122,8 @@ QML is compiled into the editor for normal builds. For live QML iteration,
 use the preview workflow below.
 For QML tests, put Qt 6's `qmltestrunner` on PATH or set `QMLTESTRUNNER`
 to its executable.
-The legacy `ui/` and `src-tauri/` applications are not part of this build;
-Node.js is not needed to build the Qt editor.
+Node.js is not needed to build the Qt editor (only for the optional MCP
+server in `mcp/`).
 
 ### Build Cache Budget
 

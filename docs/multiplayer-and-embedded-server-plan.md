@@ -42,7 +42,7 @@ The useful pattern is an authoritative ECS simulation, local or remote clients, 
 | `Project`, `ProjectFile`, `wire.rs` | Project identity, scene index and document compatibility | Add project-wide multiplayer capability through every serialization and wire path, not just `World`. |
 | `save.rs` | Explicitly saved variables and project identity | Its per-player file is currently keyed by project ID on the local machine. It is not a multiplayer world checkpoint or a server-owned player database. |
 | VM, Rust scripts, codegen and plugin hooks | One authoritative execution path for each | Add player/time context, headless capabilities and explicit presentation routing across all paths. |
-| Qt settings and Game view; pack/build; shell/MCP | Existing editor and automation surfaces | Add opt-in settings, session controls, build eligibility and command schemas. Do not add work to retired `ui/` or `src-tauri/`. |
+| Qt settings and Game view; pack/build; shell/MCP | Existing editor and automation surfaces | Add opt-in settings, session controls, build eligibility and command schemas. |
 
 The existing `FixedUpdate` is a good foundation. It does not by itself isolate simulation from rendering: collision relay and sensor publication currently occur in `Update`, and gameplay, graphics and sound effects share the same engine and effect flow. A headless server needs a real extraction of those dependencies.
 

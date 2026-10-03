@@ -10,7 +10,7 @@ use std::fs::File;
 use std::io::{Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
-const DEFAULT_ICON: &[u8] = include_bytes!("../../src-tauri/icons/512x512.png");
+const DEFAULT_ICON: &[u8] = include_bytes!("../../res/icons/default-512.png");
 
 pub struct Icons {
     pub png: Vec<u8>,

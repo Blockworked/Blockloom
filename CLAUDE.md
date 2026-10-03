@@ -67,13 +67,9 @@ Both are git dependencies in the root `Cargo.toml`, pinned to the same
 commit. To build against a local checkout instead:
 
 ```bash
-just blockstitch-local [path]        # default path: ../../blockstitch, relative to ui/
+just blockstitch-local [path]        # default path: ../blockstitch, relative to the repo root
 just blockstitch-published [commit]  # restore the pinned commit, or move to a new one
 ```
-
-The old Vue frontend (`ui/`) and its Tauri shell (`src-tauri/`) are still in
-the tree but out of the workspace, as are the browser dev bridge recipes
-(`just dev-backend`/`dev-ui`) that serve it. Nothing new goes there.
 
 ### AI/CLI shell (`blockloom-shell`)
 
@@ -93,7 +89,7 @@ are preserved as-is. `# comments`, blank lines, and `help` / `exit` are
 understood. Every response is `{"ok":bool,"result":...,"error":...,"state":...}`.
 
 **Architecture:** a separate binary (`blockloom-app/src/bin/shell.rs`) that
-hosts its own `Backend` (like `devserver`). The command registry lives in
+hosts its own `Backend`. The command registry lives in
 `blockloom-app/src/shell.rs` (`COMMANDS`), one `CommandSpec` per dispatch
 command. `parse` turns a line into `Action`, `run` turns `Action` into a
 JSON response. `--eval` for one-shot, `--no-state` to suppress the state
@@ -149,8 +145,7 @@ uploads those bytes as an image. Elsewhere it is a child process.
 - **`blockloom-app`** - the backend: `src/commands.rs` holds every command,
   `src/dispatch.rs` maps command names + JSON args onto them, `src/state.rs`
   holds `SharedState`/`AppState` and the snapshot the frontend gets, and
-  `src/runtime.rs` is the game runtime's leash. No Qt dependency, so the
-  dev bridge (`src/bin/devserver.rs`, feature `dev-bridge`) hosts the same code.
+  `src/runtime.rs` is the game runtime's leash. No Qt dependency.
   Commands publish changes through `AppHandle`, a plain callback the host
   supplies.
 - **`blockloom-runtime`** - the game world: a Bevy app that renders one project

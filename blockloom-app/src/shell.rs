@@ -1,5 +1,5 @@
 //! A shell onto the backend: a text command line is parsed into the same
-//! (name, JSON args) shape the frontend's Tauri `invoke` sends, so an AI agent
+//! (name, JSON args) shape the editor's `invokeCommand` sends, so an AI agent
 //! can create and edit projects exactly as a user can - every command the
 //! editor offers is here, and `help` documents each one.
 //!

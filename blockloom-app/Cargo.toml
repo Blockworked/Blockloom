@@ -4,16 +4,6 @@ version.workspace = true
 edition.workspace = true
 description = "Blockloom's backend: every command the editor issues, and the state it edits."
 
-[features]
-# A browser-reachable HTTP/WebSocket bridge onto the same commands, for
-# iterating on the frontend with `pnpm run dev` instead of relaunching CEF.
-dev-bridge = ["dep:axum", "dep:tower-http"]
-
-[[bin]]
-name = "blockloom-devserver"
-path = "src/bin/devserver.rs"
-required-features = ["dev-bridge"]
-
 # The agent shell: a backend driven on stdin, one shell command per line.
 [[bin]]
 name = "blockloom-shell"
@@ -31,8 +21,6 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 dirs.workspace = true
 uuid.workspace = true
-axum = { workspace = true, optional = true }
-tower-http = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "process"] }
 image.workspace = true
 base64.workspace = true

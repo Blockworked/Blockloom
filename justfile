@@ -99,15 +99,6 @@ hub-install:
 qml-preview *args: prepare-patched-deps
     {{if os() == "windows" { "python" } else { "python3" }}} scripts/qml-preview.py {{args}}
 
-# The browser dev loop: the real backend behind an HTTP bridge, plus Vite.
-# Run these in two terminals, then open http://localhost:1420.
-dev-backend: prepare-patched-deps
-    cargo build -p blockloom-runtime
-    cargo run -p blockloom-app --features dev-bridge --bin blockloom-devserver
-
-dev-ui:
-    cd ui && pnpm run dev
-
 # A shell onto the backend: each line is a command, each answer is JSON.
 # Builds the whole workspace first so Play has `blockloom-runtime` beside it.
 shell *args: prepare-patched-deps
@@ -363,21 +354,14 @@ mcp:
 clean:
     cargo clean
 
-# Work on blockstitch locally: link the Vue half and point cargo's
-# blockstitch-core and blockstitch-qml at the same checkout, without touching
-# the committed lockfiles.
-blockstitch-local path="../../blockstitch":
-    cd ui && npm pkg set dependencies.blockstitch="link:{{path}}" && pnpm install
-    git update-index --skip-worktree ui/package.json ui/pnpm-lock.yaml
+# Work on blockstitch locally: point cargo's blockstitch-core and
+# blockstitch-qml at the same checkout, without touching the committed lockfiles.
+blockstitch-local path="../blockstitch":
     {{mkdir-cargo}}
-    {{ if os() == "windows" { 'echo paths = ["' + replace(clean(justfile_directory() / "ui" / path), "\\", "/") + '", "' + replace(clean(justfile_directory() / "ui" / path), "\\", "/") + '/crates/blockstitch-core"] > .cargo\config.toml' } else { "printf 'paths = [\"" + "%s\", \"%s/crates/blockstitch-core" + "\"]\\n' \"$(realpath ui/" + path + ")\" \"$(realpath ui/" + path + ")\" > .cargo/config.toml" } }}
+    {{ if os() == "windows" { 'echo paths = ["' + replace(clean(justfile_directory() / path), "\\", "/") + '", "' + replace(clean(justfile_directory() / path), "\\", "/") + '/crates/blockstitch-core"] > .cargo\config.toml' } else { "printf 'paths = [\"" + "%s\", \"%s/crates/blockstitch-core" + "\"]\\n' \"$(realpath " + path + ")\" \"$(realpath " + path + ")\" > .cargo/config.toml" } }}
 
 blockstitch-published commit="": prepare-patched-deps
     {{rm-cargo-cfg}}
-    git update-index --no-skip-worktree ui/package.json ui/pnpm-lock.yaml
-    git checkout -- ui/package.json ui/pnpm-lock.yaml
-    {{ if os() == "windows" { 'if not "' + commit + '"=="" (cd ui && npm pkg set dependencies.blockstitch="github:Blockworked/blockstitch#' + commit + '")' } else { 'if [ -n "' + commit + '" ]; then cd ui && npm pkg set dependencies.blockstitch="github:Blockworked/blockstitch#' + commit + '"; fi' } }}
-    cd ui && pnpm install
     {{ if os() == "windows" { 'if not "' + commit + '"=="" (node scripts/set-blockstitch-rev.js ' + commit + ')' } else { 'if [ -n "' + commit + '" ]; then node scripts/set-blockstitch-rev.js ' + commit + '; fi' } }}
     cargo fetch
 

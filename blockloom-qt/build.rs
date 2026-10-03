@@ -7,7 +7,7 @@ fn main() {
         // Explorer and the taskbar pick the exe's embedded icon; the runtime
         // title-bar icon comes from the Qt resource below.
         let mut res = winres::WindowsResource::new();
-        res.set_icon("../src-tauri/icons/icon.ico");
+        res.set_icon("../res/icons/icon.ico");
         res.compile().expect("failed to embed Windows icon");
     }
 

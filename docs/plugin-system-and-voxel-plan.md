@@ -35,7 +35,7 @@ Voxel Plugin Pro is an authoring and performance reference, not a dependency or 
 
 Current Bevy registration is engine-internal Rust integration, not a distributable plugin API. Rust scripts also have a separate, narrow ABI and a no-Cargo build path. Neither can be treated as a general plugin loader.
 
-Keep existing Terrain and Fracture projects working. Expose adapters rather than migrating every built-in subsystem in the first release. Extend the shared `blockstitch` editor where dynamic block definitions require it, keeping both pinned halves compatible. Work in the Qt frontend, not the retired Vue/Tauri frontend.
+Keep existing Terrain and Fracture projects working. Expose adapters rather than migrating every built-in subsystem in the first release. Extend the shared `blockstitch` editor where dynamic block definitions require it, keeping both pinned halves compatible. Work in the Qt frontend.
 
 ## Part I: complete plugin platform
 

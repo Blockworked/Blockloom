@@ -1,7 +1,7 @@
 //! The wire format between the editor and the game world.
 //!
 //! The world runs in its own process (`blockloom-runtime`) because Bevy needs
-//! its own window and event loop, which the editor's CEF runtime already owns.
+//! its own window and event loop, separate from the editor's.
 //! The editor spawns it as a child and the two talk newline-delimited JSON over
 //! its stdin and stdout - no sockets, no ports, and the pipe closing is all the
 //! shutdown handshake either side needs.

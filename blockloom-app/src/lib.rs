@@ -1,6 +1,6 @@
 //! Blockloom's backend: the project document, every command the editor issues,
-//! and the game runtime's leash. It has no dependency on Tauri or CEF, so the
-//! editor window and the browser dev bridge host the same code.
+//! and the game runtime's leash. It has no dependency on Qt, so the editor
+//! window and the shell host the same code.
 
 pub mod attach;
 mod build_jobs;
@@ -35,7 +35,7 @@ pub enum Event {
 }
 
 /// Where the backend publishes [`Event`]s. The host supplies the sink: the
-/// editor re-emits them as a Tauri event, the dev bridge as a WebSocket frame.
+/// editor forwards them to QML.
 #[derive(Clone)]
 pub struct AppHandle {
     sink: Arc<dyn Fn(Event) + Send + Sync>,

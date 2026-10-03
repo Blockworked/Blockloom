@@ -1614,12 +1614,12 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 
 ### Phase 9 - Editor on web (separate phase, do after Phase 8)
 
-- [ ] Goal: edit block projects in a browser. Qt cannot go to web, so the
-      path is the existing browser frontend (`ui/` Vue plus the `dev-bridge`
-      backend), with the Phase 8 web player as its preview canvas. No new
-      editor stack: reuse `Backend::dispatch` commands and the shell/MCP
-      command surface.
-- [ ] Scope: block canvas and inspectors in Vue, web-player preview with
+- [ ] Goal: edit block projects in a browser. Qt cannot go to web, so this
+      needs a new browser editor (the retired `ui/` Vue frontend and its
+      `dev-bridge` backend were removed), with the Phase 8 web player as its
+      preview canvas. No new command surface: reuse `Backend::dispatch`
+      commands and the shell/MCP command surface.
+- [ ] Scope: block canvas and inspectors in the browser, web-player preview with
       input forwarding, project storage (File System Access API locally or
       server-side folders when hosted). Native-only pieces stay native:
       Qt Game-view GPU sharing, `rustc` script builds (scripts compile on a
