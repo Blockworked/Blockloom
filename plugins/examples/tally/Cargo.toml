@@ -2,6 +2,7 @@
 name = "blockloom-example-tally"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "An example plugin written with the SDK: named counters, as a native library or a WebAssembly module."
 
 [lib]

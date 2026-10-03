@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "description": "A Model Context Protocol server that drives a Blockloom backend through blockloom-shell, so an AI agent can create and edit projects exactly as a user can.",
   "type": "module",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "bin": {
     "blockloom-mcp": "./dist/index.js"
   },

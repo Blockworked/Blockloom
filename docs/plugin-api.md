@@ -101,6 +101,7 @@ A module answers ops the host raises:
 | Op | When |
 | --- | --- |
 | a command's or block's `op` | the command or block runs |
+| `world.preview` | an editor preview frame; optional, does not run game hooks |
 | `world.start`, `world.stop` | a run begins and ends (also a preview's start) |
 | `world.save`, `world.restore` | hot reload: save state before the module is replaced, restore it after |
 | `hook.<name>` | once per stage a hook names (`input`, `pre_simulation`, `fixed_simulation`, `effect_application`, `post_physics`, `render_extraction`, `presentation`) |
@@ -121,7 +122,7 @@ asks the world to act, in order. A plugin never touches the world itself.
 | `broadcast` | `message` (fires the message hats) |
 | `error` | `message` (reported, the run carries on) |
 | `event` | `name`, `actor?`, `args` (starts the plugin's hat blocks) |
-| `mesh` | `name`, `positions`, `normals`, `colors`, `indices`, `origin`, `emission`, `roughness`, `collider`, `collider_kind` |
+| `mesh` | `name`, `positions`, `normals`, `colors`, `indices`, `origin`, `emission`, `roughness`, `collider`, `collider_kind`, `gpu?`, `body?` |
 | `remove_mesh` | `name` |
 | `instances` | `name`, `mesh`, `positions`, `yaw?`, `scales?` (many copies of one of your meshes, drawn in one batch) |
 | `remove_instances` | `name` |
@@ -131,6 +132,22 @@ asks the world to act, in order. A plugin never touches the world itself.
 A mesh is checked (array lengths, indices in range, finite, at most
 `MAX_VERTICES`). `collider: true` makes the mesh solid; `collider_kind` is `trimesh` (exact, for
 fixed things), `convex_hull` or `aabb` (cheaper, for movers).
+
+`world.save` answers `{"state": ...}`; `world.restore` receives that same state
+under `state`. This is module hot reload, separate from player save storage.
+
+A mesh may name `gpu: {buffer, vertices}` with `gpu-compute`. The buffer contains
+10 f32 words per vertex: position, normal, RGBA. The host copies those vertices
+into its prepared render mesh without CPU readback. `vertices` must be a positive
+multiple of three, cover the CPU index count and stay within `MAX_VERTICES`.
+CPU arrays remain the collision geometry and renderer fallback. Queued compute
+must finish before copying; a failed compute batch retains the CPU mesh.
+
+`body: {mass, velocity, angular_velocity?, rotation?}` creates a dynamic body.
+Mass is positive kilograms, velocity uses world units per second, angular velocity
+uses radians per second, and rotation is an XYZW unit quaternion. A body requires
+`collider: true` and `convex_hull` or `aabb`. Rotation defaults to identity;
+angular velocity defaults to zero.
 
 ## Host services
 
@@ -147,6 +164,8 @@ always open.
 | `diag.count`, `gauge`, `time`, `marker` | your own metrics, shown in the Plugin Manager and the profiler |
 | `jobs.start`, `status`, `cancel`, `take`, `list` | background work (below) |
 | `physics.ray`, `overlap_point`, `overlap_sphere` | queries over the world's colliders (a run or a hosted preview) |
+| `world.actor` | `{actor}` returns `{found, position?}` from the sensed actor snapshot |
+| `world.mesh_pose` | `{name}` returns your mesh body position, rotation, velocity and angular velocity, or null |
 | `nav.available`, `nav.path` | the navigation mesh |
 
 Keys are per plugin, plain relative names; a write over the store's limits is

@@ -66,6 +66,108 @@ fn seed32(seed: i64) -> u32 {
     (seed as u64 ^ (seed as u64 >> 32)) as u32
 }
 
+fn column(size: [i32; 3], preset: &str, seed: u32, x: i32, z: i32) -> (i32, bool) {
+    let [sx, sy, sz] = size;
+    let (fx, fz, height) = (x as f32, z as f32, sy as f32);
+    let top = match preset {
+        "flat" => (height * 0.25) as i32,
+        "island" => {
+            let dx = (fx / sx as f32 - 0.5) * 2.0;
+            let dz = (fz / sz as f32 - 0.5) * 2.0;
+            let mask = (1.0 - (dx * dx + dz * dz)).clamp(0.0, 1.0);
+            ((0.12 + 0.5 * mask * (0.4 + fbm(seed, fx / 28.0, fz / 28.0, 4))) * height) as i32
+        }
+        _ => ((0.3 + 0.35 * fbm(seed, fx / 36.0, fz / 36.0, 4)) * height) as i32,
+    }
+    .clamp(1, sy - 1);
+    (top, preset == "island" && top <= (height * 0.22) as i32 + 1)
+}
+
+fn tree(size: [i32; 3], preset: &str, seed: u32, x: i32, z: i32) -> Option<(i32, i32)> {
+    if preset == "flat"
+        || x <= 3
+        || z <= 3
+        || x >= size[0] - 3
+        || z >= size[2] - 3
+        || !hash(seed ^ 0x77, x, 0, z).is_multiple_of(170)
+    {
+        return None;
+    }
+    let (top, beach) = column(size, preset, seed, x, z);
+    (!beach).then(|| (top, top + 4 + (hash(seed, x, 1, z) % 2) as i32))
+}
+
+pub fn height_bound(size: [i32; 3], preset: &str, seed: i64, x: i32, z: i32) -> i32 {
+    if preset == "empty" {
+        return -1;
+    }
+    let seed = seed32(seed);
+    let mut top = column(size, preset, seed, x, z).0;
+    for dx in -2..=2 {
+        for dz in -2..=2 {
+            if let Some((_, crown)) = tree(size, preset, seed, x + dx, z + dz) {
+                top = top.max(crown + 2);
+            }
+        }
+    }
+    top.min(size[1] - 1)
+}
+
+/// A canonical sample, including trees crossing page borders.
+pub fn sample(size: [i32; 3], preset: &str, seed: i64, cell: [i32; 3]) -> u8 {
+    if preset == "empty" || (0..3).any(|a| cell[a] < 0 || cell[a] >= size[a]) {
+        return 0;
+    }
+    let seed = seed32(seed);
+    let [x, y, z] = cell;
+    let (top, beach) = column(size, preset, seed, x, z);
+    if y <= top {
+        if preset == "caves"
+            && y > 1
+            && y < top - 2
+            && noise3(
+                seed ^ 0x5bd1,
+                x as f32 / 11.0,
+                y as f32 / 7.0,
+                z as f32 / 11.0,
+            ) > 0.64
+        {
+            return 0;
+        }
+        let depth = top - y;
+        return if depth == 0 {
+            if beach { SAND } else { GRASS }
+        } else if depth <= 3 {
+            if beach { SAND } else { DIRT }
+        } else if preset == "caves"
+            && noise3(seed ^ 0x2f1, x as f32 / 4.0, y as f32 / 4.0, z as f32 / 4.0) > 0.8
+        {
+            GLOW
+        } else {
+            STONE
+        };
+    }
+    if let Some((top, crown)) = tree(size, preset, seed, x, z)
+        && y > top
+        && y <= crown
+    {
+        return WOOD;
+    }
+    if preset != "flat" {
+        for dx in -2..=2 {
+            for dz in -2..=2 {
+                if let Some((_, crown)) = tree(size, preset, seed, x + dx, z + dz) {
+                    let dy = y - crown;
+                    if (-1..=2).contains(&dy) && dx * dx + dz * dz + dy * dy * 2 <= 6 {
+                        return LEAVES;
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
 /// Fills `grid` from `preset`. Unknown presets are an error; `empty` leaves
 /// the world as air.
 pub fn generate(grid: &mut Grid, preset: &str, seed: i64) -> Result<(), String> {
@@ -171,6 +273,25 @@ mod tests {
             }
         }
         all
+    }
+
+    #[test]
+    fn paged_samples_match_eager_generation_including_trees() {
+        for preset in PRESETS {
+            let mut grid = Grid::new([48, 32, 48]);
+            generate(&mut grid, preset, 42).unwrap();
+            for z in 0..48 {
+                for y in 0..32 {
+                    for x in 0..48 {
+                        assert_eq!(
+                            grid.get([x, y, z]),
+                            sample(grid.size(), preset, 42, [x, y, z]),
+                            "{preset} at {x},{y},{z}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

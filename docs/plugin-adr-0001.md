@@ -742,8 +742,70 @@ island runs within the manifest's existing portable work budget; its mesh
 response is about 4.1 MB with 49,156 vertices. No Qt or rendered player run
 was performed for this milestone.
 
-Phase 3 still needs player-save persistence for runtime edits and interactive
-shipping qualification. Phase 4's graph authoring, streamed residency, LOD
-transitions and origin integration remain pending, as do GPU production
-meshing and fracture in phases 5 and 6. Finite smooth worlds still generate
-and mesh synchronously through the module call budget.
+At this milestone, player-save persistence, streaming, GPU meshing and fracture
+were pending. The following batch implements their first runtime path. Finite
+smooth worlds still generate and mesh synchronously through the module budget.
+
+
+### Voxel player checkpoints, streaming, GPU meshing and fracture
+
+Runtime edits now have player save slots (`save_voxels`, `load_voxels`,
+`clear_save_voxels`). `persistent: true` restores the default `save_slot: world`
+on start and checkpoints edits, fracture and stop. Moving fragment poses are
+checkpointed every 300 ticks. Preview never accesses player saves. Version 1
+checkpoints store RLE material pages, signed densities, shapes, generation seed
+and fragment state. Streamed checkpoints contain sparse overrides, including
+explicit air, rather than cached procedural pages. Load validates everything
+before replacing live state. Failed writes report an error and preserve live
+edits and the previous save. World identity includes authored generation and
+edits; performance, palette and save policy can change without invalidating it.
+
+`streamed: true` permits up to 1,048,576 cells per axis without dense allocation.
+`stream_radius` defaults to 2 chunks, `max_pages` to 64 and `pages_per_tick` to 2.
+Invoker components follow actors through `world.actor`; `stream_voxels` sets a
+manual world-space centre, with `stream_center` providing the initial cell-space
+centre. Nearest pages win deterministically, with at most 512 resident pages
+and 16 page builds per slice. Preview frames also drain work. Queries sample the
+canonical generator and overrides even outside residency; eviction never turns
+unknown terrain into air or loses edits. `voxel_stream_status` reports resident
+pages and pending mesh work. The solid count covers resident pages, not the
+entire procedural volume. Brushes and fracture searches reject regions above
+262,144 visited cells before mutation. Physics follows published meshes and the
+normal runtime installation frame, not arbitrary unloaded canonical queries.
+
+`gpu_meshing: true` dispatches the packaged bounded WGSL kernel for cube faces
+or smooth marching tetrahedra. Each lattice cell owns a fixed maximum output
+slot, with unused triangles degenerate. Material groups preserve emission;
+shaped chunks use CPU output. Output buffers stay GPU resident, are copied to
+prepared Bevy vertex buffers before rendering, and are retired on replacement,
+eviction and stop. Retained voxel outputs are capped at 64 MiB; missing capacity
+or compute failures keep CPU fallback geometry. CPU meshing remains necessary
+for collision and fallback, so this batch does not claim a CPU-free pipeline or
+production compaction and arena allocation. No geometry readback occurs in the
+normal render path.
+
+`fracture_voxels` explicitly checks a bounded region using six-neighbour solid
+connectivity. Cells at or below `anchor_y` (default 0), or touching solid cells
+outside the search region, anchor a component. Other components detach if they
+fit `max_fragments` (default 16, maximum 128), `max_fragment_cells` (default and
+maximum 4096), and 128 cells per local axis. Budget overflow remains static and
+is reported as pending, without deleting mass. New bodies wait for affected
+source pages to retire their old static colliders, so bounded streaming does not
+briefly duplicate collision. Fragment meshes merge material
+groups into one convex body. Mass uses `palette_density` (default 1000 kg/m3)
+and occupied shape volume; smooth volume is a solid-sample approximation.
+Concave fragments therefore have approximate convex collision, and their mixed
+emission is averaged. Fragment edits, shape changes, sculpting and world-space
+ray queries operate in the moving body's local grid, preserving pose and spin
+when replacing its mesh. Empty fragments retire their bodies and free capacity.
+Terrain and fracture edits invalidate navigation.
+
+Tests exercise native and portable boundaries, restart saves, malformed loads,
+save failures, dense checkpoint compression, huge sparse bounds, eviction and
+reload, preview work slices, anchored cross-page bridges, fragment budgets,
+moving poses and editable debris. GPU geometry and the prepared-render-buffer
+copy are checked separately with Lavapipe. Physical GPU, browser and interactive
+shipping performance qualification remain outstanding. LOD is explicitly
+next, per the requested order. Generation graph authoring, floating-origin
+integration, GPU compaction, stress/damage fracture, debris lifetime and bake-back
+remain separate follow-up work.

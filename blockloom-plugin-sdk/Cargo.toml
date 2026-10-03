@@ -2,6 +2,7 @@
 name = "blockloom-plugin-sdk"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Write a Blockloom plugin once; build it as a native library or a WebAssembly module."
 
 [features]

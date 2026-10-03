@@ -2,6 +2,7 @@
 name = "blockloom-plugin-host"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Installs, resolves and runs plugin packages: cache, lockfile, lifecycle and loaders."
 
 [dependencies]

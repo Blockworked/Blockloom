@@ -2,6 +2,7 @@
 name = "blockloom-hub"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Manage Blockloom projects and editor installations."
 build = "build.rs"
 

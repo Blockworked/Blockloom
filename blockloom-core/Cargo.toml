@@ -2,6 +2,7 @@
 name = "blockloom-core"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Blockloom's engine library: the project document, block vocabulary, VM and sensor state."
 
 [dependencies]

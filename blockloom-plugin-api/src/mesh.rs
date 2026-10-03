@@ -52,6 +52,34 @@ pub struct MeshData {
     /// The shape of that collider; a trimesh unless the plugin says otherwise.
     #[serde(default)]
     pub collider_kind: ColliderKind,
+    /// Compute output: packed position, normal, rgba (10 f32 words per vertex).
+    /// CPU arrays remain the collision mesh and the rendering fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu: Option<GpuVertices>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<MeshBody>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GpuVertices {
+    pub buffer: String,
+    pub vertices: u32,
+}
+
+/// A movable mesh. Fixed meshes omit this field.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MeshBody {
+    pub mass: f32,
+    #[serde(default)]
+    pub velocity: [f32; 3],
+    #[serde(default)]
+    pub angular_velocity: [f32; 3],
+    #[serde(default = "identity_rotation")]
+    pub rotation: [f32; 4],
+}
+
+fn identity_rotation() -> [f32; 4] {
+    [0.0, 0.0, 0.0, 1.0]
 }
 
 fn default_roughness() -> f32 {
@@ -68,6 +96,33 @@ impl MeshData {
         let name = &self.name;
         if name.is_empty() {
             return Err("a mesh needs a name".to_string());
+        }
+        if let Some(gpu) = &self.gpu {
+            crate::id::validate_type_id(&gpu.buffer)?;
+            if gpu.vertices as usize > MAX_VERTICES
+                || (gpu.vertices as usize) < self.indices.len()
+                || gpu.vertices == 0
+                || gpu.vertices % 3 != 0
+            {
+                return Err(format!("mesh {name}: invalid GPU vertex capacity"));
+            }
+        }
+        if let Some(body) = &self.body
+            && (!body.mass.is_finite()
+                || body.mass <= 0.0
+                || body
+                    .velocity
+                    .iter()
+                    .chain(&body.angular_velocity)
+                    .any(|v| !v.is_finite())
+                || body.rotation.iter().any(|v| !v.is_finite())
+                || (body.rotation.iter().map(|v| v * v).sum::<f32>() - 1.0).abs() > 1e-3
+                || self.collider_kind == ColliderKind::Trimesh
+                || !self.collider)
+        {
+            return Err(format!(
+                "mesh {name}: a moving mesh needs positive mass and a convex collider"
+            ));
         }
         let count = self.vertex_count();
         if !self.positions.len().is_multiple_of(3) {
@@ -122,6 +177,8 @@ mod tests {
             roughness: 0.9,
             collider: false,
             collider_kind: ColliderKind::Trimesh,
+            gpu: None,
+            body: None,
         }
     }
 
@@ -143,6 +200,30 @@ mod tests {
         assert!(mesh.check().unwrap_err().contains("finite"));
         let mut mesh = triangle();
         mesh.name.clear();
+        assert!(mesh.check().is_err());
+    }
+
+    #[test]
+    fn compute_capacity_and_moving_body_fields_are_checked() {
+        let mut mesh = triangle();
+        mesh.gpu = Some(GpuVertices {
+            buffer: "vertices".into(),
+            vertices: 2,
+        });
+        assert!(mesh.check().is_err());
+        mesh.gpu.as_mut().unwrap().vertices = 3;
+        assert!(mesh.check().is_ok());
+        mesh.body = Some(MeshBody {
+            mass: 1.0,
+            velocity: [0.; 3],
+            angular_velocity: [0.; 3],
+            rotation: [0., 0., 0., 1.],
+        });
+        assert!(mesh.check().is_err());
+        mesh.collider = true;
+        mesh.collider_kind = ColliderKind::ConvexHull;
+        assert!(mesh.check().is_ok());
+        mesh.body.as_mut().unwrap().rotation = [0.; 4];
         assert!(mesh.check().is_err());
     }
 

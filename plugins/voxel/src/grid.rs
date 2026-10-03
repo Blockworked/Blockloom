@@ -1,10 +1,11 @@
-//! The authoritative cells: a finite box of chunks, each 16 cells a side.
+//! The authoritative cells: bounded chunks and sparse procedural pages, each 16 cells a side.
 //!
 //! A chunk that holds only air is not allocated. Cell coordinates are signed
 //! and start at zero in one corner; anything outside the box reads as air and
 //! ignores writes.
 
 pub use crate::shape::Shape;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const CHUNK: i32 = 16;
@@ -15,7 +16,9 @@ pub type Cells = [u8; CELLS];
 pub struct Grid {
     /// Size in cells, a whole number of chunks on each axis.
     size: [i32; 3],
-    chunks: Vec<Option<Box<Cells>>>,
+    chunks: BTreeMap<[i32; 3], Box<Cells>>,
+    generator: Option<(String, i64)>,
+    edits: BTreeMap<[i32; 3], u8>,
     /// The cells that are not whole cubes.
     shapes: BTreeMap<[i32; 3], Shape>,
     /// Signed density at cell centres, quantized to 1/256 cell.
@@ -37,10 +40,11 @@ fn local(cell: [i32; 3]) -> usize {
 impl Grid {
     pub fn new(size: [i32; 3]) -> Grid {
         let size = size.map(rounded);
-        let count = size.map(|s| (s / CHUNK) as usize);
         Grid {
             size,
-            chunks: vec![None; count[0] * count[1] * count[2]],
+            chunks: BTreeMap::new(),
+            generator: None,
+            edits: BTreeMap::new(),
             shapes: BTreeMap::new(),
             densities: BTreeMap::new(),
             dirty: BTreeSet::new(),
@@ -60,23 +64,23 @@ impl Grid {
         (0..3).all(|a| (0..self.size[a]).contains(&cell[a]))
     }
 
-    fn slot(&self, chunk: [i32; 3]) -> Option<usize> {
+    fn slot(&self, chunk: [i32; 3]) -> Option<()> {
         let n = self.chunk_counts();
-        (0..3)
-            .all(|a| (0..n[a]).contains(&chunk[a]))
-            .then(|| ((chunk[2] * n[1] + chunk[1]) * n[0] + chunk[0]) as usize)
+        (0..3).all(|a| (0..n[a]).contains(&chunk[a])).then_some(())
     }
 
     pub fn chunk(&self, chunk: [i32; 3]) -> Option<&Cells> {
-        self.chunks[self.slot(chunk)?].as_deref()
+        self.chunks.get(&chunk).map(Box::as_ref)
     }
 
     pub fn get(&self, cell: [i32; 3]) -> u8 {
         if !self.contains(cell) {
             return 0;
         }
-        self.chunk(cell.map(|c| c.div_euclid(CHUNK)))
-            .map_or(0, |cells| cells[local(cell)])
+        self.edits.get(&cell).copied().unwrap_or_else(|| {
+            self.chunk(cell.map(|c| c.div_euclid(CHUNK)))
+                .map_or_else(|| self.base(cell), |cells| cells[local(cell)])
+        })
     }
 
     pub fn shape_at(&self, cell: [i32; 3]) -> Shape {
@@ -138,18 +142,13 @@ impl Grid {
     }
 
     /// Include the density-gradient halo and diagonal neighbours.
-    fn dirty_sample(&mut self, cell: [i32; 3]) {
-        for z in -2..=1 {
-            for y in -2..=1 {
-                for x in -2..=1 {
-                    let chunk =
-                        [cell[0] + x, cell[1] + y, cell[2] + z].map(|c| c.max(0).div_euclid(CHUNK));
-                    if self.slot(chunk).is_some() {
-                        self.dirty.insert(chunk);
-                    }
-                }
-            }
-        }
+    fn dirty_sample(&mut self, cell:[i32;3]) {
+        let lo=cell.map(|v|(v-2).max(0).div_euclid(CHUNK));
+        let hi=cell.map(|v|(v+1).div_euclid(CHUNK));
+        for z in lo[2]..=hi[2] {for y in lo[1]..=hi[1] {for x in lo[0]..=hi[0] {
+            let chunk=[x,y,z];
+            if self.slot(chunk).is_some() {self.dirty.insert(chunk);}
+        }}}
     }
 
     /// Writes a whole cube; true when that changed the cell.
@@ -172,53 +171,236 @@ impl Grid {
         }
         let shape = if material == 0 { Shape::Cube } else { shape };
         let chunk = cell.map(|c| c.div_euclid(CHUNK));
-        let slot = self.slot(chunk).expect("a contained cell has a chunk");
+        let before = self.get(cell);
         let density_changed = self.densities.remove(&cell).is_some();
         if density_changed {
             self.dirty_sample(cell);
         }
-        if material == 0 && self.chunks[slot].is_none() {
+        if material == 0 && before == 0 && !self.shapes.contains_key(&cell) {
             return density_changed;
         }
-        let cells = self.chunks[slot].get_or_insert_with(|| Box::new([0; CELLS]));
-        let index = local(cell);
-        if cells[index] == material && self.shapes.get(&cell).copied().unwrap_or_default() == shape
-        {
+        if before == material && self.shapes.get(&cell).copied().unwrap_or_default() == shape {
             return density_changed;
         }
-        cells[index] = material;
+        if self.generator.is_some() {
+            if self.base(cell) == material {
+                self.edits.remove(&cell);
+            } else {
+                self.edits.insert(cell, material);
+            }
+        } else {
+            self.chunks
+                .entry(chunk)
+                .or_insert_with(|| Box::new([0; CELLS]))[local(cell)] = material;
+        }
+        if let Some(cells) = self.chunks.get_mut(&chunk) {
+            cells[local(cell)] = material;
+        }
         if shape == Shape::Cube {
             self.shapes.remove(&cell);
         } else {
             self.shapes.insert(cell, shape);
         }
         self.dirty_sample(cell);
-        self.dirty.insert(chunk);
-        // A cell on a chunk's face decides which faces its neighbour draws.
-        for axis in 0..3 {
-            let at = cell[axis].rem_euclid(CHUNK);
-            for (edge, step) in [(0, -1), (CHUNK - 1, 1)] {
-                if at == edge {
-                    let mut next = chunk;
-                    next[axis] += step;
-                    if self.slot(next).is_some() {
-                        self.dirty.insert(next);
-                    }
-                }
-            }
-        }
         true
     }
 
     /// Frees a chunk that has gone back to air.
     pub fn prune(&mut self, chunk: [i32; 3]) {
-        if let Some(slot) = self.slot(chunk)
-            && self.chunks[slot]
-                .as_deref()
+        if self.generator.is_none()
+            && self
+                .chunks
+                .get(&chunk)
                 .is_some_and(|cells| cells.iter().all(|&m| m == 0))
         {
-            self.chunks[slot] = None;
+            self.chunks.remove(&chunk);
         }
+    }
+
+    fn base(&self, cell: [i32; 3]) -> u8 {
+        self.generator.as_ref().map_or(0, |(preset, seed)| {
+            crate::terrain::sample(self.size, preset, *seed, cell)
+        })
+    }
+
+    pub fn stream(&mut self, preset: &str, seed: i64) {
+        self.clear();
+        self.generator = Some((preset.to_string(), seed));
+    }
+
+    pub fn resident_pages(&self) -> usize {
+        self.chunks.len()
+    }
+
+    pub fn load_page(&mut self, chunk: [i32; 3]) {
+        if self.slot(chunk).is_none() || self.chunks.contains_key(&chunk) {
+            return;
+        }
+        let mut cells = Box::new([0; CELLS]);
+        for z in 0..CHUNK {
+            for y in 0..CHUNK {
+                for x in 0..CHUNK {
+                    let cell = [
+                        chunk[0] * CHUNK + x,
+                        chunk[1] * CHUNK + y,
+                        chunk[2] * CHUNK + z,
+                    ];
+                    cells[local(cell)] = self.get(cell);
+                }
+            }
+        }
+        self.chunks.insert(chunk, cells);
+    }
+
+    pub fn retain_pages(&mut self, pages: &BTreeSet<[i32; 3]>) {
+        self.chunks.retain(|c, _| pages.contains(c));
+    }
+
+    pub fn solid_cells(&self) -> Vec<([i32; 3], u8)> {
+        let mut out = Vec::new();
+        for (&chunk, data) in &self.chunks {
+            for (i, &material) in data.iter().enumerate() {
+                if material != 0 {
+                    out.push((
+                        [
+                            chunk[0] * CHUNK + (i % 16) as i32,
+                            chunk[1] * CHUNK + ((i / 16) % 16) as i32,
+                            chunk[2] * CHUNK + (i / 256) as i32,
+                        ],
+                        material,
+                    ));
+                }
+            }
+        }
+        out
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        let mut pages = BTreeMap::<[i32; 3], Box<[u16; CELLS]>>::new();
+        if self.generator.is_some() {
+            for (&cell, &material) in &self.edits {
+                pages
+                    .entry(cell.map(|c| c.div_euclid(CHUNK)))
+                    .or_insert_with(|| Box::new([256; CELLS]))[local(cell)] = u16::from(material);
+            }
+        } else {
+            for (&chunk, data) in &self.chunks {
+                pages.insert(chunk, Box::new(data.map(u16::from)));
+            }
+        }
+        Snapshot {
+            size: self.size,
+            generator: self.generator.clone(),
+            cells: Vec::new(),
+            pages: pages
+                .into_iter()
+                .map(|(chunk, data)| {
+                    let mut runs = Vec::<(u16, u16)>::new();
+                    for &m in data.iter() {
+                        if let Some((count, value)) = runs.last_mut()
+                            && *value == m
+                        {
+                            *count += 1;
+                        } else {
+                            runs.push((1, m));
+                        }
+                    }
+                    Page { chunk, runs }
+                })
+                .collect(),
+            shapes: self.shapes.iter().map(|(&c, s)| (c, s.name())).collect(),
+            densities: self.densities.iter().map(|(&c, &d)| (c, d)).collect(),
+        }
+    }
+
+    pub fn restore(snapshot: Snapshot, palette_len: u8) -> Result<Self, String> {
+        if snapshot
+            .size
+            .iter()
+            .any(|s| *s <= 0 || *s > 1048576 || *s % CHUNK != 0)
+            || snapshot.cells.len() > 4194304
+            || snapshot.pages.len() > 262144
+            || (!snapshot.pages.is_empty() && !snapshot.cells.is_empty())
+            || snapshot.densities.len() > 4194304
+        {
+            return Err("invalid voxel checkpoint bounds".into());
+        }
+        let mut grid = Grid::new(snapshot.size);
+        if let Some((preset, seed)) = snapshot.generator {
+            if !crate::terrain::PRESETS.contains(&preset.as_str()) {
+                return Err("unknown checkpoint generator".into());
+            }
+            grid.stream(&preset, seed);
+        }
+        let mut written = 0usize;
+        let mut seen = BTreeSet::new();
+        for page in snapshot.pages {
+            if grid.slot(page.chunk).is_none()
+                || !seen.insert(page.chunk)
+                || page.runs.len() > CELLS
+            {
+                return Err("invalid checkpoint page".into());
+            }
+            let mut offset = 0usize;
+            for (count, material) in page.runs {
+                let count = count as usize;
+                if count == 0
+                    || offset + count > CELLS
+                    || (material != 256 && material > u16::from(palette_len))
+                    || (material == 256 && grid.generator.is_none())
+                {
+                    return Err("invalid checkpoint page run".into());
+                }
+                if material != 256 {
+                    written += count;
+                    if written > 4194304 {
+                        return Err("voxel checkpoint edit budget exceeded".into());
+                    }
+                    for i in offset..offset + count {
+                        let cell = [
+                            page.chunk[0] * CHUNK + (i % 16) as i32,
+                            page.chunk[1] * CHUNK + ((i / 16) % 16) as i32,
+                            page.chunk[2] * CHUNK + (i / 256) as i32,
+                        ];
+                        grid.set(cell, material as u8);
+                    }
+                }
+                offset += count;
+            }
+            if offset != CELLS {
+                return Err("incomplete checkpoint page".into());
+            }
+        }
+        for (cell, m) in snapshot.cells {
+            if !grid.contains(cell) || m > palette_len {
+                return Err("invalid checkpoint cell".into());
+            }
+            grid.set(cell, m);
+        }
+        for (cell, shape) in snapshot.shapes {
+            let shape = Shape::from_name(&shape)?;
+            if !grid.contains(cell) || grid.get(cell) == 0 {
+                return Err("invalid checkpoint shape".into());
+            }
+            grid.reshape(cell, shape);
+        }
+        for (cell, density) in snapshot.densities {
+            if !grid.contains(cell)
+                || density == 0
+                || density.unsigned_abs() > 256
+                || grid.shape_at(cell) != Shape::Cube
+            {
+                return Err("invalid checkpoint density".into());
+            }
+            if (density < 0) != (grid.get(cell) != 0) {
+                return Err("checkpoint density/material disagree".into());
+            }
+            grid.set_density(cell, density, grid.get(cell));
+        }
+        if grid.generator.is_none() {
+            grid.mark_all_dirty();
+        }
+        Ok(grid)
     }
 
     pub fn take_dirty(&mut self) -> Vec<[i32; 3]> {
@@ -237,7 +419,9 @@ impl Grid {
     }
 
     pub fn clear(&mut self) {
-        self.chunks.iter_mut().for_each(|c| *c = None);
+        self.chunks.clear();
+        self.edits.clear();
+        self.generator = None;
         self.shapes.clear();
         self.densities.clear();
         self.dirty.clear();
@@ -245,16 +429,48 @@ impl Grid {
 
     pub fn solid_count(&self) -> u64 {
         self.chunks
-            .iter()
-            .flatten()
+            .values()
             .map(|cells| cells.iter().filter(|&&m| m != 0).count() as u64)
             .sum()
     }
 
     /// The highest solid cell in a column, if there is one.
     pub fn height_at(&self, x: i32, z: i32) -> Option<i32> {
-        (0..self.size[1]).rev().find(|&y| self.get([x, y, z]) != 0)
+        if x < 0 || z < 0 || x >= self.size[0] || z >= self.size[2] {
+            return None;
+        }
+        let top = if let Some((preset, seed)) = &self.generator {
+            let base = crate::terrain::height_bound(self.size, preset, *seed, x, z);
+            self.edits
+                .iter()
+                .filter(|(c, m)| c[0] == x && c[2] == z && **m != 0)
+                .map(|(c, _)| c[1])
+                .max()
+                .unwrap_or(-1)
+                .max(base)
+        } else {
+            self.size[1] - 1
+        };
+        (0..=top).rev().find(|&y| self.get([x, y, z]) != 0)
     }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Snapshot {
+    pub size: [i32; 3],
+    pub generator: Option<(String, i64)>,
+    #[serde(default)]
+    pub cells: Vec<([i32; 3], u8)>,
+    #[serde(default)]
+    pub pages: Vec<Page>,
+    pub shapes: Vec<([i32; 3], String)>,
+    pub densities: Vec<([i32; 3], i16)>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Page {
+    pub chunk: [i32; 3],
+    pub runs: Vec<(u16, u16)>,
 }
 
 #[cfg(test)]

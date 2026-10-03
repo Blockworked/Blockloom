@@ -35,6 +35,7 @@ struct NavSnapshot {
 }
 
 thread_local! {
+    static MESH_POSES: RefCell<std::collections::BTreeMap<(String,String),Value>> = const { RefCell::new(std::collections::BTreeMap::new()) };
     static NAV: RefCell<Option<Rc<NavSnapshot>>> = const { RefCell::new(None) };
 }
 
@@ -48,6 +49,10 @@ pub fn publish_nav(navmesh: &crate::world::NavMesh) {
         })
     });
     NAV.with(|slot| *slot.borrow_mut() = snapshot);
+}
+
+pub fn publish_mesh_poses(poses: std::collections::BTreeMap<(String, String), Value>) {
+    MESH_POSES.with(|slot| *slot.borrow_mut() = poses);
 }
 
 pub struct WorldQueries;
@@ -190,8 +195,23 @@ fn path(input: &Value) -> Result<Value, String> {
 }
 
 impl ServiceProvider for WorldQueries {
-    fn call(&self, _plugin: &str, service: &str, input: &Value) -> Option<Result<Value, String>> {
+    fn call(&self, plugin: &str, service: &str, input: &Value) -> Option<Result<Value, String>> {
         Some(match service {
+            "world.mesh_pose" => Ok(MESH_POSES.with(|slot| {
+                input["name"]
+                    .as_str()
+                    .and_then(|name| slot.borrow().get(&(plugin.into(), name.into())).cloned())
+                    .unwrap_or(Value::Null)
+            })),
+            "world.actor" => Ok(sense::read(|s| {
+                input["actor"]
+                    .as_str()
+                    .and_then(|id| s.actors.get(id))
+                    .map_or(
+                        json!({"found":false}),
+                        |actor| json!({"found":true,"position":actor.position}),
+                    )
+            })),
             "physics.ray" => ray(input),
             "physics.overlap_point" => vec3(input, "point").and_then(|point| {
                 if query::available() {

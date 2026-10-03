@@ -114,6 +114,10 @@ impl Scene {
                     ..
                 } => self.said.push(text),
                 Outcome::Log { .. } => {}
+                Outcome::Effect {
+                    effect: Effect::NavDirty { .. },
+                    ..
+                } => {}
                 other => panic!("unexpected outcome {other:?}"),
             }
         }
@@ -134,7 +138,7 @@ fn the_package_schema_is_valid_and_its_blocks_resolve() {
     contributions.check_definition().unwrap();
     assert_eq!(contributions.resources.len(), 1);
     assert_eq!(contributions.tools.len(), 4);
-    assert_eq!(blocks().len(), 10);
+    assert_eq!(blocks().len(), 19);
     // Every statement and reporter has the op it names.
     let ops: BTreeSet<_> = blocks().into_iter().map(|b| b.op).collect();
     for op in [
@@ -191,7 +195,26 @@ fn a_run_draws_the_world_and_edits_redraw_only_what_they_touch() {
         ],
         "me",
     );
-    assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|o| matches!(
+                o,
+                Outcome::Effect {
+                    effect: Effect::Mesh(_),
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    assert!(outcomes.iter().any(|o| matches!(
+        o,
+        Outcome::Effect {
+            effect: Effect::NavDirty { .. },
+            ..
+        }
+    )));
     scene.apply(outcomes);
     assert_eq!(scene.meshes.len(), 4);
     assert_ne!(scene.meshes["chunk/0/0/0"], before["chunk/0/0/0"]);
@@ -204,7 +227,19 @@ fn a_run_draws_the_world_and_edits_redraw_only_what_they_touch() {
         &[json!(15), json!(5), json!(4), json!("stone")],
         "me",
     );
-    assert_eq!(outcomes.len(), 2, "{outcomes:?}");
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|o| matches!(
+                o,
+                Outcome::Effect {
+                    effect: Effect::Mesh(_),
+                    ..
+                }
+            ))
+            .count(),
+        2
+    );
 
     // Digging a hole through the floor shows in the reporters.
     let outcomes = world.run_block(
@@ -521,7 +556,7 @@ fn the_sealed_package_runs_in_the_portable_executor() {
     package::seal(&root).unwrap();
     let package = Package::load(&root).unwrap();
     assert_eq!(package.manifest.id, ID);
-    assert_eq!(package.contributions.blocks.len(), 10);
+    assert_eq!(package.contributions.blocks.len(), 19);
 
     let entry = package.manifest.runtime.portable.clone().unwrap();
     let wasm_module = portable(&root.join(&entry.module), &entry);
@@ -540,4 +575,138 @@ fn the_sealed_package_runs_in_the_portable_executor() {
     let mut expected = Scene::default();
     expected.apply(native.start(&|_| json!({"records": [], "resources": []})));
     assert_eq!(scene.meshes, expected.meshes);
+}
+
+#[test]
+fn smooth_sculpting_replays_saved_edits_and_uses_exact_collision_meshes() {
+    let native = module();
+    let start = json!({"resources": [{"type_id": "world", "payload": {
+        "preset": "empty", "surface": "smooth", "size": [32,16,16],
+        "voxel_size": 2, "origin": [-10,3,-4]
+    }}]});
+    native.call_json("world.start", &start).unwrap();
+    let args = json!({"x": 16,"y": 6,"z": 6,"radius": 3.2,"material": "glow"});
+    let edited = native.call_json("sphere", &args).unwrap();
+    assert!(edited["changed"].as_u64().unwrap() > 0);
+    let mut meshes = BTreeMap::new();
+    for effect in edited["effects"].as_array().unwrap() {
+        if effect["effect"] != "mesh" {
+            continue;
+        }
+        let mesh: blockloom_plugin_api::mesh::MeshData =
+            serde_json::from_value(effect.clone()).unwrap();
+        mesh.check().unwrap();
+        assert!(mesh.collider && mesh.emission.is_some());
+        meshes.insert(mesh.name.clone(), mesh);
+    }
+    assert_eq!(meshes.len(), 2, "both sides of the chunk boundary");
+    assert_eq!(native.call_json("sphere", &args).unwrap()["changed"], 0);
+    // The ray hits the interpolated sphere surface, beyond the cell boundary.
+    let hit = native
+        .call_json(
+            "cast",
+            &json!({"x":23,"y":30,"z":9,"dx":0,"dy":-1,"dz":0,"reach":40}),
+        )
+        .unwrap();
+    assert_eq!(hit["hit"], true);
+    let distance = hit["distance"].as_f64().unwrap();
+    assert!((distance - 7.6).abs() < 0.03, "{hit}");
+    let replay = module();
+    let mut saved = start.clone();
+    saved["resources"][0]["payload"]["edits"] = json!(["sphere 16 6 6 3.2 glow"]);
+    let replayed = replay.call_json("world.start", &saved).unwrap();
+    let replay_meshes: BTreeMap<_, _> = replayed["effects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["effect"] == "mesh")
+        .map(|e| {
+            let m: blockloom_plugin_api::mesh::MeshData =
+                serde_json::from_value(e.clone()).unwrap();
+            (m.name.clone(), m)
+        })
+        .collect();
+    assert_eq!(meshes, replay_meshes);
+    let carved = native
+        .call_json(
+            "sphere",
+            &json!({"x":16,"y":6,"z":6,"radius":2.2,"material":"air"}),
+        )
+        .unwrap();
+    assert!(carved["changed"].as_u64().unwrap() > 0);
+    assert_eq!(
+        native
+            .call_json("get", &json!({"x":16,"y":6,"z":6}))
+            .unwrap()["material"],
+        0
+    );
+    // A different paint stays within the sphere rather than its bounding box.
+    native
+        .call_json("set", &json!({"x":18,"y":8,"z":8,"material":"wood"}))
+        .unwrap();
+    native
+        .call_json(
+            "sphere",
+            &json!({"x":16,"y":6,"z":6,"radius":2.2,"material":"stone"}),
+        )
+        .unwrap();
+    assert_eq!(
+        native
+            .call_json("get", &json!({"x":18,"y":8,"z":8}))
+            .unwrap()["material"],
+        5
+    );
+}
+
+#[test]
+fn smooth_worlds_match_native_and_portable_execution() {
+    let Some(wasm) = build_wasm() else {
+        return;
+    };
+    let entry = PortableEntry {
+        module: "portable/voxel.wasm".into(),
+        memory_limit_mib: 256,
+        call_limit_ms: 10000,
+    };
+    let mut portable = portable(&wasm, &entry);
+    let native = module();
+    let start = json!({"resources": [{"type_id":"world","payload": {
+        "surface":"smooth","preset":"island"
+    }}]});
+    let began = std::time::Instant::now();
+    let expected = native.call_json("world.start", &start).unwrap();
+    println!(
+        "smooth payload {} bytes, {} vertices",
+        serde_json::to_vec(&expected).unwrap().len(),
+        expected["effects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["positions"].as_array().map_or(0, |p| p.len() / 3))
+            .sum::<usize>()
+    );
+    let actual = portable.call_json("world.start", &start).unwrap();
+    println!(
+        "default smooth native and wasm worlds took {:?}",
+        began.elapsed()
+    );
+    assert_eq!(expected, actual);
+    for (op, args) in [
+        (
+            "sphere",
+            json!({"x":16,"y":8,"z":16,"radius":3.2,"material":"air"}),
+        ),
+        ("shape", json!({"x":8,"y":1,"z":8,"shape":"ramp north"})),
+        (
+            "cast",
+            json!({"x":16.5,"y":30,"z":16.5,"dx":0,"dy":-1,"dz":0,"reach":100}),
+        ),
+        ("generate", json!({"preset":"empty","seed":3})),
+    ] {
+        assert_eq!(
+            native.call_json(op, &args).unwrap(),
+            portable.call_json(op, &args).unwrap(),
+            "{op}"
+        );
+    }
 }

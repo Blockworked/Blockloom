@@ -2,6 +2,7 @@
 name = "blockloom-app"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Blockloom's backend: every command the editor issues, and the state it edits."
 
 # The agent shell: a backend driven on stdin, one shell command per line.

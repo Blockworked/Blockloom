@@ -2,7 +2,8 @@
 name = "blockloom-voxel"
 version.workspace = true
 edition.workspace = true
-description = "The voxel plugin (com.blockworked.voxel): finite cube and smooth worlds with generated terrain, sculpting and collision meshes."
+license.workspace = true
+description = "The voxel plugin (com.blockworked.voxel): persistent streamed cube and smooth worlds with GPU meshing and editable fracture bodies."
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -13,6 +14,9 @@ blockloom-plugin-api = { path = "../../blockloom-plugin-api" }
 serde.workspace = true
 
 [dev-dependencies]
+blockloom-plugin-gpu = { path = "../../blockloom-plugin-gpu", features = ["engine"] }
+wgpu = "30"
+pollster = "0.4"
 blockloom-plugin-host = { path = "../../blockloom-plugin-host" }
 tempfile.workspace = true
 serde_json.workspace = true

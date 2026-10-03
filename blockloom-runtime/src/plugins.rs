@@ -834,7 +834,18 @@ pub fn stage(
     move |mut engine: NonSendMut<Engine>, time: Res<Time>, queries: crate::queries::QueryAccess| {
         #[cfg(feature = "plugins")]
         {
-            if !engine.plugins.active() || !engine.running || engine.plugins.previewing.is_some() {
+            if engine.plugins.previewing.is_some() {
+                if stage == Stage::Presentation
+                    && let Some(world) = engine.plugins.world.clone()
+                {
+                    let outcomes = world
+                        .borrow_mut()
+                        .preview_frame(f64::from(time.delta_secs()));
+                    apply(&mut engine, applied(outcomes));
+                }
+                return;
+            }
+            if !engine.plugins.active() || !engine.running {
                 return;
             }
             let frame_stage = matches!(stage, Stage::RenderExtraction | Stage::Presentation);
@@ -1142,7 +1153,22 @@ mod tests {
         engine.project.plugin_resources.push(world(16));
         preview_with(&mut engine, open);
         assert_eq!(opened.get(), 2);
-        assert!(matches!(engine.plugins.meshes[0], MeshOp::Clear));
+        let clear = engine
+            .plugins
+            .meshes
+            .iter()
+            .position(|op| matches!(op, MeshOp::Clear))
+            .unwrap();
+        assert!(
+            engine.plugins.meshes[..clear]
+                .iter()
+                .all(|op| matches!(op, MeshOp::Remove { .. }))
+        );
+        assert!(
+            engine.plugins.meshes[clear + 1..]
+                .iter()
+                .all(|op| matches!(op, MeshOp::Put { .. }))
+        );
         assert_eq!(
             engine
                 .plugins

@@ -3,15 +3,27 @@
   "id": "com.blockworked.voxel",
   "name": "Voxel",
   "version": "0.1.0",
-  "description": "Finite cube or smooth terrain: generation, sculpting, shaped cells, glowing materials and solid chunk meshes. A portable module, so it runs sandboxed on every desktop target.",
+  "description": "Cube and smooth terrain with sculpting, player saves, bounded streaming, optional GPU meshing and editable fracture bodies. A portable sandboxed module.",
   "license": "MIT",
   "engine": ">=0.0.1",
   "tier": "portable",
   "abi": 1,
   "sdk": "^0.0",
   "runtime": {
-    "portable": {"module": "portable/voxel.wasm", "memory_limit_mib": 256, "call_limit_ms": 10000}
+    "portable": {
+      "module": "portable/voxel.wasm",
+      "memory_limit_mib": 256,
+      "call_limit_ms": 10000
+    }
   },
-  "editor": {"preview": true},
-  "contributions": ["schemas/voxel.json"]
+  "editor": {
+    "preview": true
+  },
+  "contributions": [
+    "schemas/voxel.json"
+  ],
+  "capabilities": [
+    "project-storage",
+    "gpu-compute"
+  ]
 }

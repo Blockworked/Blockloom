@@ -246,3 +246,8 @@ system - is [blockstitch](https://github.com/Blockworked/blockstitch), shared
 with [Blockwork](https://github.com/Blockworked/Blockwork).
 
 See [AGENTS.md](AGENTS.md) for the architecture in more detail.
+
+## License
+
+Blockloom is licensed under the GNU Affero General Public License v3.0 or
+later. See [LICENSE](LICENSE) for the full text.

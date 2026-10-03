@@ -18,6 +18,17 @@ use blockloom_plugin_api::mesh::{ColliderKind, MeshData};
 use blockloom_protocol::RuntimeMessage;
 use std::collections::HashMap;
 
+#[cfg(feature = "plugins")]
+use crate::plugin_compute::ComputeLink;
+#[cfg(not(feature = "plugins"))]
+#[derive(Resource)]
+pub struct ComputeLink;
+#[cfg(not(feature = "plugins"))]
+impl ComputeLink {
+    fn bind_mesh(&self, _: AssetId<Mesh>, _: &str, _: &str, _: u32) {}
+    fn unbind_mesh(&self, _: AssetId<Mesh>) {}
+}
+
 /// Marks the entity a plugin's mesh became.
 #[derive(Component)]
 pub struct PluginMesh;
@@ -67,6 +78,30 @@ fn bevy_mesh(data: &MeshData) -> Mesh {
     .with_inserted_indices(Indices::U32(data.indices.clone()))
 }
 
+fn raster_mesh(data: &MeshData) -> Mesh {
+    let Some(gpu) = &data.gpu else {
+        return bevy_mesh(data);
+    };
+    let count = gpu.vertices as usize;
+    let mut positions = vec![[0.0; 3]; count];
+    let mut normals = vec![[0.0; 3]; count];
+    let mut colors = vec![[0.0; 4]; count];
+    // Keep the CPU fallback visible until the compute buffer has completed.
+    for (out, &index) in data.indices.iter().enumerate() {
+        let i = index as usize;
+        positions[out].copy_from_slice(&data.positions[i * 3..i * 3 + 3]);
+        normals[out].copy_from_slice(&data.normals[i * 3..i * 3 + 3]);
+        colors[out].copy_from_slice(&data.colors[i * 4..i * 4 + 4]);
+    }
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+}
+
 fn collider(data: &MeshData) -> Option<rp::Collider> {
     let vertices: Vec<Vec3> = data
         .positions
@@ -105,6 +140,7 @@ pub fn sync(
     mut state: ResMut<PluginMeshes>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    link: Option<Res<ComputeLink>>,
 ) {
     if engine.plugins.meshes.is_empty() {
         return;
@@ -134,7 +170,17 @@ pub fn sync(
                         })
                     })
                     .clone();
-                let handle = meshes.add(bevy_mesh(&mesh));
+                if let Some((old, _)) = state.assets.get(&(plugin.clone(), mesh.name.clone()))
+                    && let Some(link) = &link
+                {
+                    link.unbind_mesh(old.id());
+                }
+                let handle = meshes.add(raster_mesh(&mesh));
+                if let Some(gpu) = &mesh.gpu
+                    && let Some(link) = &link
+                {
+                    link.bind_mesh(handle.id(), &plugin, &gpu.buffer, gpu.vertices);
+                }
                 state.assets.insert(
                     (plugin.clone(), mesh.name.clone()),
                     (handle.clone(), material.clone()),
@@ -145,15 +191,38 @@ pub fn sync(
                     MeshMaterial3d(material),
                     Transform::from_translation(Vec3::from(mesh.origin)),
                 ));
+                if let Some(body) = &mesh.body {
+                    entity.insert(Transform {
+                        translation: Vec3::from(mesh.origin),
+                        rotation: Quat::from_array(body.rotation),
+                        ..default()
+                    });
+                }
                 if mesh.collider
                     && let Some(shape) = collider(&mesh)
                 {
-                    entity.insert((rp::RigidBody::Fixed, shape));
+                    if let Some(body) = &mesh.body {
+                        entity.insert((
+                            rp::RigidBody::Dynamic,
+                            shape,
+                            rp::ColliderMassProperties::Mass(body.mass),
+                            rp::Velocity {
+                                linear: Vec3::from(body.velocity),
+                                angular: Vec3::from(body.angular_velocity),
+                            },
+                        ));
+                    } else {
+                        entity.insert((rp::RigidBody::Fixed, shape));
+                    }
                 }
                 state.live.insert((plugin, mesh.name), entity.id());
             }
             MeshOp::Remove { plugin, name } => {
-                state.assets.remove(&(plugin.clone(), name.clone()));
+                if let Some((old, _)) = state.assets.remove(&(plugin.clone(), name.clone()))
+                    && let Some(link) = &link
+                {
+                    link.unbind_mesh(old.id());
+                }
                 if let Some(old) = state.live.remove(&(plugin, name)) {
                     commands.entity(old).despawn();
                 }
@@ -209,11 +278,28 @@ pub fn sync(
                         commands.entity(old).despawn();
                     }
                 }
+                if let Some(link) = &link {
+                    for (mesh, _) in state.assets.values() {
+                        link.unbind_mesh(mesh.id());
+                    }
+                }
                 state.assets.clear();
                 state.materials.clear();
             }
         }
     }
+}
+
+/// Publish moving plugin mesh poses for checkpoints and continued editing.
+#[cfg(feature = "plugins")]
+pub fn publish_poses(state: Res<PluginMeshes>, query: Query<(&Transform, Option<&rp::Velocity>)>) {
+    let poses = state.live.iter().filter_map(|(key, entity)| {
+        let (pose, velocity) = query.get(*entity).ok()?;
+        Some((key.clone(), serde_json::json!({"position":pose.translation.to_array(), "rotation":pose.rotation.to_array(),
+            "velocity":velocity.map_or([0.0;3], |v| v.linear.to_array()),
+            "angular_velocity":velocity.map_or([0.0;3], |v| v.angular.to_array())})))
+    }).collect();
+    crate::plugin_services::publish_mesh_poses(poses);
 }
 
 #[cfg(test)]
@@ -235,6 +321,8 @@ mod tests {
             roughness: 0.9,
             collider,
             collider_kind: ColliderKind::Trimesh,
+            gpu: None,
+            body: None,
         }
     }
 
@@ -270,6 +358,48 @@ mod tests {
             .query_filtered::<(), F>()
             .iter(app.world())
             .count()
+    }
+
+    #[test]
+    fn moving_meshes_have_mass_and_pose_and_gpu_fallback_has_the_fixed_capacity() {
+        use blockloom_plugin_api::mesh::{GpuVertices, MeshBody};
+        let mut app = app();
+        let mut mesh = cube("piece", [3.0, 4.0, 5.0], true);
+        mesh.positions = vec![0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0., 1.];
+        mesh.indices = vec![0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3];
+        mesh.collider_kind = ColliderKind::ConvexHull;
+        mesh.body = Some(MeshBody {
+            mass: 2500.0,
+            velocity: [2.0, 0.0, 0.0],
+            angular_velocity: [0.0; 3],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+        });
+        mesh.gpu = Some(GpuVertices {
+            buffer: "vertices1".into(),
+            vertices: 24,
+        });
+        mesh.check().unwrap();
+        let raster = raster_mesh(&mesh);
+        assert_eq!(raster.count_vertices(), 24);
+        assert!(raster.indices().is_none());
+        let mut layouts = bevy::mesh::MeshVertexBufferLayouts::default();
+        let layout = raster.get_mesh_vertex_buffer_layout(&mut layouts);
+        assert_eq!(layout.0.layout().array_stride, 40);
+        push(&mut app, vec![put(mesh)]);
+        let (body, mass, velocity, pose) = app
+            .world_mut()
+            .query::<(
+                &rp::RigidBody,
+                &rp::ColliderMassProperties,
+                &rp::Velocity,
+                &Transform,
+            )>()
+            .single(app.world())
+            .unwrap();
+        assert_eq!(*body, rp::RigidBody::Dynamic);
+        assert_eq!(*mass, rp::ColliderMassProperties::Mass(2500.0));
+        assert_eq!(velocity.linear, Vec3::new(2.0, 0.0, 0.0));
+        assert_eq!(pose.translation, Vec3::new(3.0, 4.0, 5.0));
     }
 
     #[test]

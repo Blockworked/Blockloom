@@ -1047,10 +1047,16 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   `grid.rs` are quantized to 1/256 cell; sphere brushes union or carve them,
   saved sphere lines replay them, and rays intersect the same triangles as
   collision (including actual shaped faces). Cube mode remains the default.
-  Not yet: runtime-edit player saves, streaming and LOD, instancing, GPU
-  meshing, fracture. Its manifest asks for `editor.preview`,
-  so the scene view shows the generated world without Play (edits made by
-  blocks still last only for a run). Saved edits are the `world` resource's
+  Runtime edits can persist through `save_voxels` or `persistent: true`, using
+  player storage and versioned compressed checkpoints. `streamed: true` uses
+  bounded page residency around invoker components or `stream_voxels`; canonical
+  queries and sparse edits survive eviction. `gpu_meshing: true` adds GPU vertex
+  generation with CPU collision and fallback meshes. `fracture_voxels` detaches
+  unsupported six-connected regions into editable convex bodies, retaining cells
+  when fragment budgets are exhausted. See the voxel milestone in
+  `docs/plugin-adr-0001.md` for settings, limits and validation. LOD is deferred.
+  Its manifest asks for `editor.preview`, `project-storage` and `gpu-compute`;
+  preview does not load or write player saves. Saved edits are the `world` resource's
   `edits` lines (`set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`,
   `sphere X Y Z radius material`), applied in order over the generated terrain
   at `world.start` (a bad line is reported by number and skipped), so the scene

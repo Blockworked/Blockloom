@@ -216,6 +216,16 @@ impl ComputeEngine {
         self.dispatched
     }
 
+    /// A completed compute buffer, for a host's GPU-to-GPU mesh copy.
+    pub fn mesh_buffer(&self, plugin: &str, name: &str, words: u32) -> Option<&wgpu::Buffer> {
+        let state = self.plugins.get(plugin)?;
+        if !state.queue.is_empty() {
+            return None;
+        }
+        let buffer = state.buffers.get(name)?;
+        (buffer.words == words).then_some(&buffer.buffer)
+    }
+
     /// Forgets a plugin's buffers, queue and reads in flight.
     pub fn drop_plugin(&mut self, plugin: &str) {
         self.plugins.remove(plugin);

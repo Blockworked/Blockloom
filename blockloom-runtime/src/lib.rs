@@ -318,6 +318,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         .init_resource::<plugin_meshes::PluginMeshes>()
         .add_systems(Update, plugin_meshes::sync.run_if(is_3d));
     #[cfg(feature = "plugins")]
+    app.add_systems(PostUpdate, plugin_meshes::publish_poses.run_if(is_3d));
+    #[cfg(feature = "plugins")]
     plugin_compute::register(app);
     passes::register(app);
     hdr::register(app);

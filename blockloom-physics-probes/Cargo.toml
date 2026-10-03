@@ -2,6 +2,7 @@
 name = "blockloom-physics-probes"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish = false
 description = "Headless Rapier probes behind docs/physics-and-character-controller-plan.md phase 0"
 

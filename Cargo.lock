@@ -2712,11 +2712,14 @@ name = "blockloom-voxel"
 version = "0.0.1"
 dependencies = [
  "blockloom-plugin-api",
+ "blockloom-plugin-gpu",
  "blockloom-plugin-host",
  "blockloom-plugin-sdk",
+ "pollster",
  "serde",
  "serde_json",
  "tempfile",
+ "wgpu",
 ]
 
 [[package]]

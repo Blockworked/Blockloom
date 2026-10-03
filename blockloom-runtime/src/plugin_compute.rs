@@ -9,11 +9,14 @@
 use crate::bridge;
 use crate::engine::Engine;
 use bevy::prelude::*;
+use bevy::render::mesh::{RenderMesh, allocator::MeshAllocator};
+use bevy::render::render_asset::RenderAssets;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::{Render, RenderApp, RenderSystems};
 use blockloom_plugin_api::compute::{GpuCommand, LoadoutKernel};
 use blockloom_plugin_gpu::engine::{ComputeEngine, Report};
 use blockloom_protocol::RuntimeMessage;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -26,6 +29,8 @@ struct Link {
     reports: Vec<Report>,
     /// Whether a device is there to compute on, once known.
     available: Option<bool>,
+    meshes: HashMap<AssetId<Mesh>, (String, String, u32)>,
+    completed_meshes: Vec<(String, u32)>,
 }
 
 /// What the two worlds share.
@@ -45,6 +50,20 @@ impl ComputeLink {
         let mut link = self.0.lock().unwrap();
         link.clear = true;
         link.commands.clear();
+        link.meshes.clear();
+        link.completed_meshes.clear();
+    }
+
+    pub fn bind_mesh(&self, asset: AssetId<Mesh>, plugin: &str, buffer: &str, vertices: u32) {
+        self.0
+            .lock()
+            .unwrap()
+            .meshes
+            .insert(asset, (plugin.into(), buffer.into(), vertices));
+    }
+
+    pub fn unbind_mesh(&self, asset: AssetId<Mesh>) {
+        self.0.lock().unwrap().meshes.remove(&asset);
     }
 
     pub fn take_reports(&self) -> Vec<Report> {
@@ -68,7 +87,7 @@ pub fn register(app: &mut App) {
         Some(render) => {
             render
                 .insert_resource(link)
-                .add_systems(Render, run.in_set(RenderSystems::Cleanup));
+                .add_systems(Render, run.in_set(RenderSystems::PrepareBindGroups));
         }
         // A world without a renderer has nothing to compute on.
         None => link.set_available(false),
@@ -80,6 +99,10 @@ fn run(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     mut engine: Local<Option<ComputeEngine>>,
+    allocator: Res<MeshAllocator>,
+    meshes: Res<RenderAssets<RenderMesh>>,
+    mut copied: Local<HashSet<AssetId<Mesh>>>,
+    mut failed: Local<HashSet<String>>,
 ) {
     let (kernels, commands, clear) = {
         let mut shared = link.0.lock().unwrap();
@@ -112,6 +135,8 @@ fn run(
     }
     if clear {
         engine.clear();
+        copied.clear();
+        failed.clear();
     }
     for (plugin, command) in commands {
         if let Err(message) = engine.submit(&plugin, command) {
@@ -119,6 +144,55 @@ fn run(
         }
     }
     reports.extend(engine.run());
+    for report in &reports {
+        if let Report::Error { plugin, .. } = report {
+            failed.insert(plugin.clone());
+        }
+    }
+    // Prepared Bevy meshes use position, normal, color in a 40-byte vertex.
+    let shared = link.0.lock().unwrap();
+    copied.retain(|id| shared.meshes.contains_key(id));
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("plugin GPU meshes"),
+    });
+    let mut any = false;
+    let mut completed = Vec::new();
+    for (id, (plugin, buffer, vertices)) in &shared.meshes {
+        if copied.contains(id) || failed.contains(plugin) || failed.contains("") {
+            continue;
+        }
+        let Some(mesh) = meshes.get(*id) else {
+            continue;
+        };
+        let layout = mesh.layout.0.layout();
+        if layout.array_stride != 40 {
+            continue;
+        }
+        let Some(source) = engine.mesh_buffer(plugin, buffer, vertices * 10) else {
+            continue;
+        };
+        let Some(target) = allocator.mesh_vertex_slice(id) else {
+            continue;
+        };
+        if target.range.end - target.range.start < *vertices {
+            continue;
+        }
+        encoder.copy_buffer_to_buffer(
+            source,
+            0,
+            target.buffer,
+            u64::from(target.range.start) * 40,
+            u64::from(*vertices) * 40,
+        );
+        copied.insert(*id);
+        completed.push((plugin.clone(), *vertices));
+        any = true;
+    }
+    drop(shared);
+    if any {
+        queue.submit([encoder.finish()]);
+        link.0.lock().unwrap().completed_meshes.extend(completed);
+    }
     if !reports.is_empty() {
         link.0.lock().unwrap().reports.extend(reports);
     }
@@ -153,8 +227,154 @@ fn feed(
             link.push(commands);
         }
     }
+    for (plugin, vertices) in std::mem::take(&mut link.0.lock().unwrap().completed_meshes) {
+        let _ = engine.plugins.diagnostics.count(&plugin, "gpu_meshes", 1);
+        let _ = engine
+            .plugins
+            .diagnostics
+            .count(&plugin, "gpu_mesh_vertices", i64::from(vertices));
+    }
     let reports = link.take_reports();
     if !reports.is_empty() {
         crate::plugins::gpu_reports(&mut engine, reports);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugins::MeshOp;
+    use blockloom_core::scene::Mode;
+    use blockloom_plugin_api::mesh::{ColliderKind, GpuVertices, MeshData};
+
+    #[test]
+    #[ignore = "needs a GPU or lavapipe"]
+    fn gpu_mesh_buffers_copy_into_prepared_bevy_meshes() {
+        let mut app = App::new();
+        app.add_plugins(
+            DefaultPlugins
+                .set(bevy::window::WindowPlugin {
+                    primary_window: None,
+                    ..default()
+                })
+                .set(bevy::render::RenderPlugin {
+                    synchronous_pipeline_compilation: true,
+                    ..default()
+                })
+                .disable::<bevy::winit::WinitPlugin>()
+                .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>()
+                .disable::<bevy::log::LogPlugin>()
+                .disable::<bevy::audio::AudioPlugin>(),
+        );
+        let began = std::time::Instant::now();
+        while app.plugins_state() == bevy::app::PluginsState::Adding {
+            bevy::tasks::tick_global_task_pools_on_main_thread();
+            assert!(
+                began.elapsed() < std::time::Duration::from_secs(30),
+                "renderer initialization timed out"
+            );
+        }
+        app.finish();
+        app.cleanup();
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(rx, Mode::ThreeD);
+        let words = vec![
+            2.0f32, 0., 0., 0., 0., 1., 1., 0., 0., 1., 3., 0., 0., 0., 0., 1., 1., 0., 0., 1., 2.,
+            1., 0., 0., 0., 1., 1., 0., 0., 1.,
+        ];
+        engine.plugins.gpu = vec![
+            (
+                "p".into(),
+                GpuCommand::Buffer {
+                    name: "out".into(),
+                    words: 30,
+                },
+            ),
+            (
+                "p".into(),
+                GpuCommand::Write {
+                    buffer: "out".into(),
+                    offset: 0,
+                    data: words.iter().map(|v| v.to_bits()).collect(),
+                },
+            ),
+        ];
+        engine.plugins.meshes.push(MeshOp::Put {
+            plugin: "p".into(),
+            mesh: MeshData {
+                name: "triangle".into(),
+                positions: vec![0., 0., 0., 1., 0., 0., 0., 1., 0.],
+                normals: [0., 0., 1.].repeat(3),
+                colors: vec![1.; 12],
+                indices: vec![0, 1, 2],
+                origin: [0.; 3],
+                emission: None,
+                roughness: 0.9,
+                collider: false,
+                collider_kind: ColliderKind::Trimesh,
+                gpu: Some(GpuVertices {
+                    buffer: "out".into(),
+                    vertices: 3,
+                }),
+                body: None,
+            },
+        });
+        app.insert_non_send(engine)
+            .init_resource::<crate::plugin_meshes::PluginMeshes>()
+            .add_systems(Update, crate::plugin_meshes::sync);
+        register(&mut app);
+        for _ in 0..8 {
+            app.update();
+        }
+        assert!(
+            app.world()
+                .non_send::<Engine>()
+                .plugins
+                .diagnostics
+                .metrics()
+                .iter()
+                .any(|(name, value)| name == "plugins/p/gpu_meshes" && *value == 1.0)
+        );
+        let id = *app
+            .world()
+            .resource::<ComputeLink>()
+            .0
+            .lock()
+            .unwrap()
+            .meshes
+            .keys()
+            .next()
+            .unwrap();
+        let render = app.get_sub_app_mut(RenderApp).unwrap();
+        let target = {
+            let allocator = render.world().resource::<MeshAllocator>();
+            let slice = allocator.mesh_vertex_slice(&id).unwrap();
+            (slice.buffer.clone(), u64::from(slice.range.start) * 40)
+        };
+        let device = render.world().resource::<RenderDevice>();
+        let queue = render.world().resource::<RenderQueue>();
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 120,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        encoder.copy_buffer_to_buffer(&target.0, target.1, &staging, 0, 120);
+        queue.submit([encoder.finish()]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                tx.send(result).unwrap();
+            });
+        device
+            .wgpu_device()
+            .poll(wgpu::PollType::wait_indefinitely())
+            .unwrap();
+        rx.recv().unwrap().unwrap();
+        let data = staging.slice(..).get_mapped_range().unwrap();
+        assert_eq!(bytemuck::cast_slice::<u8, f32>(&data), words.as_slice());
     }
 }

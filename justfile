@@ -95,6 +95,19 @@ hub-install:
 hub-install:
     @echo 'Hub build is in target/release/blockloom-hub - run it from there.'
 
+[linux]
+hub-uninstall:
+    sudo rm -rf /usr/lib/blockloom-hub
+    sudo rm -f /usr/bin/blockloom-hub /usr/share/applications/blockloom-hub.desktop /usr/share/icons/hicolor/256x256/apps/blockloom-hub.png
+
+[windows]
+hub-uninstall:
+    python scripts/install-windows.py hub-uninstall
+
+[macos]
+hub-uninstall:
+    @echo 'Hub runs from target/release/blockloom-hub - nothing installed.'
+
 # Build the editor and runtime, then watch QML edits through Qt 6.12.
 qml-preview *args: prepare-patched-deps
     {{if os() == "windows" { "python" } else { "python3" }}} scripts/qml-preview.py {{args}}

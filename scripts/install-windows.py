@@ -200,10 +200,31 @@ def install_hub():
     print(f"Installed Blockloom Hub to {root}")
 
 
+def uninstall_hub():
+    root = install_root("Blockloom Hub")
+    shortcut = shortcut_path("Blockloom Hub")
+    try:
+        shortcut.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        sys.exit(f"uninstall: cannot remove {shortcut}: {error}")
+    if remove_path_entry(root):
+        print("Removed the PATH entry.")
+    if not root.exists():
+        print("Nothing else to remove.")
+        return
+    try:
+        remove_tree(root)
+    except PermissionError:
+        sys.exit(f"uninstall: cannot remove {root} - close Blockloom Hub first and try again")
+    print(f"Removed {root}")
+
+
 def main(argv):
-    commands = {"install": install, "uninstall": uninstall, "hub-install": install_hub}
+    commands = {"install": install, "uninstall": uninstall, "hub-install": install_hub, "hub-uninstall": uninstall_hub}
     if len(argv) != 1 or argv[0] not in commands:
-        print("usage: install-windows.py install|uninstall|hub-install", file=sys.stderr)
+        print("usage: install-windows.py install|uninstall|hub-install|hub-uninstall", file=sys.stderr)
         return 2
     if os.name != "nt":
         sys.exit("install-windows.py only runs on Windows")

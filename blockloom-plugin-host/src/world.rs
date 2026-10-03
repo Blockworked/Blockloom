@@ -186,6 +186,7 @@ impl Effect {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Outcome {
     /// A line the module logged through the host.
     Log {
@@ -694,6 +695,16 @@ impl WorldPlugins {
         out
     }
 
+    /// Advances visual preview work without running gameplay hooks.
+    pub fn preview_frame(&mut self, dt: f64) -> Vec<Outcome> {
+        let ids: Vec<_> = self.modules.keys().cloned().collect();
+        let mut out = Vec::new();
+        for id in ids {
+            out.extend(self.call(&id, "world.preview", &json!({"dt":dt}), true));
+        }
+        out
+    }
+
     /// Runs every hook registered for `stage`, in order.
     pub fn run_stage(&mut self, stage: Stage, tick: u64, dt: f64) -> Vec<Outcome> {
         let hooks: Vec<HookRef> = self
@@ -999,6 +1010,10 @@ fn effects_of(plugin: &str, op: &str, answer: &Value, gpu_allowed: bool) -> Vec<
                 Ok(Effect::Mesh(mesh)) if mesh.check().is_err() => Outcome::Error {
                     plugin: plugin.to_string(),
                     message: format!("{op}: {}", mesh.check().unwrap_err()),
+                },
+                Ok(Effect::Mesh(mesh)) if mesh.gpu.is_some() && !gpu_allowed => Outcome::Error {
+                    plugin: plugin.to_string(),
+                    message: format!("{op}: GPU meshes need the gpu-compute capability"),
                 },
                 Ok(Effect::Instances(set)) if set.check().is_err() => Outcome::Error {
                     plugin: plugin.to_string(),

@@ -2,6 +2,7 @@
 name = "blockloom-protocol"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "The editor-to-runtime wire format: newline-delimited JSON over the child process's pipes."
 
 [dependencies]
