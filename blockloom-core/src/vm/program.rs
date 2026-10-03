@@ -25,6 +25,8 @@ pub enum Trigger {
     /// An empty `with` means "anything".
     Collision {
         with: String,
+        phase: crate::physics::ContactPhase,
+        scope: crate::physics::ContactScope,
     },
     Message(String),
     /// A fresh clone starting up, in the clone itself.
@@ -253,6 +255,25 @@ pub enum Action {
     SetCloudDrift([Value; 3]),
     SetBody(BodyKind),
     ApplyImpulse([Value; 3]),
+    /// A physics query, asked on the spot; the answer is filed under the
+    /// running actor for the `hit` reporters. `values` are `kind`'s numbers.
+    Query {
+        kind: crate::physics::query::QueryKind,
+        triggers: crate::physics::query::TriggerPolicy,
+        values: Vec<Value>,
+    },
+    /// A force (or, with `torque`, a torque) read per `mode`.
+    AddForce {
+        mode: crate::physics::ForceMode,
+        torque: bool,
+        vector: [Value; 3],
+    },
+    /// A character controller statement: `op` is `move`, `simple move` or
+    /// `set <property>` (the value in the first slot).
+    Controller {
+        op: String,
+        vector: [Value; 3],
+    },
     SetVelocity([Value; 3]),
     SetGravity([Value; 3]),
     SetDensity(Value),
@@ -591,8 +612,10 @@ pub fn compile(graph: &ActorGraph) -> Program {
                 Some(Trigger::KeyPressed(crate::sense::normalize_key(key)))
             }
             InstructionKind::WhenClicked => Some(Trigger::Clicked),
-            InstructionKind::WhenCollision { with } => Some(Trigger::Collision {
+            InstructionKind::WhenCollision { with, phase, scope } => Some(Trigger::Collision {
                 with: with.trim().to_string(),
+                phase: *phase,
+                scope: *scope,
             }),
             InstructionKind::WhenMessage { name } => {
                 Some(Trigger::Message(name.trim().to_string()))
@@ -803,6 +826,10 @@ fn action_values(action: &Action) -> Vec<&Value> {
         Action::SetRigSlot { slot, attachment } => vec![slot, attachment],
         Action::SetSlotTint { slot, color } => vec![slot, color],
         Action::SetIkTarget { constraint, x, y } => vec![constraint, x, y],
+        Action::AddForce { vector, .. } | Action::Controller { vector, .. } => {
+            vector.iter().collect()
+        }
+        Action::Query { values, .. } => values.iter().collect(),
         Action::GoTo(target)
         | Action::ApplyImpulse(target)
         | Action::SetVelocity(target)
@@ -1177,6 +1204,40 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
                 *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
             }
             Action::ApplyImpulse(t)
+        }
+        Action::Query {
+            kind,
+            triggers,
+            mut values,
+        } => {
+            for v in &mut values {
+                *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
+            }
+            Action::Query {
+                kind,
+                triggers,
+                values,
+            }
+        }
+        Action::AddForce {
+            mode,
+            torque,
+            mut vector,
+        } => {
+            for v in &mut vector {
+                *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
+            }
+            Action::AddForce {
+                mode,
+                torque,
+                vector,
+            }
+        }
+        Action::Controller { op, mut vector } => {
+            for v in &mut vector {
+                *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
+            }
+            Action::Controller { op, vector }
         }
         Action::SetVelocity(mut t) => {
             for v in &mut t {
@@ -1873,6 +1934,105 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             y.clone(),
             z.clone(),
         ]))),
+        K::CastRay {
+            hits,
+            triggers,
+            from_x,
+            from_y,
+            from_z,
+            to_x,
+            to_y,
+            to_z,
+        } => steps.push(Step::Action(Action::Query {
+            kind: hits.kind(),
+            triggers: *triggers,
+            values: vec![
+                from_x.clone(),
+                from_y.clone(),
+                from_z.clone(),
+                to_x.clone(),
+                to_y.clone(),
+                to_z.clone(),
+            ],
+        })),
+        K::CastBall {
+            triggers,
+            radius,
+            from_x,
+            from_y,
+            from_z,
+            to_x,
+            to_y,
+            to_z,
+        } => steps.push(Step::Action(Action::Query {
+            kind: crate::physics::query::QueryKind::BallCast,
+            triggers: *triggers,
+            values: vec![
+                radius.clone(),
+                from_x.clone(),
+                from_y.clone(),
+                from_z.clone(),
+                to_x.clone(),
+                to_y.clone(),
+                to_z.clone(),
+            ],
+        })),
+        K::OverlapBall {
+            triggers,
+            radius,
+            x,
+            y,
+            z,
+        } => steps.push(Step::Action(Action::Query {
+            kind: crate::physics::query::QueryKind::BallOverlap,
+            triggers: *triggers,
+            values: vec![radius.clone(), x.clone(), y.clone(), z.clone()],
+        })),
+        K::FindClosest {
+            triggers,
+            range,
+            x,
+            y,
+            z,
+        } => steps.push(Step::Action(Action::Query {
+            kind: crate::physics::query::QueryKind::Closest,
+            triggers: *triggers,
+            values: vec![range.clone(), x.clone(), y.clone(), z.clone()],
+        })),
+        K::AddForce { mode, x, y, z } => steps.push(Step::Action(Action::AddForce {
+            mode: *mode,
+            torque: false,
+            vector: [x.clone(), y.clone(), z.clone()],
+        })),
+        K::AddTorque { mode, x, y, z } => steps.push(Step::Action(Action::AddForce {
+            mode: *mode,
+            torque: true,
+            vector: [x.clone(), y.clone(), z.clone()],
+        })),
+        K::ControllerMove { mode, x, y, z } => steps.push(Step::Action(Action::Controller {
+            op: mode.name().to_string(),
+            vector: [x.clone(), y.clone(), z.clone()],
+        })),
+        K::MotorAct { action, x, y, z } => steps.push(Step::Action(Action::Controller {
+            op: format!("motor {}", action.op()),
+            vector: [x.clone(), y.clone(), z.clone()],
+        })),
+        K::JointAct {
+            action,
+            joint,
+            value,
+        } => steps.push(Step::Action(Action::Controller {
+            op: format!("joint {}|{}", action.name(), joint.trim()),
+            vector: [value.clone(), Value::number(0.0), Value::number(0.0)],
+        })),
+        K::SetMotor { property, value } => steps.push(Step::Action(Action::Controller {
+            op: format!("motor set {}", property.name()),
+            vector: [value.clone(), Value::number(0.0), Value::number(0.0)],
+        })),
+        K::SetController { property, value } => steps.push(Step::Action(Action::Controller {
+            op: format!("set {}", property.name()),
+            vector: [value.clone(), Value::number(0.0), Value::number(0.0)],
+        })),
         K::SetVelocity { x, y, z } => steps.push(Step::Action(Action::SetVelocity([
             x.clone(),
             y.clone(),

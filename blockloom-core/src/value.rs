@@ -8,7 +8,7 @@
 
 pub use blockstitch_core::value::*;
 
-use crate::physics_query;
+use crate::physics::query::{self, QueryFilter, QueryHit, QueryRequest};
 use crate::scene::Axis;
 use crate::sense;
 use crate::sound::{SoundBus, normalize_sound};
@@ -668,6 +668,79 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "QueryNumber",
+        op: "QueryNumber",
+        arity: 2,
+        default_args: || vec![number(1.0), text("count")],
+        // A number from this actor's last physics query (the `cast`, `overlap`
+        // and `find closest` blocks): the `hit`th result's point, normal,
+        // distance and so on, or how many there were. A miss reads as zero.
+        eval: |args| query_field(args, false),
+    },
+    ExtOperator {
+        kind: "QueryText",
+        op: "QueryText",
+        arity: 2,
+        default_args: || vec![number(1.0), text("actor")],
+        // Words from this actor's last physics query: the `hit`th result's
+        // actor, body or collider, or the error that stopped the query.
+        eval: |args| query_field(args, true),
+    },
+    ExtOperator {
+        kind: "ControllerNumber",
+        op: "ControllerNumber",
+        arity: 2,
+        default_args: || vec![number(1.0), text("grounded")],
+        // A number from this actor's last character controller move: whether
+        // it stands on something, the collision flags, how far it really
+        // moved, or the `hit`th obstacle's point and normal. Zero otherwise.
+        eval: |args| controller_field(args, false),
+    },
+    ExtOperator {
+        kind: "ControllerText",
+        op: "ControllerText",
+        arity: 2,
+        default_args: || vec![number(1.0), text("actor")],
+        // Words from this actor's last controller move: the `hit`th
+        // obstacle's actor, body or collider, or the error that stopped it.
+        eval: |args| controller_field(args, true),
+    },
+    ExtOperator {
+        kind: "JointNumber",
+        op: "JointNumber",
+        arity: 2,
+        default_args: || vec![text("angle"), text("")],
+        // One reading of the named constraint on this actor: angle or position,
+        // speed, force, torque, broken?, enabled?. Zero for one that isn't there.
+        eval: |args| {
+            let field = args[0].as_text();
+            let name = args[1].as_text();
+            Ok(Evaluated::Number(
+                sense::current_actor().map_or(0.0, |actor| {
+                    crate::physics::joints::read_number(&actor, &name, &field)
+                }),
+            ))
+        },
+    },
+    ExtOperator {
+        kind: "MotorNumber",
+        op: "MotorNumber",
+        arity: 1,
+        default_args: || vec![text("grounded")],
+        // One reading of this actor's character motor: grounded, speed,
+        // vertical speed, jumps left and so on. Zero without a motor.
+        eval: |args| motor_field(args, false),
+    },
+    ExtOperator {
+        kind: "MotorText",
+        op: "MotorText",
+        arity: 1,
+        default_args: || vec![text("state")],
+        // Words from this actor's character motor: its state, the support
+        // it stands on, its owner or a warning.
+        eval: |args| motor_field(args, true),
+    },
+    ExtOperator {
         kind: "Atmosphere",
         op: "Atmosphere",
         arity: 1,
@@ -962,13 +1035,11 @@ static OPERATORS: &[ExtOperator] = &[
                 num(args.get(4)) as f32,
                 num(args.get(5)) as f32,
             ];
-            Ok(Evaluated::Text(sense::read(|sensors| {
-                let skip = sense::current_actor();
-                let mask = physics_query::query_mask(sensors, skip.as_deref());
-                physics_query::ray_hit(sensors, from, to, skip.as_deref(), mask)
-                    .and_then(|(id, _)| sensors.actors.get(&id).map(|actor| actor.name.clone()))
-                    .unwrap_or_default()
-            })))
+            Ok(Evaluated::Text(
+                nearest_ray(from, to)?
+                    .map(|hit| actor_name(&hit.actor))
+                    .unwrap_or_default(),
+            ))
         },
     },
     ExtOperator {
@@ -997,13 +1068,11 @@ static OPERATORS: &[ExtOperator] = &[
                 num(args.get(4)) as f32,
                 num(args.get(5)) as f32,
             ];
-            Ok(Evaluated::Number(sense::read(|sensors| {
-                let skip = sense::current_actor();
-                let mask = physics_query::query_mask(sensors, skip.as_deref());
-                physics_query::ray_hit(sensors, from, to, skip.as_deref(), mask)
-                    .map(|(_, distance)| distance as f64)
-                    .unwrap_or(-1.0)
-            })))
+            Ok(Evaluated::Number(
+                nearest_ray(from, to)?
+                    .map(|hit| hit.distance as f64)
+                    .unwrap_or(-1.0),
+            ))
         },
     },
     ExtOperator {
@@ -1102,18 +1171,140 @@ static OPERATORS: &[ExtOperator] = &[
                 num(args.get(2)) as f32,
             ];
             let radius = num(args.get(3)) as f32;
-            Ok(Evaluated::Text(sense::read(|sensors| {
-                let skip = sense::current_actor();
-                let mask = physics_query::query_mask(sensors, skip.as_deref());
-                physics_query::overlap_circle(sensors, center, radius, skip.as_deref(), mask)
-                    .into_iter()
-                    .next()
-                    .and_then(|id| sensors.actors.get(&id).map(|actor| actor.name.clone()))
-                    .unwrap_or_default()
-            })))
+            Ok(Evaluated::Text(
+                nearest_within(center, radius)?
+                    .map(|hit| actor_name(&hit.actor))
+                    .unwrap_or_default(),
+            ))
         },
     },
 ];
+
+/// Reads a field of the running actor's last physics query.
+fn query_field(args: &[Evaluated], text: bool) -> Result<Evaluated, String> {
+    let name = args[1].as_text();
+    let field = query::HitField::parse(&name)
+        .filter(|field| field.is_text() == text)
+        .ok_or_else(|| {
+            let kind = if text { "words" } else { "numbers" };
+            format!("a query result has no {kind} called \"{name}\"")
+        })?;
+    let Some(actor) = sense::current_actor() else {
+        // A reporter previewed in the editor has no query to read.
+        return Ok(if text {
+            Evaluated::Text(String::new())
+        } else {
+            Evaluated::Number(0.0)
+        });
+    };
+    let index = num(args.first()).max(0.0) as usize;
+    Ok(match query::read_field(&actor, index, field, actor_name) {
+        query::HitValue::Number(n) => Evaluated::Number(n),
+        query::HitValue::Text(t) => Evaluated::Text(t),
+    })
+}
+
+/// Reads a field of the running actor's character motor.
+fn motor_field(args: &[Evaluated], text: bool) -> Result<Evaluated, String> {
+    let name = args[0].as_text();
+    let actor = sense::current_actor();
+    Ok(if text {
+        Evaluated::Text(match actor {
+            Some(actor) => {
+                let words = crate::physics::motor::read_text(&actor, &name);
+                if name.trim().eq_ignore_ascii_case("support") && !words.is_empty() {
+                    actor_name(&words)
+                } else {
+                    words
+                }
+            }
+            None => String::new(),
+        })
+    } else {
+        Evaluated::Number(actor.map_or(0.0, |actor| {
+            crate::physics::motor::read_number(&actor, &name)
+        }))
+    })
+}
+
+/// Reads a field of the running actor's last character controller move.
+fn controller_field(args: &[Evaluated], text: bool) -> Result<Evaluated, String> {
+    let name = args[1].as_text();
+    let Some(actor) = sense::current_actor() else {
+        return Ok(if text {
+            Evaluated::Text(String::new())
+        } else {
+            Evaluated::Number(0.0)
+        });
+    };
+    let index = num(args.first()).max(0.0) as usize;
+    Ok(if text {
+        Evaluated::Text(
+            match crate::physics::controller::read_text(&actor, &name, index) {
+                id if matches!(name.trim(), "actor") && !id.is_empty() => actor_name(&id),
+                other => other,
+            },
+        )
+    } else {
+        Evaluated::Number(crate::physics::controller::read_number(
+            &actor, &name, index,
+        ))
+    })
+}
+
+/// The name blocks use for an actor id, or the id itself when it has none.
+fn actor_name(id: &str) -> String {
+    sense::read(|sensors| {
+        sensors
+            .actors
+            .get(id)
+            .map(|actor| actor.name.clone())
+            .unwrap_or_else(|| id.to_string())
+    })
+}
+
+/// What a legacy ray reporter asks: the nearest collider on the segment, as
+/// the running actor. Outside a run there is no world to ask, which reads as
+/// nothing found; a world that fails to answer is an error.
+fn nearest_ray(from: [f32; 3], to: [f32; 3]) -> Result<Option<QueryHit>, String> {
+    if !query::available() {
+        return Ok(None);
+    }
+    let request = QueryRequest::Ray {
+        from,
+        to,
+        all: false,
+    };
+    let outcome = query::dispatch(&request, &asker(), 1);
+    match outcome.error {
+        Some(why) => Err(why),
+        None => Ok(outcome.hits.into_iter().next()),
+    }
+}
+
+/// The nearest collider within `radius` of `center`: the ball a ground check
+/// holds underfoot touches exactly what lies within its radius.
+fn nearest_within(center: [f32; 3], radius: f32) -> Result<Option<QueryHit>, String> {
+    if !query::available() {
+        return Ok(None);
+    }
+    let request = QueryRequest::Closest {
+        point: center,
+        max_distance: radius.max(0.0),
+    };
+    let outcome = query::dispatch(&request, &asker(), 1);
+    match outcome.error {
+        Some(why) => Err(why),
+        None => Ok(outcome.hits.into_iter().next()),
+    }
+}
+
+fn asker() -> QueryFilter {
+    match sense::current_actor() {
+        Some(actor) => QueryFilter::as_actor(actor),
+        None => QueryFilter::default(),
+    }
+}
 
 /// Teaches blockstitch about [`OPERATORS`]. Idempotent; called from
 /// [`crate::init`], which every entry point runs before touching a project.
@@ -1207,8 +1398,45 @@ mod tests {
         assert!(missing_local.eval().is_err());
     }
 
+    /// A wall whose near face is at x = 4, found by rays at y within 1 and by a
+    /// ball within reach of x = 5.
+    struct WallAtFive;
+
+    impl query::QueryService for WallAtFive {
+        fn run(
+            &self,
+            request: &QueryRequest,
+            filter: &QueryFilter,
+            limit: usize,
+        ) -> query::QueryOutcome {
+            // The asker is the running actor.
+            assert_eq!(filter.as_actor.as_deref(), Some("me"));
+            let wall = |distance: f32| QueryHit {
+                actor: "wall".into(),
+                body: None,
+                collider: "wall#body".into(),
+                subshape: 0,
+                point: [4.0, 0.0, 0.0],
+                normal: [-1.0, 0.0, 0.0],
+                distance,
+                fraction: 0.2,
+                started_inside: false,
+                trigger: false,
+            };
+            let hits = match request {
+                QueryRequest::Ray { from, .. } if from[1].abs() <= 1.0 => vec![wall(4.0)],
+                QueryRequest::Closest {
+                    point,
+                    max_distance,
+                } if (point[0] - 5.0).abs() <= *max_distance + 1.0 => vec![wall(0.0)],
+                _ => vec![],
+            };
+            query::QueryOutcome::finish(hits, limit)
+        }
+    }
+
     #[test]
-    fn physics_queries_read_bodies_through_the_snapshot() {
+    fn legacy_ray_and_ball_reporters_ask_the_installed_query_service() {
         use crate::sense::ColliderShape;
         register_blockloom_operators();
         let mut sensors = Sensors::default();
@@ -1272,47 +1500,58 @@ mod tests {
                 Value::number(0.0),
             ],
         );
+        // Nothing answers outside a run: no world, nothing found.
         sense::with_actor("me", || {
-            assert_eq!(hit.eval(), Ok(Evaluated::Text("Wall".to_string())));
+            assert_eq!(hit.eval(), Ok(Evaluated::Text(String::new())));
         });
-        let distance = Value::op(
-            Op::from_name("RayDistance"),
-            vec![
-                Value::number(0.0),
-                Value::number(0.0),
-                Value::number(0.0),
-                Value::number(20.0),
-                Value::number(0.0),
-                Value::number(0.0),
-            ],
-        );
-        sense::with_actor("me", || {
-            assert_eq!(distance.eval(), Ok(Evaluated::Number(4.0)));
-        });
-        let sky = Value::op(
-            Op::from_name("RayHit"),
-            vec![
-                Value::number(0.0),
-                Value::number(50.0),
-                Value::number(0.0),
-                Value::number(20.0),
-                Value::number(50.0),
-                Value::number(0.0),
-            ],
-        );
-        assert_eq!(sky.eval(), Ok(Evaluated::Text(String::new())));
+        let world = WallAtFive;
+        query::with_service(&world, 1, || {
+            sense::with_actor("me", || {
+                assert_eq!(hit.eval(), Ok(Evaluated::Text("Wall".to_string())));
+            });
+            let distance = Value::op(
+                Op::from_name("RayDistance"),
+                vec![
+                    Value::number(0.0),
+                    Value::number(0.0),
+                    Value::number(0.0),
+                    Value::number(20.0),
+                    Value::number(0.0),
+                    Value::number(0.0),
+                ],
+            );
+            sense::with_actor("me", || {
+                assert_eq!(distance.eval(), Ok(Evaluated::Number(4.0)));
+            });
+            let sky = Value::op(
+                Op::from_name("RayHit"),
+                vec![
+                    Value::number(0.0),
+                    Value::number(50.0),
+                    Value::number(0.0),
+                    Value::number(20.0),
+                    Value::number(50.0),
+                    Value::number(0.0),
+                ],
+            );
+            sense::with_actor("me", || {
+                assert_eq!(sky.eval(), Ok(Evaluated::Text(String::new())));
+            });
 
-        // A ball over the wall names it; a ball in the sky names nothing.
-        let circle = Value::op(
-            Op::from_name("CircleHit"),
-            vec![
-                Value::number(5.0),
-                Value::number(0.0),
-                Value::number(0.0),
-                Value::number(2.0),
-            ],
-        );
-        assert_eq!(circle.eval(), Ok(Evaluated::Text("Wall".to_string())));
+            // A ball over the wall names it; a ball in the sky names nothing.
+            let circle = Value::op(
+                Op::from_name("CircleHit"),
+                vec![
+                    Value::number(5.0),
+                    Value::number(0.0),
+                    Value::number(0.0),
+                    Value::number(2.0),
+                ],
+            );
+            sense::with_actor("me", || {
+                assert_eq!(circle.eval(), Ok(Evaluated::Text("Wall".to_string())));
+            });
+        });
     }
 
     #[test]

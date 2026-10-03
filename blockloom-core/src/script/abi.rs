@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 36;
+pub const ABI_VERSION: u32 = 40;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -226,6 +226,18 @@ pub const PLUGIN_SEP: char = '\u{1f}';
 pub const READ_PLUGIN: u32 = 53;
 /// The same reporter's answer as text, asked the same way.
 pub const TEXT_PLUGIN: u32 = 21;
+/// `a` = field name (`count`, `x`, `distance`, ...), `arg` = which hit, from
+/// 1. A number from this actor's last query; a miss reads as zero.
+pub const READ_QUERY: u32 = 54;
+/// `a` = field name (`actor`, `body`, `collider`, `error`, ...), `b` = which
+/// hit, from 1. Words from this actor's last query.
+pub const TEXT_QUERY: u32 = 22;
+/// `a` = field name (`grounded`, `flags`, `moved y`, `normal x`, ...), `arg` =
+/// which obstacle, from 1. A number from this actor's last controller move.
+pub const READ_CONTROLLER: u32 = 55;
+/// `a` = field name (`actor`, `body`, `collider`, `error`), `b` = which
+/// obstacle, from 1. Words from this actor's last controller move.
+pub const TEXT_CONTROLLER: u32 = 23;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -451,6 +463,20 @@ pub const ACT_FADE_SCREEN: u32 = 99;
 /// `a` = plugin id, `b` = block id, `c` = the slot values as a JSON array
 /// (whole numbers as integers). Runs the block's command, as the block does.
 pub const ACT_PLUGIN_CALL: u32 = 100;
+/// `a` = force mode (`Force`, `Acceleration`, `Impulse`, `VelocityChange`),
+/// `b` = `torque` to turn the body instead of pushing it; `n0..n2` = the
+/// vector. Acts for one fixed step.
+pub const ACT_ADD_FORCE: u32 = 101;
+/// `a` = query kind (`ray`, `rays`, `ball cast`, `ball overlap`, `box cast`,
+/// `box overlap`, `capsule cast`, `capsule overlap`, `closest`), `b` = trigger
+/// policy (`UseGlobal`, `Ignore`, `Include`); `n0` = layer mask (0 for every
+/// layer), `n1..` = the kind's numbers. Asked on the spot, as this actor;
+/// the answer is read back with [`READ_QUERY`] and [`TEXT_QUERY`].
+pub const ACT_PHYSICS_QUERY: u32 = 102;
+/// `a` = `move`, `simple move` or `set <property>`; `n0..n2` = the vector
+/// (the value in `n0` for a set). Runs on the spot, as this actor; the result
+/// is read back with [`READ_CONTROLLER`] and [`TEXT_CONTROLLER`].
+pub const ACT_CONTROLLER: u32 = 103;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per
@@ -525,6 +551,10 @@ pub const EVENT_CUTSCENE_ENDED: u32 = 19;
 /// the event; detail: the plugin id, then each slot's text, all joined by
 /// [`PLUGIN_SEP`].
 pub const EVENT_PLUGIN: u32 = 20;
+/// This actor entered, kept or left a touch, in every phase. Subject: the other
+/// actor's name; detail: its id; `n0` = phase (0 enter, 1 stay, 2 exit), `n1` =
+/// 1 for a trigger overlap, `n2` = impulse, `n3` = relative speed.
+pub const EVENT_CONTACT: u32 = 21;
 
 // ─── The same three calls in a browser ─────────────────────────────────────
 // A web build loads each script as its own wasm module, and one module can't

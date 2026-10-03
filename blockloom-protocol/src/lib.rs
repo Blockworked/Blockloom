@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 29;
+pub const PROTOCOL_VERSION: u32 = 30;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -427,6 +427,8 @@ pub struct SceneView {
     /// Which bloom level `DebugView::BloomMip` shows, 0 the sharpest.
     pub bloom_mip: u32,
     pub volumes: VolumeDebug,
+    /// What the Physics Debug view draws over the world.
+    pub physics: PhysicsDebug,
     pub path_tracer: PathTracerView,
     /// The terrain brush the Brush tool paints with.
     pub brush: blockloom_core::terrain::sculpt::Brush,
@@ -502,6 +504,29 @@ impl Default for PathTracerView {
     }
 }
 
+/// The Physics Debug view: which parts of the physics world are drawn as gizmos.
+/// All off by default, and drawing costs nothing while they are.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PhysicsDebug {
+    /// Every collider's shape.
+    pub shapes: bool,
+    /// Each collider's bounding box, which is what the broad phase sees.
+    pub aabbs: bool,
+    /// Contact points and normals.
+    pub contacts: bool,
+    /// Constraints, between their two anchors.
+    pub joints: bool,
+    /// Each body's own axes, which shows where it points and where it rests.
+    pub axes: bool,
+}
+
+impl PhysicsDebug {
+    pub fn any(&self) -> bool {
+        self.shapes || self.aabbs || self.contacts || self.joints || self.axes
+    }
+}
+
 /// The environment volumes' debug views.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -540,6 +565,7 @@ impl Default for SceneView {
             debug_view: DebugView::Lit,
             bloom_mip: 0,
             volumes: VolumeDebug::default(),
+            physics: PhysicsDebug::default(),
             path_tracer: PathTracerView::default(),
             brush: Default::default(),
             tile_brush: Default::default(),

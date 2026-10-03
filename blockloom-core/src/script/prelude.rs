@@ -36,6 +36,37 @@ pub struct WaterSample {
     pub foam: f32,
 }
 
+/// One thing a physics query found, as [`Actor::raycast`] and friends report
+/// it. `distance` is along the query, `fraction` how far along (0-1).
+#[derive(Clone, PartialEq, Debug)]
+pub struct Hit {
+    pub actor: String,
+    pub body: String,
+    pub collider: String,
+    pub part: u32,
+    pub point: (f32, f32, f32),
+    pub normal: (f32, f32, f32),
+    pub distance: f32,
+    pub fraction: f32,
+    pub started_inside: bool,
+    pub trigger: bool,
+}
+
+/// What a character controller move did, as [`Actor::move_controller`] and
+/// [`Actor::simple_move_controller`] report it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Moved {
+    pub sides: bool,
+    pub above: bool,
+    pub below: bool,
+    /// Whether the controller ended standing on something.
+    pub grounded: bool,
+    /// How far it really went.
+    pub moved: (f32, f32, f32),
+    /// How many obstacles it met.
+    pub hits: usize,
+}
+
 /// This actor's particles, as [`Actor::particles`] reads them.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Particles {
@@ -385,6 +416,106 @@ impl Actor {
 
     pub fn my_collision_layer(&self) -> u8 {
         self.collision_layer("")
+    }
+
+    /// Asks the physics world, as this actor, and files the answer for
+    /// [`Actor::hit_count`], [`Actor::hit_number`] and [`Actor::hit_text`].
+    /// `kind` is a query name (`"ray"`, `"rays"`, `"ball cast"`, `"ball
+    /// overlap"`, `"box cast"`, `"box overlap"`, `"capsule cast"`, `"capsule
+    /// overlap"`, `"closest"`), `triggers` is `"UseGlobal"`, `"Ignore"` or
+    /// `"Include"`, `layers` a mask (0 for every layer) and `numbers` what
+    /// the kind takes. Returns how many hits there were.
+    pub fn query(&self, kind: &str, triggers: &str, layers: u32, numbers: &[f64]) -> usize {
+        let mut all = Vec::with_capacity(numbers.len() + 1);
+        all.push(layers as f64);
+        all.extend_from_slice(numbers);
+        self.act_many(
+            ACT_PHYSICS_QUERY,
+            Str::borrow(kind),
+            Str::borrow(triggers),
+            Str::EMPTY,
+            &all,
+        );
+        self.hit_count()
+    }
+
+    /// How many hits the last query found.
+    pub fn hit_count(&self) -> usize {
+        self.hit_number(1, "count") as usize
+    }
+
+    /// A number from the `index`th (from 1) hit of the last query: `x`, `y`,
+    /// `z`, `normal x`, `normal y`, `normal z`, `distance`, `fraction`,
+    /// `part`, `started inside`, `is trigger`; or `count`, `overflowed` and
+    /// `tick` for the query itself. Zero when there is no such hit.
+    pub fn hit_number(&self, index: usize, field: &str) -> f64 {
+        self.number(READ_QUERY, Str::borrow(field), Str::EMPTY, index as f64)
+            .unwrap_or(0.0)
+    }
+
+    /// Words from a hit: `actor` (its name), `actor id`, `body`, `collider`;
+    /// or `error` for the query itself. Empty when there is none.
+    pub fn hit_text(&self, index: usize, field: &str) -> String {
+        self.text(
+            TEXT_QUERY,
+            Str::borrow(field),
+            Str::borrow(&index.to_string()),
+        )
+        .unwrap_or_default()
+    }
+
+    /// The nearest thing a segment crosses, as this actor.
+    pub fn raycast(&self, from: (f32, f32, f32), to: (f32, f32, f32)) -> Option<Hit> {
+        let numbers = [from.0, from.1, from.2, to.0, to.1, to.2].map(f64::from);
+        (self.query("ray", "UseGlobal", 0, &numbers) > 0).then(|| self.hit(1))
+    }
+
+    /// Everything a segment crosses, nearest first.
+    pub fn raycast_all(&self, from: (f32, f32, f32), to: (f32, f32, f32)) -> Vec<Hit> {
+        let numbers = [from.0, from.1, from.2, to.0, to.1, to.2].map(f64::from);
+        let count = self.query("rays", "UseGlobal", 0, &numbers);
+        (1..=count).map(|index| self.hit(index)).collect()
+    }
+
+    /// The first thing a ball meets sweeping along a segment.
+    pub fn cast_ball(
+        &self,
+        radius: f32,
+        from: (f32, f32, f32),
+        to: (f32, f32, f32),
+    ) -> Option<Hit> {
+        let numbers = [radius, from.0, from.1, from.2, to.0, to.1, to.2].map(f64::from);
+        (self.query("ball cast", "UseGlobal", 0, &numbers) > 0).then(|| self.hit(1))
+    }
+
+    /// Everything a ball at a point overlaps, nearest first.
+    pub fn overlap_ball(&self, at: (f32, f32, f32), radius: f32) -> Vec<Hit> {
+        let numbers = [radius, at.0, at.1, at.2].map(f64::from);
+        let count = self.query("ball overlap", "UseGlobal", 0, &numbers);
+        (1..=count).map(|index| self.hit(index)).collect()
+    }
+
+    /// The collider nearest a point within `range`.
+    pub fn closest(&self, at: (f32, f32, f32), range: f32) -> Option<Hit> {
+        let numbers = [range, at.0, at.1, at.2].map(f64::from);
+        (self.query("closest", "UseGlobal", 0, &numbers) > 0).then(|| self.hit(1))
+    }
+
+    /// The `index`th (from 1) hit of the last query.
+    pub fn hit(&self, index: usize) -> Hit {
+        let n = |field: &str| self.hit_number(index, field);
+        Hit {
+            actor: self.hit_text(index, "actor"),
+            body: self.hit_text(index, "body"),
+            collider: self.hit_text(index, "collider"),
+            part: n("part") as u32,
+            point: (n("x") as f32, n("y") as f32, n("z") as f32),
+            normal: (n("normal x") as f32, n("normal y") as f32, n("normal z") as f32),
+            distance: n("distance") as f32,
+            fraction: n("fraction") as f32,
+            started_inside: n("started inside") != 0.0,
+            trigger: n("is trigger") != 0.0,
+        }
     }
 
     /// The first body a segment hits, by name, or `None`. Bodies only; this
@@ -1714,6 +1845,196 @@ impl Actor {
         );
     }
 
+    /// A force on this body for one fixed step. `mode` is `"Force"`,
+    /// `"Acceleration"`, `"Impulse"` or `"VelocityChange"`.
+    pub fn add_force(&self, mode: &str, x: f32, y: f32, z: f32) {
+        self.act(
+            ACT_ADD_FORCE,
+            Str::borrow(mode),
+            Str::EMPTY,
+            Str::EMPTY,
+            x as f64,
+            y as f64,
+            z as f64,
+        );
+    }
+
+    /// Moves this actor's character controller by a displacement in world
+    /// units, sliding along what it hits. No gravity. Needs a
+    /// CharacterController component.
+    pub fn move_controller(&self, x: f32, y: f32, z: f32) -> Moved {
+        self.controller_op("move", x, y, z)
+    }
+
+    /// Moves it at a speed in units a second with gravity applied; up is
+    /// ignored.
+    pub fn simple_move_controller(&self, x: f32, y: f32, z: f32) -> Moved {
+        self.controller_op("simple move", x, y, z)
+    }
+
+    /// Changes one controller setting for the run: `"enabled"`, `"radius"`,
+    /// `"height"`, `"slope limit"`, `"step offset"`, `"skin width"`,
+    /// `"minimum move"`, `"detect collisions"` or `"overlap recovery"`.
+    pub fn set_controller(&self, property: &str, value: f64) {
+        let op = format!("set {property}");
+        self.act(
+            ACT_CONTROLLER,
+            Str::borrow(&op),
+            Str::EMPTY,
+            Str::EMPTY,
+            value,
+            0.0,
+            0.0,
+        );
+    }
+
+    fn controller_op(&self, op: &str, x: f32, y: f32, z: f32) -> Moved {
+        self.act(
+            ACT_CONTROLLER,
+            Str::borrow(op),
+            Str::EMPTY,
+            Str::EMPTY,
+            x as f64,
+            y as f64,
+            z as f64,
+        );
+        let n = |field: &str| self.controller_number(field, 0);
+        Moved {
+            sides: n("sides") != 0.0,
+            above: n("above") != 0.0,
+            below: n("below") != 0.0,
+            grounded: n("grounded") != 0.0,
+            moved: (n("moved x") as f32, n("moved y") as f32, n("moved z") as f32),
+            hits: n("hit count") as usize,
+        }
+    }
+
+    /// A number from this actor's last controller move: `grounded`, `flags`,
+    /// `sides`, `above`, `below`, `moved x/y/z`, `asked x/y/z`, `velocity
+    /// x/y/z`, `fall speed`, `recovered`, `stepped`, `skipped`, `hit count`;
+    /// and, for the `index`th (from 1) obstacle, `hit x/y/z`, `normal x/y/z`
+    /// and `hit length`. Zero when there is none.
+    pub fn controller_number(&self, field: &str, index: usize) -> f64 {
+        self.number(READ_CONTROLLER, Str::borrow(field), Str::EMPTY, index as f64)
+            .unwrap_or(0.0)
+    }
+
+    /// Words from the last controller move: the `index`th obstacle's `actor`,
+    /// `body` or `collider`, or the `error` that stopped it.
+    pub fn controller_text(&self, field: &str, index: usize) -> String {
+        self.text(
+            TEXT_CONTROLLER,
+            Str::borrow(field),
+            Str::borrow(&index.to_string()),
+        )
+        .unwrap_or_default()
+    }
+
+    /// Whether this controller stood on something after its last move.
+    pub fn is_grounded(&self) -> bool {
+        self.controller_number("grounded", 0) != 0.0
+    }
+
+    /// Steers this actor's character motor: a direction, length 1 for full
+    /// speed. Needs a CharacterMotor owned by a script or an AI.
+    pub fn motor_steer(&self, x: f32, y: f32, z: f32) {
+        self.motor_op("intent", x, y, z);
+    }
+
+    /// Presses jump on this actor's motor.
+    pub fn motor_jump(&self) {
+        self.motor_op("jump", 0.0, 0.0, 0.0);
+    }
+
+    /// Lets go of jump, which cuts a rising jump short.
+    pub fn motor_release_jump(&self) {
+        self.motor_op("jump release", 0.0, 0.0, 0.0);
+    }
+
+    pub fn motor_sprint(&self, on: bool) {
+        self.motor_op(if on { "sprint on" } else { "sprint off" }, 0.0, 0.0, 0.0);
+    }
+
+    pub fn motor_crouch(&self, on: bool) {
+        self.motor_op(if on { "crouch on" } else { "crouch off" }, 0.0, 0.0, 0.0);
+    }
+
+    /// Knockback that fades by the motor's external drag.
+    pub fn motor_push(&self, x: f32, y: f32, z: f32) {
+        self.motor_op("push", x, y, z);
+    }
+
+    /// Clears every intent and the motor's speed.
+    pub fn motor_stop(&self) {
+        self.motor_op("stop", 0.0, 0.0, 0.0);
+    }
+
+    /// Commands one of this actor's constraints by name: `"motor speed"`,
+    /// `"motor target"`, `"motor force"`, `"motor off"`, `"stiffness"`,
+    /// `"damping"`, `"enable"`, `"disable"` or `"break"`.
+    pub fn joint(&self, action: &str, joint: &str, value: f64) {
+        let op = format!("joint {action}|{joint}");
+        self.act(
+            ACT_CONTROLLER,
+            Str::borrow(&op),
+            Str::EMPTY,
+            Str::EMPTY,
+            value,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// A reading of the named constraint: `angle`, `position`, `speed`,
+    /// `force`, `torque`, `broken`, `enabled`. Zero when it isn't there.
+    pub fn joint_number(&self, joint: &str, field: &str) -> f64 {
+        self.controller_number(&format!("joint {field}|{joint}"), 0)
+    }
+
+    /// Changes one motor setting for the run: `"walk speed"`, `"jump
+    /// height"`, `"max jumps"`, `"air control"` and so on.
+    pub fn set_motor(&self, property: &str, value: f64) {
+        self.motor_op(&format!("set {property}"), value as f32, 0.0, 0.0);
+    }
+
+    fn motor_op(&self, op: &str, x: f32, y: f32, z: f32) {
+        let op = format!("motor {op}");
+        self.act(
+            ACT_CONTROLLER,
+            Str::borrow(&op),
+            Str::EMPTY,
+            Str::EMPTY,
+            x as f64,
+            y as f64,
+            z as f64,
+        );
+    }
+
+    /// A number from this actor's motor: `grounded`, `rising`, `falling`,
+    /// `landed`, `jumped`, `speed`, `vertical speed`, `jumps left`, `slope`,
+    /// `knockback` and more. Zero without a motor.
+    pub fn motor_number(&self, field: &str) -> f64 {
+        self.controller_number(&format!("motor {field}"), 0)
+    }
+
+    /// Words from this actor's motor: `state`, `support`, `owner`, `warning`.
+    pub fn motor_text(&self, field: &str) -> String {
+        self.controller_text(&format!("motor {field}"), 0)
+    }
+
+    /// The same for a torque. A 2D body turns about z only.
+    pub fn add_torque(&self, mode: &str, x: f32, y: f32, z: f32) {
+        self.act(
+            ACT_ADD_FORCE,
+            Str::borrow(mode),
+            Str::borrow("torque"),
+            Str::EMPTY,
+            x as f64,
+            y as f64,
+            z as f64,
+        );
+    }
+
     pub fn set_velocity(&self, x: f32, y: f32, z: f32) {
         self.act(
             ACT_SET_VELOCITY,
@@ -2567,6 +2888,17 @@ pub enum Event {
     Touched,
     /// This actor started touching another: its name and its id.
     Collision { with: String, id: String },
+    /// This actor entered, kept or left a touch: the other actor's name and
+    /// id, the phase, whether it is a trigger overlap, and for a solid touch
+    /// the impulse the solver spent and the relative speed.
+    Contact {
+        with: String,
+        id: String,
+        phase: ContactPhase,
+        trigger: bool,
+        impulse: f32,
+        speed: f32,
+    },
     /// This actor's particles spawned, died or collided this frame: how many,
     /// and where the last one did.
     Particles {
@@ -2682,6 +3014,14 @@ fn plugin_args_json(args: &[PluginArg]) -> String {
     out
 }
 
+/// Which part of a touch an [`Event::Contact`] is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContactPhase {
+    Enter,
+    Stay,
+    Exit,
+}
+
 /// Which particle event an [`Event::Particles`] is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParticleKind {
@@ -2709,6 +3049,18 @@ impl Event {
             EVENT_COLLISION => Event::Collision {
                 with: subject,
                 id: word("detail"),
+            },
+            EVENT_CONTACT => Event::Contact {
+                with: subject,
+                id: word("detail"),
+                phase: match n[0] as u32 {
+                    0 => ContactPhase::Enter,
+                    1 => ContactPhase::Stay,
+                    _ => ContactPhase::Exit,
+                },
+                trigger: n[1] != 0.0,
+                impulse: n[2] as f32,
+                speed: n[3] as f32,
             },
             EVENT_PARTICLES => Event::Particles {
                 kind: match subject.as_str() {

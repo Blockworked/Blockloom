@@ -68,6 +68,26 @@ pub fn plugin_detail(plugin: &str, event: &str, args: &[String]) -> String {
 
 /// Whether a plugin event (`got`) starts a hat (`want`): same plugin and
 /// event, and every non-empty hat slot equal as text or as numbers.
+/// A `when I touch` hat against a touch. The hat's detail is `with`, phase and
+/// scope joined by U+001F; the event's is the other actor's id, phase and kind.
+fn collision_hat_matches(hat: &str, event: &str, other_name: &str) -> bool {
+    let mut want = hat.split('\u{1f}');
+    let (with, phase, scope) = (
+        want.next().unwrap_or(""),
+        want.next().unwrap_or("Enter"),
+        want.next().unwrap_or("Any"),
+    );
+    let mut got = event.split('\u{1f}');
+    let (other, event_phase, kind) = (
+        got.next().unwrap_or(""),
+        got.next().unwrap_or("Enter"),
+        got.next().unwrap_or("Collision"),
+    );
+    phase == event_phase
+        && (scope == "Any" || scope == kind)
+        && (with.is_empty() || with == other || with.eq_ignore_ascii_case(other_name))
+}
+
 fn plugin_hat_matches(want: &str, got: &str) -> bool {
     let want: Vec<&str> = want.split(PLUGIN_SEP).collect();
     let got: Vec<&str> = got.split(PLUGIN_SEP).collect();
@@ -367,6 +387,17 @@ pub enum Act {
     ApplyImpulse {
         impulse: [f32; 3],
     },
+    AddForce {
+        mode: &'static str,
+        torque: bool,
+        vector: [f32; 3],
+    },
+    /// A character controller statement: `move`, `simple move` or `set
+    /// <property>`. The host runs it on the spot.
+    Controller {
+        op: &'static str,
+        vector: [f32; 3],
+    },
     SetVelocity {
         velocity: [f32; 3],
     },
@@ -495,6 +526,13 @@ pub enum Act {
         plugin: String,
         block: String,
         args: Vec<Val>,
+    },
+    /// A physics query: `kind` by name, `triggers` as a `TriggerPolicy` name
+    /// and the kind's numbers. The host files the answer under the actor.
+    Query {
+        kind: &'static str,
+        triggers: &'static str,
+        numbers: Vec<f64>,
     },
     /// Grabs or frees the pointer; window-global, like gravity.
     SetMouseLocked {
@@ -907,9 +945,7 @@ impl Runner {
                 ("Clicked", "Clicked") => entry.actor == &*template,
                 ("Collision", "Collision") => {
                     entry.actor == &*template
-                        && (entry.detail.is_empty()
-                            || entry.detail == detail
-                            || entry.detail.eq_ignore_ascii_case(other_name))
+                        && collision_hat_matches(entry.detail, detail, other_name)
                 }
                 ("AnimationEnded", "AnimationEnded")
                 | ("AnimationMarker", "AnimationMarker")
@@ -1293,7 +1329,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 34;
+pub const LOGIC_ABI_VERSION: u32 = 37;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1524,6 +1560,13 @@ pub const ACT_FADE_SCREEN: u32 = 121;
 /// `a` = plugin id, `b` = block id, `c` = the slot values as a JSON array
 /// (whole numbers as integers, as the VM hands them over).
 pub const ACT_PLUGIN_CALL: u32 = 122;
+/// `a` = force mode name, `b` = `torque` for a torque, empty for a force.
+pub const ACT_ADD_FORCE: u32 = 123;
+/// `a` = query kind name, `b` = trigger policy name, numbers = the query's.
+pub const ACT_PHYSICS_QUERY: u32 = 124;
+/// `a` = `move`, `simple move` or `set <property>`; numbers = the vector (the
+/// value first for a set).
+pub const ACT_CONTROLLER: u32 = 125;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2210,6 +2253,34 @@ impl Host for AbiHost {
                 impulse.map(f64::from),
                 &zero,
             ),
+            Act::Query {
+                kind,
+                triggers,
+                numbers,
+            } => self.act_many(
+                actor,
+                ACT_PHYSICS_QUERY,
+                kind,
+                triggers,
+                "",
+                &numbers,
+                &zero,
+            ),
+            Act::AddForce {
+                mode,
+                torque,
+                vector,
+            } => self.act_wire(
+                actor,
+                ACT_ADD_FORCE,
+                mode,
+                if torque { "torque" } else { "" },
+                vector.map(f64::from),
+                &zero,
+            ),
+            Act::Controller { op, vector } => {
+                self.act_wire(actor, ACT_CONTROLLER, op, "", vector.map(f64::from), &zero)
+            }
             Act::SetVelocity { velocity } => self.act_wire(
                 actor,
                 ACT_SET_VELOCITY,

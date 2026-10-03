@@ -85,7 +85,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "create-project",
         cmd: "create_project",
         aliases: &["create_project"],
-        summary: "Make a project folder under location and open it.",
+        summary: "Make a project folder under location and open it, empty or from a sample (physics-playground: a player, crates, a pendulum, a motor wheel, a door, a breakable joint and a trigger zone).",
         args: &[
             ArgSpec {
                 name: "name",
@@ -100,6 +100,11 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             ArgSpec {
                 name: "mode",
                 ty: "TwoD|ThreeD",
+                required: false,
+            },
+            ArgSpec {
+                name: "sample",
+                ty: "physics-playground",
                 required: false,
             },
         ],
@@ -1371,6 +1376,442 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 required: true,
             },
         ],
+    },
+    // ── Physics ───────────────────────────────────────────────────────────
+    CommandSpec {
+        name: "add-collider",
+        cmd: "add_collider",
+        aliases: &[],
+        summary: "Add a collider to an actor and answer its id. The object is a collider spec: {geometry: {kind: \"Shape\", shape: {...}} or {kind: \"FromLook\"}, center, rotation, material, trigger, layer, ...}. Refused when it would leave the actor invalid.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "collider",
+                ty: "object {\"geometry\", ...}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "set-collider",
+        cmd: "set_collider",
+        aliases: &[],
+        summary: "Replace the collider whose id the object carries, in place. The id never changes.",
+        args: &[ArgSpec {
+            name: "collider",
+            ty: "object {\"id\", \"geometry\", ...}",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "remove-collider",
+        cmd: "remove_collider",
+        aliases: &[],
+        summary: "Remove a collider by id. Answers the actor it was on.",
+        args: &[ArgSpec {
+            name: "colliderId",
+            ty: "id",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "add-constraint",
+        cmd: "add_constraint",
+        aliases: &[],
+        summary: "Add a joint to an actor and answer its id. The object is a constraint spec: {kind: Fixed|Hinge|Ball|Slider|Spring|Distance|Wheel|Configurable, name, target (an actor id; empty anchors to the world), anchor, axis, limit: {enabled, min, max}, motor: {mode: Off|Velocity|Position, target, max_force}, spring, min_distance, max_distance, break_force, break_torque, break_message, enable_collision}. The actor and its target need Rigidbodies.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "constraint",
+                ty: "object {\"kind\", ...}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "set-constraint",
+        cmd: "set_constraint",
+        aliases: &[],
+        summary: "Replace the constraint whose id the object carries, in place. The id never changes.",
+        args: &[ArgSpec {
+            name: "constraint",
+            ty: "object {\"id\", \"kind\", ...}",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "remove-constraint",
+        cmd: "remove_constraint",
+        aliases: &[],
+        summary: "Remove a constraint by id. Answers the actor it was on.",
+        args: &[ArgSpec {
+            name: "constraintId",
+            ty: "id",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "list-constraints",
+        cmd: "list_constraints",
+        aliases: &[],
+        summary: "List the active scene's constraints with the name blocks use for each, optionally for one actor.",
+        args: &[ArgSpec {
+            name: "actorId",
+            ty: "id",
+            required: false,
+        }],
+    },
+    CommandSpec {
+        name: "fit-collider-to-look",
+        cmd: "fit_collider_to_look",
+        aliases: &[],
+        summary: "Save a collider's shape from its actor's Look, so it stops following the Look.",
+        args: &[ArgSpec {
+            name: "colliderId",
+            ty: "id",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-rigidbody",
+        cmd: "set_rigidbody",
+        aliases: &[],
+        summary: "Give an actor a Rigidbody, or replace the one it has (its id stays). The object is a rigidbody spec: {body_type, mass, use_gravity, constraints, ...}. Answers the body's id.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "rigidbody",
+                ty: "object {...}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "remove-rigidbody",
+        cmd: "remove_rigidbody",
+        aliases: &[],
+        summary: "Take the Rigidbody off an actor. Its colliders stay, as static scenery or on an ancestor's body.",
+        args: &[A],
+    },
+    CommandSpec {
+        name: "set-character-controller",
+        cmd: "set_character_controller",
+        aliases: &[],
+        summary: "Give an actor a CharacterController, or replace the one it has (its id stays). The object is {radius, height, slope_limit, step_offset, skin_width, min_move_distance, detect_collisions, overlap_recovery, layer, center, up}; omitted fields take Unity's defaults. Answers the component's id.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "controller",
+                ty: "object {...}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "remove-character-controller",
+        cmd: "remove_character_controller",
+        aliases: &[],
+        summary: "Take the CharacterController off an actor.",
+        args: &[A],
+    },
+    CommandSpec {
+        name: "set-character-motor",
+        cmd: "set_character_motor",
+        aliases: &[],
+        summary: "Give an actor a CharacterMotor (walking, sprinting, jumping, crouching on top of its CharacterController), or replace the one it has. The object is {owner, space, walk_speed, sprint_speed, crouch_speed, ground_acceleration, ground_braking, air_acceleration, air_control, turn_speed, gravity_scale, terminal_fall_speed, ground_snap_distance, slide_on_steep, jump_height, max_jumps, jump_cut, coyote_time, jump_buffer, crouch_height, top_down}; omitted fields take the 3D defaults and the whole object replaces the old one. Answers the component's id.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "motor",
+                ty: "object {...}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "remove-character-motor",
+        cmd: "remove_character_motor",
+        aliases: &[],
+        summary: "Take the CharacterMotor off an actor.",
+        args: &[A],
+    },
+    CommandSpec {
+        name: "preview-player-preset",
+        cmd: "preview_player_preset",
+        aliases: &[],
+        summary: "What a player preset would add, replace or convert on an actor, and why it might be refused. Changes nothing. Presets: first-person-3d, third-person-3d, top-down-3d, platformer-2d, top-down-2d.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "preset",
+                ty: "first-person-3d|third-person-3d|top-down-3d|platformer-2d|top-down-2d",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "apply-player-preset",
+        cmd: "apply_player_preset",
+        aliases: &[],
+        summary: "Make an actor a playable character in one undoable step: a visual if it has none, a CharacterController, a CharacterMotor, the Camera and PlayerCamera, and the standard Move, Look, Jump, Sprint, Crouch and Interact actions. An actor that already moves another way (a dynamic Rigidbody, a legacy Body) needs convert=true.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "preset",
+                ty: "first-person-3d|third-person-3d|top-down-3d|platformer-2d|top-down-2d",
+                required: true,
+            },
+            ArgSpec {
+                name: "convert",
+                ty: "bool",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "save-player-profile",
+        cmd: "save_player_profile",
+        aliases: &[],
+        summary: "Save an actor's controller, motor, camera and input actions as assets/profiles/<name>.profile.json, to reuse here or in another project. Answers the file's project path.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "list-player-profiles",
+        cmd: "list_player_profiles",
+        aliases: &[],
+        summary: "The player profiles saved in this project.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "apply-player-profile",
+        cmd: "apply_player_profile",
+        aliases: &[],
+        summary: "Install a saved player profile on an actor as one undoable step. Input actions the project already has keep their own bindings.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "convert",
+                ty: "bool",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "import-player-profile",
+        cmd: "import_player_profile",
+        aliases: &[],
+        summary: "Copy a profile file from another project into this one. Answers the profile's name.",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "file path",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-physics-profile",
+        cmd: "set_physics_profile",
+        aliases: &[],
+        summary: "Choose how the project's collisions behave: Legacy (as before this system) or Unity (the documented matrix).",
+        args: &[ArgSpec {
+            name: "profile",
+            ty: "Legacy|Unity",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-physics-layer-name",
+        cmd: "set_physics_layer_name",
+        aliases: &[],
+        summary: "Name one of the 32 collision layers; an empty name goes back to \"Layer N\".",
+        args: &[
+            ArgSpec {
+                name: "layer",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "set-layer-collision",
+        cmd: "set_layer_collision",
+        aliases: &[],
+        summary: "Switch collisions between two layers on or off in the 2D or 3D matrix. Layers are 1 to 32; everything collides until a pair is switched off.",
+        args: &[
+            ArgSpec {
+                name: "mode",
+                ty: "TwoD|ThreeD",
+                required: true,
+            },
+            ArgSpec {
+                name: "a",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "b",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "collides",
+                ty: "bool",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "physics-plan",
+        cmd: "physics_plan",
+        aliases: &[],
+        summary: "What Play would install for the active scene: each body's mass split, each shape's pose, material and filter groups, and every problem (errors stop Play and Build).",
+        args: &[],
+    },
+    CommandSpec {
+        name: "add-physics-material",
+        cmd: "add_physics_material",
+        aliases: &[],
+        summary: "Store a reusable surface material and answer its id. 3D: {dimension: \"Three\", material: {static_friction, dynamic_friction, bounciness, friction_combine, bounce_combine}}; 2D: {dimension: \"Two\", material: {friction, bounciness}}.",
+        args: &[
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "material",
+                ty: "object {\"dimension\", \"material\"}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "set-physics-material",
+        cmd: "set_physics_material",
+        aliases: &[],
+        summary: "Change a stored material's values (and name, when given). Colliders using it follow.",
+        args: &[
+            ArgSpec {
+                name: "id",
+                ty: "id",
+                required: true,
+            },
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "material",
+                ty: "object {\"dimension\", \"material\"}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "remove-physics-material",
+        cmd: "remove_physics_material",
+        aliases: &[],
+        summary: "Forget a stored material. Refused while a collider still uses it.",
+        args: &[ArgSpec {
+            name: "id",
+            ty: "id",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "physics-check",
+        cmd: "physics_check",
+        aliases: &[],
+        summary: "Every physics problem in the project's scenes: errors block Play, warnings do not.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "physics-cook",
+        cmd: "physics_cook",
+        aliases: &[],
+        summary: "Make (or reuse) the collision data of every mesh collider in the project and answer each mesh's kind and statistics (vertices, triangles, hulls, worst error). A mesh that cannot cook is an error here, in Play and in a build.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "set-physics-cooking",
+        cmd: "set_physics_cooking",
+        aliases: &[],
+        summary: "Change how meshes become collision: the weld distance, the most points a hull keeps and, with mesh, a decomposition ({max_hulls, max_hull_vertices, concavity, resolution}, or null to forget it) so a concave mesh can be a solid shape on a dynamic body.",
+        args: &[
+            ArgSpec {
+                name: "weld",
+                ty: "number",
+                required: false,
+            },
+            ArgSpec {
+                name: "maxHullVertices",
+                ty: "number",
+                required: false,
+            },
+            ArgSpec {
+                name: "mesh",
+                ty: "asset path",
+                required: false,
+            },
+            ArgSpec {
+                name: "decompose",
+                ty: "object {...}",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "physics-ownership",
+        cmd: "physics_ownership",
+        aliases: &[],
+        summary: "Which body carries each collider in the active scene (itself or the nearest ancestor with a Rigidbody), the shape's pose in the body's frame, static colliders, bodies with no shape and actors still on the legacy Body.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "physics-properties",
+        cmd: "physics_properties",
+        aliases: &[],
+        summary: "The units, bounds and visibility of every Rigidbody, Collider and material field.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "physics-migration-preview",
+        cmd: "physics_migration_preview",
+        aliases: &[],
+        summary: "What converting each legacy Body to a Rigidbody and Collider would store, in every scene or for one actor. Changes nothing.",
+        args: &[ArgSpec {
+            name: "actorId",
+            ty: "id",
+            required: false,
+        }],
+    },
+    CommandSpec {
+        name: "migrate-physics",
+        cmd: "migrate_physics",
+        aliases: &[],
+        summary: "Convert legacy Body components to Rigidbody and Collider in every scene, or on one actor. One undo step, and the project file is copied to .blockloom/backups first. Running it again converts nothing.",
+        args: &[ArgSpec {
+            name: "actorId",
+            ty: "id",
+            required: false,
+        }],
     },
     // ── Assets ────────────────────────────────────────────────────────────
     CommandSpec {

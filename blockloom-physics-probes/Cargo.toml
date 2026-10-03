@@ -1,0 +1,12 @@
+[package]
+name = "blockloom-physics-probes"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Headless Rapier probes behind docs/physics-and-character-controller-plan.md phase 0"
+
+# Raw Rapier at the revision bevy_rapier is pinned to, so a result here is a
+# result for the engine. No Bevy, no renderer.
+[dependencies]
+rapier2d = { git = "https://github.com/dimforge/rapier", rev = "09ca067a" }
+rapier3d = { git = "https://github.com/dimforge/rapier", rev = "09ca067a" }

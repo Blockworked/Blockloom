@@ -330,6 +330,23 @@ pub enum Effect {
         actor: String,
         impulse: [f32; 3],
     },
+    /// A force on the actor's body for one fixed step, read per `mode`. With
+    /// `torque` the vector turns it instead (2D bodies use z only).
+    AddForce {
+        actor: String,
+        mode: crate::physics::ForceMode,
+        torque: bool,
+        vector: [f32; 3],
+    },
+    /// A character controller statement (`move`, `simple move` or `set
+    /// <property>`) that ran on the spot; `flags` is the move's collision
+    /// flags with 8 added when it ended grounded.
+    Controller {
+        actor: String,
+        op: String,
+        vector: [f32; 3],
+        flags: u32,
+    },
     SetVelocity {
         actor: String,
         velocity: [f32; 3],
@@ -511,6 +528,13 @@ pub enum Effect {
         plugin: String,
         block: String,
         args: Vec<serde_json::Value>,
+    },
+    /// A physics query ran and its answer is filed under `actor`; the world
+    /// has nothing to apply, so this only keeps the two schedulers honest.
+    PhysicsQuery {
+        actor: String,
+        kind: String,
+        hits: usize,
     },
     /// Rumbles connected gamepads. Window-global: no actor.
     RumbleGamepad {

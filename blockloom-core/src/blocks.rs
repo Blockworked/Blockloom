@@ -121,10 +121,15 @@ pub enum InstructionKind {
     WhenTouched,
     /// Runs when this actor is clicked.
     WhenClicked,
-    /// Runs when this actor starts touching `with` (an actor name, or an
-    /// empty string for "anything").
+    /// Runs when this actor starts (Enter), keeps (Stay) or stops (Exit)
+    /// touching `with` (an actor name, or an empty string for "anything").
+    /// `scope` narrows it to solid touches or trigger overlaps.
     WhenCollision {
         with: String,
+        #[serde(default)]
+        phase: crate::physics::ContactPhase,
+        #[serde(default)]
+        scope: crate::physics::ContactScope,
     },
     /// Runs when any actor broadcasts `name`.
     WhenMessage {
@@ -526,6 +531,109 @@ pub enum InstructionKind {
         z: Value,
     },
     SetVelocity {
+        x: Value,
+        y: Value,
+        z: Value,
+    },
+    /// A force on this body for one fixed step, read per `mode`. Only a
+    /// dynamic body responds.
+    AddForce {
+        mode: crate::physics::ForceMode,
+        x: Value,
+        y: Value,
+        z: Value,
+    },
+    /// A torque on this body for one fixed step, read per `mode`. 2D bodies
+    /// turn about z only.
+    AddTorque {
+        mode: crate::physics::ForceMode,
+        x: Value,
+        y: Value,
+        z: Value,
+    },
+    /// Moves this actor's character controller: a displacement, or with
+    /// `Simple` a speed with gravity. Needs a CharacterController component.
+    ControllerMove {
+        #[serde(default)]
+        mode: crate::physics::controller::MoveMode,
+        x: Value,
+        y: Value,
+        z: Value,
+    },
+    /// Steers this actor's character motor or fires one of its actions: a
+    /// direction, jump, sprint, crouch, a knockback push or a stop. Needs a
+    /// CharacterMotor component; a player-owned motor reads the keys itself.
+    MotorAct {
+        #[serde(default)]
+        action: crate::physics::motor::MotorAction,
+        x: Value,
+        y: Value,
+        z: Value,
+    },
+    /// Commands one of this actor's constraints by name (or place): switch it
+    /// on or off, break it, or change its motor or spring for the run. The
+    /// value is a speed, a target, a force, a stiffness or a damping.
+    JointAct {
+        #[serde(default)]
+        action: crate::physics::joints::JointVerb,
+        #[serde(default)]
+        joint: String,
+        value: Value,
+    },
+    /// Changes one setting of this actor's character motor for the run.
+    SetMotor {
+        property: crate::physics::motor::MotorProperty,
+        value: Value,
+    },
+    /// Changes one setting of this actor's character controller for the run.
+    SetController {
+        property: crate::physics::controller::ControllerProperty,
+        value: Value,
+    },
+    /// Casts a ray along a segment and keeps what it crossed as this actor's
+    /// query result, read back by the `hit` reporters. The ray ignores this
+    /// actor's own colliders.
+    CastRay {
+        #[serde(default)]
+        hits: crate::physics::query::RayHits,
+        #[serde(default)]
+        triggers: crate::physics::query::TriggerPolicy,
+        from_x: Value,
+        from_y: Value,
+        from_z: Value,
+        to_x: Value,
+        to_y: Value,
+        to_z: Value,
+    },
+    /// Sweeps a ball along a segment and keeps the first thing it meets as
+    /// this actor's query result.
+    CastBall {
+        #[serde(default)]
+        triggers: crate::physics::query::TriggerPolicy,
+        radius: Value,
+        from_x: Value,
+        from_y: Value,
+        from_z: Value,
+        to_x: Value,
+        to_y: Value,
+        to_z: Value,
+    },
+    /// Keeps everything a ball at a point overlaps as this actor's query
+    /// result.
+    OverlapBall {
+        #[serde(default)]
+        triggers: crate::physics::query::TriggerPolicy,
+        radius: Value,
+        x: Value,
+        y: Value,
+        z: Value,
+    },
+    /// Keeps the collider nearest a point, within `range`, as this actor's
+    /// query result.
+    FindClosest {
+        #[serde(default)]
+        triggers: crate::physics::query::TriggerPolicy,
+        range: Value,
         x: Value,
         y: Value,
         z: Value,
@@ -1124,6 +1232,9 @@ impl BlockKind for InstructionKind {
             | K::SetWater { value: v, .. }
             | K::SetDensity { density: v }
             | K::SetMass { mass: v }
+            | K::SetController { value: v, .. }
+            | K::SetMotor { value: v, .. }
+            | K::JointAct { value: v, .. }
             | K::SetCollisionLayer { layer: v }
             | K::SetCollisionMask { mask: v }
             | K::Say { text: v }
@@ -1151,10 +1262,55 @@ impl BlockKind for InstructionKind {
             | K::SetCloudDrift { x, y, z }
             | K::ApplyImpulse { x, y, z }
             | K::SetVelocity { x, y, z }
+            | K::AddForce { x, y, z, .. }
+            | K::AddTorque { x, y, z, .. }
+            | K::ControllerMove { x, y, z, .. }
+            | K::MotorAct { x, y, z, .. }
             | K::SetGravity { x, y, z } => {
                 f(x, InputValueType::Any);
                 f(y, InputValueType::Any);
                 f(z, InputValueType::Any);
+            }
+            K::CastRay {
+                from_x,
+                from_y,
+                from_z,
+                to_x,
+                to_y,
+                to_z,
+                ..
+            } => {
+                for v in [from_x, from_y, from_z, to_x, to_y, to_z] {
+                    f(v, InputValueType::Any);
+                }
+            }
+            K::CastBall {
+                radius,
+                from_x,
+                from_y,
+                from_z,
+                to_x,
+                to_y,
+                to_z,
+                ..
+            } => {
+                for v in [radius, from_x, from_y, from_z, to_x, to_y, to_z] {
+                    f(v, InputValueType::Any);
+                }
+            }
+            K::OverlapBall {
+                radius, x, y, z, ..
+            }
+            | K::FindClosest {
+                range: radius,
+                x,
+                y,
+                z,
+                ..
+            } => {
+                for v in [radius, x, y, z] {
+                    f(v, InputValueType::Any);
+                }
             }
             K::Splash {
                 x,

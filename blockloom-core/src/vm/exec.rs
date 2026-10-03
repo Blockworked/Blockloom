@@ -311,10 +311,15 @@ pub enum Event {
     Click {
         actor: String,
     },
-    /// `actor` started touching `with` (both actor ids).
+    /// `actor` entered, kept or left a touch with `with` (both actor ids).
+    /// A trigger overlap carries no impulse or speed.
     Collision {
         actor: String,
         with: String,
+        phase: crate::physics::ContactPhase,
+        kind: crate::physics::ContactKind,
+        impulse: f32,
+        speed: f32,
     },
     Message(String),
     /// A fresh clone is ready to run its own `when I start as a clone`.
@@ -839,13 +844,22 @@ impl Vm {
             (Trigger::KeyPressed(want), Event::Key(got)) => want == got,
             (Trigger::Clicked, Event::Click { actor: clicked }) => clicked == actor,
             (
-                Trigger::Collision { with },
+                Trigger::Collision {
+                    with,
+                    phase: want_phase,
+                    scope,
+                },
                 Event::Collision {
                     actor: touched,
                     with: other,
+                    phase,
+                    kind,
+                    ..
                 },
             ) => {
                 touched == actor
+                    && want_phase == phase
+                    && scope.accepts(*kind)
                     && (with.is_empty()
                         || with == other
                         || self
@@ -1637,6 +1651,56 @@ impl Vm {
                     actor: actor.to_string(),
                     impulse,
                 });
+            }
+            Action::Query {
+                kind,
+                triggers,
+                values,
+            } => {
+                let numbers: Vec<f64> = values
+                    .iter()
+                    .map(|value| f64::from(self.eval_f32(value, actor, params, temps, out)))
+                    .collect();
+                let record = crate::physics::query::ask_call(actor, *kind, *triggers, 0, &numbers);
+                if let Some(message) = record.error {
+                    out.push(Effect::Error {
+                        actor: actor.to_string(),
+                        message,
+                    });
+                }
+                out.push(Effect::PhysicsQuery {
+                    actor: actor.to_string(),
+                    kind: kind.name().to_string(),
+                    hits: record.hits.len(),
+                });
+            }
+            Action::AddForce {
+                mode,
+                torque,
+                vector,
+            } => {
+                let vector = self.eval_vec3(vector, actor, params, temps, out);
+                out.push(Effect::AddForce {
+                    actor: actor.to_string(),
+                    mode: *mode,
+                    torque: *torque,
+                    vector,
+                });
+            }
+            Action::Controller { op, vector } => {
+                let vector = self.eval_vec3(vector, actor, params, temps, out);
+                match crate::physics::controller::run_op(actor, op, vector) {
+                    Ok(flags) => out.push(Effect::Controller {
+                        actor: actor.to_string(),
+                        op: op.clone(),
+                        vector,
+                        flags,
+                    }),
+                    Err(message) => out.push(Effect::Error {
+                        actor: actor.to_string(),
+                        message,
+                    }),
+                }
             }
             Action::SetVelocity(vector) => {
                 let velocity = self.eval_vec3(vector, actor, params, temps, out);

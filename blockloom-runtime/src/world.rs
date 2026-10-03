@@ -31,7 +31,6 @@ use bevy::window::CursorGrabMode;
 #[cfg(target_os = "android")]
 use bevy::window::Ime;
 use bevy::window::{CursorOptions, PrimaryWindow, WindowFocused};
-use blockloom_core::components::CameraView;
 use blockloom_core::input::{ActionSense, LiveInput, normalize_pad_axis, normalize_pad_button};
 use blockloom_core::nav;
 use blockloom_core::project::Actor;
@@ -216,34 +215,59 @@ pub fn actor_bundle(actor: &Actor) -> impl Bundle {
     )
 }
 
-/// Records (or clears) a contact between two entities, and starts any
-/// `when I touch` strand it satisfies - in both directions, since either
-/// actor may be the one listening.
-pub fn note_contact(engine: &mut Engine, a: Entity, b: Entity, started: bool) {
-    let Some(first) = engine.actor_id_of(a).map(str::to_string) else {
-        return;
-    };
-    let Some(second) = engine.actor_id_of(b).map(str::to_string) else {
-        return;
-    };
-    for (actor, other) in [(&first, &second), (&second, &first)] {
-        let contacts = engine.touching.entry(actor.clone()).or_default();
-        if started {
-            contacts.insert(other.clone());
-        } else {
-            contacts.remove(other);
+/// Hands the VM the contact events the last closed tick made, for both actors
+/// of each pair. Only the actor-level edge of a pair starts a `when I touch`
+/// strand, so a compound wall is still one Enter and one Exit.
+pub fn deliver_contacts(engine: &mut Engine) {
+    let tick = engine.contact_ticks + 1;
+    for event in engine.contacts.deliver(tick) {
+        if !event.edge {
+            continue;
+        }
+        let (impulse, speed) = event.payload.as_ref().map_or((0.0, 0.0), |payload| {
+            let v = payload.relative_velocity;
+            (
+                payload.impulse,
+                (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt(),
+            )
+        });
+        let sides = [
+            (event.a.actor.clone(), event.b.actor.clone()),
+            (event.b.actor.clone(), event.a.actor.clone()),
+        ];
+        for (actor, with) in sides {
+            engine.fire(Event::Collision {
+                actor,
+                with,
+                phase: event.phase,
+                kind: event.kind,
+                impulse,
+                speed,
+            });
         }
     }
-    if started {
-        engine.fire(Event::Collision {
-            actor: first.clone(),
-            with: second.clone(),
-        });
-        engine.fire(Event::Collision {
-            actor: second,
-            with: first,
-        });
+}
+
+/// Mirrors the tracker's actor-level answer into `touching`, which the
+/// reporters read, when a tick changed it.
+pub fn sync_touching(engine: &mut Engine) {
+    if !engine.contacts.take_changed() {
+        return;
     }
+    let mut touching: HashMap<String, HashSet<String>> = HashMap::new();
+    for (a, b, _) in engine.contacts.active_pairs() {
+        if a.actor != b.actor {
+            touching
+                .entry(a.actor.clone())
+                .or_default()
+                .insert(b.actor.clone());
+            touching
+                .entry(b.actor.clone())
+                .or_default()
+                .insert(a.actor.clone());
+        }
+    }
+    engine.touching = touching;
 }
 
 // ─── Editor messages ───────────────────────────────────────────────────────
@@ -342,6 +366,9 @@ pub fn pump_editor(
                     logic.reset();
                 }
                 engine.touching.clear();
+                engine.contacts.clear();
+                engine.contact_ticks = 0;
+                blockloom_core::physics::query::reset();
                 engine.speech.clear();
                 engine.pending_scene = None;
                 engine.veil.reset();
@@ -680,6 +707,9 @@ pub fn rebuild_world(
     sound.reset(project_sound(&engine));
     engine.entities.clear();
     engine.touching.clear();
+    engine.contacts.clear();
+    engine.contact_ticks = 0;
+    blockloom_core::physics::query::reset();
     // Remaps last exactly as long as the run, like everything else live.
     engine.reset_input_run();
     // Everything the last run made goes with it - except opt-in survivors
@@ -905,6 +935,22 @@ pub fn rebuild_world(
             }
         }
     }
+    // Rigidbody and Collider components become rapier bodies and child shapes.
+    // A game in the editor cooks (and caches) meshes from their model files; a
+    // shipped one only reads what its build carried.
+    let collision: Box<dyn blockloom_core::physics::CollisionLookup> =
+        match engine.project_dir.as_deref() {
+            Some(dir) => Box::new(blockloom_core::physics::cook::FolderCollision::new(
+                dir,
+                if bridge::attached() {
+                    blockloom_core::physics::cook::Source::Cook
+                } else {
+                    blockloom_core::physics::cook::Source::Shipped
+                },
+            )),
+            None => Box::new(blockloom_core::physics::cook::NoCollisionData),
+        };
+    crate::physics_install::install_with(&mut commands, &project, &engine.entities, &*collision);
     // The dimension's own effect system owns the physics pipeline, so gravity
     // is set the same way a `set gravity` block would set it.
     effects.0.push(Effect::SetGravity {
@@ -1016,6 +1062,7 @@ pub fn step_scripts(
     mut engine: NonSendMut<Engine>,
     time: Res<Time>,
     mut effects: ResMut<PendingEffects>,
+    queries: crate::queries::QueryAccess,
 ) {
     if !engine.running || engine.paused || engine.scripts.is_empty() {
         return;
@@ -1032,33 +1079,40 @@ pub fn step_scripts(
 
     // What happened since the last step, as each script will hear it.
     let fired = std::mem::take(&mut engine.script_events);
+    let name_of = |id: &str| {
+        engine
+            .actor(id)
+            .map(|actor| actor.name.clone())
+            .unwrap_or_default()
+    };
     let heard: Vec<_> = fired
         .iter()
-        .filter_map(|event| {
-            crate::script::ScriptEvent::of(event, |id| {
-                engine
-                    .actor(id)
-                    .map(|actor| actor.name.clone())
-                    .unwrap_or_default()
-            })
+        .flat_map(|event| {
+            let touch = crate::script::ScriptEvent::contact_of(event, name_of)
+                .map(|(to, heard)| (Some(to), heard));
+            crate::script::ScriptEvent::of(event, name_of)
+                .into_iter()
+                .chain(touch)
         })
         .collect();
 
     let mut asked = crate::script::Asked::default();
-    for actor in &actors {
-        let Some(script) = engine.scripts.get(actor) else {
-            continue;
-        };
-        if fresh.contains(actor) {
-            script.start(actor, &mut asked);
-        }
-        for (to, event) in &heard {
-            if to.as_ref().is_none_or(|to| to == actor) {
-                script.event(actor, &mut asked, event);
+    queries.scope(engine.contact_ticks, || {
+        for actor in &actors {
+            let Some(script) = engine.scripts.get(actor) else {
+                continue;
+            };
+            if fresh.contains(actor) {
+                script.start(actor, &mut asked);
             }
+            for (to, event) in &heard {
+                if to.as_ref().is_none_or(|to| to == actor) {
+                    script.event(actor, &mut asked, event);
+                }
+            }
+            script.tick(actor, &mut asked, dt);
         }
-        script.tick(actor, &mut asked, dt);
-    }
+    });
     engine.scripts_started.extend(fresh);
     for message in asked.messages.drain(..) {
         engine.fire(Event::Message(message));
@@ -1408,22 +1462,29 @@ pub fn publish_sensors(
     let mut pad_buttons: HashSet<String> = HashSet::new();
     let mut pad_axes: HashMap<String, f32> = HashMap::new();
     let mut pad_count = 0;
+    // Each pad on its own too, for actions that belong to one local player.
+    let mut each_pad: Vec<(HashSet<String>, HashMap<String, f32>)> = Vec::new();
     for pad in &pads {
         pad_count += 1;
+        let mut own_buttons: HashSet<String> = HashSet::new();
+        let mut own_axes: HashMap<String, f32> = HashMap::new();
         for button in GamepadButton::all() {
             if pad.pressed(button) {
                 pad_buttons.insert(pad_button_name(button));
+                own_buttons.insert(pad_button_name(button));
             }
         }
         for axis in GamepadAxis::all() {
             if let Some(value) = pad.get(axis) {
                 let name = pad_axis_name(axis);
+                own_axes.insert(name.clone(), value);
                 let kept = pad_axes.get(&name).copied().unwrap_or(0.0);
                 if value.abs() > kept.abs() {
                     pad_axes.insert(name, value);
                 }
             }
         }
+        each_pad.push((own_buttons, own_axes));
     }
     // Pad buttons and sticks keep working while typing: only the keyboard
     // belongs to the text input, so a gamepad pause button still pauses.
@@ -1442,6 +1503,8 @@ pub fn publish_sensors(
         mouse: mouse_buttons.clone(),
         pad_buttons: pad_buttons.clone(),
         axes: pad_axes.clone(),
+        // Up is positive, as a stick's is.
+        mouse_delta: [mouse_delta[0], -mouse_delta[1]],
     };
 
     // Named actions, with run-scoped remaps winning over the document.
@@ -1456,11 +1519,35 @@ pub fn publish_sensors(
             .cloned()
             .unwrap_or_else(|| action.bindings.clone());
         let scoped = blockloom_core::input::InputAction {
-            name: action.name.clone(),
             bindings,
+            ..action.clone()
         };
-        let held_now = live.action_held(&scoped);
-        let value = live.action_value(&scoped);
+        // A later player reads only their own pad; an action in a map that
+        // is off reads as released.
+        let own = (action.player > 0).then(|| {
+            let (buttons, axes) = each_pad
+                .get(usize::from(action.player) - 1)
+                .cloned()
+                .unwrap_or_default();
+            LiveInput {
+                pad_buttons: buttons,
+                axes,
+                ..Default::default()
+            }
+        });
+        let source = own.as_ref().unwrap_or(&live);
+        let on = blockloom_core::input::map_enabled(&action.map);
+        let held_now = on && source.action_held(&scoped);
+        let value = if on {
+            source.action_value(&scoped)
+        } else {
+            0.0
+        };
+        let vector = if on {
+            source.action_vector(&scoped)
+        } else {
+            [0.0; 2]
+        };
         let was = engine
             .prev_action_held
             .get(&action.name.to_lowercase())
@@ -1478,6 +1565,7 @@ pub fn publish_sensors(
                 pressed,
                 released,
                 value,
+                vector,
             },
         );
         if pressed {
@@ -2133,6 +2221,7 @@ pub fn step_vm(
     time: Res<Time>,
     mut effects: ResMut<PendingEffects>,
     transforms: Query<&Transform, With<ActorId>>,
+    queries: crate::queries::QueryAccess,
 ) {
     // A paused world is still stepped: the scheduler gives a slice to the
     // strands the interface started and skips everything else, which is what
@@ -2160,27 +2249,31 @@ pub fn step_vm(
             perform_scene_switch(&mut engine, &transforms, &scene, &transition);
         }
     }
+    deliver_contacts(&mut engine);
     let elapsed = time.elapsed_secs() as f64;
     let now = engine.run_time(elapsed);
     let wall = (elapsed - engine.started_at).max(0.0);
     let mut produced = Vec::new();
     let mut messages = Vec::new();
-    if engine.logic.is_some() {
-        let variables = engine.variables.clone();
-        let lists = engine.lists.clone();
-        let dicts = engine.dicts.clone();
-        engine.logic.as_mut().expect("checked above").tick(
-            now,
-            wall,
-            variables,
-            lists,
-            dicts,
-            &mut produced,
-            &mut messages,
-        );
-    } else {
-        engine.vm.tick_at(now, wall, &mut produced);
-    }
+    let tick = engine.contact_ticks;
+    queries.scope(tick, || {
+        if engine.logic.is_some() {
+            let variables = engine.variables.clone();
+            let lists = engine.lists.clone();
+            let dicts = engine.dicts.clone();
+            engine.logic.as_mut().expect("checked above").tick(
+                now,
+                wall,
+                variables,
+                lists,
+                dicts,
+                &mut produced,
+                &mut messages,
+            );
+        } else {
+            engine.vm.tick_at(now, wall, &mut produced);
+        }
+    });
     for message in messages {
         engine.fire(Event::Message(message));
     }
@@ -2345,6 +2438,8 @@ fn perform_scene_switch(
     engine.last_created.clear();
     engine.speech.retain(|id, _| keep.contains(id));
     engine.touching.clear();
+    engine.contacts.clear();
+    engine.contact_ticks = 0;
     engine.driven.retain(|id| keep.contains(id));
     let project = engine.project.clone();
     if let Some(logic) = &mut engine.logic {
@@ -2863,62 +2958,98 @@ pub fn drive_camera(
     engine: NonSend<Engine>,
     dimension: Res<Dimension>,
     editor: Option<Res<crate::edit::SceneEditor>>,
-    rigs: Query<(&CameraRig, &Transform), Without<WorldCamera>>,
-    mut cameras: Query<(&mut Transform, Option<&mut Projection>), With<WorldCamera>>,
+    time: Res<Time>,
+    mut wheel: MessageReader<MouseWheel>,
+    // The query service reads every Transform, so the camera's write is a separate set member.
+    mut sets: ParamSet<(
+        crate::queries::QueryAccess,
+        Query<(&mut Transform, Option<&mut Projection>), With<WorldCamera>>,
+    )>,
+    mut facing: ResMut<crate::player_camera::BodyFacing>,
+    mut state: Local<crate::player_camera::RigState>,
+    mut rigs: Query<(&mut CameraRig, &Transform, Option<&ActorId>), Without<WorldCamera>>,
 ) {
+    // Scroll is read every frame so none queues up behind a held-off camera.
+    let scroll: f32 = wheel
+        .read()
+        .map(|w| match w.unit {
+            MouseScrollUnit::Line => w.y,
+            MouseScrollUnit::Pixel => w.y / 40.0,
+        })
+        .sum();
     // The scene view flies the camera itself.
     if editor.is_some_and(|editor| crate::edit::editing(&engine, &editor)) {
         return;
     }
-    let Some((rig, target)) = rigs.iter().next() else {
+    let Some((mut rig, target, id)) = rigs.iter_mut().next() else {
         return;
     };
+    let id = id.map_or("", |id| id.0.as_str());
+    let Ok(live) = sets.p1().single_mut().map(|(t, _)| *t) else {
+        return;
+    };
+    let spec = engine
+        .actor(id)
+        .and_then(|actor| actor.components.player_camera().copied())
+        .filter(|spec| spec.enabled);
+    facing.0.clear();
+    let mut next = live;
+    let dt = time.delta_secs();
+    let mode = dimension.0;
+    match (&spec, mode) {
+        (Some(spec), Mode::TwoD) => {
+            crate::player_camera::follow_2d(spec, &mut state, &rig.0, target, &mut next, dt, id);
+            write_camera(&mut sets.p1(), next, None);
+            return;
+        }
+        (None, Mode::TwoD) => {
+            let offset = Vec3::from(rig.0.offset);
+            next.translation = Vec3::new(
+                target.translation.x + offset.x,
+                target.translation.y + offset.y,
+                next.translation.z,
+            );
+            write_camera(&mut sets.p1(), next, None);
+            return;
+        }
+        _ => {}
+    }
+    let live_rig = rig.0;
+    let mut edited = live_rig;
+    let access = sets.p0();
+    crate::player_camera::pose_3d(
+        &engine,
+        &access,
+        spec.as_ref(),
+        &mut state,
+        &mut edited,
+        target,
+        id,
+        scroll,
+        dt,
+        &mut next,
+        &mut facing,
+    );
+    if edited != live_rig {
+        rig.0 = edited;
+    }
+    write_camera(&mut sets.p1(), next, Some(edited.fov));
+}
+
+/// Lays the camera's pose (and its field of view, when the rig owns it) on the world camera.
+fn write_camera(
+    cameras: &mut Query<(&mut Transform, Option<&mut Projection>), With<WorldCamera>>,
+    next: Transform,
+    fov: Option<f32>,
+) {
     let Ok((mut live, projection)) = cameras.single_mut() else {
         return;
     };
-    // Written only when it moves, so a still camera stays unchanged.
-    let mut next = *live;
-    let camera = &mut next;
-    let rig = rig.0;
-    let offset = Vec3::from(rig.offset);
-    if let Mode::TwoD = dimension.0 {
-        camera.translation = Vec3::new(
-            target.translation.x + offset.x,
-            target.translation.y + offset.y,
-            camera.translation.z,
-        );
-        live.set_if_neq(next);
-        return;
-    }
-    // The offset is in the actor's own frame, so an eye stays on its head
-    // however the actor is turned.
-    let pivot = target.translation + target.rotation * offset;
-    match rig.view {
-        CameraView::FirstPerson => {
-            camera.translation = pivot;
-            // Yaw from the body, pitch from the rig: the FPS composition,
-            // where turning the body never weakens looking up and down.
-            camera.rotation = target.rotation * Quat::from_rotation_x(rig.pitch.to_radians());
-        }
-        CameraView::ThirdPerson => {
-            let pitch = rig.pitch.to_radians();
-            let back = -forward_of(target, Mode::ThreeD) * rig.distance * pitch.cos();
-            camera.translation = pivot + back + Vec3::Y * rig.distance * pitch.sin();
-            camera.look_at(pivot, Vec3::Y);
-        }
-        CameraView::Follow => {
-            let settings = &engine.project.world.camera;
-            let boom = Vec3::from(settings.position) - Vec3::from(settings.look_at);
-            camera.translation = target.translation + boom;
-            camera.look_at(target.translation, Vec3::Y);
-        }
-    }
     live.set_if_neq(next);
-    if dimension.0 == Mode::ThreeD
-        && let Some(mut projection) = projection
+    if let (Some(fov), Some(mut projection)) = (fov, projection)
         && let Projection::Perspective(perspective) = projection.as_mut()
     {
-        perspective.fov = rig.fov.clamp(30.0, 110.0).to_radians();
+        perspective.fov = fov.clamp(30.0, 110.0).to_radians();
     }
 }
 
@@ -2942,6 +3073,36 @@ pub fn restore_poses(engine: NonSend<Engine>, mut posed: Query<(&mut Transform, 
     }
 }
 
+/// Where an actor is drawn, `alpha` of the way through a fixed step.
+pub fn blend_pose(
+    mode: blockloom_core::physics::Interpolation,
+    previous: &Transform,
+    current: &Transform,
+    alpha: f32,
+) -> Transform {
+    use blockloom_core::physics::Interpolation;
+    // At rest there is nothing to blend, and a slerp of equal rotations can
+    // still come back an ulp off.
+    if previous == current || mode == Interpolation::None {
+        return *current;
+    }
+    // Extrapolating carries the last step's motion on by the fraction shown.
+    let t = if mode == Interpolation::Extrapolate {
+        1.0 + alpha
+    } else {
+        alpha
+    };
+    Transform {
+        translation: previous.translation.lerp(current.translation, t),
+        rotation: previous.rotation.slerp(current.rotation, t),
+        scale: if mode == Interpolation::Extrapolate {
+            current.scale
+        } else {
+            previous.scale.lerp(current.scale, t)
+        },
+    }
+}
+
 /// Renders actors between the poses they settled at, so nothing on screen
 /// marches along at the fixed step rate - whether physics wrote the pose or a
 /// step's effects did. On a high-refresh display that step pattern would
@@ -2949,14 +3110,19 @@ pub fn restore_poses(engine: NonSend<Engine>, mut posed: Query<(&mut Transform, 
 pub fn interpolate_poses(
     engine: NonSend<Engine>,
     fixed: Res<Time<Fixed>>,
-    mut posed: Query<(&mut Transform, &PhysicsPose, &PrevPose)>,
+    mut posed: Query<(
+        &mut Transform,
+        &PhysicsPose,
+        &PrevPose,
+        Option<&crate::physics_install::PoseSmoothing>,
+    )>,
 ) {
     // Writes only what differs: an assignment through `DerefMut` marks the
     // transform changed, and a frame of that on every actor makes Bevy
     // propagate, re-bound and re-extract the whole scene.
     if !engine.running || engine.paused {
         // Frozen: put each actor back exactly where its last step left it.
-        for (mut transform, current, _) in &mut posed {
+        for (mut transform, current, _, _) in &mut posed {
             if *transform != current.0 {
                 *transform = current.0;
             }
@@ -2964,18 +3130,10 @@ pub fn interpolate_poses(
         return;
     }
     let alpha = fixed.overstep_fraction();
-    for (mut transform, current, previous) in &mut posed {
-        // At rest there is nothing to blend, and a slerp of equal rotations
-        // can still come back an ulp off.
-        let next = if previous.0 == current.0 {
-            current.0
-        } else {
-            Transform {
-                translation: previous.0.translation.lerp(current.0.translation, alpha),
-                rotation: previous.0.rotation.slerp(current.0.rotation, alpha),
-                scale: previous.0.scale.lerp(current.0.scale, alpha),
-            }
-        };
+    for (mut transform, current, previous, smoothing) in &mut posed {
+        use blockloom_core::physics::Interpolation;
+        let mode = smoothing.map_or(Interpolation::Interpolate, |s| s.0);
+        let next = blend_pose(mode, &previous.0, &current.0, alpha);
         if *transform != next {
             *transform = next;
         }
@@ -3354,6 +3512,7 @@ pub fn apply_lifetimes(
                     continue;
                 };
                 copy.id = clone.clone();
+                copy.refresh_physics_ids();
                 if let Some(entity) = engine.entities.get(of).copied() {
                     if let Ok(transform) = transforms.get(entity) {
                         let stretch = copy.placement().stretch;
@@ -3527,6 +3686,20 @@ fn spawn_runtime_actor(
         engine.parents.insert(actor.id.clone(), parent.to_string());
     }
     engine.entities.insert(actor.id.clone(), entity);
+    // Its colliders, body and constraints, installed the way a rebuild would.
+    let targets: Vec<Actor> = actor
+        .components
+        .constraints()
+        .filter(|c| !c.target.is_empty())
+        .filter_map(|c| engine.actor(&c.target).cloned())
+        .collect();
+    crate::physics_install::install_actor(
+        commands,
+        &engine.project,
+        &actor,
+        &targets,
+        &engine.entities,
+    );
     // A scripted actor's library is opened here rather than when the world
     // was built, because this one didn't exist then.
     open_script_for(engine, &actor);
@@ -3582,6 +3755,7 @@ pub(crate) fn delete_actor(commands: &mut Commands, engine: &mut Engine, actor: 
     engine.attached.remove(actor);
     engine.physics_filter.remove(actor);
     engine.touching.remove(actor);
+    engine.contacts.remove_actor(actor);
     engine.speech.remove(actor);
     engine.scripts.remove(actor);
     engine.scripts_started.remove(actor);
@@ -3967,6 +4141,13 @@ pub fn report_status(
             });
         }
     }
+    for (name, value) in crate::physics_debug::metrics() {
+        render_metrics.push(RenderMetric {
+            name: name.into(),
+            value,
+            unit: if name.ends_with("_ms") { "ms" } else { "count" }.into(),
+        });
+    }
     for (name, value) in crate::plugins::report(&mut engine) {
         render_metrics.push(RenderMetric {
             name,
@@ -4338,7 +4519,13 @@ pub fn apply_cursor_lock(
     let wanted = engine.wants_cursor_locked;
     if !engine.running {
         engine.wants_cursor_locked = false;
+        engine.look_lock_offered = false;
     } else {
+        // A look camera takes the pointer once per run; a block can free it.
+        if !engine.look_lock_offered && crate::player_camera::wants_lock(&engine) {
+            engine.look_lock_offered = true;
+            engine.wants_cursor_locked = true;
+        }
         for effect in &effects.0 {
             if let Effect::SetMouseLocked { locked } = effect {
                 engine.wants_cursor_locked = *locked;
@@ -4443,6 +4630,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetBody { actor, .. }
         | Effect::ApplyImpulse { actor, .. }
         | Effect::SetVelocity { actor, .. }
+        | Effect::AddForce { actor, .. }
         | Effect::SetDensity { actor, .. }
         | Effect::SetMass { actor, .. }
         | Effect::SetTrigger { actor, .. }
@@ -4521,6 +4709,8 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SetPaused { .. }
         | Effect::SaveVariable { .. }
         | Effect::PluginCall { .. }
+        | Effect::PhysicsQuery { .. }
+        | Effect::Controller { .. }
         | Effect::SetParent { .. }
         | Effect::CreateClone { .. }
         | Effect::CreateActor { .. }
@@ -4551,9 +4741,12 @@ pub fn forward_of(transform: &Transform, mode: Mode) -> Vec3 {
 
 /// True when the physics engine owns this actor's movement.
 pub fn is_dynamic(engine: &Engine, actor: &str) -> bool {
-    engine
-        .actor(actor)
-        .is_some_and(|actor| actor.physics().body == BodyKind::Dynamic)
+    engine.actor(actor).is_some_and(|actor| {
+        actor.physics().body == BodyKind::Dynamic
+            || actor.components.rigidbody().is_some_and(|body| {
+                body.simulated && body.body_type == blockloom_core::physics::BodyType::Dynamic
+            })
+    })
 }
 
 pub fn is_character(engine: &Engine, actor: &str) -> bool {
@@ -4762,6 +4955,23 @@ mod tests {
     use bevy::time::{TimePlugin, TimeUpdateStrategy};
 
     #[test]
+    fn a_pose_mode_decides_how_a_step_is_drawn() {
+        use blockloom_core::physics::Interpolation;
+        let before = Transform::from_xyz(0.0, 0.0, 0.0);
+        let after = Transform::from_xyz(10.0, 0.0, 0.0);
+        let x = |mode, alpha| blend_pose(mode, &before, &after, alpha).translation.x;
+        // None snaps to the step, Interpolate lags it, Extrapolate leads it.
+        assert_eq!(x(Interpolation::None, 0.5), 10.0);
+        assert_eq!(x(Interpolation::Interpolate, 0.5), 5.0);
+        assert_eq!(x(Interpolation::Extrapolate, 0.5), 15.0);
+        // A body at rest is left exactly where it is.
+        assert_eq!(
+            blend_pose(Interpolation::Extrapolate, &after, &after, 0.9),
+            after
+        );
+    }
+
+    #[test]
     fn an_idle_vm_keeps_the_play_session_running() {
         let (_sender, incoming) = std::sync::mpsc::channel();
         let mut engine = Engine::new(incoming, Mode::TwoD);
@@ -4946,6 +5156,9 @@ mod tests {
         let (_sender, incoming) = std::sync::mpsc::channel();
         let mut app = App::new();
         app.insert_resource(Dimension(mode));
+        app.init_resource::<Time>();
+        app.init_resource::<crate::player_camera::BodyFacing>();
+        app.add_message::<MouseWheel>();
         app.insert_non_send(Engine::new(incoming, mode));
         let camera = app
             .world_mut()

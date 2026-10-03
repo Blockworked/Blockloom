@@ -47,6 +47,12 @@ Rectangle {
         property bool volumeBounds: true
         property bool volumeHeatmap: false
         property bool volumePanel: false
+        property bool physicsPanel: false
+        property bool physShapes: false
+        property bool physAabbs: false
+        property bool physContacts: false
+        property bool physJoints: false
+        property bool physAxes: false
         property int pathSamples: 256
         property real pathSeconds: 60
         property string brushOp: "Raise"
@@ -86,6 +92,7 @@ Rectangle {
         grid: is3d ? scene.grid3d : scene.grid2d, angle: scene.angle, scale: scene.scaleStep, show_grid: scene.showGrid,
         debug_view: scene.debugView, bloom_mip: scene.bloomMip,
         volumes: { bounds: scene.volumeBounds, heatmap: scene.volumeHeatmap, freeze: root.volumeFreeze },
+        physics: { shapes: scene.physShapes, aabbs: scene.physAabbs, contacts: scene.physContacts, joints: scene.physJoints, axes: scene.physAxes },
         path_tracer: { enabled: root.pathTracing && is3d, samples: scene.pathSamples, seconds: scene.pathSeconds },
         brush: { op: scene.brushOp, target: brushTarget(scene.brushTarget), radius: scene.brushRadius, strength: scene.brushStrength,
                  falloff: scene.brushFalloff, level: null, step: scene.brushStep, scale: scene.brushScale, seed: 1 },
@@ -312,6 +319,11 @@ Rectangle {
             IconButton {
                 iconName: "layers"; tip: "Environment volumes: bounds, heat map, the blend and its lerp"
                 onClicked: scene.volumePanel = !scene.volumePanel
+            }
+            IconButton {
+                iconName: "box"; highlighted: scene.physShapes || scene.physAabbs || scene.physContacts || scene.physJoints || scene.physAxes
+                tip: "Physics debug: collider shapes, bounding boxes, contacts, joints and body axes"
+                onClicked: scene.physicsPanel = !scene.physicsPanel
             }
             IconButton {
                 visible: root.is3d
@@ -686,6 +698,25 @@ Rectangle {
                         Text { text: "samples or"; color: Theme.textDim; font.pixelSize: 11 }
                         NumberField { Layout.preferredWidth: 52; value: scene.pathSeconds; fallback: 60; onCommitted: n => scene.pathSeconds = Math.max(0, n) }
                         Text { text: "s"; color: Theme.textDim; font.pixelSize: 11 }
+                    }
+                }
+                // Physics debug: what the physics world is drawn with.
+                Rectangle {
+                    visible: scene.physicsPanel
+                    anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 8
+                    width: physicsColumn.implicitWidth + 16; height: physicsColumn.implicitHeight + 16; radius: 6
+                    color: "#e0202124"; border.color: Theme.borderSoft
+                    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }
+                    ColumnLayout {
+                        id: physicsColumn
+                        anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 8; spacing: 2
+                        Text { text: "Physics debug"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+                        BwCheckBox { text: "Collider shapes"; checked: scene.physShapes; onToggled: scene.physShapes = checked }
+                        BwCheckBox { text: "Bounding boxes"; checked: scene.physAabbs; onToggled: scene.physAabbs = checked }
+                        BwCheckBox { text: "Contacts and normals"; checked: scene.physContacts; onToggled: scene.physContacts = checked }
+                        BwCheckBox { text: "Joints"; checked: scene.physJoints; onToggled: scene.physJoints = checked }
+                        BwCheckBox { text: "Body axes"; checked: scene.physAxes; onToggled: scene.physAxes = checked }
+                        Text { text: "Rows for bodies, colliders, joints and step time are in the profiler."; color: Theme.textDim; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.preferredWidth: 220 }
                     }
                 }
                 // Environment volumes: what is blending at the camera, and why.

@@ -32,6 +32,9 @@ mod capture;
 mod cinematic;
 mod cloud_layers;
 mod clouds;
+mod constraints;
+mod contacts;
+mod controller;
 mod culling;
 mod decals;
 mod decals_deferred;
@@ -57,6 +60,8 @@ mod logic;
 mod luminance;
 mod materials;
 mod model;
+mod motor;
+mod player_camera;
 mod wind;
 // Plumbing the Phase 5 passes build on; nothing reads most of it yet.
 mod overlay;
@@ -64,6 +69,8 @@ mod overlay;
 mod passes;
 mod pbr_patch;
 mod performance;
+mod physics_debug;
+mod physics_install;
 pub mod player;
 #[cfg(feature = "plugins")]
 mod plugin_compute;
@@ -75,6 +82,7 @@ mod post;
 mod preview;
 mod probes;
 mod quality;
+mod queries;
 mod ray_tracing;
 mod script;
 mod shadows;
@@ -280,6 +288,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         .insert_resource(Dimension(mode))
         .init_resource::<PendingEffects>()
         .init_resource::<world::NavMesh>()
+        .init_resource::<player_camera::BodyFacing>()
         .init_resource::<ui::UiManager>()
         .init_resource::<ui_design::DesignSession>()
         .init_resource::<ui::DeviceInsets>()
@@ -391,6 +400,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     }));
     app.init_resource::<model::ModelCache>();
     app.init_resource::<lights::LightMasks>();
+    app.init_resource::<physics_install::PhysicsLayers>();
     app.add_plugins(
         bevy_rapier2d::prelude::RapierPhysicsPlugin::<dim2::OneWayHooks>::pixels_per_meter(
             dim2::PIXELS_PER_METER,
@@ -398,9 +408,29 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         .in_fixed_schedule(),
     );
     app.add_plugins(
-        bevy_rapier3d::prelude::RapierPhysicsPlugin::<bevy_rapier3d::prelude::NoUserData>::default(
-        )
-        .in_fixed_schedule(),
+        bevy_rapier3d::prelude::RapierPhysicsPlugin::<physics_install::d3::Hooks3>::default()
+            .in_fixed_schedule(),
+    );
+    // Physics Debug view: Rapier's gizmo renderer, off until the scene view asks.
+    app.add_plugins(bevy_rapier2d::render::RapierDebugRenderPlugin::default().disabled());
+    app.add_plugins(bevy_rapier3d::render::RapierDebugRenderPlugin::default().disabled());
+    app.add_systems(Update, physics_debug::sync);
+    app.add_systems(
+        FixedUpdate,
+        (
+            physics_debug::d3::begin
+                .before(bevy_rapier3d::prelude::PhysicsSet::SyncBackend)
+                .run_if(is_3d),
+            physics_debug::d3::end
+                .after(bevy_rapier3d::prelude::PhysicsSet::Writeback)
+                .run_if(is_3d),
+            physics_debug::d2::begin
+                .before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend)
+                .run_if(is_2d),
+            physics_debug::d2::end
+                .after(bevy_rapier2d::prelude::PhysicsSet::Writeback)
+                .run_if(is_2d),
+        ),
     );
     // The veil and the audio scale follow the live scene, not the launch
     // mode, so they run once outside the gated dimension blocks.
@@ -497,13 +527,21 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 world::apply_saved_data,
                 (world::apply_lifetimes, world::sync_navmesh).chain(),
                 (
+                    motor::drive_motors,
+                    controller::apply_motion,
                     world::apply_common,
                     environment::apply_exposure_effects,
                     hdr::apply_hdr_effects,
                     volumes::apply_volume_effects,
                 )
                     .chain(),
-                (dim2::apply_effects, dim3::apply_effects).chain(),
+                (
+                    dim2::apply_effects,
+                    dim3::apply_effects,
+                    physics_install::d2::apply_forces.run_if(is_2d),
+                    physics_install::d3::apply_forces.run_if(is_3d),
+                )
+                    .chain(),
                 (
                     world::apply_component_effects,
                     lights::apply_light_effects.run_if(is_3d),
@@ -540,6 +578,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 world::apply_parenting,
                 dim2::record_poses,
                 dim3::record_poses,
+                dim2::track_contacts.run_if(is_2d),
+                dim3::track_contacts.run_if(is_3d),
             )
                 .chain(),
         )
@@ -572,7 +612,6 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                         .run_if(is_3d),
                 )
                     .chain(),
-                (dim2::relay_collisions, dim3::relay_collisions).chain(),
                 (
                     ui_systems::canvas,
                     ui_systems::collections,
@@ -611,6 +650,26 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .chain(),
             )
                 .chain(),
+        )
+        .add_systems(
+            FixedUpdate,
+            (
+                physics_install::d2::clamp_velocities.run_if(is_2d),
+                physics_install::d3::clamp_velocities.run_if(is_3d),
+                physics_install::d2::refresh_masses.run_if(is_2d),
+                physics_install::d3::refresh_masses.run_if(is_3d),
+            )
+                .before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend)
+                .before(bevy_rapier3d::prelude::PhysicsSet::SyncBackend),
+        )
+        .add_systems(
+            FixedUpdate,
+            (
+                constraints::d2::drive.run_if(is_2d),
+                constraints::d3::drive.run_if(is_3d),
+            )
+                .after(bevy_rapier2d::prelude::PhysicsSet::Writeback)
+                .after(bevy_rapier3d::prelude::PhysicsSet::Writeback),
         )
         .configure_sets(
             FixedUpdate,
@@ -670,6 +729,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .after(world::rebuild_world)
                     .run_if(is_3d),
                 tiles::publish_level.after(world::publish_sensors),
+                motor::latch_player_input.after(world::publish_sensors),
                 tiles::confine_camera
                     .after(world::drive_camera)
                     .before(edit::apply_view),
@@ -743,11 +803,11 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .before(volumes::gather_volumes),
                 performance::mark_update_segment
                     .after(environment::apply_environment)
-                    .before(dim2::relay_collisions)
+                    .before(ui_systems::canvas)
                     .run_if(is_2d),
                 performance::mark_update_segment
                     .after(light_probes::sync_probes)
-                    .before(dim3::relay_collisions)
+                    .before(ui_systems::canvas)
                     .run_if(is_3d),
                 performance::mark_update_segment
                     .after(world::detect_clicks)

@@ -2,6 +2,7 @@
 
 use crate::engine::{ActorId, Dimension, Engine, PendingEffects};
 use bevy::asset::RenderAssetUsages;
+use bevy::ecs::system::SystemParam;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -389,6 +390,40 @@ fn cell_mesh(cell: &model::Cell, interior: bool) -> Option<Mesh> {
     )
 }
 
+/// What a fractured actor was made of, read off its live entity.
+#[derive(SystemParam)]
+struct Sources<'w, 's> {
+    actors: Query<
+        'w,
+        's,
+        (
+            &'static Transform,
+            Option<&'static rp::Velocity>,
+            Option<&'static Children>,
+            Option<&'static rp::ReadMassProperties>,
+        ),
+        With<ActorId>,
+    >,
+    colliders: Query<
+        'w,
+        's,
+        (
+            &'static rp::CollisionGroups,
+            &'static rp::SolverGroups,
+            &'static rp::Friction,
+            &'static rp::Restitution,
+        ),
+    >,
+}
+
+/// A source collider's filters and surface, which its shards keep.
+type Inherited = (
+    rp::CollisionGroups,
+    rp::SolverGroups,
+    rp::Friction,
+    rp::Restitution,
+);
+
 #[allow(clippy::too_many_arguments)]
 fn simulate(
     scaling: Option<Res<crate::quality::Scaling>>,
@@ -398,7 +433,7 @@ fn simulate(
     time: Res<Time<Fixed>>,
     effects: Res<PendingEffects>,
     mut state: ResMut<Destruction>,
-    actors: Query<(&Transform, Option<&rp::Velocity>), With<ActorId>>,
+    sources: Sources,
     mut existing: Query<(&mut Shard, Option<&ViewVisibility>)>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -506,7 +541,8 @@ fn simulate(
                     report(format!("{id} needs an attached Fracture component"));
                     continue;
                 }
-                let Ok((transform, velocity)) = actors.get(entity) else {
+                let Ok((transform, velocity, children, body_mass)) = sources.actors.get(entity)
+                else {
                     continue;
                 };
                 let Some(actor) = engine.actor(&id).cloned() else {
@@ -569,6 +605,13 @@ fn simulate(
                     &assets,
                 ));
                 let cell_count = cells.len().max(1) as f32;
+                // Shards keep the collider's layers and surface, and share the body's mass.
+                let inherited: Option<Inherited> = children
+                    .into_iter()
+                    .flatten()
+                    .find_map(|child| sources.colliders.get(*child).ok())
+                    .map(|(g, s, f, r)| (*g, *s, *f, *r));
+                let body_mass = body_mass.map(|m| m.get().mass).filter(|m| *m > 0.0);
                 for cell in cells {
                     let points: Vec<_> = cell
                         .faces
@@ -606,7 +649,7 @@ fn simulate(
                             Visibility::default(),
                             rp::RigidBody::Dynamic,
                             rp::Sleeping::default(),
-                            match actor.physics().mass {
+                            match body_mass.or(actor.physics().mass) {
                                 Some(mass) => rp::ColliderMassProperties::Mass(mass / cell_count),
                                 None => {
                                     rp::ColliderMassProperties::Density(actor.physics().density)
@@ -623,6 +666,11 @@ fn simulate(
                             rp::ActiveEvents::COLLISION_EVENTS,
                         ))
                         .id();
+                    if let Some((groups, solver, friction, restitution)) = inherited {
+                        commands
+                            .entity(shard)
+                            .insert((groups, solver, friction, restitution));
+                    }
                     for (interior, material) in [(false, outside.clone()), (true, inside.clone())] {
                         if let Some(mesh) = cell_mesh(&cell, interior) {
                             commands.spawn((
@@ -652,7 +700,7 @@ fn simulate(
         .retain(|entity, _| engine.entities.values().any(|e| e == entity));
     // Moving feet stir existing water; rain uses a deterministic cell sequence.
     for (id, entity) in &engine.entities {
-        let Ok((transform, _)) = actors.get(*entity) else {
+        let Ok((transform, ..)) = sources.actors.get(*entity) else {
             continue;
         };
         let half = engine

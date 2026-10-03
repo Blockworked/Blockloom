@@ -94,6 +94,63 @@ const CLOUD_PROPERTIES: &[&str] = &["Coverage", "Density", "Type"];
 const PRECIPITATION_KINDS: &[&str] = &["Rain", "Snow"];
 const WATER_PROPERTIES: &[&str] = &["Level", "Chop", "Foam"];
 const PARALLAX_AXES: &[&str] = &["Both", "X", "Y"];
+const CONTACT_PHASES: &[&str] = &["Enter", "Stay", "Exit"];
+const CONTACT_SCOPES: &[&str] = &["Any", "Collision", "Trigger"];
+const FORCE_MODES: &[&str] = &["Force", "Acceleration", "Impulse", "VelocityChange"];
+const MOVE_MODES: &[&str] = &["Move", "Simple"];
+const CONTROLLER_PROPERTIES: &[&str] = &[
+    "Enabled",
+    "Radius",
+    "Height",
+    "SlopeLimit",
+    "StepOffset",
+    "SkinWidth",
+    "MinMoveDistance",
+    "DetectCollisions",
+    "OverlapRecovery",
+];
+const JOINT_ACTIONS: &[&str] = &[
+    "MotorSpeed",
+    "MotorTarget",
+    "MotorForce",
+    "MotorOff",
+    "Stiffness",
+    "Damping",
+    "Enable",
+    "Disable",
+    "Break",
+];
+const MOTOR_ACTIONS: &[&str] = &[
+    "Intent",
+    "Jump",
+    "JumpRelease",
+    "SprintOn",
+    "SprintOff",
+    "CrouchOn",
+    "CrouchOff",
+    "Push",
+    "Stop",
+];
+const MOTOR_PROPERTIES: &[&str] = &[
+    "Enabled",
+    "WalkSpeed",
+    "SprintSpeed",
+    "CrouchSpeed",
+    "Acceleration",
+    "Braking",
+    "AirAcceleration",
+    "AirControl",
+    "TurnSpeed",
+    "GravityScale",
+    "TerminalSpeed",
+    "JumpHeight",
+    "MaxJumps",
+    "CoyoteTime",
+    "JumpBuffer",
+    "SlideOnSteep",
+];
+const RAY_HITS: &[&str] = &["Nearest", "Every"];
+const TRIGGER_POLICIES: &[&str] = &["UseGlobal", "Ignore", "Include"];
 const CLOUD_LAYER_PROPERTIES: &[&str] = &["Coverage", "Opacity", "Contrast", "Altitude", "Spin"];
 const UI_ANCHORS: &[&str] = &[
     "TopLeft",
@@ -264,11 +321,20 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "WhenCollision",
         category: "Events",
-        purpose: "Runs when this actor starts touching with (an actor name; blank means anything).",
+        purpose: "Runs when this actor starts (Enter), keeps (Stay, once a tick) or stops (Exit) touching with (an actor name; blank means anything); scope picks solid touches (Collision), trigger overlaps (Trigger) or both (Any).",
         header: true,
         three_d: false,
         slots: NO_SLOTS,
-        dropdowns: NO_DROPDOWNS,
+        dropdowns: &[
+            Dropdown {
+                field: "phase",
+                options: CONTACT_PHASES,
+            },
+            Dropdown {
+                field: "scope",
+                options: CONTACT_SCOPES,
+            },
+        ],
         strings: &["with"],
         bools: NO_BOOLS,
         bodies: NO_BODIES,
@@ -873,6 +939,362 @@ pub const BLOCKS: &[BlockSpec] = &[
             },
         ],
         dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "AddForce",
+        category: "Physics",
+        purpose: "Pushes this body for one fixed step. Force is newtons, Acceleration ignores mass, Impulse is newton seconds, VelocityChange ignores mass and changes velocity at once. Only a dynamic body responds; a 2D body reads x and y and speaks the same units as set velocity.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "x",
+                id: "ForceX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "ForceY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "ForceZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "mode",
+            options: FORCE_MODES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "AddTorque",
+        category: "Physics",
+        purpose: "Turns this body for one fixed step, in the same four modes as add force and with the body's inertia where force uses mass. A 2D body turns about z only.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "x",
+                id: "ForceX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "ForceY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "ForceZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "mode",
+            options: FORCE_MODES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "ControllerMove",
+        category: "Physics",
+        purpose: "Moves this actor's character controller. Move is a displacement in world units that ignores gravity; Simple is a speed in units a second with gravity applied and up ignored. The controller slides along what it hits, climbs steps and refuses slopes past its limit. Read the result with the controller reporters. Needs a CharacterController component.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "x",
+                id: "ControllerX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "ControllerY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "ControllerZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "mode",
+            options: MOVE_MODES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "MotorAct",
+        category: "Physics",
+        purpose: "Steers this actor's character motor or fires one of its actions. Intent takes a direction (length 1 is full speed, turned by the motor's move space); Jump presses jump, JumpRelease lets go of it; Sprint and Crouch switch on and off; Push adds knockback that fades; Stop clears every intent and the motor's speed. A motor owned by the player reads the keys itself, so these are for Script and Ai motors.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "x",
+                id: "ControllerX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "ControllerY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "ControllerZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "action",
+            options: MOTOR_ACTIONS,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "JointAct",
+        category: "Physics",
+        purpose: "Commands one of this actor's constraints, named in `joint` (or by its place: 1 is the first). MotorSpeed and MotorTarget switch the motor to a speed (degrees or units a second) or a place (degrees or units); MotorForce limits it; MotorOff stops it; Stiffness and Damping change a spring; Enable and Disable switch the joint; Break snaps it for good. The value is ignored by the last four.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "value",
+            id: "JointValue",
+            value: "Any",
+        }],
+        dropdowns: &[Dropdown {
+            field: "action",
+            options: JOINT_ACTIONS,
+        }],
+        strings: &["joint"],
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetMotor",
+        category: "Physics",
+        purpose: "Changes one setting of this actor's character motor for the rest of the run. Enabled and Slide on steep read zero as off. A change that would make the motor invalid is refused with an error.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "value",
+            id: "ControllerValue",
+            value: "Any",
+        }],
+        dropdowns: &[Dropdown {
+            field: "property",
+            options: MOTOR_PROPERTIES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetController",
+        category: "Physics",
+        purpose: "Changes one setting of this actor's character controller for the rest of the run. Enabled and the two switches read zero as off. A change that would make the controller invalid is refused with an error.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "value",
+            id: "ControllerValue",
+            value: "Any",
+        }],
+        dropdowns: &[Dropdown {
+            field: "property",
+            options: CONTROLLER_PROPERTIES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "CastRay",
+        category: "Physics",
+        purpose: "Casts a ray from one point to another in the physics world and keeps what it crossed as this actor's query result. Nearest keeps the first hit, Every keeps all of them nearest first. Read the result with the hit reporters. The ray ignores this actor's own colliders and a ray that starts inside a collider hits it at distance 0. 2D worlds read x and y.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "from_x",
+                id: "QueryFromX",
+                value: "Any",
+            },
+            Slot {
+                field: "from_y",
+                id: "QueryFromY",
+                value: "Any",
+            },
+            Slot {
+                field: "from_z",
+                id: "QueryFromZ",
+                value: "Any",
+            },
+            Slot {
+                field: "to_x",
+                id: "QueryToX",
+                value: "Any",
+            },
+            Slot {
+                field: "to_y",
+                id: "QueryToY",
+                value: "Any",
+            },
+            Slot {
+                field: "to_z",
+                id: "QueryToZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[
+            Dropdown {
+                field: "hits",
+                options: RAY_HITS,
+            },
+            Dropdown {
+                field: "triggers",
+                options: TRIGGER_POLICIES,
+            },
+        ],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "CastBall",
+        category: "Physics",
+        purpose: "Sweeps a ball of the given radius from one point to another and keeps the first thing it meets as this actor's query result. A ball that starts overlapping something hits it at distance 0. Read the result with the hit reporters.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "radius",
+                id: "QueryRadius",
+                value: "Any",
+            },
+            Slot {
+                field: "from_x",
+                id: "QueryFromX",
+                value: "Any",
+            },
+            Slot {
+                field: "from_y",
+                id: "QueryFromY",
+                value: "Any",
+            },
+            Slot {
+                field: "from_z",
+                id: "QueryFromZ",
+                value: "Any",
+            },
+            Slot {
+                field: "to_x",
+                id: "QueryToX",
+                value: "Any",
+            },
+            Slot {
+                field: "to_y",
+                id: "QueryToY",
+                value: "Any",
+            },
+            Slot {
+                field: "to_z",
+                id: "QueryToZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "triggers",
+            options: TRIGGER_POLICIES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "OverlapBall",
+        category: "Physics",
+        purpose: "Keeps every collider a ball at a point overlaps as this actor's query result, nearest first. Read the result with the hit reporters.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "radius",
+                id: "QueryRadius",
+                value: "Any",
+            },
+            Slot {
+                field: "x",
+                id: "QueryFromX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "QueryFromY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "QueryFromZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "triggers",
+            options: TRIGGER_POLICIES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "FindClosest",
+        category: "Physics",
+        purpose: "Keeps the collider nearest a point, within range, as this actor's query result. Distance is to the surface, and zero when the point is inside. Read the result with the hit reporters.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "range",
+                id: "QueryRadius",
+                value: "Any",
+            },
+            Slot {
+                field: "x",
+                id: "QueryFromX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "QueryFromY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "QueryFromZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "triggers",
+            options: TRIGGER_POLICIES,
+        }],
         strings: NO_STRINGS,
         bools: NO_BOOLS,
         bodies: NO_BODIES,

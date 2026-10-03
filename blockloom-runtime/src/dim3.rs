@@ -940,25 +940,113 @@ pub fn apply_effects(
     }
 }
 
-pub fn relay_collisions(
+/// Closes one fixed tick of contacts: rapier's begin and end reports go to the
+/// tracker, which makes the tick's events for the next one to hear.
+#[allow(clippy::too_many_arguments)]
+pub fn track_contacts(
     mut messages: MessageReader<rp::CollisionEvent>,
     mut engine: NonSendMut<Engine>,
     ground: Query<&ChildOf, With<crate::terrain::TerrainCollider>>,
+    planned: Query<&crate::physics_install::PlannedCollider>,
+    bodies: Query<(&rp::RigidBody, Option<&rp::Sleeping>)>,
+    velocities: Query<&rp::Velocity>,
+    disabled: Query<(), With<rp::ColliderDisabled>>,
+    context: rp::ReadRapierContext,
 ) {
     if !engine.running || engine.paused {
         messages.clear();
         return;
     }
-    // A terrain's collider hangs off its actor, so a touch on it is a touch
-    // on the terrain actor.
-    let owner = |entity: Entity| ground.get(entity).map_or(entity, ChildOf::parent);
-    for message in messages.read() {
-        let (a, b, started) = match message {
-            rp::CollisionEvent::Started(a, b, _) => (*a, *b, true),
-            rp::CollisionEvent::Stopped(a, b, _) => (*a, *b, false),
+    let who = |engine: &Engine, entity: Entity| {
+        // A terrain's collider hangs off its actor; a planned collider names it.
+        let planned_collider = planned.get(entity).ok();
+        let owner = match planned_collider {
+            Some(shape) => engine.entities.get(&shape.actor).copied()?,
+            None => ground.get(entity).map_or(entity, ChildOf::parent),
         };
-        crate::world::note_contact(&mut engine, owner(a), owner(b), started);
-    }
+        Some(crate::contacts::Who {
+            owner,
+            planned: planned_collider.cloned(),
+            moving: bodies
+                .get(owner)
+                .is_ok_and(|(body, _)| !matches!(body, rp::RigidBody::Fixed)),
+            disabled: disabled.contains(entity),
+        })
+    };
+    let seen: Vec<_> = messages
+        .read()
+        .map(|message| match message {
+            rp::CollisionEvent::Started(a, b, flags) => crate::contacts::Seen {
+                a: *a,
+                b: *b,
+                started: true,
+                sensor: flags
+                    .contains(bevy_rapier3d::rapier::geometry::CollisionEventFlags::SENSOR),
+                removed: false,
+            },
+            rp::CollisionEvent::Stopped(a, b, flags) => crate::contacts::Seen {
+                a: *a,
+                b: *b,
+                started: false,
+                sensor: flags
+                    .contains(bevy_rapier3d::rapier::geometry::CollisionEventFlags::SENSOR),
+                removed: flags
+                    .contains(bevy_rapier3d::rapier::geometry::CollisionEventFlags::REMOVED),
+            },
+        })
+        .collect();
+    let rapier = context.single().ok();
+    let payload = |a: Entity, b: Entity| -> Option<blockloom_core::physics::ContactPayload> {
+        let rapier = rapier.as_ref()?;
+        let pair = rapier
+            .simulation
+            .contact_pair(rapier.colliders, rapier.rigidbody_set, a, b)?;
+        let mut out = blockloom_core::physics::ContactPayload::default();
+        let mut speed = Vec3::ZERO;
+        for manifold in pair.manifolds() {
+            out.normal = manifold.normal().to_array();
+            for point in manifold.solver_contacts() {
+                out.points.push(blockloom_core::physics::ContactPoint {
+                    point: point.point().to_array(),
+                    separation: point.dist(),
+                });
+            }
+            for point in manifold.points() {
+                out.impulse += point.impulse();
+            }
+            let velocity = |body: Option<Entity>| {
+                body.and_then(|e| velocities.get(e).ok())
+                    .map_or(Vec3::ZERO, |v| v.linear)
+            };
+            speed = velocity(manifold.rigid_body2()) - velocity(manifold.rigid_body1());
+        }
+        out.relative_velocity = speed.to_array();
+        Some(out)
+    };
+    let refresh = match &rapier {
+        Some(rapier) => rapier
+            .simulation
+            .contact_pairs(rapier.colliders, rapier.rigidbody_set)
+            .filter(|pair| pair.has_any_active_contact())
+            .filter_map(|pair| {
+                let (a, b) = (pair.collider1()?, pair.collider2()?);
+                Some((a, b, payload(a, b)?))
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    let awake = |engine: &Engine, endpoint: &blockloom_core::physics::Endpoint| {
+        endpoint
+            .body
+            .as_ref()
+            .and_then(|actor| engine.entities.get(actor))
+            .is_some_and(|entity| {
+                bodies
+                    .get(*entity)
+                    .is_ok_and(|(_, sleeping)| !sleeping.is_some_and(|s| s.sleeping))
+            })
+    };
+    crate::contacts::track(&mut engine, &seen, who, payload, refresh, awake);
 }
 
 /// Freezes the physics pipeline while paused or stopped so bodies stop falling

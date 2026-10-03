@@ -43,6 +43,7 @@ use std::path::{Path, PathBuf};
 use std::sync::MutexGuard;
 use std::sync::atomic::Ordering;
 
+pub(crate) mod physics;
 pub(crate) mod plugins;
 
 type Guard<'a> = MutexGuard<'a, AppState>;
@@ -355,6 +356,7 @@ pub(crate) fn create_project(
     name: String,
     location: Option<String>,
     mode: Mode,
+    sample: Option<String>,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
     if name.is_empty() {
@@ -365,7 +367,10 @@ pub(crate) fn create_project(
         .filter(|location| !location.as_os_str().is_empty())
         .unwrap_or_else(project::default_projects_dir);
 
-    let project = Project::starter(name, mode);
+    let project = match sample.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(sample) => blockloom_core::physics::sample::build(sample, &name, mode)?,
+        None => Project::starter(name, mode),
+    };
     let dir = project::create_project(&project, &parent)?;
 
     let mut s = lock(state)?;
@@ -1774,6 +1779,8 @@ pub(crate) fn duplicate_actor(
     copy.graph.comments.clear();
     // There is one camera, so the copy doesn't get to keep it.
     copy.components.remove("Camera");
+    // A copy's colliders and body are its own, not shared with the original.
+    copy.refresh_physics_ids();
     let id = project.add_actor(copy);
     s.selected_actor = Some(id.clone());
     auto_save(&s);
@@ -1930,6 +1937,8 @@ pub(crate) fn add_actor_component(
     actor_id: String,
     mut component: ActorComponent,
 ) -> Result<String, String> {
+    physics::refuse_generic(&component)?;
+    check_player_camera(&component)?;
     let mut s = lock(state)?;
     check_parent(s.project(), &actor_id, &component)?;
     push_undo(&mut s);
@@ -1961,6 +1970,8 @@ pub(crate) fn set_actor_component(
     name: String,
     mut component: ActorComponent,
 ) -> Result<(), String> {
+    physics::refuse_generic(&component)?;
+    check_player_camera(&component)?;
     let mut s = lock(state)?;
     check_parent(s.project(), &actor_id, &component)?;
     if let ActorComponent::Material { material } = &mut component {
@@ -1989,6 +2000,22 @@ pub(crate) fn set_actor_component(
     sync_runtime(&mut s);
     emit(app, &s);
     result
+}
+
+/// A player camera with a nonsense setting is refused with the field named.
+fn check_player_camera(component: &ActorComponent) -> Result<(), String> {
+    let ActorComponent::PlayerCamera { player_camera } = component else {
+        return Ok(());
+    };
+    let problems = player_camera.validate();
+    if problems.is_empty() {
+        return Ok(());
+    }
+    Err(problems
+        .iter()
+        .map(|(field, why)| format!("{field}: {why}"))
+        .collect::<Vec<_>>()
+        .join("; "))
 }
 
 /// A `Parent` has to name another actor that isn't already hanging off this
@@ -2147,6 +2174,7 @@ pub(crate) fn run_project(
     };
     // Missing plugin data is a report, not a game that quietly does less.
     plugins::preflight_run(&s)?;
+    physics::preflight(&project, s.project_dir(), "Play")?;
     auto_save(&s);
     // Built before the world is handed over, so a script that won't compile
     // shows its errors in the log instead of silently doing nothing.
@@ -2761,6 +2789,7 @@ pub(crate) fn run_build_game(
         }
     }
 
+    physics::preflight(&project, Some(Path::new(&dir)), "the build")?;
     blockloom_core::build_control::step("Refreshing imports")?;
     plugins::refresh_imports(state, app);
     let options = build::BuildOptions {
@@ -2770,7 +2799,12 @@ pub(crate) fn run_build_game(
         key_pass,
         remember_passwords,
         plugins: plugins::payloads(&dir, &project, target)?,
-        extras: plugins::run_build_hooks(state, app, &dir, &project, target)?,
+        extras: {
+            let mut extras = plugins::run_build_hooks(state, app, &dir, &project, target)?;
+            blockloom_core::build_control::step("Cooking collision")?;
+            extras.extend(physics::collision_extras(&project, Path::new(&dir))?);
+            extras
+        },
     };
     let built = build::build(
         &project,

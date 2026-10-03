@@ -828,8 +828,10 @@ const JOB_BUDGET_MS: f64 = 4.0;
 
 /// The system that runs one stage's hooks. Hooks wait while the game is
 /// paused or not yet running, except the two stages that follow frames.
-pub fn stage(stage: Stage) -> impl FnMut(NonSendMut<Engine>, Res<Time>) {
-    move |mut engine: NonSendMut<Engine>, time: Res<Time>| {
+pub fn stage(
+    stage: Stage,
+) -> impl FnMut(NonSendMut<Engine>, Res<Time>, crate::queries::QueryAccess) {
+    move |mut engine: NonSendMut<Engine>, time: Res<Time>, queries: crate::queries::QueryAccess| {
         #[cfg(feature = "plugins")]
         {
             if !engine.plugins.active() || !engine.running || engine.plugins.previewing.is_some() {
@@ -848,7 +850,7 @@ pub fn stage(stage: Stage) -> impl FnMut(NonSendMut<Engine>, Res<Time>) {
             let Some(world) = engine.plugins.world.clone() else {
                 return;
             };
-            let outcomes = {
+            let outcomes = queries.scope(engine.contact_ticks, || {
                 let mut world = world.borrow_mut();
                 // What a reporter answered last step may have moved.
                 if matches!(stage, Stage::Input | Stage::Presentation) {
@@ -860,11 +862,11 @@ pub fn stage(stage: Stage) -> impl FnMut(NonSendMut<Engine>, Res<Time>) {
                     outcomes.extend(world.run_jobs(JOB_BUDGET_MS));
                 }
                 outcomes
-            };
+            });
             apply(&mut engine, applied(outcomes));
         }
         #[cfg(not(feature = "plugins"))]
-        let _ = (&mut engine, &time, stage);
+        let _ = (&mut engine, &time, &queries, stage);
     }
 }
 

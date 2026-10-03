@@ -33,6 +33,16 @@ fn half_extents(actor: &Actor, scale: Vec3) -> Vec3 {
     half * scale.abs()
 }
 
+/// Half extents of a body's colliders as (half size, local centre) pairs, scale
+/// included. `None` when it has none.
+fn collider_extents(parts: impl Iterator<Item = (Vec3, Vec3)>, scale: Vec3) -> Option<Vec3> {
+    let scale = scale.abs();
+    parts
+        .map(|(half, at)| (at.abs() * scale) + half)
+        .reduce(Vec3::max)
+        .map(|half| half.max(Vec3::splat(1.0e-3)))
+}
+
 /// What the water does to one body this tick.
 #[derive(Debug, Default, PartialEq)]
 struct Float {
@@ -210,7 +220,7 @@ fn stir(engine: &Engine, state: &mut WaterState, result: &Float, half: Vec3, dt:
 }
 
 macro_rules! float_bodies {
-    ($name:ident, $rp:ident, $mode:expr, $lin:expr, $ang:expr, $com:expr, $apply:expr) => {
+    ($name:ident, $rp:ident, $mode:expr, $lin:expr, $ang:expr, $com:expr, $shape:expr, $apply:expr) => {
         /// Pushes and drags every floating body, and splashes whatever
         /// just went in. Impulses go through rapier's own step.
         #[allow(clippy::too_many_arguments)]
@@ -229,7 +239,9 @@ macro_rules! float_bodies {
                 &mut $rp::prelude::ExternalImpulse,
                 Option<&$rp::prelude::ReadMassProperties>,
                 &$rp::prelude::RigidBody,
+                Option<&Children>,
             )>,
+            colliders: Query<(&$rp::prelude::Collider, &Transform)>,
             mut cache: ResMut<FxCache>,
             mut meshes: ResMut<Assets<Mesh>>,
             mut materials: ResMut<Assets<StandardMaterial>>,
@@ -250,11 +262,21 @@ macro_rules! float_bodies {
                 effects: &mut effects,
                 seed: &mut seed,
             };
-            for (entity, id, pose, mut velocity, mut impulse, mass, kind) in &mut bodies {
+            for (entity, id, pose, mut velocity, mut impulse, mass, kind, children) in &mut bodies {
                 let Some(actor) = engine.actor(&id.0) else {
                     continue;
                 };
-                let half = half_extents(actor, pose.scale);
+                // The body's colliders decide its size, so a body with no Look floats too.
+                let half = collider_extents(
+                    children.into_iter().flatten().filter_map(|child| {
+                        colliders
+                            .get(*child)
+                            .ok()
+                            .map(|(c, t)| (($shape)(c), t.translation))
+                    }),
+                    pose.scale,
+                )
+                .unwrap_or_else(|| half_extents(actor, pose.scale));
                 let linvel: Vec3 = ($lin)(&*velocity);
                 let buoyancy = engine
                     .has_component(&id.0, "Buoyancy")
@@ -319,6 +341,7 @@ float_bodies!(
     |v: &bevy_rapier3d::prelude::Velocity| v.linear,
     |v: &bevy_rapier3d::prelude::Velocity| v.angular,
     |c: Vec3| c,
+    |c: &bevy_rapier3d::prelude::Collider| Vec3::from(c.raw.compute_local_aabb().half_extents()),
     |impulse: &mut bevy_rapier3d::prelude::ExternalImpulse,
      velocity: &mut bevy_rapier3d::prelude::Velocity,
      result: &Float,
@@ -337,6 +360,10 @@ float_bodies!(
     |v: &bevy_rapier2d::prelude::Velocity| v.linear.extend(0.0),
     |v: &bevy_rapier2d::prelude::Velocity| Vec3::Z * v.angular,
     |c: Vec2| c.extend(0.0),
+    |c: &bevy_rapier2d::prelude::Collider| {
+        Vec2::from(c.raw.compute_local_aabb().half_extents()).extend(0.0)
+            * crate::dim2::PIXELS_PER_METER
+    },
     |impulse: &mut bevy_rapier2d::prelude::ExternalImpulse,
      velocity: &mut bevy_rapier2d::prelude::Velocity,
      result: &Float,
@@ -389,6 +416,21 @@ mod tests {
             Vec3::ZERO,
             Vec3::new(0.0, y, 0.0),
         )
+    }
+
+    #[test]
+    fn colliders_size_a_body_with_no_look() {
+        let half = collider_extents(
+            [
+                (Vec3::new(1.0, 0.5, 0.5), Vec3::ZERO),
+                (Vec3::new(0.25, 0.25, 0.25), Vec3::new(2.0, 0.0, 0.0)),
+            ]
+            .into_iter(),
+            Vec3::splat(2.0),
+        )
+        .unwrap();
+        assert_eq!(half, Vec3::new(4.25, 0.5, 0.5));
+        assert!(collider_extents(std::iter::empty(), Vec3::ONE).is_none());
     }
 
     #[test]

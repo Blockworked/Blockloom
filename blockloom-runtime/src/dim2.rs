@@ -36,24 +36,62 @@ pub struct OneWayPlatform;
 pub struct OneWayHooks<'w, 's> {
     platforms: Query<'w, 's, &'static OneWayPlatform>,
     velocities: Query<'w, 's, &'static rp::Velocity>,
+    layers: Res<'w, crate::physics_install::PhysicsLayers>,
+    colliders: Query<'w, 's, &'static crate::physics_install::PlannedCollider>,
+    planned: Query<'w, 's, &'static crate::physics_install::PlannedBody>,
+    time: Res<'w, Time>,
 }
 
 impl rp::BevyPhysicsHooks for OneWayHooks<'_, '_> {
+    fn filter_contact_pair(&self, context: rp::PairFilterContextView) -> Option<rp::SolverFlags> {
+        crate::physics_install::pair_allowed(
+            &self.layers,
+            self.colliders.get(context.collider1()).ok(),
+            self.colliders.get(context.collider2()).ok(),
+        )
+        .then_some(rp::SolverFlags::COMPUTE_RIGID_IMPULSES)
+    }
+
+    fn filter_intersection_pair(&self, context: rp::PairFilterContextView) -> bool {
+        crate::physics_install::pair_allowed(
+            &self.layers,
+            self.colliders.get(context.collider1()).ok(),
+            self.colliders.get(context.collider2()).ok(),
+        )
+    }
+
     fn modify_solver_contacts(&self, mut context: rp::ContactModificationContextView) {
+        let planned = |body: Option<Entity>| body.and_then(|b| self.planned.get(b).ok());
+        if let Some(cap) = crate::physics_install::depenetration_cap(
+            planned(context.rigid_body1()),
+            planned(context.rigid_body2()),
+        ) && cap.is_finite()
+            && let Some(contacts) = context.solver_contacts_mut()
+        {
+            let deepest = -cap * self.time.delta_secs();
+            for contact in contacts.iter_mut() {
+                contact.dist = contact.dist.max(deepest);
+            }
+        }
         let a = context.collider1();
         let b = context.collider2();
         // Two soft surfaces have no manifold normal; a platform is never soft.
         let Some(normal) = context.normal() else {
             return;
         };
-        let (other, up) = if self.platforms.get(a).is_ok() {
-            (b, normal.y)
+        // A collider on its own entity carries the velocity itself; a planned
+        // one hangs off its body.
+        let (other, up, other_body) = if self.platforms.get(a).is_ok() {
+            (b, normal.y, context.rigid_body2())
         } else if self.platforms.get(b).is_ok() {
-            (a, -normal.y)
+            (a, -normal.y, context.rigid_body1())
         } else {
             return;
         };
-        let rising = self.velocities.get(other).is_ok_and(|v| v.linear.y > 0.0);
+        let rising = self
+            .velocities
+            .get(other_body.unwrap_or(other))
+            .is_ok_and(|v| v.linear.y > 0.0);
         if (up < 0.5 || rising)
             && let Some(contacts) = context.solver_contacts_mut()
         {
@@ -973,24 +1011,114 @@ pub fn apply_effects(
     }
 }
 
-/// Turns rapier's contact messages into `when I touch` triggers, and keeps the
-/// `touching?` reporter's answer up to date. Skipped while paused or stopped
-/// so a frozen world doesn't queue new collision strands.
-pub fn relay_collisions(
+/// Closes one fixed tick of contacts: rapier's begin and end reports go to the
+/// tracker, which makes the tick's events for the next one to hear.
+#[allow(clippy::too_many_arguments)]
+pub fn track_contacts(
     mut messages: MessageReader<rp::CollisionEvent>,
     mut engine: NonSendMut<Engine>,
+    planned: Query<&crate::physics_install::PlannedCollider>,
+    bodies: Query<(&rp::RigidBody, Option<&rp::Sleeping>)>,
+    velocities: Query<&rp::Velocity>,
+    disabled: Query<(), With<rp::ColliderDisabled>>,
+    context: rp::ReadRapierContext,
 ) {
     if !engine.running || engine.paused {
         messages.clear();
         return;
     }
-    for message in messages.read() {
-        let (a, b, started) = match message {
-            rp::CollisionEvent::Started(a, b, _) => (*a, *b, true),
-            rp::CollisionEvent::Stopped(a, b, _) => (*a, *b, false),
+    let who = |engine: &Engine, entity: Entity| {
+        // A planned collider is its own entity; the touch is its actor's.
+        let planned_collider = planned.get(entity).ok();
+        let owner = match planned_collider {
+            Some(shape) => engine.entities.get(&shape.actor).copied()?,
+            None => entity,
         };
-        crate::world::note_contact(&mut engine, a, b, started);
-    }
+        Some(crate::contacts::Who {
+            owner,
+            planned: planned_collider.cloned(),
+            moving: bodies
+                .get(owner)
+                .is_ok_and(|(body, _)| !matches!(body, rp::RigidBody::Fixed)),
+            disabled: disabled.contains(entity),
+        })
+    };
+    let seen: Vec<_> = messages
+        .read()
+        .map(|message| match message {
+            rp::CollisionEvent::Started(a, b, flags) => crate::contacts::Seen {
+                a: *a,
+                b: *b,
+                started: true,
+                sensor: flags
+                    .contains(bevy_rapier2d::rapier::geometry::CollisionEventFlags::SENSOR),
+                removed: false,
+            },
+            rp::CollisionEvent::Stopped(a, b, flags) => crate::contacts::Seen {
+                a: *a,
+                b: *b,
+                started: false,
+                sensor: flags
+                    .contains(bevy_rapier2d::rapier::geometry::CollisionEventFlags::SENSOR),
+                removed: flags
+                    .contains(bevy_rapier2d::rapier::geometry::CollisionEventFlags::REMOVED),
+            },
+        })
+        .collect();
+    let rapier = context.single().ok();
+    let payload = |a: Entity, b: Entity| -> Option<blockloom_core::physics::ContactPayload> {
+        let rapier = rapier.as_ref()?;
+        let pair = rapier
+            .simulation
+            .contact_pair(rapier.colliders, rapier.rigidbody_set, a, b)?;
+        let mut out = blockloom_core::physics::ContactPayload::default();
+        let mut speed = Vec2::ZERO;
+        for manifold in pair.manifolds() {
+            let n = manifold.normal();
+            out.normal = [n.x, n.y, 0.0];
+            for point in manifold.solver_contacts() {
+                let p = point.point();
+                out.points.push(blockloom_core::physics::ContactPoint {
+                    point: [p.x, p.y, 0.0],
+                    separation: point.dist(),
+                });
+            }
+            for point in manifold.points() {
+                out.impulse += point.impulse();
+            }
+            let velocity = |body: Option<Entity>| {
+                body.and_then(|e| velocities.get(e).ok())
+                    .map_or(Vec2::ZERO, |v| v.linear)
+            };
+            speed = velocity(manifold.rigid_body2()) - velocity(manifold.rigid_body1());
+        }
+        out.relative_velocity = [speed.x, speed.y, 0.0];
+        Some(out)
+    };
+    let refresh = match &rapier {
+        Some(rapier) => rapier
+            .simulation
+            .contact_pairs(rapier.colliders, rapier.rigidbody_set)
+            .filter(|pair| pair.has_any_active_contact())
+            .filter_map(|pair| {
+                let (a, b) = (pair.collider1()?, pair.collider2()?);
+                Some((a, b, payload(a, b)?))
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    let awake = |engine: &Engine, endpoint: &blockloom_core::physics::Endpoint| {
+        endpoint
+            .body
+            .as_ref()
+            .and_then(|actor| engine.entities.get(actor))
+            .is_some_and(|entity| {
+                bodies
+                    .get(*entity)
+                    .is_ok_and(|(_, sleeping)| !sleeping.is_some_and(|s| s.sleeping))
+            })
+    };
+    crate::contacts::track(&mut engine, &seen, who, payload, refresh, awake);
 }
 
 /// Freezes the physics pipeline while paused or stopped so bodies stop falling
@@ -1075,6 +1203,7 @@ mod tests {
         app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
             Duration::from_secs_f32(1.0 / 60.0),
         ));
+        app.init_resource::<crate::physics_install::PhysicsLayers>();
         app.add_plugins(rp::RapierPhysicsPlugin::<OneWayHooks>::default());
         app.world_mut().spawn((
             rp::RigidBody::Fixed,

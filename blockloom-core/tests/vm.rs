@@ -5,6 +5,7 @@ use blockloom_core::blocks::{
     BlockDef, BlockPiece, BlockShape, DictDef, DictEntry, DictItem, Instruction, InstructionKind,
     ListDef, ListItem, Strand,
 };
+use blockloom_core::physics::{ContactKind, ContactPhase};
 use blockloom_core::project::{Actor, Project, Scene};
 use blockloom_core::scene::{Axis, Mode, Visual};
 use blockloom_core::sense::Sensors;
@@ -45,6 +46,7 @@ fn project_with(strands: Vec<Strand>) -> Project {
         global_lists: Vec::new(),
         global_dicts: Vec::new(),
         plugin_resources: Vec::new(),
+        physics: Default::default(),
     }
 }
 
@@ -770,6 +772,8 @@ fn a_collision_only_starts_the_strand_whose_target_matches() {
         vec![
             ins(InstructionKind::WhenCollision {
                 with: "Ground".to_string(),
+                phase: Default::default(),
+                scope: Default::default(),
             }),
             ins(say("landed")),
         ],
@@ -781,11 +785,28 @@ fn a_collision_only_starts_the_strand_whose_target_matches() {
     vm.vm.fire(Event::Collision {
         actor: player.clone(),
         with: wall,
+        phase: Default::default(),
+        kind: ContactKind::Collision,
+        impulse: 0.0,
+        speed: 0.0,
     });
     assert!(says(&vm.run(1)).is_empty());
     vm.vm.fire(Event::Collision {
+        actor: player.clone(),
+        with: ground.clone(),
+        phase: ContactPhase::Stay,
+        kind: ContactKind::Collision,
+        impulse: 0.0,
+        speed: 0.0,
+    });
+    assert!(says(&vm.run(1)).is_empty(), "the hat listens to Enter");
+    vm.vm.fire(Event::Collision {
         actor: player,
         with: ground,
+        phase: ContactPhase::Enter,
+        kind: ContactKind::Collision,
+        impulse: 0.0,
+        speed: 0.0,
     });
     assert_eq!(says(&vm.run(1)), vec!["landed".to_string()]);
 }
@@ -912,6 +933,7 @@ fn project_with_two(first: Vec<Strand>, second: Vec<Strand>) -> Project {
         global_lists: Vec::new(),
         global_dicts: Vec::new(),
         plugin_resources: Vec::new(),
+        physics: Default::default(),
     }
 }
 
@@ -2407,6 +2429,260 @@ fn a_plugin_block_asks_the_editor_to_run_its_command_with_its_slots() {
             serde_json::json!(false),
         ],
     }));
+}
+
+/// One wall at the end of every query, standing in for a physics world.
+struct Wall;
+
+impl blockloom_core::physics::query::QueryService for Wall {
+    fn run(
+        &self,
+        request: &blockloom_core::physics::query::QueryRequest,
+        _: &blockloom_core::physics::query::QueryFilter,
+        limit: usize,
+    ) -> blockloom_core::physics::query::QueryOutcome {
+        use blockloom_core::physics::query::{QueryHit, QueryOutcome, QueryRequest};
+        let point = match request {
+            QueryRequest::Ray { to, .. } | QueryRequest::Cast { to, .. } => *to,
+            QueryRequest::Overlap { at, .. } => *at,
+            QueryRequest::Closest { point, .. } => *point,
+        };
+        let hit = QueryHit {
+            actor: "wall".into(),
+            body: None,
+            collider: "wall:0".into(),
+            subshape: 0,
+            point,
+            normal: [0.0, 1.0, 0.0],
+            distance: point[0],
+            fraction: 1.0,
+            started_inside: false,
+            trigger: false,
+        };
+        QueryOutcome::finish(vec![hit], limit)
+    }
+}
+
+#[test]
+fn a_cast_block_files_its_answer_for_the_hit_reporters() {
+    use blockloom_core::physics::query::{self, RayHits, TriggerPolicy};
+    let project = project_with(vec![started(vec![
+        InstructionKind::CastRay {
+            hits: RayHits::Nearest,
+            triggers: TriggerPolicy::UseGlobal,
+            from_x: Value::number(0.0),
+            from_y: Value::number(0.0),
+            from_z: Value::number(0.0),
+            to_x: Value::number(6.0),
+            to_y: Value::number(1.0),
+            to_z: Value::number(0.0),
+        },
+        InstructionKind::Say {
+            text: Value::op(
+                Op::from_name("QueryNumber"),
+                vec![Value::number(1.0), Value::text("distance")],
+            ),
+        },
+        InstructionKind::Say {
+            text: Value::op(
+                Op::from_name("QueryText"),
+                vec![Value::number(1.0), Value::text("actor")],
+            ),
+        },
+        InstructionKind::Say {
+            text: Value::op(
+                Op::from_name("QueryNumber"),
+                vec![Value::number(2.0), Value::text("distance")],
+            ),
+        },
+    ])]);
+    query::reset();
+    let effects = query::with_service(&Wall, 0, || Harness::started(&project).run(1));
+    let said: Vec<_> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Say { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    // The second hit does not exist, which reads as zero rather than an error.
+    assert_eq!(said, ["6", "wall", "0"]);
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::PhysicsQuery { kind, hits: 1, .. } if kind == "ray"
+    )));
+}
+
+#[test]
+fn a_controller_block_with_no_controller_reports_why_and_reads_as_nothing() {
+    use blockloom_core::physics::controller::{self, ControllerProperty, MoveMode};
+    let project = project_with(vec![started(vec![
+        InstructionKind::ControllerMove {
+            mode: MoveMode::Simple,
+            x: Value::number(1.0),
+            y: Value::number(0.0),
+            z: Value::number(0.0),
+        },
+        InstructionKind::SetController {
+            property: ControllerProperty::Radius,
+            value: Value::number(0.4),
+        },
+        InstructionKind::Say {
+            text: Value::op(
+                Op::from_name("ControllerNumber"),
+                vec![Value::number(0.0), Value::text("grounded")],
+            ),
+        },
+    ])]);
+    controller::reset();
+    let effects = Harness::started(&project).run(1);
+    let errors = effects
+        .iter()
+        .filter(|effect| matches!(effect, Effect::Error { .. }))
+        .count();
+    assert_eq!(errors, 2, "both statements say there is nothing to move");
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::Say { text, .. } if text == "0"
+    )));
+}
+
+#[test]
+fn motor_blocks_steer_set_and_read_the_actors_motor() {
+    use blockloom_core::physics::motor::{self, CharacterMotorSpec, MotorAction, MotorProperty};
+    let project = project_with(vec![started(vec![
+        InstructionKind::MotorAct {
+            action: MotorAction::Intent,
+            x: Value::number(1.0),
+            y: Value::number(0.0),
+            z: Value::number(0.0),
+        },
+        InstructionKind::SetMotor {
+            property: MotorProperty::WalkSpeed,
+            value: Value::number(7.0),
+        },
+        InstructionKind::Say {
+            text: Value::op(
+                Op::from_name("MotorNumber"),
+                vec![Value::text("walk speed")],
+            ),
+        },
+        InstructionKind::SetMotor {
+            property: MotorProperty::AirControl,
+            value: Value::number(9.0),
+        },
+    ])]);
+    let id = project.active_scene().actors[0].id.clone();
+    motor::reset();
+    motor::register(&id, CharacterMotorSpec::default());
+    let effects = Harness::started(&project).run(1);
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::Say { text, .. } if text == "7"
+    )));
+    let errors = effects
+        .iter()
+        .filter(|effect| matches!(effect, Effect::Error { .. }))
+        .count();
+    assert_eq!(errors, 1, "an air control past 1 is refused: {effects:?}");
+    assert_eq!(motor::spec_of(&id).unwrap().walk_speed, 7.0);
+    motor::reset();
+}
+
+#[test]
+fn joint_blocks_command_a_named_constraint_and_read_it_back() {
+    use blockloom_core::physics::joints::{
+        self, ConstraintKind, ConstraintPlan, ConstraintSpec, JointStatus, JointVerb,
+        resolve_frames,
+    };
+    use blockloom_core::scene::Mode;
+    let project = project_with(vec![started(vec![
+        InstructionKind::JointAct {
+            action: JointVerb::MotorSpeed,
+            joint: "Axle".to_string(),
+            value: Value::number(45.0),
+        },
+        InstructionKind::JointAct {
+            action: JointVerb::Break,
+            joint: "nope".to_string(),
+            value: Value::number(0.0),
+        },
+        InstructionKind::Say {
+            text: Value::op(
+                Op::from_name("JointNumber"),
+                vec![Value::text("angle"), Value::text("axle")],
+            ),
+        },
+    ])]);
+    let id = project.active_scene().actors[0].id.clone();
+    let mut spec = ConstraintSpec::of(ConstraintKind::Hinge, Mode::ThreeD);
+    spec.name = "Axle".to_string();
+    let frames = resolve_frames(&spec, &glam::Mat4::IDENTITY, None);
+    joints::register_plan(&[ConstraintPlan {
+        actor: id.clone(),
+        target: None,
+        handle: "Axle".to_string(),
+        spec,
+        frames,
+    }]);
+    joints::publish(
+        &id,
+        "Axle",
+        JointStatus {
+            enabled: true,
+            position: 30.0,
+            ..Default::default()
+        },
+    );
+    let effects = Harness::started(&project).run(1);
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::Say { text, .. } if text == "30"
+    )));
+    let errors = effects
+        .iter()
+        .filter(|effect| matches!(effect, Effect::Error { .. }))
+        .count();
+    assert_eq!(
+        errors, 1,
+        "a joint that isn't there is an error: {effects:?}"
+    );
+    let queued = joints::take_commands();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].verb, JointVerb::MotorSpeed);
+    assert_eq!(queued[0].value, 45.0);
+    joints::reset();
+}
+
+#[test]
+fn a_query_with_no_world_reports_why_and_reads_as_a_miss() {
+    use blockloom_core::physics::query::{self, TriggerPolicy};
+    let project = project_with(vec![started(vec![
+        InstructionKind::OverlapBall {
+            triggers: TriggerPolicy::UseGlobal,
+            radius: Value::number(-1.0),
+            x: Value::number(0.0),
+            y: Value::number(0.0),
+            z: Value::number(0.0),
+        },
+        InstructionKind::Say {
+            text: Value::op(
+                Op::from_name("QueryNumber"),
+                vec![Value::number(1.0), Value::text("count")],
+            ),
+        },
+    ])]);
+    query::reset();
+    let effects = Harness::started(&project).run(1);
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Error { .. }))
+    );
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::Say { text, .. } if text == "0"
+    )));
 }
 
 fn when_plugin(event: &str, args: &[&str]) -> Instruction {
