@@ -237,6 +237,21 @@ uploads those bytes as an image. Elsewhere it is a child process.
   explicit one. Unity values come from Unity's documentation, not an editor. CI
   runs it with the rest of the workspace; `cargo test -p blockloom-physics-probes
   -- --nocapture` prints the quoted numbers.
+- **`blockloom-net`** - native multiplayer transport (Phase 0 of
+  `docs/multiplayer-and-embedded-server-plan.md`, findings in
+  `docs/multiplayer-phase0.md`). Quiche over a nonblocking UDP socket, driven
+  by `poll()` from one thread, carrying opaque bytes: `Server` and `Client`
+  with ALPN `blockloom-game/1`, a self-signed in-memory `Identity` pinned by
+  its SHA-256 `Fingerprint` (a BoringSSL custom verify callback, never a
+  disabled check), stateless Retry address validation, reliable streams with a
+  4 MiB per-peer queue cap (`QueueFull`), datagrams, a peer cap and `kick`.
+  `Impairment` (loss, duplication, delay, jitter, seeded) wraps the send path
+  for tests, and Quiche's pacing times are honoured there. Server connection
+  IDs must be full length (a short header does not carry one). Nothing depends
+  on it yet and it cannot build for wasm32 (BoringSSL), so keep it out of the
+  web and Android runtimes. `cargo test -p blockloom-net`; the RTT/loss matrix
+  is `cargo test -p blockloom-net --test loopback -- --ignored --nocapture
+  matrix`.
 - **`blockstitch-core`** (sibling repo, see above) - the shared block-editor
   backend. `value` is the `Value`/`Op` expression system, extended by an app
   through `register_operators` (Blockloom registers its sensing reporters in
@@ -2458,6 +2473,37 @@ The VM holds `Rc`s, so it is a `!Send` Bevy resource - which is exactly right:
 every system touching it is therefore scheduled on the main thread, the same
 thread the thread-local sensor snapshot lives on. Keep it that way.
 
+### Simulation and presentation registration
+
+`blockloom-runtime/src/simulation.rs` is the half of `add_world` that a server
+could register alone: `add_simulation` inserts the engine, `Dimension`,
+`PendingEffects`, the nav mesh, both Rapier pipelines (in the fixed schedule,
+with the collision hooks), motors, controllers, constraints and the whole
+fixed-step simulation chain, plus `FixedPostUpdate`'s parenting, pose recording
+and contact tracking. The physics debug renderer stays with presentation. Each fixed-step simulation
+system sits in a `SimStep` set and the sets are chained in the order the old
+single chain ran. The systems that used to sit inside that chain but present
+something (interface bindings and effects, exposure, HDR, lights, ray tracing,
+fx, sound, input effects) are registered by `add_world` in lib.rs and order
+themselves `.after`/`.before` the steps they used to sit between, so the order
+is unchanged. A new simulation system is a `SimStep` member; a new
+presentation system that reads an effect goes between two steps in lib.rs.
+
+Still interleaved, and the next extraction: the `Update` chain (`pump_editor`,
+`rebuild_world`, `gather_volumes`/`blend_environment`, `publish_sensors`) and
+`rebuild_world`/`apply_lifetimes` themselves, which spawn meshes and materials
+next to the entities. The sim systems therefore still take the asset stores
+(`AssetServer`, `Assets<Mesh>`, `Assets<StandardMaterial>`, ...) as required
+parameters. The tests in `simulation.rs` supply them as plain CPU-side asset
+collections over `MinimalPlugins`, which is the headless footing: a 2D and a 3D
+project step on the fixed clock with no window or device, the same project steps
+to the same place on every run, and a project compiled to native logic steps to
+the same place as the VM.
+
+`volumes::VolumeEye` says where volumes are weighed: the world camera (the
+default), a named actor or a point, so a world with no camera blends the same
+atmosphere for `sample_atmosphere`.
+
 ### Per-frame cost
 
 `publish_sensors` rebuilds the snapshot every frame, so it is the first thing
@@ -2769,6 +2815,13 @@ on a frozen menu still blinks. A `pause game` in a world strand stops that
 strand where it stands, the way `delete myself` does; in a UI strand it
 doesn't. `world::set_paused` is the one place that flips it, whether the
 editor's Pause button or the block asked.
+
+The wall clock is real time: `Engine::wall_time` counts `Time<Real>` seconds
+from `begin_run`'s `wall_started_at`, so a pause, a game speed below 1 or a
+stalled frame doesn't slow or rewind it (it used to be the fixed clock minus the
+run start, which jumped back by the paused span on resume). Run clocks read
+`elapsed_secs_f64`, since the `f32` form loses about a quarter millisecond an
+hour in.
 
 Pointer lock is fully manual: game code unlocks around a menu and re-locks on
 close. In the Game view the editor holds it on the world's behalf (see Game

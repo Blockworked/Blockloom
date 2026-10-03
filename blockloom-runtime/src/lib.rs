@@ -86,6 +86,7 @@ mod queries;
 mod ray_tracing;
 mod script;
 mod shadows;
+mod simulation;
 mod sky;
 #[cfg(feature = "ray_tracing")]
 mod solari_patch;
@@ -117,8 +118,9 @@ use bevy::window::WindowResolution;
 use blockloom_core::scene::Mode;
 use blockloom_plugin_api::schema::Stage;
 use blockloom_protocol::{GAME_SIZE, PROTOCOL_VERSION, RuntimeMessage};
-use engine::{Dimension, PendingEffects};
+use engine::Dimension;
 use player::Launch;
+use simulation::SimStep;
 
 /// True while the live world is 2D: what gates the 2D simulation chain when
 /// both dimensions' pipelines are registered for live cross-dimension switches.
@@ -284,11 +286,10 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // in the surface code, so it must not quit the run like other errors.
     display::install_render_error_handler(app);
     app.add_plugins((RenderDiagnosticsPlugin, MeshAllocatorDiagnosticPlugin));
+    // The simulation first: its resources and the engine, which the
+    // presentation systems below reach as a `NonSend` too.
+    simulation::add_simulation(app, mode, engine);
     app.insert_resource(ClearColor(Color::srgb(0.11, 0.14, 0.19)))
-        .insert_resource(Dimension(mode))
-        .init_resource::<PendingEffects>()
-        .init_resource::<world::NavMesh>()
-        .init_resource::<player_camera::BodyFacing>()
         .init_resource::<ui::UiManager>()
         .init_resource::<ui_design::DesignSession>()
         .init_resource::<ui::DeviceInsets>()
@@ -300,10 +301,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         .init_resource::<preview::PreviewPointer>()
         .init_resource::<preview::PreviewButtons>()
         .init_resource::<preview::PreviewKeys>()
-        .init_resource::<preview::PreviewTouches>()
-        .insert_non_send(engine);
+        .init_resource::<preview::PreviewTouches>();
     environment::register(app);
-    atmosphere::register(app);
     volumes::register(app);
     volume_heat::register(app);
     streaming::register(app);
@@ -385,14 +384,6 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // still panics at schedule init. Only dimension-specific pairs run side
     // by side (each no-ops on the other side); the rest is gated per system
     // with `is_2d`/`is_3d` where it must not run out of dimension.
-    app.insert_resource(bevy_rapier2d::prelude::TimestepMode::Fixed {
-        dt: 1.0 / 60.0,
-        substeps: 1,
-    });
-    app.insert_resource(bevy_rapier3d::prelude::TimestepMode::Fixed {
-        dt: 1.0 / 60.0,
-        substeps: 1,
-    });
     app.insert_resource(bevy::audio::DefaultSpatialScale(if mode.is_3d() {
         bevy::audio::SpatialScale::default()
     } else {
@@ -400,17 +391,6 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     }));
     app.init_resource::<model::ModelCache>();
     app.init_resource::<lights::LightMasks>();
-    app.init_resource::<physics_install::PhysicsLayers>();
-    app.add_plugins(
-        bevy_rapier2d::prelude::RapierPhysicsPlugin::<dim2::OneWayHooks>::pixels_per_meter(
-            dim2::PIXELS_PER_METER,
-        )
-        .in_fixed_schedule(),
-    );
-    app.add_plugins(
-        bevy_rapier3d::prelude::RapierPhysicsPlugin::<physics_install::d3::Hooks3>::default()
-            .in_fixed_schedule(),
-    );
     // Physics Debug view: Rapier's gizmo renderer, off until the scene view asks.
     app.add_plugins(bevy_rapier2d::render::RapierDebugRenderPlugin::default().disabled());
     app.add_plugins(bevy_rapier3d::render::RapierDebugRenderPlugin::default().disabled());
@@ -504,84 +484,44 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 .after(bevy::ui::UiSystems::PostLayout)
                 .after(bevy::ui::UiSystems::Stack),
         );
-        // ── Simulation (FixedUpdate), shared once ──
+        // The fixed step's simulation is `simulation::add_simulation`; these
+        // are the presentation systems that ran inside it, each ordered
+        // between the `SimStep`s it used to sit between.
         app.add_systems(
             FixedUpdate,
             (
-                (dim2::sync_pause, dim3::sync_pause).chain(),
-                (dim2::sync_timestep, dim3::sync_timestep).chain(),
-                (world::restore_poses, atmosphere::sample_atmosphere).chain(),
+                ui_systems::bindings
+                    .run_if(ui_design::inactive)
+                    .after(SimStep::PluginPreSimulation)
+                    .before(SimStep::Vm),
+                overlay::apply_ui_effects
+                    .after(SimStep::PluginFixed)
+                    .before(SimStep::SavedData),
+                (environment::apply_exposure_effects, hdr::apply_hdr_effects)
+                    .chain()
+                    .after(SimStep::Common)
+                    .before(SimStep::VolumeEffects),
                 (
-                    plugins::stage(Stage::Input),
-                    plugins::stage(Stage::PreSimulation),
-                    (
-                        ui_systems::bindings.run_if(ui_design::inactive),
-                        world::step_vm,
-                    )
-                        .chain(),
-                    (world::step_scripts, ai::tick).chain(),
-                    plugins::stage(Stage::FixedSimulation),
-                )
-                    .chain(),
-                overlay::apply_ui_effects,
-                world::apply_saved_data,
-                (world::apply_lifetimes, world::sync_navmesh).chain(),
-                (
-                    motor::drive_motors,
-                    controller::apply_motion,
-                    world::apply_common,
-                    environment::apply_exposure_effects,
-                    hdr::apply_hdr_effects,
-                    volumes::apply_volume_effects,
-                )
-                    .chain(),
-                (
-                    dim2::apply_effects,
-                    dim3::apply_effects,
-                    physics_install::d2::apply_forces.run_if(is_2d),
-                    physics_install::d3::apply_forces.run_if(is_3d),
-                )
-                    .chain(),
-                (
-                    world::apply_component_effects,
                     lights::apply_light_effects.run_if(is_3d),
                     ray_tracing::apply_ray_tracing_effects.run_if(is_3d),
                 )
-                    .chain(),
-                plugins::stage(Stage::EffectApplication),
-                (dim2::sync_joints, dim3::sync_joints).chain(),
-                fx::apply_fx_effects,
-                sound::apply_sound_effects,
-                (
-                    world::step_glides,
-                    world::step_tweens,
-                    anim2d::apply_animation_effects,
-                    anim2d::step_animations,
-                )
-                    .chain(),
+                    .chain()
+                    .after(SimStep::ComponentEffects)
+                    .before(SimStep::PluginEffects),
+                (fx::apply_fx_effects, sound::apply_sound_effects)
+                    .chain()
+                    .after(SimStep::Joints)
+                    .before(SimStep::Animation),
                 (
                     world::apply_input_effects,
                     world::apply_rumble,
                     world::apply_cursor_lock,
                 )
-                    .chain(),
-                world::clear_effects,
-                world::finish_step,
+                    .chain()
+                    .after(SimStep::Animation)
+                    .before(SimStep::ClearEffects),
             )
-                .chain()
                 .in_set(world::SimulationSet),
-        )
-        .add_systems(
-            FixedPostUpdate,
-            (
-                plugins::stage(Stage::PostPhysics),
-                world::apply_parenting,
-                dim2::record_poses,
-                dim3::record_poses,
-                dim2::track_contacts.run_if(is_2d),
-                dim3::track_contacts.run_if(is_3d),
-            )
-                .chain(),
         )
         .add_systems(
             Update,
@@ -650,34 +590,6 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .chain(),
             )
                 .chain(),
-        )
-        .add_systems(
-            FixedUpdate,
-            (
-                physics_install::d2::clamp_velocities.run_if(is_2d),
-                physics_install::d3::clamp_velocities.run_if(is_3d),
-                physics_install::d2::refresh_masses.run_if(is_2d),
-                physics_install::d3::refresh_masses.run_if(is_3d),
-            )
-                .before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend)
-                .before(bevy_rapier3d::prelude::PhysicsSet::SyncBackend),
-        )
-        .add_systems(
-            FixedUpdate,
-            (
-                constraints::d2::drive.run_if(is_2d),
-                constraints::d3::drive.run_if(is_3d),
-            )
-                .after(bevy_rapier2d::prelude::PhysicsSet::Writeback)
-                .after(bevy_rapier3d::prelude::PhysicsSet::Writeback),
-        )
-        .configure_sets(
-            FixedUpdate,
-            world::SimulationSet.before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend),
-        )
-        .configure_sets(
-            FixedUpdate,
-            world::SimulationSet.before(bevy_rapier3d::prelude::PhysicsSet::SyncBackend),
         )
         // Rigs and sprite dials draw after the camera settles, so Y-sort
         // measures from where it ended up.

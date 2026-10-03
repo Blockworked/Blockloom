@@ -283,6 +283,7 @@ pub fn pump_editor(
     mut captures: Option<ResMut<crate::capture::ExrCaptures>>,
     mut bakes: Option<ResMut<crate::light_probes::ProbeBaker>>,
     time: Res<Time>,
+    real: Res<Time<Real>>,
     mut fixed: ResMut<Time<Fixed>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -292,7 +293,7 @@ pub fn pump_editor(
     if rate.is_finite() {
         fixed.set_timestep_hz(rate.clamp(1.0, 1000.0) as f64);
     }
-    let now = time.elapsed_secs() as f64;
+    let now = time.elapsed_secs_f64();
     loop {
         let message = match engine.incoming.try_recv() {
             Ok(message) => message,
@@ -395,7 +396,7 @@ pub fn pump_editor(
                     engine.running = false;
                     engine.starting = true;
                 } else {
-                    begin_run(&mut engine, now);
+                    begin_run(&mut engine, now, real.elapsed_secs_f64());
                 }
             }
             EditorMessage::Stop => {
@@ -513,10 +514,11 @@ pub fn end_run(engine: &mut Engine, manager: &mut crate::ui::UiManager) {
 }
 
 /// Presses the green flag: the run's clock starts now.
-pub fn begin_run(engine: &mut Engine, now: f64) {
+pub fn begin_run(engine: &mut Engine, now: f64, real_now: f64) {
     engine.starting = false;
     engine.running = true;
     engine.started_at = now;
+    engine.wall_started_at = real_now;
     crate::plugins::begin(engine);
     engine.fire(Event::Started);
 }
@@ -644,7 +646,7 @@ pub fn finish_step(mut engine: NonSendMut<Engine>, time: Res<Time>) {
     }
     engine.pause_after_tick = false;
     if engine.running && !engine.paused {
-        set_paused(&mut engine, true, time.elapsed_secs() as f64);
+        set_paused(&mut engine, true, time.elapsed_secs_f64());
     }
 }
 
@@ -1287,7 +1289,7 @@ fn attach_camera(commands: &mut Commands, actor: &Actor, entity: Entity) {
 pub fn publish_sensors(
     mut engine: NonSendMut<Engine>,
     manager: Res<crate::ui::UiManager>,
-    time: Res<Time>,
+    time: (Res<Time>, Res<Time<Real>>),
     dimension: Res<Dimension>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -1317,7 +1319,8 @@ pub fn publish_sensors(
     ),
     preview_pointer: Option<ResMut<crate::preview::PreviewPointer>>,
 ) {
-    let now = time.elapsed_secs() as f64;
+    let (time, real) = time;
+    let now = time.elapsed_secs_f64();
     let held: HashSet<String> = keys.get_pressed().filter_map(key_name).collect();
     // OS-confirmed focus, not the component: `Window::focused` defaults to
     // true and winit only reports changes, so a game opened behind the
@@ -1605,7 +1608,7 @@ pub fn publish_sensors(
         time: engine.run_time(now),
         // Never frozen: what a strand the interface started reads, so a
         // clock on a pause menu keeps ticking.
-        wall_time: (now - engine.started_at).max(0.0),
+        wall_time: engine.wall_time(real.elapsed_secs_f64()),
         paused: engine.paused,
         keys: keys_live,
         mouse,
@@ -2219,6 +2222,7 @@ pub fn actor_top(actor: &Actor, transform: &Transform, mode: Mode) -> Vec3 {
 pub fn step_vm(
     mut engine: NonSendMut<Engine>,
     time: Res<Time>,
+    real: Res<Time<Real>>,
     mut effects: ResMut<PendingEffects>,
     transforms: Query<&Transform, With<ActorId>>,
     queries: crate::queries::QueryAccess,
@@ -2250,9 +2254,9 @@ pub fn step_vm(
         }
     }
     deliver_contacts(&mut engine);
-    let elapsed = time.elapsed_secs() as f64;
+    let elapsed = time.elapsed_secs_f64();
     let now = engine.run_time(elapsed);
-    let wall = (elapsed - engine.started_at).max(0.0);
+    let wall = engine.wall_time(real.elapsed_secs_f64());
     let mut produced = Vec::new();
     let mut messages = Vec::new();
     let tick = engine.contact_ticks;
@@ -4040,7 +4044,7 @@ pub fn report_status(
     ),
     actors: Query<(&ActorId, &Transform, &Visibility)>,
 ) {
-    let now = time.elapsed_secs() as f64;
+    let now = time.elapsed_secs_f64();
     if now < engine.next_report {
         return;
     }
@@ -5010,6 +5014,7 @@ mod tests {
         app.insert_resource(Time::<Fixed>::from_hz(60.0));
         app.init_resource::<PendingEffects>();
         app.init_resource::<crate::ui::UiManager>();
+        app.init_resource::<Time<Real>>();
         app.insert_non_send(engine);
         app.add_systems(Update, pump_editor);
         app.update();
@@ -5035,6 +5040,65 @@ mod tests {
         assert!(!engine.paused);
         assert_eq!(engine.run_time(25.0), 5.0);
         assert_eq!(engine.run_time(30.0), 10.0);
+    }
+
+    #[test]
+    fn the_wall_clock_runs_through_a_pause_while_the_run_timer_freezes() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        begin_run(&mut engine, 10.0, 100.0);
+
+        set_paused(&mut engine, true, 15.0);
+        assert_eq!(engine.run_time(20.0), 5.0);
+        assert_eq!(engine.wall_time(120.0), 20.0);
+
+        // Resuming shifts the run timer, never the wall clock.
+        set_paused(&mut engine, false, 25.0);
+        assert_eq!(engine.run_time(30.0), 10.0);
+        assert_eq!(engine.wall_time(130.0), 30.0);
+        assert!(engine.wall_time(130.0) > engine.wall_time(120.0));
+    }
+
+    #[test]
+    fn the_wall_clock_ignores_game_speed_and_before_the_run_is_zero() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        begin_run(&mut engine, 0.0, 50.0);
+        assert_eq!(engine.wall_time(40.0), 0.0);
+        // 10 game seconds elapsed over 20 real ones (half speed).
+        assert_eq!(engine.run_time(10.0), 10.0);
+        assert_eq!(engine.wall_time(70.0), 20.0);
+    }
+
+    #[test]
+    fn step_vm_hands_the_scheduler_real_time_as_the_wall_clock() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.running = true;
+        let mut app = fixed_step_app(engine);
+        app.init_resource::<Time<Real>>();
+        // Slow the game to a quarter: virtual and fixed time lag real time.
+        app.world_mut()
+            .resource_mut::<Time<Virtual>>()
+            .set_relative_speed(0.25);
+        // A quarter-speed clock steps the fixed schedule only on some frames:
+        // each step must see the real time of its own frame.
+        let mut seen = Vec::new();
+        for _ in 0..24 {
+            app.update();
+            let wall = app.world().non_send::<Engine>().vm.wall();
+            let real = app.world().resource::<Time<Real>>().elapsed_secs_f64();
+            if seen.last().is_none_or(|&(w, _)| w != wall) {
+                seen.push((wall, real));
+            }
+        }
+        assert!(seen.len() >= 3, "stepped {} times", seen.len());
+        for (wall, real) in seen {
+            assert!((wall - real).abs() < 1e-9, "wall {wall} vs real {real}");
+        }
+        let real = app.world().resource::<Time<Real>>().elapsed_secs_f64();
+        let fixed = app.world().resource::<Time<Fixed>>().elapsed_secs_f64();
+        assert!(fixed < real * 0.5);
     }
 
     #[test]
@@ -5116,6 +5180,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(Time::<()>::default());
         app.insert_resource(Time::<Fixed>::from_hz(60.0));
+        app.init_resource::<Time<Real>>();
         app.init_resource::<PendingEffects>();
         app.init_resource::<crate::ui::UiManager>();
         app.insert_non_send(engine);
@@ -5532,6 +5597,7 @@ mod tests {
                     focused,
                 });
         }
+        app.init_resource::<Time<Real>>();
         app.add_systems(Update, publish_sensors);
         app.update();
 
@@ -6846,6 +6912,7 @@ mod tests {
             Vec2::new(100.0, 100.0),
             Vec2::new(90.0, 20.0),
         );
+        app.init_resource::<Time<Real>>();
         app.add_systems(Update, (detect_clicks, publish_sensors).chain());
         app.update();
 
@@ -7355,6 +7422,7 @@ mod tests {
         app.init_resource::<bevy::input::touch::Touches>();
         app.insert_non_send(engine);
         app.world_mut().spawn((Window::default(), PrimaryWindow));
+        app.init_resource::<Time<Real>>();
         app.add_systems(Update, publish_sensors);
 
         app.update();
@@ -7408,6 +7476,7 @@ mod tests {
         }
         app.insert_non_send(engine);
         app.world_mut().spawn((Window::default(), PrimaryWindow));
+        app.init_resource::<Time<Real>>();
         app.add_systems(Update, publish_sensors);
         app
     }

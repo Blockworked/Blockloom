@@ -1497,7 +1497,17 @@ Phased by dependency and value per cost. Each phase unblocks the next.
       Rust std plus winit plus Bevy unblock upstream.
 
 ### Phase 7 - Scale and ecosystem, do last
-- [ ] Multiplayer: headless server, replication, lobbies, rollback.
+- [ ] Multiplayer: headless server, replication, lobbies, rollback (`docs/multiplayer-and-embedded-server-plan.md`):
+    - [x] Phase 0, transport spike: `blockloom-net` (Quiche, pinned self-signed identity, Retry, streams, datagrams, seeded loss/delay harness) and the findings in `docs/multiplayer-phase0.md` (extraction inventory, reporter domains, clock facts, decisions needed).
+    - [x] `tokio-quiche` spike (dev-only test): works, not adopted; raw `poll()` driver stays (`docs/multiplayer-phase0.md` 1.1). Retry-skip-with-token is not possible at the QUIC layer; adaptive Retry proposed.
+    - [ ] Phase 0 leftovers: Windows/macOS/Android Quiche builds, VM and sensing baselines against the built player (needs a GPU).
+    - [ ] Phase 1: private authoritative simulation:
+        - [x] Clocks: `wall` is real time (`Engine::wall_time`), run clocks use `elapsed_secs_f64`.
+        - [x] Contacts relayed on the fixed tick (the physics work's `contacts.rs`: `track_contacts` per step, `world::deliver_contacts` at the next tick).
+        - [x] `add_world` split: `simulation::add_simulation` (fixed step and physics) with presentation ordered around it; headless 2D/3D harness in `simulation::tests` (determinism, VM vs native logic).
+        - [x] `VolumeEye`: volumes weighed at a named actor or point instead of the camera.
+        - [ ] Split the `Update` chain and `rebuild_world`/`apply_lifetimes` (simulation spawn vs visuals), move the tick-sampled part of `publish_sensors` into the fixed tick, virtual-delta cap and own accumulator.
+    - [ ] Phases 2 to 6 as in the plan (players and authoring, LAN and late join, prediction and dedicated server, plugin/save scope, browser and internet).
 - [ ] Deploy: Web/WASM (see Phase 8 player and Phase 9 editor), Android signing (see Phase 6.5), Windows Store signing (see Phase 6.6), iOS signing, console path, auto-updater/DLC/addressables.
 - [ ] Ecosystem: analytics/crash, achievements/IAP hooks, asset store, collab/VCS, docs/LTS.
 - [ ] Plugin platform (`docs/plugin-system-and-voxel-plan.md`; decisions in `docs/plugin-adr-0001.md`):

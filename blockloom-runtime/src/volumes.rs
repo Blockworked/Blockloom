@@ -17,7 +17,21 @@ use blockloom_protocol::{
 
 pub fn register(app: &mut App) {
     app.init_resource::<VolumeBlend>()
+        .init_resource::<VolumeEye>()
         .init_resource::<VolumeDebugView>();
+}
+
+/// Where volumes are weighed. A game with a window weighs them at its world
+/// camera; a server has no camera, so it names an actor or a point instead and
+/// the weights don't depend on what any one client is looking at.
+// The server driver picks the other two; a windowed game keeps the camera.
+#[allow(dead_code)]
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub enum VolumeEye {
+    #[default]
+    Camera,
+    Actor(String),
+    Point(Vec3),
 }
 
 /// The editor's volume debug settings.
@@ -176,6 +190,7 @@ pub fn gather_volumes(
     dimension: Res<Dimension>,
     debug: Res<VolumeDebugView>,
     claims: Res<ExposureClaims>,
+    eye: Res<VolumeEye>,
     cameras: Query<&Transform, With<WorldCamera>>,
     actors: Query<(&ActorId, &Transform), Without<WorldCamera>>,
     mut blend: ResMut<VolumeBlend>,
@@ -189,7 +204,15 @@ pub fn gather_volumes(
         return;
     }
     blend.trace.clear();
-    let Some(eye) = cameras.iter().next().map(|camera| camera.translation) else {
+    let at = match &*eye {
+        VolumeEye::Camera => cameras.iter().next().map(|camera| camera.translation),
+        VolumeEye::Actor(id) => actors
+            .iter()
+            .find(|(actor, _)| actor.0 == *id)
+            .map(|(_, transform)| transform.translation),
+        VolumeEye::Point(point) => Some(*point),
+    };
+    let Some(eye) = at else {
         blend.active.clear();
         volumes.0.clear();
         return;
@@ -482,6 +505,35 @@ mod tests {
         app.update();
         assert_eq!(app.world().resource::<Environment>().exposure, base);
         assert!(app.world().resource::<VolumeBlend>().active.is_empty());
+    }
+
+    #[test]
+    fn a_world_without_a_camera_weighs_volumes_at_its_named_eye() {
+        let base = Environment::default().exposure;
+        let mut app = app(vec![(volume("Cave", 0.0, base + 4.0), Vec3::ZERO)]);
+        // No camera at all, the way a server runs.
+        let cameras: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<WorldCamera>>()
+            .iter(app.world())
+            .collect();
+        for camera in cameras {
+            app.world_mut().despawn(camera);
+        }
+        app.update();
+        assert!(app.world().resource::<VolumeBlend>().active.is_empty());
+
+        *app.world_mut().resource_mut::<VolumeEye>() = VolumeEye::Point(Vec3::new(3.0, 0.0, 0.0));
+        app.update();
+        assert!((app.world().resource::<Environment>().exposure - (base + 2.0)).abs() < 1e-4);
+
+        // An actor as the eye: the volume's own actor stands in the volume.
+        let id = app.world().non_send::<Engine>().project.actors[0]
+            .id
+            .clone();
+        *app.world_mut().resource_mut::<VolumeEye>() = VolumeEye::Actor(id);
+        app.update();
+        assert!((app.world().resource::<Environment>().exposure - (base + 4.0)).abs() < 1e-4);
     }
 
     #[test]

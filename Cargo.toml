@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "blockloom-hub",
+    "blockloom-net",
     "blockloom-qt",
     "blockloom-app",
     "blockloom-core",

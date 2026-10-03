@@ -181,8 +181,11 @@ pub struct Engine {
     /// `Time::elapsed_secs` when the current pause began, if paused. Used to
     /// keep the `timer` reporter frozen while paused.
     pub pause_began: Option<f64>,
-    /// `Time::elapsed_secs` when the green flag was pressed.
+    /// `Time::elapsed_secs_f64` when the green flag was pressed.
     pub started_at: f64,
+    /// `Time<Real>` seconds when the green flag was pressed. The wall clock a
+    /// UI strand sleeps against counts from here and never pauses or scales.
+    pub wall_started_at: f64,
     /// Who is touching whom, from collision messages, by actor id.
     pub touching: HashMap<String, HashSet<String>>,
     /// Every collider pair that touches, with the events they made.
@@ -362,6 +365,7 @@ impl Engine {
             look_lock_offered: false,
             pause_began: None,
             started_at: 0.0,
+            wall_started_at: 0.0,
             touching: HashMap::new(),
             contacts: Default::default(),
             contact_ticks: 0,
@@ -542,6 +546,12 @@ impl Engine {
             None => now,
         };
         (end - self.started_at).max(0.0)
+    }
+
+    /// Seconds of real time since the green flag: unaffected by pause, game
+    /// speed and a stalled frame, and what a UI strand's `wait` counts.
+    pub fn wall_time(&self, real_now: f64) -> f64 {
+        (real_now - self.wall_started_at).max(0.0)
     }
 
     pub fn actor_id_of(&self, entity: Entity) -> Option<&str> {
