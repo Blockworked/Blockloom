@@ -53,7 +53,7 @@ impl Group {
 
     /// A flat convex polygon of three or more points, wound counter-clockwise
     /// seen from the side `normal` points to. Positions are already scaled.
-    fn push_poly(&mut self, points: &[[f32; 3]], normal: [f32; 3], color: [f32; 3]) {
+    pub(crate) fn push_poly(&mut self, points: &[[f32; 3]], normal: [f32; 3], color: [f32; 3]) {
         let base = self.positions.len() as u32 / 3;
         for p in points {
             self.positions.extend(p);
@@ -201,6 +201,19 @@ pub fn mesh_chunk(
             }
         }
     }
+    mesh_shapes(grid, palette, chunk, voxel, false, &mut groups);
+    groups
+}
+
+pub(crate) fn mesh_shapes(
+    grid: &Grid,
+    palette: &Palette,
+    chunk: [i32; 3],
+    voxel: f32,
+    smooth: bool,
+    groups: &mut BTreeMap<Option<u8>, Group>,
+) {
+    let base = chunk.map(|c| c * CHUNK);
     for (cell, shape) in grid.shaped_in(chunk) {
         let Some(look) = palette.get(grid.get(cell)) else {
             continue;
@@ -209,6 +222,7 @@ pub fn mesh_chunk(
         let at = [0, 1, 2].map(|a| (cell[a] - base[a]) as f32);
         for face in shape.faces() {
             if let Some(e) = face.edge
+                && !smooth
                 && grid.is_full([cell[0] + e[0], cell[1] + e[1], cell[2] + e[2]])
             {
                 continue;
@@ -224,7 +238,6 @@ pub fn mesh_chunk(
                 .push_poly(&points, face.normal, look.color);
         }
     }
-    groups
 }
 
 #[cfg(test)]

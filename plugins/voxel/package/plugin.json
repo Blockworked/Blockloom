@@ -3,7 +3,7 @@
   "id": "com.blockworked.voxel",
   "name": "Voxel",
   "version": "0.1.0",
-  "description": "A finite world of cubes: generated terrain, live edits, glowing materials and solid chunk meshes. A portable module, so it runs sandboxed on every desktop target.",
+  "description": "Finite cube or smooth terrain: generation, sculpting, shaped cells, glowing materials and solid chunk meshes. A portable module, so it runs sandboxed on every desktop target.",
   "license": "MIT",
   "engine": ">=0.0.1",
   "tier": "portable",

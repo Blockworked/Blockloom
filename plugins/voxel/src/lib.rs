@@ -1,4 +1,4 @@
-//! Voxels: a finite world of cubes with generated terrain and live edits.
+//! Finite cube or smooth voxel worlds with generated terrain and live edits.
 //!
 //! The world's settings are the plugin's `world` resource. When a running
 //! game hosts the module it hears `world.start`, builds the world from that
@@ -11,7 +11,8 @@
 //! `get`, `height`, `count`, `cast`, `break`, `place`. Cell coordinates are
 //! whole numbers from one corner of the world; a material is its id or its
 //! name (`air` or 0 clears). A solid cell may be a slab, top slab or post
-//! instead of a whole cube (`shape`); rays still treat it as the whole cell. A ray (`cast`, `break`, `place`) is given in
+//! instead of a whole cube (`shape`). Cube-world rays use occupied cells;
+//! smooth-world rays intersect the surface. A ray (`cast`, `break`, `place`) is given in
 //! world units, like the cubes are drawn.
 //!
 //! Edits made by blocks last as long as the run: stopping the game starts the
@@ -23,6 +24,7 @@ mod mesher;
 mod palette;
 mod ray;
 mod shape;
+mod smooth;
 mod terrain;
 
 use blockloom_plugin_api::mesh::{ColliderKind, MeshData};
@@ -45,6 +47,7 @@ struct Settings {
     origin: [f64; 3],
     preset: String,
     solid: bool,
+    surface: Surface,
     palette_colors: Vec<String>,
     palette_emission: Vec<f64>,
     /// Edits laid over the generated terrain, oldest first (see `apply_edit`).
@@ -60,11 +63,20 @@ impl Default for Settings {
             origin: [0.0; 3],
             preset: "island".to_string(),
             solid: true,
+            surface: Surface::Cubes,
             palette_colors: Vec::new(),
             palette_emission: Vec::new(),
             edits: Vec::new(),
         }
     }
+}
+
+#[derive(Deserialize, Clone, Copy, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum Surface {
+    #[default]
+    Cubes,
+    Smooth,
 }
 
 struct World {
@@ -73,6 +85,7 @@ struct World {
     voxel: f32,
     origin: [f32; 3],
     solid: bool,
+    surface: Surface,
     seed: i64,
     /// The mesh names each chunk has drawn, so a remesh can retire the ones
     /// it no longer makes.
@@ -125,6 +138,7 @@ impl World {
             voxel: settings.voxel_size as f32,
             origin: settings.origin.map(|v| v as f32),
             solid: settings.solid,
+            surface: settings.surface,
             seed: settings.seed,
             published: BTreeMap::new(),
         })
@@ -153,10 +167,10 @@ impl World {
         changed
     }
 
-    /// Fills the cells whose centres lie within `radius` cells of `centre`.
+    /// Fills a ball in cell units; smooth worlds combine signed sphere density.
     fn fill_sphere(&mut self, centre: [i32; 3], radius: f64, material: u8) -> u64 {
         let size = self.grid.size();
-        let reach = radius.ceil() as i32;
+        let reach = radius.ceil() as i32 + i32::from(self.surface == Surface::Smooth);
         let lo = [0, 1, 2].map(|i| (centre[i] - reach).max(0));
         let hi = [0, 1, 2].map(|i| (centre[i] + reach).min(size[i] - 1));
         let mut changed = 0;
@@ -165,7 +179,35 @@ impl World {
                 for x in lo[0]..=hi[0] {
                     let d = [x - centre[0], y - centre[1], z - centre[2]]
                         .map(|d| f64::from(d) * f64::from(d));
-                    if d[0] + d[1] + d[2] <= radius * radius {
+                    if self.surface == Surface::Smooth {
+                        let sphere = ((d.iter().sum::<f64>().sqrt() - radius) * 256.0)
+                            .round()
+                            .clamp(-256.0, 256.0) as i16;
+                        if sphere == 256 {
+                            continue;
+                        }
+                        let cell = [x, y, z];
+                        let before = self.grid.get(cell);
+                        let old = if self.grid.shape_at(cell) == Shape::Cube {
+                            self.grid.density(cell)
+                        } else {
+                            -256
+                        };
+                        let density = if material == 0 {
+                            old.max(-sphere)
+                        } else {
+                            old.min(sphere)
+                        };
+                        let paint = if material != 0 && sphere < 0 {
+                            material
+                        } else {
+                            before
+                        };
+                        if density == old && paint == before {
+                            continue;
+                        }
+                        changed += u64::from(self.grid.set_density([x, y, z], density, paint));
+                    } else if d[0] + d[1] + d[2] <= radius * radius {
                         changed += u64::from(self.grid.set([x, y, z], material));
                     }
                 }
@@ -232,7 +274,10 @@ impl World {
     fn flush(&mut self) -> Vec<Value> {
         let mut effects = Vec::new();
         for chunk in self.grid.take_dirty() {
-            let groups = mesher::mesh_chunk(&self.grid, &self.palette, chunk, self.voxel);
+            let groups = match self.surface {
+                Surface::Cubes => mesher::mesh_chunk(&self.grid, &self.palette, chunk, self.voxel),
+                Surface::Smooth => smooth::mesh_chunk(&self.grid, &self.palette, chunk, self.voxel),
+            };
             let origin = [0, 1, 2].map(|a| self.origin[a] + (chunk[a] * CHUNK) as f32 * self.voxel);
             let mut names = BTreeSet::new();
             for (glow, group) in groups {
@@ -280,7 +325,7 @@ fn serde_value(mesh: &MeshData) -> Value {
     json!({
         "name": mesh.name,
         "positions": floats(&mesh.positions),
-        "normals": mesh.normals,
+        "normals": floats(&mesh.normals),
         "colors": floats(&mesh.colors),
         "indices": mesh.indices,
         "origin": mesh.origin.map(round),
@@ -432,7 +477,12 @@ impl Voxel {
         let world = self.world()?;
         let voxel = f64::from(world.voxel);
         let cells = [0, 1, 2].map(|a| ((origin[a] - f64::from(world.origin[a])) / voxel) as f32);
-        let hit = ray::cast(
+        let cast = if world.surface == Surface::Smooth {
+            ray::cast_smooth
+        } else {
+            ray::cast
+        };
+        let hit = cast(
             &world.grid,
             cells,
             dir.map(|d| d as f32),
@@ -489,7 +539,9 @@ impl Voxel {
         let target = hit.and_then(|hit| match material {
             None => Some(hit.cell),
             // A ray that starts inside a cell has no face to build against.
-            Some(_) => (hit.normal != [0; 3]).then(|| hit.before()),
+            Some(_) => {
+                (hit.normal != [0; 3] && world.grid.get(hit.before()) == 0).then(|| hit.before())
+            }
         });
         let changed = target.map_or(0, |at| u64::from(world.grid.set(at, material.unwrap_or(0))));
         let mut answer = Voxel::edited(world, changed);
@@ -535,7 +587,9 @@ impl Plugin for Voxel {
                 let grid = &self.world()?.grid;
                 let material = grid.get(at);
                 let shape = grid.shape_at(at).name();
-                Ok(json!({"material": material, "shape": shape, "value": material}))
+                Ok(
+                    json!({"material": material, "shape": shape, "density": f64::from(grid.density(at))/256.0, "value": material}),
+                )
             }
             "height" => {
                 let (x, z) = (int(&args, "x")?, int(&args, "z")?);

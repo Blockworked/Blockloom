@@ -703,3 +703,47 @@ now carry `blockloom-plugin-worker` beside the editor, which is where
 isolation looks for it. A built game does not ship the worker: isolation is an
 editor and developer setting, and a built game runs the plugin where it
 always did.
+
+### Voxel smooth surface milestone (phase 3)
+
+The world's `surface` is `cubes` (the default for existing projects) or
+`smooth`, exposed by the resource inspector and `set_world`. Smooth worlds
+use quantized signed density at cell centres, with negative density solid.
+Unedited samples derive from the existing terrain cells; fractional samples
+are sparse overrides. `sphere` combines a signed sphere with the field
+(union for a material, difference for air), including a one-cell halo. Saved
+sphere edit lines replay the same operation, so existing tools and the
+backend's resource history provide authoring and undo without another path.
+`set`, `fill`, `break` and `place` write full samples; shaping a solid sample
+removes it from the smooth field and draws the authored shape separately.
+
+The CPU extractor uses six consistently oriented tetrahedra per lattice cube.
+This is a baseline alternative to the plan's proposed Marching Cubes, written
+here without third-party tables. Shared samples and a fixed face diagonal
+resolve ambiguity at equal resolution. A chunk reads its halo once, shares
+vertices per material, and computes normals from canonical central density
+gradients, so both positions and shading agree at boundaries. Every edit
+invalidates diagonal neighbours and the gradient halo. This does not provide
+LOD transitions or a smooth-to-shaped transition mesher.
+
+Submitted triangles are also the fixed trimesh collision geometry. Smooth
+rays walk the lattice and intersect those canonical triangles, plus actual
+shaped-cell faces; they report the next surface even when starting inside.
+The integer `normal` remains an adjacent-cell selection direction (the
+largest geometric normal axis), and `cell` is a solid sample contributing to
+the hit. `get` additionally returns signed density in cell units. Cube rays
+retain their occupied-cell behavior.
+
+Tests cover closed world-edge surfaces, outward winding, fractional seams
+and matching normals, diagonal invalidation, glowing and shaped geometry,
+exact smooth ray distances, sculpt idempotence, carve/paint bounds, saved
+edit replay, and native/portable output parity. The default 64x32x64 smooth
+island runs within the manifest's existing portable work budget; its mesh
+response is about 4.1 MB with 49,156 vertices. No Qt or rendered player run
+was performed for this milestone.
+
+Phase 3 still needs player-save persistence for runtime edits and interactive
+shipping qualification. Phase 4's graph authoring, streamed residency, LOD
+transitions and origin integration remain pending, as do GPU production
+meshing and fracture in phases 5 and 6. Finite smooth worlds still generate
+and mesh synchronously through the module call budget.

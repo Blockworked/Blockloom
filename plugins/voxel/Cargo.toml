@@ -2,7 +2,7 @@
 name = "blockloom-voxel"
 version.workspace = true
 edition.workspace = true
-description = "The voxel plugin (com.blockworked.voxel): a cube world with generated terrain, live edits and meshes the game draws."
+description = "The voxel plugin (com.blockworked.voxel): finite cube and smooth worlds with generated terrain, sculpting and collision meshes."
 
 [lib]
 crate-type = ["cdylib", "rlib"]

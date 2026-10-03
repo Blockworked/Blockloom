@@ -18,6 +18,8 @@ pub struct Grid {
     chunks: Vec<Option<Box<Cells>>>,
     /// The cells that are not whole cubes.
     shapes: BTreeMap<[i32; 3], Shape>,
+    /// Signed density at cell centres, quantized to 1/256 cell.
+    densities: BTreeMap<[i32; 3], i16>,
     /// Chunks whose meshes are out of date: those written to, and the
     /// neighbours that see one of their cells across a boundary.
     dirty: BTreeSet<[i32; 3]>,
@@ -40,6 +42,7 @@ impl Grid {
             size,
             chunks: vec![None; count[0] * count[1] * count[2]],
             shapes: BTreeMap::new(),
+            densities: BTreeMap::new(),
             dirty: BTreeSet::new(),
         }
     }
@@ -96,6 +99,59 @@ impl Grid {
             .collect()
     }
 
+    /// Negative is solid. Shaped cells are drawn separately from the field.
+    pub fn density(&self, cell: [i32; 3]) -> i16 {
+        if !self.contains(cell) || self.shape_at(cell) != Shape::Cube {
+            return 256;
+        }
+        self.densities
+            .get(&cell)
+            .copied()
+            .unwrap_or_else(|| if self.get(cell) == 0 { 256 } else { -256 })
+    }
+
+    pub fn set_density(&mut self, cell: [i32; 3], density: i16, material: u8) -> bool {
+        if !self.contains(cell) {
+            return false;
+        }
+        // Keep every intersection away from lattice vertices.
+        let density = if density == 0 {
+            1
+        } else {
+            density.clamp(-256, 256)
+        };
+        let material = if density < 0 { material } else { 0 };
+        let old = self.density(cell);
+        if old == density && self.get(cell) == material && self.shape_at(cell) == Shape::Cube {
+            return false;
+        }
+        let changed = self.set_shaped(cell, material, Shape::Cube);
+        if density.abs() == 256 {
+            self.densities.remove(&cell);
+        } else {
+            self.densities.insert(cell, density);
+        }
+        if old != density {
+            self.dirty_sample(cell);
+        }
+        changed || old != density
+    }
+
+    /// Include the density-gradient halo and diagonal neighbours.
+    fn dirty_sample(&mut self, cell: [i32; 3]) {
+        for z in -2..=1 {
+            for y in -2..=1 {
+                for x in -2..=1 {
+                    let chunk =
+                        [cell[0] + x, cell[1] + y, cell[2] + z].map(|c| c.max(0).div_euclid(CHUNK));
+                    if self.slot(chunk).is_some() {
+                        self.dirty.insert(chunk);
+                    }
+                }
+            }
+        }
+    }
+
     /// Writes a whole cube; true when that changed the cell.
     pub fn set(&mut self, cell: [i32; 3], material: u8) -> bool {
         self.set_shaped(cell, material, Shape::Cube)
@@ -117,14 +173,18 @@ impl Grid {
         let shape = if material == 0 { Shape::Cube } else { shape };
         let chunk = cell.map(|c| c.div_euclid(CHUNK));
         let slot = self.slot(chunk).expect("a contained cell has a chunk");
+        let density_changed = self.densities.remove(&cell).is_some();
+        if density_changed {
+            self.dirty_sample(cell);
+        }
         if material == 0 && self.chunks[slot].is_none() {
-            return false;
+            return density_changed;
         }
         let cells = self.chunks[slot].get_or_insert_with(|| Box::new([0; CELLS]));
         let index = local(cell);
         if cells[index] == material && self.shapes.get(&cell).copied().unwrap_or_default() == shape
         {
-            return false;
+            return density_changed;
         }
         cells[index] = material;
         if shape == Shape::Cube {
@@ -132,6 +192,7 @@ impl Grid {
         } else {
             self.shapes.insert(cell, shape);
         }
+        self.dirty_sample(cell);
         self.dirty.insert(chunk);
         // A cell on a chunk's face decides which faces its neighbour draws.
         for axis in 0..3 {
@@ -178,6 +239,7 @@ impl Grid {
     pub fn clear(&mut self) {
         self.chunks.iter_mut().for_each(|c| *c = None);
         self.shapes.clear();
+        self.densities.clear();
         self.dirty.clear();
     }
 

@@ -1041,8 +1041,14 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   edit along one); edits last for the run. The package schema declares the
   resource, commands and nine blocks (a material is a dropdown of the built-in names; ids work
   too). Measured: the default 64x32x64 island is drawn from the wasm module in
-  under a second, inside its 10 s call budget. Not yet: smooth terrain,
-  streaming and LOD, instancing, GPU meshing, fracture. Its manifest asks for `editor.preview`,
+  under a second, inside its 10 s call budget. `surface=smooth` selects the
+  CPU density mesher (`smooth.rs`): fixed tetrahedra, shared vertices and
+  central-gradient normals across chunk halos. Signed density overrides in
+  `grid.rs` are quantized to 1/256 cell; sphere brushes union or carve them,
+  saved sphere lines replay them, and rays intersect the same triangles as
+  collision (including actual shaped faces). Cube mode remains the default.
+  Not yet: runtime-edit player saves, streaming and LOD, instancing, GPU
+  meshing, fracture. Its manifest asks for `editor.preview`,
   so the scene view shows the generated world without Play (edits made by
   blocks still last only for a run). Saved edits are the `world` resource's
   `edits` lines (`set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`,
@@ -1062,7 +1068,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   cells are a few boxes (and a wedge) meshed on their own from `Shape::faces`,
   with faces on a cell's edge hidden by a whole-cube neighbour, `shape` is the op, `shape_voxel` the command and block
   (ten blocks now), `shape X Y Z name` a saved edit line (`stair west`, `ramp north`). Writing a cube or air
-  takes a shape away; rays still treat a shaped cell as the whole cell.
+  takes a shape away; cube-world rays treat a shaped cell as the whole cell,
+  while smooth-world rays intersect its actual faces.
 - **Importers and build hooks** (`blockloom-plugin-api/src/assets.rs`,
   `blockloom-plugin-host/src/imports.rs`): a package's schema may list
   `importers` (name, extensions, `limit_ms`) and `build` hooks (name,
