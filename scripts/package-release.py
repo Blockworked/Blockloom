@@ -20,8 +20,8 @@ import hub_install
 from hub_process import bundle_rust
 
 
-def copy_tree(source, destination):
-    shutil.copytree(source, destination, dirs_exist_ok=True,
+def copy_tree(source, destination, symlinks=False):
+    shutil.copytree(source, destination, dirs_exist_ok=True, symlinks=symlinks,
                     ignore=shutil.ignore_patterns("*.a", "*.lib", "*.o", "*.obj", "*.pdb", "*.prl", "*.debug"))
 
 
@@ -133,7 +133,9 @@ def deploy_qt(directory, qmake):
         output.mkdir()
         for file in libraries.iterdir():
             if file.name.endswith(".framework"):
-                copy_tree(file, output / file.name)
+                # Frameworks are macOS-only; keep their symlinked layout so
+                # the copy stays a bundle codesign can identify.
+                copy_tree(file, output / file.name, symlinks=True)
             elif ".so" in file.name or file.suffix == ".dylib":
                 shutil.copy2(file, output / file.name)
         frameworks = set()

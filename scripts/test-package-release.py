@@ -90,7 +90,8 @@ class PackageTests(unittest.TestCase):
             libs = root / "qtlib"
             (libs / "Foo.framework" / "Versions" / "A").mkdir(parents=True)
             (libs / "Foo.framework" / "Versions" / "A" / "Foo").write_bytes(header)
-            (libs / "Foo.framework" / "Foo").write_bytes(header)
+            (libs / "Foo.framework" / "Versions" / "Current").symlink_to("A", target_is_directory=True)
+            (libs / "Foo.framework" / "Foo").symlink_to("Versions/Current/Foo")
             (libs / "libplain.dylib").write_bytes(header)
             plugins = root / "qtplugins"
             plugins.mkdir()
@@ -118,6 +119,10 @@ class PackageTests(unittest.TestCase):
                     patch.object(packaging.subprocess, "run", side_effect=run), \
                     patch.object(packaging.sys, "platform", "darwin"):
                 packaging.deploy_qt(directory, "qmake")
+            copied = directory / "lib" / "Foo.framework"
+            # The symlinked layout is what makes the copy a bundle codesign accepts.
+            self.assertTrue((copied / "Foo").is_symlink())
+            self.assertTrue((copied / "Versions" / "Current").is_symlink())
             signed = [cmd[-1] for cmd in calls if cmd[0] == "codesign"]
             bundle = str(directory / "lib" / "Foo.framework")
             self.assertEqual(signed.count(bundle), 1)
@@ -127,7 +132,10 @@ class PackageTests(unittest.TestCase):
             self.assertIn(str(directory / "lib" / "libplain.dylib"), signed)
             self.assertIn(str(directory / "plugins" / "libqcocoa.dylib"), signed)
             patched = [cmd[-1] for cmd in calls if cmd[0] == "install_name_tool"]
-            self.assertIn(str(directory / "lib" / "Foo.framework" / "Versions" / "A" / "Foo"), patched)
+            real = str(directory / "lib" / "Foo.framework" / "Versions" / "A" / "Foo")
+            self.assertIn(real, patched)
+            # One real binary means one patch, not one per flattened copy.
+            self.assertEqual(patched.count(real), 1)
             self.assertTrue((directory / "qt.conf").is_file())
 
     def test_ci_profiles_and_no_system_install(self):
