@@ -47,8 +47,8 @@ claimed.
 
 ## Required gates still open
 
-- `just web-check` and `just web-smoke` need the wasm target and a browser build;
-  not run here.
+- The runtime's wasm `cargo check` (`wasm32-unknown-unknown`, `plugins` feature)
+  passes. `just web-smoke` needs a browser build and was not run here.
 - Windows and macOS checks need their runners.
 - Phase 0 left 2D probes, a platform-carry backend switch and Unity-editor
   confirmation of documented values open (`TODO.md`).

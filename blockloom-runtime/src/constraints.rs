@@ -18,6 +18,7 @@ use blockloom_core::scene::Mode;
 use crate::engine::Engine;
 
 /// Marks a constraint's joint entity.
+#[allow(dead_code)]
 #[derive(Component, Debug, Clone)]
 pub struct ConstraintLink {
     pub actor: String,
@@ -44,13 +45,10 @@ pub struct Constraints {
     items: Vec<Installed>,
 }
 
+#[cfg(test)]
 impl Constraints {
     pub fn len(&self) -> usize {
         self.items.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
     }
 }
 

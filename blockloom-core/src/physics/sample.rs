@@ -75,7 +75,7 @@ fn physics_playground(name: &str, mode: Mode) -> Result<Project, String> {
             [x * k, y * k - 150.0, 0.0]
         }
     };
-    let mut spawn = |scene: &mut crate::project::Scene, s: Spawn| -> Result<String, String> {
+    let spawn = |scene: &mut crate::project::Scene, s: Spawn| -> Result<String, String> {
         let mut actor = Actor::new(s.name, s.visual);
         actor.components.placement_mut().position = s.at;
         let id = scene.add_actor(actor);
@@ -94,7 +94,7 @@ fn physics_playground(name: &str, mode: Mode) -> Result<Project, String> {
         scene.add_collider(&id, collider, &library)?;
         Ok(id)
     };
-    let mut constraint =
+    let constraint =
         |scene: &mut crate::project::Scene,
          actor: &str,
          spec: ConstraintSpec|

@@ -71,7 +71,6 @@ macro_rules! counters {
     ($module:ident, $rp:ident) => {
         pub mod $module {
             use super::*;
-            use bevy::prelude::*;
 
             /// Marks the start of the physics step.
             pub fn begin(mut started: Local<Option<web_time::Instant>>) {
