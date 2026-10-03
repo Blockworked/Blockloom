@@ -26,6 +26,7 @@ use super::ids::ColliderId;
 use super::layers::{ColliderFilter, needs_exact};
 use super::material::{MaterialBody, PhysicsMaterial, PhysicsMaterial2D};
 use super::migrate::shape_from_look;
+use super::motor::CharacterMotorSpec;
 use super::ownership::{actor_worlds, body_above};
 use super::spec::{
     BodyType, ColliderGeometry, ColliderShape, ColliderSpec, MassSource, RigidbodySpec,
@@ -126,12 +127,21 @@ pub struct ControllerPlan {
     pub has_body: bool,
 }
 
+/// One CharacterMotor to run each fixed tick.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MotorInstall {
+    pub actor: String,
+    pub name: String,
+    pub spec: CharacterMotorSpec,
+}
+
 /// A scene's physics, ready to install.
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub struct PhysicsPlan {
     pub bodies: Vec<BodyPlan>,
     pub colliders: Vec<ColliderPlan>,
     pub controllers: Vec<ControllerPlan>,
+    pub motors: Vec<MotorInstall>,
     pub issues: Vec<PhysicsIssue>,
     /// True when a pair rule needs the exact test from a hook (an include override
     /// or a priority is in play) instead of group masks alone.
@@ -196,6 +206,16 @@ impl PhysicsPlan {
         }
 
         for actor in actors {
+            if let (Some(motor), Some(_)) = (
+                actor.components.character_motor(),
+                actor.components.character_controller(),
+            ) {
+                plan.motors.push(MotorInstall {
+                    actor: actor.id.clone(),
+                    name: actor.name.clone(),
+                    spec: motor.clone(),
+                });
+            }
             if let Some(spec) = actor.components.character_controller() {
                 let filter = ColliderFilter {
                     layer: spec.layer.clamp(1, super::spec::LAYER_SLOTS),
@@ -258,7 +278,10 @@ impl PhysicsPlan {
 
     /// True when the scene has anything for the new system to install.
     pub fn is_empty(&self) -> bool {
-        self.bodies.is_empty() && self.colliders.is_empty() && self.controllers.is_empty()
+        self.bodies.is_empty()
+            && self.colliders.is_empty()
+            && self.controllers.is_empty()
+            && self.motors.is_empty()
     }
 
     pub fn collider(&self, id: &ColliderId) -> Option<&ColliderPlan> {

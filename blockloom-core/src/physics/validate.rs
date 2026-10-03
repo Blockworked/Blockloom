@@ -402,6 +402,20 @@ pub fn validate_scene_with(
             .iter()
             .filter(|c| matches!(c, ActorComponent::CharacterController { .. }))
             .count();
+        let motors = actor
+            .components
+            .iter()
+            .filter(|c| matches!(c, ActorComponent::CharacterMotor { .. }))
+            .count();
+        if motors > 1 {
+            issues.push(
+                PhysicsIssue::error(format!(
+                    "\"{}\" has {motors} CharacterMotors; an actor has at most one",
+                    actor.name
+                ))
+                .on(id),
+            );
+        }
         if controllers > 1 {
             issues.push(
                 PhysicsIssue::error(format!(
@@ -490,6 +504,37 @@ pub fn validate_scene_with(
                             ))
                             .on(id)
                             .of(controller.id.as_str()),
+                        );
+                    }
+                }
+                ActorComponent::CharacterMotor { motor } => {
+                    for (field, message) in motor.validate() {
+                        issues.push(
+                            PhysicsIssue::error(message)
+                                .on(id)
+                                .of(motor.id.as_str())
+                                .field(&field),
+                        );
+                    }
+                    if actor.components.character_controller().is_none() {
+                        issues.push(
+                            PhysicsIssue::error(format!(
+                                "\"{}\" has a CharacterMotor but no CharacterController to move; add one",
+                                actor.name
+                            ))
+                            .on(id)
+                            .of(motor.id.as_str()),
+                        );
+                    }
+                    if motor.top_down && mode == Mode::ThreeD {
+                        issues.push(
+                            PhysicsIssue::warning(format!(
+                                "\"{}\" has a top-down motor in a 3D project; top down only applies in 2D",
+                                actor.name
+                            ))
+                            .on(id)
+                            .of(motor.id.as_str())
+                            .field("top_down"),
                         );
                     }
                 }

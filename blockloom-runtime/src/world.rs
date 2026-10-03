@@ -1463,22 +1463,29 @@ pub fn publish_sensors(
     let mut pad_buttons: HashSet<String> = HashSet::new();
     let mut pad_axes: HashMap<String, f32> = HashMap::new();
     let mut pad_count = 0;
+    // Each pad on its own too, for actions that belong to one local player.
+    let mut each_pad: Vec<(HashSet<String>, HashMap<String, f32>)> = Vec::new();
     for pad in &pads {
         pad_count += 1;
+        let mut own_buttons: HashSet<String> = HashSet::new();
+        let mut own_axes: HashMap<String, f32> = HashMap::new();
         for button in GamepadButton::all() {
             if pad.pressed(button) {
                 pad_buttons.insert(pad_button_name(button));
+                own_buttons.insert(pad_button_name(button));
             }
         }
         for axis in GamepadAxis::all() {
             if let Some(value) = pad.get(axis) {
                 let name = pad_axis_name(axis);
+                own_axes.insert(name.clone(), value);
                 let kept = pad_axes.get(&name).copied().unwrap_or(0.0);
                 if value.abs() > kept.abs() {
                     pad_axes.insert(name, value);
                 }
             }
         }
+        each_pad.push((own_buttons, own_axes));
     }
     // Pad buttons and sticks keep working while typing: only the keyboard
     // belongs to the text input, so a gamepad pause button still pauses.
@@ -1497,6 +1504,8 @@ pub fn publish_sensors(
         mouse: mouse_buttons.clone(),
         pad_buttons: pad_buttons.clone(),
         axes: pad_axes.clone(),
+        // Up is positive, as a stick's is.
+        mouse_delta: [mouse_delta[0], -mouse_delta[1]],
     };
 
     // Named actions, with run-scoped remaps winning over the document.
@@ -1511,11 +1520,35 @@ pub fn publish_sensors(
             .cloned()
             .unwrap_or_else(|| action.bindings.clone());
         let scoped = blockloom_core::input::InputAction {
-            name: action.name.clone(),
             bindings,
+            ..action.clone()
         };
-        let held_now = live.action_held(&scoped);
-        let value = live.action_value(&scoped);
+        // A later player reads only their own pad; an action in a map that
+        // is off reads as released.
+        let own = (action.player > 0).then(|| {
+            let (buttons, axes) = each_pad
+                .get(usize::from(action.player) - 1)
+                .cloned()
+                .unwrap_or_default();
+            LiveInput {
+                pad_buttons: buttons,
+                axes,
+                ..Default::default()
+            }
+        });
+        let source = own.as_ref().unwrap_or(&live);
+        let on = blockloom_core::input::map_enabled(&action.map);
+        let held_now = on && source.action_held(&scoped);
+        let value = if on {
+            source.action_value(&scoped)
+        } else {
+            0.0
+        };
+        let vector = if on {
+            source.action_vector(&scoped)
+        } else {
+            [0.0; 2]
+        };
         let was = engine
             .prev_action_held
             .get(&action.name.to_lowercase())
@@ -1533,6 +1566,7 @@ pub fn publish_sensors(
                 pressed,
                 released,
                 value,
+                vector,
             },
         );
         if pressed {
@@ -4613,6 +4647,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::SaveVariable { .. }
         | Effect::PluginCall { .. }
         | Effect::PhysicsQuery { .. }
+        | Effect::Controller { .. }
         | Effect::SetParent { .. }
         | Effect::CreateClone { .. }
         | Effect::CreateActor { .. }

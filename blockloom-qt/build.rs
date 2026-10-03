@@ -30,6 +30,7 @@ fn main() {
                 "qml/InspectorComponentCard.qml",
                 "qml/RigidbodyForm.qml",
                 "qml/ColliderForm.qml",
+                "qml/CharacterControllerForm.qml",
                 "qml/InspectorRow.qml",
                 "qml/SurfaceDetailRows.qml",
                 "qml/EmitterGraphRows.qml",

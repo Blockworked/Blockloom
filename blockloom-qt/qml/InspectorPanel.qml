@@ -51,6 +51,7 @@ Rectangle {
         if (!actor) return;
         if (c.component === "Collider") app.invoke("remove_collider", { colliderId: c.collider.id });
         else if (c.component === "Rigidbody") app.invoke("remove_rigidbody", { actorId: actor.id });
+        else if (c.component === "CharacterController") app.invoke("remove_character_controller", { actorId: actor.id });
         else remove(componentName(c));
     }
     function copy(o) { return JSON.parse(JSON.stringify(o)); }
@@ -348,7 +349,7 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Rigidbody","Collider","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
+        return ["Look","Render","Body","Rigidbody","Collider","CharacterController","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
             .filter(n => n !== "Sprite" || !is3d)
             .filter(n => n !== "Fracture" || is3d)
             .filter(n => n === "Custom" || n === "Collider" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }))
@@ -388,6 +389,7 @@ Rectangle {
         if (!actor) return;
         // A script needs a file on disk, so the backend makes both at once.
         if (name === "Script") { app.invoke("create_script", { actorId: actor.id }); return; }
+        if (name === "CharacterController") { app.invoke("set_character_controller", { actorId: actor.id, controller: is3d ? {} : { radius: 16, height: 64, step_offset: 12, skin_width: 2, min_move_distance: 0.05 } }); return; }
         if (name === "Rigidbody") { app.invoke("set_rigidbody", { actorId: actor.id, rigidbody: { body_type: "Dynamic" } }); return; }
         if (name === "Collider") {
             app.invoke("add_collider", { actorId: actor.id, collider: { geometry: { kind: "Shape", shape: is3d ? { kind: "Box", size: [1, 1, 1] } : { kind: "Rect", size: [60, 60] } } } });
@@ -457,7 +459,7 @@ Rectangle {
                             Loader {
                                 Layout.fillWidth: true
                                 readonly property var c: card.c
-                                sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Rigidbody: rigidbodyCard, Collider: colliderCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
+                                sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Rigidbody: rigidbodyCard, Collider: colliderCard, CharacterController: controllerCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
                                                     Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard, Plugin: pluginCard })[card.c.component] || null
                             }
                         }
@@ -813,6 +815,13 @@ Rectangle {
     Component {
         id: rigidbodyCard
         RigidbodyForm {
+            readonly property var c: parent.c
+            app: root.app; actorId: root.actor ? root.actor.id : ""; component: c; is3d: root.is3d
+        }
+    }
+    Component {
+        id: controllerCard
+        CharacterControllerForm {
             readonly property var c: parent.c
             app: root.app; actorId: root.actor ? root.actor.id : ""; component: c; is3d: root.is3d
         }

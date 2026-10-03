@@ -485,6 +485,17 @@ impl Backend {
             "remove_character_controller" => to_json(
                 commands::physics::remove_character_controller(state, app, arg(&args, "actorId")?)?,
             ),
+            "set_character_motor" => to_json(commands::physics::set_character_motor(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "motor")?,
+            )?),
+            "remove_character_motor" => to_json(commands::physics::remove_character_motor(
+                state,
+                app,
+                arg(&args, "actorId")?,
+            )?),
             "set_physics_profile" => to_json(commands::physics::set_physics_profile(
                 state,
                 app,

@@ -52,6 +52,21 @@ pub struct Hit {
     pub trigger: bool,
 }
 
+/// What a character controller move did, as [`Actor::move_controller`] and
+/// [`Actor::simple_move_controller`] report it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Moved {
+    pub sides: bool,
+    pub above: bool,
+    pub below: bool,
+    /// Whether the controller ended standing on something.
+    pub grounded: bool,
+    /// How far it really went.
+    pub moved: (f32, f32, f32),
+    /// How many obstacles it met.
+    pub hits: usize,
+}
+
 /// This actor's particles, as [`Actor::particles`] reads them.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Particles {
@@ -1842,6 +1857,82 @@ impl Actor {
             y as f64,
             z as f64,
         );
+    }
+
+    /// Moves this actor's character controller by a displacement in world
+    /// units, sliding along what it hits. No gravity. Needs a
+    /// CharacterController component.
+    pub fn move_controller(&self, x: f32, y: f32, z: f32) -> Moved {
+        self.controller_op("move", x, y, z)
+    }
+
+    /// Moves it at a speed in units a second with gravity applied; up is
+    /// ignored.
+    pub fn simple_move_controller(&self, x: f32, y: f32, z: f32) -> Moved {
+        self.controller_op("simple move", x, y, z)
+    }
+
+    /// Changes one controller setting for the run: `"enabled"`, `"radius"`,
+    /// `"height"`, `"slope limit"`, `"step offset"`, `"skin width"`,
+    /// `"minimum move"`, `"detect collisions"` or `"overlap recovery"`.
+    pub fn set_controller(&self, property: &str, value: f64) {
+        let op = format!("set {property}");
+        self.act(
+            ACT_CONTROLLER,
+            Str::borrow(&op),
+            Str::EMPTY,
+            Str::EMPTY,
+            value,
+            0.0,
+            0.0,
+        );
+    }
+
+    fn controller_op(&self, op: &str, x: f32, y: f32, z: f32) -> Moved {
+        self.act(
+            ACT_CONTROLLER,
+            Str::borrow(op),
+            Str::EMPTY,
+            Str::EMPTY,
+            x as f64,
+            y as f64,
+            z as f64,
+        );
+        let n = |field: &str| self.controller_number(field, 0);
+        Moved {
+            sides: n("sides") != 0.0,
+            above: n("above") != 0.0,
+            below: n("below") != 0.0,
+            grounded: n("grounded") != 0.0,
+            moved: (n("moved x") as f32, n("moved y") as f32, n("moved z") as f32),
+            hits: n("hit count") as usize,
+        }
+    }
+
+    /// A number from this actor's last controller move: `grounded`, `flags`,
+    /// `sides`, `above`, `below`, `moved x/y/z`, `asked x/y/z`, `velocity
+    /// x/y/z`, `fall speed`, `recovered`, `stepped`, `skipped`, `hit count`;
+    /// and, for the `index`th (from 1) obstacle, `hit x/y/z`, `normal x/y/z`
+    /// and `hit length`. Zero when there is none.
+    pub fn controller_number(&self, field: &str, index: usize) -> f64 {
+        self.number(READ_CONTROLLER, Str::borrow(field), Str::EMPTY, index as f64)
+            .unwrap_or(0.0)
+    }
+
+    /// Words from the last controller move: the `index`th obstacle's `actor`,
+    /// `body` or `collider`, or the `error` that stopped it.
+    pub fn controller_text(&self, field: &str, index: usize) -> String {
+        self.text(
+            TEXT_CONTROLLER,
+            Str::borrow(field),
+            Str::borrow(&index.to_string()),
+        )
+        .unwrap_or_default()
+    }
+
+    /// Whether this controller stood on something after its last move.
+    pub fn is_grounded(&self) -> bool {
+        self.controller_number("grounded", 0) != 0.0
     }
 
     /// The same for a torque. A 2D body turns about z only.

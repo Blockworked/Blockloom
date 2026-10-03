@@ -19,6 +19,7 @@ use crate::ai::BrainSpec;
 use crate::animation::AnimationSpec;
 use crate::material::{ParticleSpec, SurfaceMaterial, TrailSpec};
 use crate::physics::controller::CharacterControllerSpec;
+use crate::physics::motor::CharacterMotorSpec;
 use crate::physics::{ColliderId, ColliderSpec, RigidbodySpec};
 use crate::probe::ProbeSpec;
 use crate::scene::{Physics, Placement, Visual};
@@ -41,6 +42,7 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "Rigidbody",
     "Collider",
     "CharacterController",
+    "CharacterMotor",
     "Joint",
     "Brain",
     "Camera",
@@ -327,6 +329,9 @@ pub enum ActorComponent {
     /// A capsule moved by blocks or scripts against the world (see
     /// [`crate::physics::controller`]). At most one per actor.
     CharacterController { controller: CharacterControllerSpec },
+    /// The reusable movement layer over a CharacterController (see
+    /// [`crate::physics::motor`]). Needs the controller; at most one per actor.
+    CharacterMotor { motor: CharacterMotorSpec },
     /// Constrains this body to another actor. A chain of hinged bodies makes
     /// a ragdoll while the usual parent hierarchy remains independent.
     Joint { joint: JointSpec },
@@ -417,6 +422,7 @@ impl ActorComponent {
             ActorComponent::Rigidbody { .. } => "Rigidbody",
             ActorComponent::Collider { .. } => "Collider",
             ActorComponent::CharacterController { .. } => "CharacterController",
+            ActorComponent::CharacterMotor { .. } => "CharacterMotor",
             ActorComponent::Joint { .. } => "Joint",
             ActorComponent::Brain { .. } => "Brain",
             ActorComponent::Camera { .. } => "Camera",
@@ -688,6 +694,14 @@ impl Components {
     pub fn character_controller(&self) -> Option<&CharacterControllerSpec> {
         self.0.iter().find_map(|c| match c {
             ActorComponent::CharacterController { controller } => Some(controller),
+            _ => None,
+        })
+    }
+
+    /// The CharacterMotor, if the actor has one.
+    pub fn character_motor(&self) -> Option<&CharacterMotorSpec> {
+        self.0.iter().find_map(|c| match c {
+            ActorComponent::CharacterMotor { motor } => Some(motor),
             _ => None,
         })
     }

@@ -21,6 +21,7 @@ pub mod layers;
 pub mod material;
 pub mod meta;
 pub mod migrate;
+pub mod motor;
 pub mod ops;
 pub mod ownership;
 pub mod plan;
@@ -42,7 +43,10 @@ pub use material::{
 pub use migrate::{ActorMigration, shape_from_look};
 pub use ops::{ForceMode, world_inertia};
 pub use ownership::{BodyEntry, ColliderOwnership, LocalPose, PhysicsOwnership};
-pub use plan::{BodyPlan, ColliderPlan, ControllerPlan, ExtraMass, PhysicsPlan, PlannedMaterial, PlannedShape};
+pub use plan::{
+    BodyPlan, ColliderPlan, ControllerPlan, ExtraMass, MotorInstall, PhysicsPlan, PlannedMaterial,
+    PlannedShape,
+};
 pub use spec::{
     Axis, BodyType, ColliderGeometry, ColliderShape, ColliderSpec, CollisionDetection, Constraints,
     Interpolation, LayerOverrides, MassSource, RigidbodySpec,

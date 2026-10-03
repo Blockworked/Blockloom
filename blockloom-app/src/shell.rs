@@ -1463,6 +1463,27 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[A],
     },
     CommandSpec {
+        name: "set-character-motor",
+        cmd: "set_character_motor",
+        aliases: &[],
+        summary: "Give an actor a CharacterMotor (walking, sprinting, jumping, crouching on top of its CharacterController), or replace the one it has. The object is {owner, space, walk_speed, sprint_speed, crouch_speed, ground_acceleration, ground_braking, air_acceleration, air_control, turn_speed, gravity_scale, terminal_fall_speed, ground_snap_distance, slide_on_steep, jump_height, max_jumps, jump_cut, coyote_time, jump_buffer, crouch_height, top_down}; omitted fields take the 3D defaults and the whole object replaces the old one. Answers the component's id.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "motor",
+                ty: "object {...}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "remove-character-motor",
+        cmd: "remove_character_motor",
+        aliases: &[],
+        summary: "Take the CharacterMotor off an actor.",
+        args: &[A],
+    },
+    CommandSpec {
         name: "set-physics-profile",
         cmd: "set_physics_profile",
         aliases: &[],

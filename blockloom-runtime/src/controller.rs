@@ -18,7 +18,7 @@ use blockloom_core::physics::controller::{
 };
 use blockloom_core::physics::query::{QueryFilter, TriggerPolicy};
 use blockloom_core::scene::Mode;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// The entities of this world's controllers, by actor.
 #[derive(Resource, Default, Clone)]
@@ -30,9 +30,7 @@ pub struct ControllerEntities {
 
 /// Marks a controller's capsule collider.
 #[derive(Component, Debug, Clone)]
-pub struct ControllerCapsule {
-    pub actor: String,
-}
+pub struct ControllerCapsule;
 
 /// The id a controller's capsule goes by in contacts and queries.
 pub fn capsule_id(actor: &str) -> ColliderId {
@@ -92,7 +90,9 @@ impl ControllerAccess<'_, '_> {
 /// reshapes capsules a block changed.
 pub fn apply_motion(
     // Core keeps controllers in thread-local state: stay on the main thread.
-    _main: NonSend<crate::engine::Engine>,
+    mut engine: NonSendMut<crate::engine::Engine>,
+    time: Res<Time<Fixed>>,
+    mut touching: Local<HashMap<String, HashSet<String>>>,
     mut commands: Commands,
     entities: Option<Res<ControllerEntities>>,
     layers: Option<Res<PhysicsLayers>>,
@@ -102,7 +102,9 @@ pub fn apply_motion(
     let Some(entities) = entities else {
         return;
     };
-    let mode = layers.and_then(|layers| layers.mode).unwrap_or(Mode::ThreeD);
+    let mode = layers
+        .and_then(|layers| layers.mode)
+        .unwrap_or(Mode::ThreeD);
     for (actor, delta) in core::take_pending() {
         let Some(&entity) = entities.actors.get(&actor) else {
             continue;
@@ -118,6 +120,7 @@ pub fn apply_motion(
             *global = GlobalTransform::from(*transform);
         }
     }
+    announce_hits(&mut engine, &mut touching, time.timestep().as_secs_f32());
     for (actor, spec) in core::take_reshaped() {
         let Some(&capsule) = entities.capsules.get(&actor) else {
             continue;
@@ -145,6 +148,57 @@ pub fn apply_motion(
         match mode {
             Mode::ThreeD => d3::set_enabled(&mut e, spec.enabled && spec.detect_collisions),
             Mode::TwoD => d2::set_enabled(&mut e, spec.enabled && spec.detect_collisions),
+        }
+    }
+}
+
+/// Tells the blocks what each move met. A fixed obstacle the controller met
+/// and had not met on its last move is an Enter, one it keeps meeting a Stay
+/// and one it no longer meets an Exit; bodies that move are left to the
+/// contact lifecycle, which already hears them.
+fn announce_hits(
+    engine: &mut crate::engine::Engine,
+    touching: &mut HashMap<String, HashSet<String>>,
+    dt: f32,
+) {
+    use blockloom_core::physics::controller as core;
+    use blockloom_core::physics::{ContactKind, ContactPhase};
+    let moved = core::take_moved();
+    let mut now: HashMap<String, HashMap<String, f32>> = HashMap::new();
+    for (actor, hit) in core::take_hits() {
+        if hit.body.is_none() {
+            let speed = if dt > 0.0 { hit.move_length / dt } else { 0.0 };
+            now.entry(actor)
+                .or_default()
+                .insert(hit.actor.clone(), speed);
+        }
+    }
+    let fire = |engine: &mut crate::engine::Engine, actor: &str, with: &str, phase, speed| {
+        engine.fire(blockloom_core::vm::Event::Collision {
+            actor: actor.to_string(),
+            with: with.to_string(),
+            phase,
+            kind: ContactKind::Collision,
+            impulse: 0.0,
+            speed,
+        });
+    };
+    for actor in moved {
+        let hit = now.remove(&actor).unwrap_or_default();
+        let before = touching.remove(&actor).unwrap_or_default();
+        for (with, speed) in &hit {
+            let phase = if before.contains(with) {
+                ContactPhase::Stay
+            } else {
+                ContactPhase::Enter
+            };
+            fire(engine, &actor, with, phase, *speed);
+        }
+        for with in before.iter().filter(|with| !hit.contains_key(*with)) {
+            fire(engine, &actor, with, ContactPhase::Exit, 0.0);
+        }
+        if !hit.is_empty() {
+            touching.insert(actor, hit.into_keys().collect());
         }
     }
 }
@@ -215,9 +269,7 @@ pub mod d3 {
                     trigger: false,
                     queryable: true,
                 },
-                ControllerCapsule {
-                    actor: planned.actor.clone(),
-                },
+                ControllerCapsule,
             ));
             if !spec.enabled || !spec.detect_collisions {
                 e.insert(rp::ColliderDisabled);
@@ -247,7 +299,10 @@ pub mod d3 {
     pub struct View3<'a, 'w, 's>(&'a Access3<'w, 's>);
 
     /// Rapier's controller configured the way the spec asks.
-    pub(super) fn configured(spec: &CharacterControllerSpec, up: Vec3) -> KinematicCharacterController {
+    pub(super) fn configured(
+        spec: &CharacterControllerSpec,
+        up: Vec3,
+    ) -> KinematicCharacterController {
         KinematicCharacterController {
             up,
             offset: CharacterLength::Absolute(spec.skin_width),
@@ -293,12 +348,13 @@ pub mod d3 {
 
             let filter = sweep_filter(r.actor);
             let lookups = &world.lookups;
-            let predicate = |entity: Entity, raw: &bevy_rapier3d::rapier::geometry::Collider| -> bool {
-                raw.is_enabled() && !raw.is_sensor() && {
-                    let ident = lookups.ident(entity, false, raw.parent().is_some());
-                    lookups.admits(&ident, true, &filter)
-                }
-            };
+            let predicate =
+                |entity: Entity, raw: &bevy_rapier3d::rapier::geometry::Collider| -> bool {
+                    raw.is_enabled() && !raw.is_sensor() && {
+                        let ident = lookups.ident(entity, false, raw.parent().is_some());
+                        lookups.admits(&ident, true, &filter)
+                    }
+                };
             let query_filter = rp::QueryFilter::default().predicate(&predicate);
             Ok(context.with_query_pipeline(query_filter, |pipeline| {
                 let queries = &pipeline.query_pipeline;
@@ -321,7 +377,8 @@ pub mod d3 {
                     outcome.effective = moved.translation.to_array();
                     outcome.grounded = moved.grounded;
                 } else if !spec.overlap_recovery {
-                    let probe = controller.move_shape(dt, queries, &shape, &pose, Vec3::ZERO, |_| {});
+                    let probe =
+                        controller.move_shape(dt, queries, &shape, &pose, Vec3::ZERO, |_| {});
                     outcome.grounded = probe.grounded;
                 }
                 outcome.recovered = recovered.to_array();
@@ -333,7 +390,9 @@ pub mod d3 {
                         .colliders
                         .colliders
                         .get(c.handle)
-                        .map_or((false, false), |raw| (raw.is_sensor(), raw.parent().is_some()));
+                        .map_or((false, false), |raw| {
+                            (raw.is_sensor(), raw.parent().is_some())
+                        });
                     let ident = lookups.ident(hit_entity, sensor, carried);
                     let (point, normal) = (c.hit.witness1, c.hit.normal1);
                     outcome.hits.push(RawHit {
@@ -435,9 +494,7 @@ pub mod d2 {
                     trigger: false,
                     queryable: true,
                 },
-                ControllerCapsule {
-                    actor: planned.actor.clone(),
-                },
+                ControllerCapsule,
             ));
             if !spec.enabled || !spec.detect_collisions {
                 e.insert(rp::ColliderDisabled);
@@ -474,7 +531,10 @@ pub mod d2 {
         [v.x, v.y, 0.0]
     }
 
-    pub(super) fn configured(spec: &CharacterControllerSpec, up: Vec2) -> KinematicCharacterController {
+    pub(super) fn configured(
+        spec: &CharacterControllerSpec,
+        up: Vec2,
+    ) -> KinematicCharacterController {
         KinematicCharacterController {
             up,
             offset: CharacterLength::Absolute(spec.skin_width),
@@ -519,12 +579,13 @@ pub mod d2 {
 
             let filter = sweep_filter(r.actor);
             let lookups = &world.lookups;
-            let predicate = |entity: Entity, raw: &bevy_rapier2d::rapier::geometry::Collider| -> bool {
-                raw.is_enabled() && !raw.is_sensor() && {
-                    let ident = lookups.ident(entity, false, raw.parent().is_some());
-                    lookups.admits(&ident, true, &filter)
-                }
-            };
+            let predicate =
+                |entity: Entity, raw: &bevy_rapier2d::rapier::geometry::Collider| -> bool {
+                    raw.is_enabled() && !raw.is_sensor() && {
+                        let ident = lookups.ident(entity, false, raw.parent().is_some());
+                        lookups.admits(&ident, true, &filter)
+                    }
+                };
             let query_filter = rp::QueryFilter::default().predicate(&predicate);
             Ok(context.with_query_pipeline(query_filter, |pipeline| {
                 let queries = &pipeline.query_pipeline;
@@ -547,7 +608,8 @@ pub mod d2 {
                     outcome.effective = lift(moved.translation);
                     outcome.grounded = moved.grounded;
                 } else if !spec.overlap_recovery {
-                    let probe = controller.move_shape(dt, queries, &shape, &pose, Vec2::ZERO, |_| {});
+                    let probe =
+                        controller.move_shape(dt, queries, &shape, &pose, Vec2::ZERO, |_| {});
                     outcome.grounded = probe.grounded;
                 }
                 outcome.recovered = lift(recovered);
@@ -559,7 +621,9 @@ pub mod d2 {
                         .colliders
                         .colliders
                         .get(c.handle)
-                        .map_or((false, false), |raw| (raw.is_sensor(), raw.parent().is_some()));
+                        .map_or((false, false), |raw| {
+                            (raw.is_sensor(), raw.parent().is_some())
+                        });
                     let ident = lookups.ident(hit_entity, sensor, carried);
                     let (point, normal) = (c.hit.witness1, c.hit.normal1);
                     outcome.hits.push(RawHit {

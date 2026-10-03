@@ -338,6 +338,15 @@ pub enum Effect {
         torque: bool,
         vector: [f32; 3],
     },
+    /// A character controller statement (`move`, `simple move` or `set
+    /// <property>`) that ran on the spot; `flags` is the move's collision
+    /// flags with 8 added when it ended grounded.
+    Controller {
+        actor: String,
+        op: String,
+        vector: [f32; 3],
+        flags: u32,
+    },
     SetVelocity {
         actor: String,
         velocity: [f32; 3],

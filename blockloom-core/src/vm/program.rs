@@ -268,6 +268,12 @@ pub enum Action {
         torque: bool,
         vector: [Value; 3],
     },
+    /// A character controller statement: `op` is `move`, `simple move` or
+    /// `set <property>` (the value in the first slot).
+    Controller {
+        op: String,
+        vector: [Value; 3],
+    },
     SetVelocity([Value; 3]),
     SetGravity([Value; 3]),
     SetDensity(Value),
@@ -820,7 +826,9 @@ fn action_values(action: &Action) -> Vec<&Value> {
         Action::SetRigSlot { slot, attachment } => vec![slot, attachment],
         Action::SetSlotTint { slot, color } => vec![slot, color],
         Action::SetIkTarget { constraint, x, y } => vec![constraint, x, y],
-        Action::AddForce { vector, .. } => vector.iter().collect(),
+        Action::AddForce { vector, .. } | Action::Controller { vector, .. } => {
+            vector.iter().collect()
+        }
         Action::Query { values, .. } => values.iter().collect(),
         Action::GoTo(target)
         | Action::ApplyImpulse(target)
@@ -1224,6 +1232,12 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
                 torque,
                 vector,
             }
+        }
+        Action::Controller { op, mut vector } => {
+            for v in &mut vector {
+                *v = lift_one(std::mem::replace(v, Value::Bool), ctx);
+            }
+            Action::Controller { op, vector }
         }
         Action::SetVelocity(mut t) => {
             for v in &mut t {
@@ -1994,6 +2008,14 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             mode: *mode,
             torque: true,
             vector: [x.clone(), y.clone(), z.clone()],
+        })),
+        K::ControllerMove { mode, x, y, z } => steps.push(Step::Action(Action::Controller {
+            op: mode.name().to_string(),
+            vector: [x.clone(), y.clone(), z.clone()],
+        })),
+        K::SetController { property, value } => steps.push(Step::Action(Action::Controller {
+            op: format!("set {}", property.name()),
+            vector: [value.clone(), Value::number(0.0), Value::number(0.0)],
         })),
         K::SetVelocity { x, y, z } => steps.push(Step::Action(Action::SetVelocity([
             x.clone(),

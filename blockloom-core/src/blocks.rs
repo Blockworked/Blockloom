@@ -551,6 +551,20 @@ pub enum InstructionKind {
         y: Value,
         z: Value,
     },
+    /// Moves this actor's character controller: a displacement, or with
+    /// `Simple` a speed with gravity. Needs a CharacterController component.
+    ControllerMove {
+        #[serde(default)]
+        mode: crate::physics::controller::MoveMode,
+        x: Value,
+        y: Value,
+        z: Value,
+    },
+    /// Changes one setting of this actor's character controller for the run.
+    SetController {
+        property: crate::physics::controller::ControllerProperty,
+        value: Value,
+    },
     /// Casts a ray along a segment and keeps what it crossed as this actor's
     /// query result, read back by the `hit` reporters. The ray ignores this
     /// actor's own colliders.
@@ -1193,6 +1207,7 @@ impl BlockKind for InstructionKind {
             | K::SetWater { value: v, .. }
             | K::SetDensity { density: v }
             | K::SetMass { mass: v }
+            | K::SetController { value: v, .. }
             | K::SetCollisionLayer { layer: v }
             | K::SetCollisionMask { mask: v }
             | K::Say { text: v }
@@ -1222,6 +1237,7 @@ impl BlockKind for InstructionKind {
             | K::SetVelocity { x, y, z }
             | K::AddForce { x, y, z, .. }
             | K::AddTorque { x, y, z, .. }
+            | K::ControllerMove { x, y, z, .. }
             | K::SetGravity { x, y, z } => {
                 f(x, InputValueType::Any);
                 f(y, InputValueType::Any);

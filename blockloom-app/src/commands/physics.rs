@@ -16,6 +16,7 @@ use blockloom_core::physics::controller::CharacterControllerSpec;
 use blockloom_core::physics::cook::{
     CollisionLookup, CookControl, Decompose, FolderCollision, NoCollisionData, Source, cook_project,
 };
+use blockloom_core::physics::motor::CharacterMotorSpec;
 use blockloom_core::physics::{
     ColliderId, ColliderSpec, CompatibilityProfile, MaterialBody, MaterialLibrary, MaterialRef,
     PhysicsOwnership, RigidbodySpec, Severity, meta,
@@ -186,6 +187,34 @@ pub(crate) fn remove_character_controller(
     edit(state, app, None, |project| {
         with_scene(project, |scene, library| {
             scene.remove_character_controller(&actor_id, library)
+        })
+    })
+}
+
+pub(crate) fn set_character_motor(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    motor: CharacterMotorSpec,
+) -> Result<String, String> {
+    let session = Some(format!("physics-motor:{actor_id}"));
+    edit(state, app, session, |project| {
+        with_scene(project, |scene, library| {
+            scene
+                .set_character_motor(&actor_id, motor, library)
+                .map(|id| id.to_string())
+        })
+    })
+}
+
+pub(crate) fn remove_character_motor(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+) -> Result<(), String> {
+    edit(state, app, None, |project| {
+        with_scene(project, |scene, library| {
+            scene.remove_character_motor(&actor_id, library)
         })
     })
 }

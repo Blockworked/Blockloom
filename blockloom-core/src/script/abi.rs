@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 39;
+pub const ABI_VERSION: u32 = 40;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -232,6 +232,12 @@ pub const READ_QUERY: u32 = 54;
 /// `a` = field name (`actor`, `body`, `collider`, `error`, ...), `b` = which
 /// hit, from 1. Words from this actor's last query.
 pub const TEXT_QUERY: u32 = 22;
+/// `a` = field name (`grounded`, `flags`, `moved y`, `normal x`, ...), `arg` =
+/// which obstacle, from 1. A number from this actor's last controller move.
+pub const READ_CONTROLLER: u32 = 55;
+/// `a` = field name (`actor`, `body`, `collider`, `error`), `b` = which
+/// obstacle, from 1. Words from this actor's last controller move.
+pub const TEXT_CONTROLLER: u32 = 23;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -467,6 +473,10 @@ pub const ACT_ADD_FORCE: u32 = 101;
 /// layer), `n1..` = the kind's numbers. Asked on the spot, as this actor;
 /// the answer is read back with [`READ_QUERY`] and [`TEXT_QUERY`].
 pub const ACT_PHYSICS_QUERY: u32 = 102;
+/// `a` = `move`, `simple move` or `set <property>`; `n0..n2` = the vector
+/// (the value in `n0` for a set). Runs on the spot, as this actor; the result
+/// is read back with [`READ_CONTROLLER`] and [`TEXT_CONTROLLER`].
+pub const ACT_CONTROLLER: u32 = 103;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

@@ -274,7 +274,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [x] Phase 1: document and ownership foundation (specs, ids, ownership, materials, validation, transactions, migration preview, shell/MCP commands). Not yet: inspector UI, runtime reading the components, applying migration.
   - [x] Phase 2: bodies, geometry and solver policy (planner in core, per-collider child entities, mass rules, constraints, sleep, materials with stick/slip, layer matrix and exact pair filtering, CCD mapping, speed caps, Play/Build preflight, layer/plan commands). Force blocks and per-body solver overrides landed with Phase 3. Contact offset, queryable and interpolation now act at runtime, and Rigidbody/Collider have inspector cards.
   - [x] Phase 3: contact lifecycle, authoritative 2D and 3D queries (ray, rays, ball/box/capsule cast and overlap, closest) over the Rapier world with layer and trigger filtering, collision cooking (hulls, decomposition, trimesh) for Play and builds, query blocks and `hit` reporters in the VM, compiled logic and script ABI. Open: no GPU-checked run, no inspector UI for cooking settings, no collider handles in the scene view yet.
-  - [ ] Phase 4: character controllers.
+  - [x] Phase 4: character controllers (CharacterController component and document ops, Unity-style move/slide/step/slope/ground/recovery over Rapier in 2D and 3D, move and settings blocks with `controller` reporters across the VM, compiled logic and scripts, hit events, inspector card). Open: no GPU-checked run, no platform carry, QML untested here (no Qt in the container), no capsule gizmo in the scene view yet.
   - [ ] Phase 5: reusable motors and input.
   - [ ] Phase 6: cameras, presets and authoring.
   - [ ] Phase 7: joints and full integration.

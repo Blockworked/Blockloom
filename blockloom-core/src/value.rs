@@ -687,6 +687,25 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |args| query_field(args, true),
     },
     ExtOperator {
+        kind: "ControllerNumber",
+        op: "ControllerNumber",
+        arity: 2,
+        default_args: || vec![number(1.0), text("grounded")],
+        // A number from this actor's last character controller move: whether
+        // it stands on something, the collision flags, how far it really
+        // moved, or the `hit`th obstacle's point and normal. Zero otherwise.
+        eval: |args| controller_field(args, false),
+    },
+    ExtOperator {
+        kind: "ControllerText",
+        op: "ControllerText",
+        arity: 2,
+        default_args: || vec![number(1.0), text("actor")],
+        // Words from this actor's last controller move: the `hit`th
+        // obstacle's actor, body or collider, or the error that stopped it.
+        eval: |args| controller_field(args, true),
+    },
+    ExtOperator {
         kind: "Atmosphere",
         op: "Atmosphere",
         arity: 1,
@@ -1147,6 +1166,31 @@ fn query_field(args: &[Evaluated], text: bool) -> Result<Evaluated, String> {
     Ok(match query::read_field(&actor, index, field, actor_name) {
         query::HitValue::Number(n) => Evaluated::Number(n),
         query::HitValue::Text(t) => Evaluated::Text(t),
+    })
+}
+
+/// Reads a field of the running actor's last character controller move.
+fn controller_field(args: &[Evaluated], text: bool) -> Result<Evaluated, String> {
+    let name = args[1].as_text();
+    let Some(actor) = sense::current_actor() else {
+        return Ok(if text {
+            Evaluated::Text(String::new())
+        } else {
+            Evaluated::Number(0.0)
+        });
+    };
+    let index = num(args.first()).max(0.0) as usize;
+    Ok(if text {
+        Evaluated::Text(
+            match crate::physics::controller::read_text(&actor, &name, index) {
+                id if matches!(name.trim(), "actor") && !id.is_empty() => actor_name(&id),
+                other => other,
+            },
+        )
+    } else {
+        Evaluated::Number(crate::physics::controller::read_number(
+            &actor, &name, index,
+        ))
     })
 }
 

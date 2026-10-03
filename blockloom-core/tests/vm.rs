@@ -2514,6 +2514,40 @@ fn a_cast_block_files_its_answer_for_the_hit_reporters() {
 }
 
 #[test]
+fn a_controller_block_with_no_controller_reports_why_and_reads_as_nothing() {
+    use blockloom_core::physics::controller::{self, ControllerProperty, MoveMode};
+    let project = project_with(vec![started(vec![
+        InstructionKind::ControllerMove {
+            mode: MoveMode::Simple,
+            x: Value::number(1.0),
+            y: Value::number(0.0),
+            z: Value::number(0.0),
+        },
+        InstructionKind::SetController {
+            property: ControllerProperty::Radius,
+            value: Value::number(0.4),
+        },
+        InstructionKind::Say {
+            text: Value::op(
+                Op::from_name("ControllerNumber"),
+                vec![Value::number(0.0), Value::text("grounded")],
+            ),
+        },
+    ])]);
+    controller::reset();
+    let effects = Harness::started(&project).run(1);
+    let errors = effects
+        .iter()
+        .filter(|effect| matches!(effect, Effect::Error { .. }))
+        .count();
+    assert_eq!(errors, 2, "both statements say there is nothing to move");
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::Say { text, .. } if text == "0"
+    )));
+}
+
+#[test]
 fn a_query_with_no_world_reports_why_and_reads_as_a_miss() {
     use blockloom_core::physics::query::{self, TriggerPolicy};
     let project = project_with(vec![started(vec![

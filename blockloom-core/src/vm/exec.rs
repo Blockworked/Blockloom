@@ -1687,6 +1687,21 @@ impl Vm {
                     vector,
                 });
             }
+            Action::Controller { op, vector } => {
+                let vector = self.eval_vec3(vector, actor, params, temps, out);
+                match crate::physics::controller::run_op(actor, op, vector) {
+                    Ok(flags) => out.push(Effect::Controller {
+                        actor: actor.to_string(),
+                        op: op.clone(),
+                        vector,
+                        flags,
+                    }),
+                    Err(message) => out.push(Effect::Error {
+                        actor: actor.to_string(),
+                        message,
+                    }),
+                }
+            }
             Action::SetVelocity(vector) => {
                 let velocity = self.eval_vec3(vector, actor, params, temps, out);
                 out.push(Effect::SetVelocity {

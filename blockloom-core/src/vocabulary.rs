@@ -97,6 +97,18 @@ const PARALLAX_AXES: &[&str] = &["Both", "X", "Y"];
 const CONTACT_PHASES: &[&str] = &["Enter", "Stay", "Exit"];
 const CONTACT_SCOPES: &[&str] = &["Any", "Collision", "Trigger"];
 const FORCE_MODES: &[&str] = &["Force", "Acceleration", "Impulse", "VelocityChange"];
+const MOVE_MODES: &[&str] = &["Move", "Simple"];
+const CONTROLLER_PROPERTIES: &[&str] = &[
+    "Enabled",
+    "Radius",
+    "Height",
+    "SlopeLimit",
+    "StepOffset",
+    "SkinWidth",
+    "MinMoveDistance",
+    "DetectCollisions",
+    "OverlapRecovery",
+];
 const RAY_HITS: &[&str] = &["Nearest", "Every"];
 const TRIGGER_POLICIES: &[&str] = &["UseGlobal", "Ignore", "Include"];
 const CLOUD_LAYER_PROPERTIES: &[&str] = &["Coverage", "Opacity", "Contrast", "Altitude", "Spin"];
@@ -948,6 +960,56 @@ pub const BLOCKS: &[BlockSpec] = &[
         dropdowns: &[Dropdown {
             field: "mode",
             options: FORCE_MODES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "ControllerMove",
+        category: "Physics",
+        purpose: "Moves this actor's character controller. Move is a displacement in world units that ignores gravity; Simple is a speed in units a second with gravity applied and up ignored. The controller slides along what it hits, climbs steps and refuses slopes past its limit. Read the result with the controller reporters. Needs a CharacterController component.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "x",
+                id: "ControllerX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "ControllerY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "ControllerZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "mode",
+            options: MOVE_MODES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetController",
+        category: "Physics",
+        purpose: "Changes one setting of this actor's character controller for the rest of the run. Enabled and the two switches read zero as off. A change that would make the controller invalid is refused with an error.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "value",
+            id: "ControllerValue",
+            value: "Any",
+        }],
+        dropdowns: &[Dropdown {
+            field: "property",
+            options: CONTROLLER_PROPERTIES,
         }],
         strings: NO_STRINGS,
         bools: NO_BOOLS,

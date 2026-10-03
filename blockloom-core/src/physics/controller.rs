@@ -199,7 +199,10 @@ impl CharacterControllerSpec {
             );
         }
         if !finite(self.slope_limit) || !(0.0..=90.0).contains(&self.slope_limit) {
-            bad("slope_limit", "The slope limit must be 0 to 90 degrees".into());
+            bad(
+                "slope_limit",
+                "The slope limit must be 0 to 90 degrees".into(),
+            );
         }
         if !finite(self.step_offset) || self.step_offset < 0.0 {
             bad("step_offset", "The step offset cannot be negative".into());
@@ -215,10 +218,16 @@ impl CharacterControllerSpec {
         if !finite(self.skin_width) || self.skin_width <= 0.0 {
             bad("skin_width", "The skin width must be above zero".into());
         } else if finite(self.radius) && self.skin_width > self.radius {
-            bad("skin_width", "The skin width cannot exceed the radius".into());
+            bad(
+                "skin_width",
+                "The skin width cannot exceed the radius".into(),
+            );
         }
         if !finite(self.min_move_distance) || self.min_move_distance < 0.0 {
-            bad("min_move_distance", "The minimum move cannot be negative".into());
+            bad(
+                "min_move_distance",
+                "The minimum move cannot be negative".into(),
+            );
         }
         if self.center.iter().any(|c| !c.is_finite()) {
             bad("center", "The centre must be finite".into());
@@ -413,6 +422,7 @@ struct Registry {
     controllers: HashMap<String, Tracked>,
     /// Hits since the engine last collected them, to raise as events.
     outbox: Vec<(String, ControllerHit)>,
+    moved: Vec<String>,
 }
 
 thread_local! {
@@ -474,11 +484,17 @@ pub fn has(actor: &str) -> bool {
 
 /// The controller's spec as it stands, with any change a run made.
 pub fn spec_of(actor: &str) -> Option<CharacterControllerSpec> {
-    REGISTRY.with(|registry| registry.borrow().controllers.get(actor).map(|t| t.spec.clone()))
+    REGISTRY.with(|registry| {
+        registry
+            .borrow()
+            .controllers
+            .get(actor)
+            .map(|t| t.spec.clone())
+    })
 }
 
 /// The properties a block or script can change during a run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ControllerProperty {
     Enabled,
     Radius,
@@ -611,6 +627,41 @@ pub fn take_hits() -> Vec<(String, ControllerHit)> {
     REGISTRY.with(|registry| std::mem::take(&mut registry.borrow_mut().outbox))
 }
 
+/// What the installed service says about the world: gravity, the fixed step,
+/// the dimension and the tick. `None` outside a run.
+pub fn service_info() -> Option<([f32; 3], f32, Mode, u64)> {
+    let (service, tick) = SERVICE.with(|slot| slot.get())?;
+    // SAFETY: see `with_service`; the scope that set it is still running.
+    let service: &dyn ControllerService = unsafe { &*service };
+    Some((service.gravity(), service.timestep(), service.mode(), tick))
+}
+
+/// How far a move would get, without making it: the sweep of `vector` from
+/// where the capsule stands now. Used for headroom before standing up.
+pub fn probe_move(actor: &str, vector: [f32; 3]) -> Option<[f32; 3]> {
+    let (service, _) = SERVICE.with(|slot| slot.get())?;
+    // SAFETY: see `with_service`; the scope that set it is still running.
+    let service: &dyn ControllerService = unsafe { &*service };
+    let (spec, pending) = REGISTRY.with(|registry| {
+        let registry = registry.borrow();
+        let tracked = registry.controllers.get(actor)?;
+        Some((tracked.spec.clone(), tracked.pending))
+    })?;
+    let request = StepRequest {
+        actor,
+        spec: &spec,
+        displacement: vector,
+        pending,
+        dt: service.timestep(),
+    };
+    service.step(&request).ok().map(|outcome| outcome.effective)
+}
+
+/// The actors whose controllers made a move since the last call.
+pub fn take_moved() -> Vec<String> {
+    REGISTRY.with(|registry| std::mem::take(&mut registry.borrow_mut().moved))
+}
+
 /// Moves `actor`'s controller. The answer is also filed for the reporters.
 /// Without a service (no world yet) or a controller, the result carries why.
 pub fn move_call(actor: &str, mode: MoveMode, vector: [f32; 3]) -> MoveResult {
@@ -678,10 +729,9 @@ pub fn move_call(actor: &str, mode: MoveMode, vector: [f32; 3]) -> MoveResult {
         result.grounded = was_grounded.unwrap_or(false);
         return file(actor, result, None, fall_speed);
     }
-    let length = (requested[0] * requested[0]
-        + requested[1] * requested[1]
-        + requested[2] * requested[2])
-        .sqrt();
+    let length =
+        (requested[0] * requested[0] + requested[1] * requested[1] + requested[2] * requested[2])
+            .sqrt();
     let skipped = length < spec.min_move_distance;
     let displacement = if skipped { [0.0; 3] } else { requested };
     let request = StepRequest {
@@ -764,12 +814,7 @@ fn failed(actor: &str, mode: MoveMode, tick: u64, why: &str) -> MoveResult {
 }
 
 /// Files a finished move under its actor and queues its hits and motion.
-fn file(
-    actor: &str,
-    result: MoveResult,
-    moved: Option<[f32; 3]>,
-    fall_speed: f32,
-) -> MoveResult {
+fn file(actor: &str, result: MoveResult, moved: Option<[f32; 3]>, fall_speed: f32) -> MoveResult {
     REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
         let hits = result.hits.clone();
@@ -786,8 +831,33 @@ fn file(
         registry
             .outbox
             .extend(hits.into_iter().map(|hit| (actor.to_string(), hit)));
+        registry.moved.push(actor.to_string());
     });
     result
+}
+
+/// One controller statement, the way every adapter (blocks, compiled logic,
+/// scripts) states it: `op` is `move`, `simple move` or `set <property>`, and
+/// `vector` is the move's numbers or, for a set, the value in `vector[0]`.
+/// Answers the move's flags (see [`CollisionFlags::bits`], with 8 added when
+/// grounded) or why it was refused.
+pub fn run_op(actor: &str, op: &str, vector: [f32; 3]) -> Result<u32, String> {
+    let op = op.trim();
+    if let Some(name) = op.strip_prefix("set ") {
+        let property = ControllerProperty::parse(name)
+            .ok_or_else(|| format!("a controller has no setting called \"{name}\""))?;
+        let mode = SERVICE
+            .with(|slot| slot.get())
+            // SAFETY: see `with_service`; the scope that set it is running.
+            .map_or(Mode::ThreeD, |(service, _)| unsafe { (*service).mode() });
+        set_property(actor, property, f64::from(vector[0]), mode)?;
+        return Ok(0);
+    }
+    let result = move_call(actor, MoveMode::parse(op), vector);
+    match result.error {
+        Some(why) => Err(why),
+        None => Ok(result.flags.bits() | u32::from(result.grounded) << 3),
+    }
 }
 
 /// The actor's last move, as its reporters read it.
@@ -955,10 +1025,18 @@ mod tests {
     fn impossible_dimensions_are_refused() {
         let mut spec = CharacterControllerSpec::default();
         spec.radius = -1.0;
-        assert!(spec.validate(Mode::ThreeD).iter().any(|(f, _)| f == "radius"));
+        assert!(
+            spec.validate(Mode::ThreeD)
+                .iter()
+                .any(|(f, _)| f == "radius")
+        );
         let mut spec = CharacterControllerSpec::default();
         spec.height = 0.8;
-        assert!(spec.validate(Mode::ThreeD).iter().any(|(f, _)| f == "height"));
+        assert!(
+            spec.validate(Mode::ThreeD)
+                .iter()
+                .any(|(f, _)| f == "height")
+        );
         let mut spec = CharacterControllerSpec::default();
         spec.step_offset = 5.0;
         assert!(
@@ -994,8 +1072,14 @@ mod tests {
         );
         // A 30 degree slope is walkable at a 45 degree limit; a 60 one is a wall.
         let slope = |deg: f32| [deg.to_radians().sin(), deg.to_radians().cos(), 0.0];
-        assert_eq!(CollisionFlags::classify(slope(30.0), up, 45.0), Surface::Floor);
-        assert_eq!(CollisionFlags::classify(slope(60.0), up, 45.0), Surface::Wall);
+        assert_eq!(
+            CollisionFlags::classify(slope(30.0), up, 45.0),
+            Surface::Floor
+        );
+        assert_eq!(
+            CollisionFlags::classify(slope(60.0), up, 45.0),
+            Surface::Wall
+        );
         assert_eq!(
             CollisionFlags::classify([1.0, 0.0, 0.0], up, 45.0),
             Surface::Wall
@@ -1054,10 +1138,18 @@ mod tests {
             let _ = move_call("a", MoveMode::Move, [0.0, 3.0, 0.0]);
             // Up three, then down five: the floor stops it one under the start.
             let down = move_call("a", MoveMode::Move, [0.0, -5.0, 0.0]);
-            assert!((down.effective[1] + 4.0).abs() < 1e-5, "{:?}", down.effective);
+            assert!(
+                (down.effective[1] + 4.0).abs() < 1e-5,
+                "{:?}",
+                down.effective
+            );
             let pending = take_pending();
             assert_eq!(pending.len(), 1);
-            assert!((pending[0].1[1] + 1.0).abs() < 1e-5, "net {:?}", pending[0].1);
+            assert!(
+                (pending[0].1[1] + 1.0).abs() < 1e-5,
+                "net {:?}",
+                pending[0].1
+            );
             assert!(take_pending().is_empty(), "taking clears it");
         });
     }
@@ -1123,6 +1215,20 @@ mod tests {
             assert!(set_property("a", ControllerProperty::Radius, f64::NAN, Mode::ThreeD).is_err());
             assert_eq!(spec_of("a").unwrap().height, 2.0);
             assert!(set_property("ghost", ControllerProperty::Radius, 1.0, Mode::ThreeD).is_err());
+        });
+    }
+
+    #[test]
+    fn statements_run_through_one_entry() {
+        run(|| {
+            register("a", standing(2.0));
+            let flags = run_op("a", "move", [0.0, -3.0, 0.0]).unwrap();
+            assert_eq!(flags, 4 | 8, "below and grounded");
+            assert_eq!(run_op("a", "set radius", [0.4, 0.0, 0.0]), Ok(0));
+            assert_eq!(spec_of("a").unwrap().radius, 0.4);
+            assert!(run_op("a", "set mood", [1.0; 3]).is_err());
+            assert!(run_op("a", "set radius", [-1.0, 0.0, 0.0]).is_err());
+            assert!(run_op("ghost", "move", [1.0; 3]).is_err());
         });
     }
 

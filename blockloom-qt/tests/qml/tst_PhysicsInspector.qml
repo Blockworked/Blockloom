@@ -19,6 +19,7 @@ TestCase {
     }
     Component { id: bodyFactory; Editor.RigidbodyForm { app: stubApp; actorId: "a1" } }
     Component { id: colliderFactory; Editor.ColliderForm { app: stubApp } }
+    Component { id: controllerFactory; Editor.CharacterControllerForm { app: stubApp; actorId: "a1" } }
 
     function init() { calls = []; }
     function last() { return calls[calls.length - 1]; }
@@ -101,5 +102,27 @@ TestCase {
     function test_pointsParseFromText() {
         const form = createTemporaryObject(colliderFactory, test, { component: { collider: { id: "c" } }, is3d: false });
         compare(JSON.stringify(form.parsePoints("0,0  10,0 5,8 junk 3")), "[[0,0],[10,0],[5,8]]");
+    }
+
+    function test_aBlankControllerShowsUnityDefaults() {
+        const form = createTemporaryObject(controllerFactory, test, { component: { component: "CharacterController", controller: {} } });
+        compare(form.c.radius, 0.5);
+        compare(form.c.height, 2);
+        compare(form.c.slope_limit, 45);
+        compare(form.c.step_offset, 0.3);
+    }
+    function test_aTwoDimensionalControllerIsInPixels() {
+        const form = createTemporaryObject(controllerFactory, test, { component: { controller: {} }, is3d: false });
+        compare(form.c.radius, 16);
+        compare(form.c.height, 64);
+    }
+    function test_aControllerEditSendsTheWholeNextSpec() {
+        const form = createTemporaryObject(controllerFactory, test, { component: { controller: { id: "cc", slope_limit: 30 } } });
+        form.write({ step_offset: 0.5 });
+        compare(last().command, "set_character_controller");
+        compare(last().args.actorId, "a1");
+        compare(last().args.controller.id, "cc");
+        compare(last().args.controller.slope_limit, 30);
+        compare(last().args.controller.step_offset, 0.5);
     }
 }

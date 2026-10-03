@@ -508,6 +508,49 @@ Rigidbody with `remove_rigidbody`, and Add component gives an actor a Rigidbody 
 Collider). Every edit sends the whole next spec to `set_rigidbody`/`set_collider`, so
 validation and undo are the backend's. QML test: `tests/qml/tst_PhysicsInspector.qml`.
 
+### Character controller (Phase 4)
+
+A `CharacterController` component (`ActorComponent::CharacterController`,
+`physics/controller.rs`, `CharacterControllerSpec`) is a capsule that blocks sweep
+through the world, Unity-style: radius, height, centre, slope limit, step offset, skin
+width, minimum move, detect collisions, overlap recovery, layer and up. It needs no
+Rigidbody (the runtime gives the actor a position-based kinematic body when it has
+none). `Scene::set_character_controller`/`remove_character_controller` edit it and
+the plan carries `PhysicsPlan::controllers`; the shell has `set-character-controller`
+and `remove-character-controller`.
+
+- **Contract**: core decides, the runtime installs. `controller::move_call(actor,
+  MoveMode, vector)` runs through a `ControllerService` (installed per frame by
+  `controller::with_service`, the way queries are). `Move` is a displacement without
+  gravity, `Simple` a speed with gravity (fall speed builds while airborne and is
+  zeroed on a floor or ceiling). Moves run in order on the spot with a `pending`
+  displacement; the pose is written once per fixed step by
+  `blockloom-runtime/src/controller.rs::apply_motion`. A move below
+  `min_move_distance` skips moving but still probes the ground and recovers overlap.
+  Hits are classified by normal against the slope limit into sides, above and below
+  (`CollisionFlags`, Unity's 1/2/4); triggers are never obstacles.
+- **Runtime** (`blockloom-runtime/src/controller.rs`): `KinematicCharacterController`
+  (`move_shape`) over a capsule child collider, 3D and 2D. Its hit normal points at the
+  controller. `ControllerAccess` is folded into `QueryAccess::scope`, so a VM tick,
+  compiled logic or a script can move a controller where it already asks queries.
+  Fixed obstacles the controller meets fire `Event::Collision` (Enter, Stay, Exit by
+  move); moving bodies are left to the contact lifecycle.
+- **Blocks**: `ControllerMove` (mode Move or Simple, x y z) and `SetController`
+  (property, value) are both `Action::Controller { op, vector }`, `Effect::Controller`,
+  `Act::Controller` (`ACT_CONTROLLER` 125 in the logic ABI, 103 in the script ABI) and
+  `controller::run_op`, the one entry every adapter calls. `ControllerNumber` and
+  `ControllerText` read `(hit index, field)` of the last move (`grounded`, `flags`,
+  `moved x`, `normal y`, ...; see `controller::read_number`). Scripts get
+  `move_controller`, `simple_move_controller`, `set_controller`, `controller_number`,
+  `controller_text` and `is_grounded` (`READ_CONTROLLER` 55, `TEXT_CONTROLLER` 23).
+  `ABI_VERSION` is 40 and `LOGIC_ABI_VERSION` 37. `tests/codegen.rs` holds the VM and
+  compiled halves together against a flat-floor harness.
+- **Inspector**: `CharacterControllerForm.qml` (Add component gives an actor one;
+  `tests/qml/tst_PhysicsInspector.qml`).
+- Tests: `cargo test -p blockloom-core controller`, `cargo test -p blockloom-runtime
+  --lib controller` (headless Rapier worlds in 3D and 2D: floor, step, slope, wall,
+  trigger, overlap recovery, idle then move).
+
 ### Actors that come and go
 
 An actor's id is what everything keys it by, and a run can mint ids the

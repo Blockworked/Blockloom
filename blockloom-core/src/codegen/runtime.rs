@@ -392,6 +392,12 @@ pub enum Act {
         torque: bool,
         vector: [f32; 3],
     },
+    /// A character controller statement: `move`, `simple move` or `set
+    /// <property>`. The host runs it on the spot.
+    Controller {
+        op: &'static str,
+        vector: [f32; 3],
+    },
     SetVelocity {
         velocity: [f32; 3],
     },
@@ -1323,7 +1329,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 36;
+pub const LOGIC_ABI_VERSION: u32 = 37;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1558,6 +1564,9 @@ pub const ACT_PLUGIN_CALL: u32 = 122;
 pub const ACT_ADD_FORCE: u32 = 123;
 /// `a` = query kind name, `b` = trigger policy name, numbers = the query's.
 pub const ACT_PHYSICS_QUERY: u32 = 124;
+/// `a` = `move`, `simple move` or `set <property>`; numbers = the vector (the
+/// value first for a set).
+pub const ACT_CONTROLLER: u32 = 125;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2269,6 +2278,9 @@ impl Host for AbiHost {
                 vector.map(f64::from),
                 &zero,
             ),
+            Act::Controller { op, vector } => {
+                self.act_wire(actor, ACT_CONTROLLER, op, "", vector.map(f64::from), &zero)
+            }
             Act::SetVelocity { velocity } => self.act_wire(
                 actor,
                 ACT_SET_VELOCITY,

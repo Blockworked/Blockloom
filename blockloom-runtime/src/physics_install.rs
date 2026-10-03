@@ -3090,11 +3090,11 @@ mod controller_tests {
     use super::*;
     use crate::controller;
     use bevy_rapier3d::prelude as rp;
-    use std::time::Duration;
     use blockloom_core::physics::controller::{
         CharacterControllerSpec, MoveMode, MoveResult, move_call,
     };
     use blockloom_core::physics::{ColliderShape, ColliderSpec};
+    use std::time::Duration;
 
     #[derive(Resource, Default)]
     struct Moves {
@@ -3118,7 +3118,11 @@ mod controller_tests {
         moves.done.extend(done);
     }
 
-    fn player(project: &mut Project, at: [f32; 3], tweak: impl FnOnce(&mut CharacterControllerSpec)) -> String {
+    fn player(
+        project: &mut Project,
+        at: [f32; 3],
+        tweak: impl FnOnce(&mut CharacterControllerSpec),
+    ) -> String {
         let id = add(project, "Player", at);
         let mut spec = CharacterControllerSpec::default();
         tweak(&mut spec);
@@ -3183,9 +3187,16 @@ mod controller_tests {
     }
 
     fn go(app: &mut App, mode: MoveMode, vector: [f32; 3]) -> MoveResult {
-        app.world_mut().resource_mut::<Moves>().todo.push((mode, vector));
+        app.world_mut()
+            .resource_mut::<Moves>()
+            .todo
+            .push((mode, vector));
         run(app, 1);
-        app.world_mut().resource_mut::<Moves>().done.pop().expect("a move ran")
+        app.world_mut()
+            .resource_mut::<Moves>()
+            .done
+            .pop()
+            .expect("a move ran")
     }
 
     fn wall(project: &mut Project, name: &str, centre: [f32; 3], size: [f32; 3]) {
@@ -3245,9 +3256,19 @@ mod controller_tests {
             }
         }
         let r = hit.expect("the wall stopped it");
-        let wall_hit = r.hits.iter().find(|h| h.normal[0].abs() > 0.9).expect("a wall hit");
-        assert!(wall_hit.normal[0] < -0.9, "points back at the walker: {wall_hit:?}");
-        assert!(wall_hit.point[0] > 2.0 && wall_hit.point[0] < 3.1, "{wall_hit:?}");
+        let wall_hit = r
+            .hits
+            .iter()
+            .find(|h| h.normal[0].abs() > 0.9)
+            .expect("a wall hit");
+        assert!(
+            wall_hit.normal[0] < -0.9,
+            "points back at the walker: {wall_hit:?}"
+        );
+        assert!(
+            wall_hit.point[0] > 2.0 && wall_hit.point[0] < 3.1,
+            "{wall_hit:?}"
+        );
     }
 
     #[test]
@@ -3304,7 +3325,13 @@ mod controller_tests {
                 .components
                 .placement_mut()
                 .rotation = [0.0, 0.0, degrees];
-            scenery(&mut p, &id, ColliderShape::Box { size: [10.0, 0.4, 6.0] });
+            scenery(
+                &mut p,
+                &id,
+                ColliderShape::Box {
+                    size: [10.0, 0.4, 6.0],
+                },
+            );
             let walker = player(&mut p, [0.0, 1.0, 0.0], |_| {});
             let (mut app, ids) = start(&p);
             for _ in 0..180 {
@@ -3325,9 +3352,13 @@ mod controller_tests {
         floor(&mut p);
         let id = add(&mut p, "Zone", [3.0, 1.0, 0.0]);
         let library = p.physics.materials.clone();
-        let mut zone = ColliderSpec::new(ColliderShape::Box { size: [1.0, 2.0, 6.0] });
+        let mut zone = ColliderSpec::new(ColliderShape::Box {
+            size: [1.0, 2.0, 6.0],
+        });
         zone.trigger = true;
-        p.active_scene_mut().add_collider(&id, zone, &library).unwrap();
+        p.active_scene_mut()
+            .add_collider(&id, zone, &library)
+            .unwrap();
         let walker = player(&mut p, [0.0, 1.0, 0.0], |_| {});
         let (mut app, ids) = start(&p);
         for _ in 0..60 {
@@ -3345,7 +3376,10 @@ mod controller_tests {
         let (mut app, _) = start(&p);
         let disabled = app
             .world_mut()
-            .query_filtered::<(), (With<controller::ControllerCapsule>, With<rp::ColliderDisabled>)>()
+            .query_filtered::<(), (
+                With<controller::ControllerCapsule>,
+                With<rp::ColliderDisabled>,
+            )>()
             .iter(app.world())
             .count();
         assert_eq!(disabled, 1);
@@ -3431,7 +3465,11 @@ mod controller_tests_2d {
         let library = project.physics.materials.clone();
         project
             .active_scene_mut()
-            .add_collider(&id, ColliderSpec::new(ColliderShape::Rect { size }), &library)
+            .add_collider(
+                &id,
+                ColliderSpec::new(ColliderShape::Rect { size }),
+                &library,
+            )
             .unwrap();
     }
 
@@ -3486,9 +3524,16 @@ mod controller_tests_2d {
     }
 
     fn go(app: &mut App, mode: MoveMode, vector: [f32; 3]) -> MoveResult {
-        app.world_mut().resource_mut::<Moves>().todo.push((mode, vector));
+        app.world_mut()
+            .resource_mut::<Moves>()
+            .todo
+            .push((mode, vector));
         run(app, 1);
-        app.world_mut().resource_mut::<Moves>().done.pop().expect("a move ran")
+        app.world_mut()
+            .resource_mut::<Moves>()
+            .done
+            .pop()
+            .expect("a move ran")
     }
 
     fn level() -> (Project, String) {
@@ -3518,7 +3563,11 @@ mod controller_tests_2d {
         }
         let r = side.expect("the wall was met");
         assert!(r.grounded, "still standing: {r:?}");
-        let hit = r.hits.iter().find(|h| h.normal[0].abs() > 0.9).expect("a wall hit");
+        let hit = r
+            .hits
+            .iter()
+            .find(|h| h.normal[0].abs() > 0.9)
+            .expect("a wall hit");
         assert!(hit.normal[0] < -0.9, "faces the walker: {hit:?}");
         assert!(!hit.actor.is_empty());
         let at = app.world().get::<Transform>(entity).unwrap().translation;

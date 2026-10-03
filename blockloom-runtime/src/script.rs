@@ -770,6 +770,11 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
             query::HitValue::Number(number) => Some(number),
             query::HitValue::Text(_) => None,
         },
+        abi::READ_CONTROLLER => Some(blockloom_core::physics::controller::read_number(
+            actor,
+            a,
+            arg.max(0.0) as usize,
+        )),
         _ => None,
     }
 }
@@ -922,6 +927,16 @@ fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
                 query::HitValue::Number(_) => None,
             }
         }
+        abi::TEXT_CONTROLLER => {
+            let index = b.trim().parse::<usize>().ok()?;
+            let text = blockloom_core::physics::controller::read_text(actor, a, index);
+            let text = if a.trim() == "actor" && !text.is_empty() {
+                actor_name(&text)
+            } else {
+                text
+            };
+            Some(text).filter(|text| !text.is_empty())
+        }
         abi::TEXT_CURRENT_CLIP => me(actor)
             .map(|me| me.anim_clip)
             .filter(|clip| !clip.is_empty()),
@@ -1051,6 +1066,17 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
                 message: format!("there's no query called \"{a}\""),
             },
         },
+        abi::ACT_CONTROLLER => {
+            match blockloom_core::physics::controller::run_op(&actor, a, vector) {
+                Ok(flags) => Effect::Controller {
+                    actor,
+                    op: a.trim().to_string(),
+                    vector,
+                    flags,
+                },
+                Err(message) => Effect::Error { actor, message },
+            }
+        }
         abi::ACT_ADD_FORCE => match blockloom_core::physics::ForceMode::parse(a) {
             Some(mode) => Effect::AddForce {
                 actor,

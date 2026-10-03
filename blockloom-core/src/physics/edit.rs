@@ -11,6 +11,7 @@ use super::controller::CharacterControllerSpec;
 use super::ids::{ColliderId, ComponentId};
 use super::material::MaterialLibrary;
 use super::migrate::shape_from_look;
+use super::motor::CharacterMotorSpec;
 use super::spec::{ColliderGeometry, ColliderSpec, RigidbodySpec};
 use super::validate::{PhysicsIssue, validate_scene};
 use crate::components::{ActorComponent, Components};
@@ -241,6 +242,60 @@ impl Scene {
                 .position(|c| matches!(c, ActorComponent::CharacterController { .. }))
             else {
                 return Err("This actor has no CharacterController".to_string());
+            };
+            components.0.remove(index);
+            Ok(())
+        })
+    }
+
+    /// Adds or replaces the actor's CharacterMotor, keeping its identity.
+    pub fn set_character_motor(
+        &mut self,
+        actor_id: &str,
+        mut spec: CharacterMotorSpec,
+        library: &MaterialLibrary,
+    ) -> Result<ComponentId, String> {
+        if spec.id.is_empty() {
+            spec.id = ComponentId::generate();
+        }
+        if let Some(existing) = self
+            .actors
+            .iter()
+            .find(|a| a.id == actor_id)
+            .and_then(|a| a.components.character_motor())
+        {
+            spec.id = existing.id.clone();
+        }
+        let id = spec.id.clone();
+        let touched = vec![id.to_string()];
+        self.transact(actor_id, &touched, library, |components| {
+            let next = ActorComponent::CharacterMotor { motor: spec };
+            match components
+                .0
+                .iter_mut()
+                .find(|c| matches!(c, ActorComponent::CharacterMotor { .. }))
+            {
+                Some(slot) => *slot = next,
+                None => components.0.push(next),
+            }
+            Ok(())
+        })?;
+        Ok(id)
+    }
+
+    /// Takes the CharacterMotor off the actor.
+    pub fn remove_character_motor(
+        &mut self,
+        actor_id: &str,
+        library: &MaterialLibrary,
+    ) -> Result<(), String> {
+        self.transact(actor_id, &[], library, |components| {
+            let Some(index) = components
+                .0
+                .iter()
+                .position(|c| matches!(c, ActorComponent::CharacterMotor { .. }))
+            else {
+                return Err("This actor has no CharacterMotor".to_string());
             };
             components.0.remove(index);
             Ok(())

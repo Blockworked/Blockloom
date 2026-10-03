@@ -119,6 +119,7 @@ fn publish_world() {
             pressed: true,
             released: false,
             value: 1.0,
+            vector: [1.0, 0.0],
         },
     );
     sensors.actions.insert(
@@ -128,6 +129,7 @@ fn publish_world() {
             pressed: false,
             released: false,
             value: 0.5,
+            vector: [0.5, 0.0],
         },
     );
     sensors.touches.push(TouchSense {
@@ -169,6 +171,8 @@ struct Recorder {
     /// The last physics query: where its one hit stood, how big the ball was
     /// (or the range), and whether triggers were asked for.
     query: Option<([f64; 3], f64, bool)>,
+    /// The last controller move's flags, with 8 added when it ended grounded.
+    controller: u32,
 }
 
 impl Host for Recorder {
@@ -187,6 +191,14 @@ impl Host for Recorder {
                     _ => ([at(1), at(2), at(3)], at(0)),
                 };
                 self.query = Some((point.map(|n| n as f32 as f64), size as f32 as f64, *triggers == "Include"));
+            }
+            // The harness controller stands one metre over a floor: a
+            // plain move with any downward part lands on it, a simple move's
+            // gravity is too small to reach it.
+            Act::Controller { op, vector } => {
+                if !op.starts_with("set ") {
+                    self.controller = if *op == "move" && vector[1] < 0.0 { 12 } else { 0 };
+                }
             }
             Act::AddToList { name, value } => {
                 match list_item(value) {
@@ -513,6 +525,17 @@ impl Host for Recorder {
                     _ => return Err(format!("a query result has no numbers called \"{field}\"")),
                 }))
             }
+            "ControllerNumber" => {
+                let field = args[1].as_text();
+                Ok(Val::Num(match field.as_str() {
+                    "grounded" => f64::from(self.controller >> 3 & 1),
+                    "below" => f64::from(self.controller >> 2 & 1),
+                    "sides" | "above" => 0.0,
+                    "flags" => f64::from(self.controller & 7),
+                    _ => 0.0,
+                }))
+            }
+            "ControllerText" => Ok(Val::Text(String::new())),
             "QueryText" => {
                 let field = args[1].as_text();
                 let index = args[0].as_number().unwrap_or(0.0).max(0.0) as usize;
@@ -1163,6 +1186,7 @@ fn line_of(act: &Act) -> String {
             args,
         } => format!("PluginCall {plugin}/{block} {}", plugin_args_json(args)),
         Act::Query { kind, .. } => format!("Query {kind} 1"),
+        Act::Controller { op, vector } => format!("Controller {op} {vector:?}"),
         Act::SetBody { body } => format!("SetBody {body}"),
         Act::AddForce {
             mode,
@@ -1235,7 +1259,7 @@ fn shown(value: &Val) -> String {
 /// fixed tick, in the order they started, and the run ends when they are all
 /// done or one of them says `stop all`.
 fn main() {
-    let mut recorder = Recorder { vars: HashMap::new(), lists: HashMap::new(), dicts: HashMap::new(), tick: 0, out: Vec::new(), query: None };
+    let mut recorder = Recorder { vars: HashMap::new(), lists: HashMap::new(), dicts: HashMap::new(), tick: 0, out: Vec::new(), query: None, controller: 0 };
     for (name, value) in seeded() {
         recorder.vars.insert(name.to_string(), value);
     }
@@ -1533,6 +1557,9 @@ fn line_of(effect: &Effect) -> Option<String> {
             serde_json::Value::Array(args.clone())
         ),
         Effect::PhysicsQuery { actor, kind, hits } => format!("{actor}|Query {kind} {hits}"),
+        Effect::Controller {
+            actor, op, vector, ..
+        } => format!("{actor}|Controller {op} {vector:?}"),
         Effect::SetBody { actor, body } => format!("{actor}|SetBody {body:?}"),
         Effect::AddForce {
             actor,
@@ -1809,9 +1836,61 @@ impl blockloom_core::physics::query::QueryService for WallWorld {
     }
 }
 
+/// A controller standing a metre over flat ground, as the compiled harness
+/// models it.
+struct FloorWorld;
+
+impl blockloom_core::physics::controller::ControllerService for FloorWorld {
+    fn step(
+        &self,
+        r: &blockloom_core::physics::controller::StepRequest,
+    ) -> Result<blockloom_core::physics::controller::StepOutcome, String> {
+        use blockloom_core::physics::controller::{RawHit, StepOutcome};
+        let foot = r.pending[1] + r.spec.center[1] - r.spec.height * 0.5;
+        let mut effective = r.displacement;
+        let mut hits = Vec::new();
+        if foot + effective[1] < 0.0 {
+            effective[1] = -foot;
+            hits.push(RawHit {
+                actor: "ground".into(),
+                body: None,
+                collider: "ground".into(),
+                point: [0.0; 3],
+                normal: [0.0, 1.0, 0.0],
+                applied: effective,
+            });
+        }
+        Ok(StepOutcome {
+            grounded: foot + effective[1] <= 1e-4,
+            effective,
+            hits,
+            ..StepOutcome::default()
+        })
+    }
+
+    fn gravity(&self) -> [f32; 3] {
+        [0.0, -10.0, 0.0]
+    }
+
+    fn timestep(&self) -> f32 {
+        0.1
+    }
+
+    fn mode(&self) -> blockloom_core::scene::Mode {
+        blockloom_core::scene::Mode::ThreeD
+    }
+}
+
 fn by_vm(project: &Project) -> Vec<String> {
+    use blockloom_core::physics::controller;
     blockloom_core::physics::query::reset();
-    blockloom_core::physics::query::with_service(&WallWorld, 0, || by_vm_ticks(project))
+    controller::reset();
+    let mut spec = controller::CharacterControllerSpec::default();
+    spec.center = [0.0, 2.0, 0.0];
+    controller::register(ACTOR, spec);
+    blockloom_core::physics::query::with_service(&WallWorld, 0, || {
+        controller::with_service(&FloorWorld, 0, || by_vm_ticks(project))
+    })
 }
 
 fn by_vm_ticks(project: &Project) -> Vec<String> {
@@ -3919,6 +3998,57 @@ fn force_blocks_ask_the_same_things_in_order() {
                 x: number(0.0),
                 y: number(0.0),
                 z: number(0.0),
+            },
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn controller_blocks_ask_the_same_things_in_order() {
+    use blockloom_core::physics::controller::{ControllerProperty, MoveMode};
+    let say = |field: &str| K::Say {
+        text: op("ControllerNumber", vec![number(0.0), Value::text(field)]),
+    };
+    assert_same(
+        "controller",
+        vec![
+            K::ControllerMove {
+                mode: MoveMode::Move,
+                x: number(1.0),
+                y: number(0.0),
+                z: op("Sub", vec![number(1.0), number(3.0)]),
+            },
+            say("grounded"),
+            K::ControllerMove {
+                mode: MoveMode::Move,
+                x: number(0.0),
+                y: op("Mul", vec![number(-1.0), number(3.0)]),
+                z: number(0.0),
+            },
+            say("grounded"),
+            say("below"),
+            say("flags"),
+            K::ControllerMove {
+                mode: MoveMode::Move,
+                x: number(0.0),
+                y: number(2.0),
+                z: number(0.0),
+            },
+            say("grounded"),
+            K::ControllerMove {
+                mode: MoveMode::Simple,
+                x: number(2.0),
+                y: number(0.0),
+                z: number(0.0),
+            },
+            say("below"),
+            K::SetController {
+                property: ControllerProperty::SlopeLimit,
+                value: op("Add", vec![number(30.0), number(15.0)]),
+            },
+            K::Say {
+                text: op("ControllerText", vec![number(1.0), Value::text("actor")]),
             },
         ],
         &[],
