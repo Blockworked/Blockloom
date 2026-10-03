@@ -1,0 +1,187 @@
+# Voxy LOD research and Blockloom design
+
+Research date: 2026-10-03. This is a source review and implementation design;
+the runtime still uses its existing 16-cell pages and has no visual LOD.
+
+## Requested chunk dimensions
+
+A Blockloom chunk is a column with a 32 by 32 cell footprint in X/Z. Its
+height is the world's configured height limit, currently represented by
+`world.size[1]`. The height is an exact logical bound, not rounded upward to
+a section boundary. A height of 100 means cells 0 through 99 are valid.
+
+Internally, divide columns into sparse 32 by 32 by 32 sections. The last
+section is clipped to the height limit; padding is air and cannot be edited.
+A height of 256 has eight possible vertical sections per column. Empty
+sections need no dense allocation. Sections are storage and meshing units;
+they do not change the full-height definition of a chunk.
+
+Keep column addresses `(chunk_x, chunk_z)` distinct from section addresses
+`(section_x, section_y, section_z)` and LOD addresses `(level, x, y, z)`.
+Column footprint is measured in cells; world-space width is
+`32 * voxel_size`. Finite horizontal edge columns can also be clipped.
+
+## What upstream Voxy does
+
+Reviewed upstream [MCRcortex/voxy](https://github.com/MCRcortex/voxy), pinned
+to commit `534d58ec8b4aa412ef314b884295552c69d480a6`. Fork-specific world
+generation and networking features are not assumed to be upstream behavior.
+
+### Voxel hierarchy
+
+`WorldSection` stores 32 cubed samples at every detail level. `WorldEngine`
+sets the maximum LOD layer to 4, giving levels 0 through 4. Each coarser
+sample spans twice the distance on every axis. This yields:
+
+| Level | Sample width in base blocks | Section span on each axis |
+| --- | --- | --- |
+| 0 | 1 | 32 |
+| 1 | 2 | 64 |
+| 2 | 4 | 128 |
+| 3 | 8 | 256 |
+| 4 | 16 | 512 |
+
+Eight child sections occupy a parent section's volume. Sections track
+non-empty children so traversal can skip absent branches. This is a
+volumetric hierarchy, capable of representing caves and overhangs.
+
+Sources:
+[WorldSection](https://github.com/MCRcortex/voxy/blob/534d58ec8b4aa412ef314b884295552c69d480a6/src/main/java/me/cortex/voxy/common/world/WorldSection.java),
+[WorldEngine](https://github.com/MCRcortex/voxy/blob/534d58ec8b4aa412ef314b884295552c69d480a6/src/main/java/me/cortex/voxy/common/world/WorldEngine.java).
+
+### Ingestion and downsampling
+
+Minecraft's loaded sections are converted into voxel records on service
+workers. A 16-cubed input section is reduced through 8-cubed, 4-cubed,
+2-cubed and 1-sample representations, then inserted into the appropriate
+regions of the 32-cubed world sections at each level.
+
+The actual `Mipper` selects a non-air child with the highest mapped opacity,
+using a fixed corner ordering to break ties. It carries the selected child's
+record. When all eight children are air, it combines their lighting. It
+does not currently select the most common material, average block colors,
+or use a signed-density surface filter. A single non-air child can therefore
+survive reduction, but become visually thicker at coarse levels.
+
+`WorldUpdater` propagates changed data and child-existence state upward,
+marks affected sections and boundary neighbors dirty, and stops early when
+neither data nor relevant existence state changes. Dirty callbacks and
+storage callbacks separate rebuild work from persistence. Stored section
+data can survive unloading the corresponding Minecraft chunks. The ingest
+path consumes available chunks; distant rendering itself does not imply
+generation of unexplored terrain.
+
+Sources:
+[VoxelIngestService](https://github.com/MCRcortex/voxy/blob/534d58ec8b4aa412ef314b884295552c69d480a6/src/main/java/me/cortex/voxy/common/world/service/VoxelIngestService.java),
+[section reduction](https://github.com/MCRcortex/voxy/blob/534d58ec8b4aa412ef314b884295552c69d480a6/src/main/java/me/cortex/voxy/common/voxelization/WorldVoxilizedSectionMipper.java),
+[Mipper](https://github.com/MCRcortex/voxy/blob/534d58ec8b4aa412ef314b884295552c69d480a6/src/main/java/me/cortex/voxy/common/world/other/Mipper.java),
+[WorldUpdater](https://github.com/MCRcortex/voxy/blob/534d58ec8b4aa412ef314b884295552c69d480a6/src/main/java/me/cortex/voxy/common/world/WorldUpdater.java),
+[SectionStorage](https://github.com/MCRcortex/voxy/blob/534d58ec8b4aa412ef314b884295552c69d480a6/src/main/java/me/cortex/voxy/common/config/section/SectionStorage.java).
+
+### Detail selection and visibility
+
+The compute traversal projects each section's bounds and estimates projected
+area. If that area exceeds the subdivision threshold, it descends into
+children; otherwise it draws the current section mesh. The host normalizes
+the configured subdivision size squared by viewport pixel count.
+
+Traversal applies a horizontal render-distance bound, frustum rejection and
+hierarchical depth-buffer occlusion checks. GPU request queues ask for missing
+detail, with duplicate suppression and queue limits. When finer children
+are not ready, the traversal can retain the current coarser mesh, subject
+to its render-distance boundary checks. This avoids requiring every fine
+section to be loaded before distant terrain is visible.
+
+These are screen-area decisions, not a measured geometric-error metric.
+The reviewed traversal does not establish a two-threshold hysteresis policy
+or smooth interpolation between LOD meshes.
+
+Sources:
+[traversal shader](https://github.com/MCRcortex/voxy/blob/534d58ec8b4aa412ef314b884295552c69d480a6/src/main/resources/assets/voxy/shaders/lod/hierarchical/traversal_dev.comp),
+[screen-space and depth checks](https://github.com/MCRcortex/voxy/blob/534d58ec8b4aa412ef314b884295552c69d480a6/src/main/resources/assets/voxy/shaders/lod/hierarchical/screenspace.glsl),
+[traversal host](https://github.com/MCRcortex/voxy/blob/534d58ec8b4aa412ef314b884295552c69d480a6/src/main/java/me/cortex/voxy/client/core/rendering/hierachical/HierarchicalOcclusionTraverser.java).
+
+### Geometry production
+
+Mesh generation is performed by CPU service workers. The render factory
+culls faces using block-model metadata and neighboring samples, merges
+compatible faces with a scanline greedy mesher, and packs quads into compact
+records. It distinguishes translucent, double-sided and directional output.
+GPU compute traversal and rendering do not mean GPU voxel mesh generation.
+
+Sources:
+[RenderGenerationService](https://github.com/MCRcortex/voxy/blob/534d58ec8b4aa412ef314b884295552c69d480a6/src/main/java/me/cortex/voxy/client/core/rendering/building/RenderGenerationService.java),
+[RenderDataFactory](https://github.com/MCRcortex/voxy/blob/534d58ec8b4aa412ef314b884295552c69d480a6/src/main/java/me/cortex/voxy/client/core/rendering/building/RenderDataFactory.java),
+[ScanMesher2D](https://github.com/MCRcortex/voxy/blob/534d58ec8b4aa412ef314b884295552c69d480a6/src/main/java/me/cortex/voxy/client/core/util/ScanMesher2D.java).
+
+## Applying this architecture to Blockloom
+
+These are proposed Blockloom decisions, not claims about Voxy:
+
+1. Migrate addressing to 32-cell sections and expose 32 by 32 full-height
+   columns. Keep exact world height separate from section allocation size.
+   Stream selection groups columns horizontally, with vertical sections
+   scheduled within explicit section and byte budgets.
+2. Build a sparse, versioned voxel mip hierarchy from canonical generated
+   data plus runtime edits. Start with levels 0 through 4 and permit future
+   policy expansion. Far nodes should not require all full-detail pages to
+   remain resident. Generation, edits, shape changes and fracture removals
+   invalidate the affected ancestor chain and boundary dependencies.
+3. Select visual detail using projected section area, render distance and
+   camera information. Add split/merge hysteresis to limit camera jitter.
+   Keep collision and interaction residency driven by invokers at full
+   detail. A distant visual node never becomes authoritative gameplay data.
+4. Preserve the last valid covering mesh while replacement work is queued.
+   Publish a coherent parent/child replacement only after required meshes
+   and boundary data are ready. Validate generation and revision identities
+   before installing results. Do not draw overlapping parent and child
+   coverage or expose missing regions during refinement and edits.
+5. Use material/opacity-aware occupancy proxies for cubic and shaped terrain.
+   Include silhouette and thin-structure fixtures. Smooth density terrain
+   needs its own reduction rule and transition geometry between resolutions;
+   the existing tetrahedral extractor alone does not supply LOD seams.
+6. Keep mip data and meshes as disposable caches derived from authoritative
+   cells. Save cache identity with generator, palette, reduction version and
+   world revision if persisted. A stale cache can be rebuilt without losing
+   player edits or detached-body saves.
+7. Add renderer integration for camera/viewport inputs, GPU visibility and
+   compact geometry allocation in stages. The current plugin compute API
+   exposes buffers and dispatches, but does not expose Voxy's depth texture,
+   traversal queues or compact quad draw pipeline as ready-made services.
+
+### Constraints in the current implementation
+
+`grid.rs` uses `CHUNK = 16`, 4096-entry pages, hard-coded save-page index
+decoding and all-axis rounded bounds. Merely changing the constant would
+misdecode old saves and round world heights. Version 1 checkpoints need an
+explicit 16-cell page decoder and migration to cell coordinates before
+repacking; they cannot be interpreted as 32-cell pages.
+
+`gpu_mesh.rs` reserves 36 vertices per lattice cell. At 32 cubed this becomes
+1,179,648 vertices per section, or 1,293,732 with a 33-cubed boundary lattice.
+Both exceed the current 262,144-vertex mesh limit. Full-height meshes would
+be larger still. Section storage must be separated from bounded mesh jobs,
+using tiled outputs initially or a compacted output pipeline. Preserve CPU
+collision and fallback geometry while changing allocation.
+
+Streaming radii currently address 3D 16-cell pages. With full-height columns,
+horizontal distance, vertical section residency, collision radius and visual
+LOD distance need distinct meanings. Status reporting should count columns,
+resident sections, LOD nodes and allocated bytes separately.
+
+### Implementation order and qualification
+
+First implement column/section addressing and checkpoint migration, then
+bounded meshing for 32-cell sections. Next add voxel reduction and edit
+propagation, followed by screen-space selection and coherent mesh replacement.
+Finish seam handling for both surface modes and renderer visibility/compaction.
+
+Qualification includes non-multiple heights (1, 31, 33, 100), old checkpoints,
+column and section borders, thin structures, caves, shape proxies, smooth
+LOD seams, camera threshold jitter, edit propagation, fracture removals,
+teleports, delayed jobs, eviction and memory limits. Verify CPU/GPU parity,
+native/WASM behavior and the whole workspace build for runtime changes.
+
+Upstream's [license](https://github.com/MCRcortex/voxy/blob/534d58ec8b4aa412ef314b884295552c69d480a6/LICENSE.md)
+reserves rights and prohibits redistribution. Implement the architecture
+independently; do not vendor Voxy source or shaders.
