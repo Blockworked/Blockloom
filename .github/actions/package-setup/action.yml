@@ -44,10 +44,12 @@ runs:
       shell: bash
       run: |
         sudo apt-get update
+        # lld must stay installed: without it the Qt build probe falls back
+        # to gold, and gold mislinks the editor (cxx-qt init missing).
         sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev \
           libudev-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev \
           libvulkan-dev libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 \
-          libxcb-shape0 libxcb-xinerama0 patchelf
+          libxcb-shape0 libxcb-xinerama0 patchelf lld
     - uses: jurplel/install-qt-action@v4
       if: inputs.qt-arch != ''
       with:

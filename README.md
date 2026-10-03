@@ -35,7 +35,9 @@ them.
   dependencies. On Windows, put the Git Bash tools on PATH.
 - On Linux: `pkg-config` and development libraries for ALSA, udev, Wayland,
   xkbcommon and EGL, plus a working Vulkan loader and GPU driver. Python 3
-  is needed for automatic build-cache cleanup.
+  is needed for automatic build-cache cleanup. `lld` must be installed:
+  without it the Qt build probe falls back to the gold linker, which
+  mislinks the editor.
 - On Windows: a working Vulkan GPU driver. Dependency preparation downloads
   pinned Vulkan headers; a full Vulkan SDK is optional.
 
