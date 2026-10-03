@@ -12,12 +12,25 @@ use bevy::prelude::*;
 use bevy::render::mesh::{RenderMesh, allocator::MeshAllocator};
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
-use bevy::render::{Render, RenderApp, RenderSystems};
+use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 use blockloom_plugin_api::compute::{GpuCommand, LoadoutKernel};
 use blockloom_plugin_gpu::engine::{ComputeEngine, Report};
 use blockloom_protocol::RuntimeMessage;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+
+const COPY_BYTES_PER_FRAME: u64 = blockloom_plugin_api::mesh::MAX_VERTICES as u64 * 40;
+const COPY_MESHES_PER_FRAME: usize = 64;
+
+struct MeshBinding {
+    plugin: String,
+    buffer: String,
+    vertices: u32,
+    order: u64,
+}
+
+#[derive(Resource, Default)]
+struct VisibleMeshes(HashSet<AssetId<Mesh>>);
 
 #[derive(Default)]
 struct Link {
@@ -29,7 +42,8 @@ struct Link {
     reports: Vec<Report>,
     /// Whether a device is there to compute on, once known.
     available: Option<bool>,
-    meshes: HashMap<AssetId<Mesh>, (String, String, u32)>,
+    meshes: HashMap<AssetId<Mesh>, MeshBinding>,
+    mesh_order: u64,
     completed_meshes: Vec<(String, u32)>,
 }
 
@@ -55,11 +69,18 @@ impl ComputeLink {
     }
 
     pub fn bind_mesh(&self, asset: AssetId<Mesh>, plugin: &str, buffer: &str, vertices: u32) {
-        self.0
-            .lock()
-            .unwrap()
-            .meshes
-            .insert(asset, (plugin.into(), buffer.into(), vertices));
+        let mut link = self.0.lock().unwrap();
+        let order = link.mesh_order;
+        link.mesh_order += 1;
+        link.meshes.insert(
+            asset,
+            MeshBinding {
+                plugin: plugin.into(),
+                buffer: buffer.into(),
+                vertices,
+                order,
+            },
+        );
     }
 
     pub fn unbind_mesh(&self, asset: AssetId<Mesh>) {
@@ -87,10 +108,42 @@ pub fn register(app: &mut App) {
         Some(render) => {
             render
                 .insert_resource(link)
+                .init_resource::<VisibleMeshes>()
+                .add_systems(ExtractSchedule, extract_visible_meshes)
                 .add_systems(Render, run.in_set(RenderSystems::PrepareBindGroups));
         }
         // A world without a renderer has nothing to compute on.
         None => link.set_available(false),
+    }
+}
+
+fn extract_visible_meshes(
+    mut visible: ResMut<VisibleMeshes>,
+    meshes: Extract<Query<(&Mesh3d, &ViewVisibility, &InheritedVisibility)>>,
+) {
+    visible.0.clear();
+    for (mesh, view, inherited) in &meshes {
+        if inherited.get() && view.get() {
+            visible.0.insert(mesh.id());
+        }
+    }
+}
+
+#[derive(Default)]
+struct CopyBudget {
+    bytes: u64,
+    meshes: usize,
+}
+
+impl CopyBudget {
+    fn admit(&mut self, vertices: u32) -> bool {
+        let bytes = u64::from(vertices) * 40;
+        if self.meshes >= COPY_MESHES_PER_FRAME || self.bytes + bytes > COPY_BYTES_PER_FRAME {
+            return false;
+        }
+        self.bytes += bytes;
+        self.meshes += 1;
+        true
     }
 }
 
@@ -101,6 +154,7 @@ fn run(
     mut engine: Local<Option<ComputeEngine>>,
     allocator: Res<MeshAllocator>,
     meshes: Res<RenderAssets<RenderMesh>>,
+    visible: Res<VisibleMeshes>,
     mut copied: Local<HashSet<AssetId<Mesh>>>,
     mut failed: Local<HashSet<String>>,
 ) {
@@ -157,9 +211,27 @@ fn run(
     });
     let mut any = false;
     let mut completed = Vec::new();
-    for (id, (plugin, buffer, vertices)) in &shared.meshes {
-        if copied.contains(id) || failed.contains(plugin) || failed.contains("") {
-            continue;
+    let mut pending: Vec<_> = shared
+        .meshes
+        .iter()
+        .filter(|(id, binding)| {
+            visible.0.contains(id)
+                && !copied.contains(id)
+                && !failed.contains(&binding.plugin)
+                && !failed.contains("")
+        })
+        .collect();
+    pending.sort_unstable_by_key(|(_, binding)| binding.order);
+    let mut budget = CopyBudget::default();
+    for (id, binding) in pending {
+        let MeshBinding {
+            plugin,
+            buffer,
+            vertices,
+            ..
+        } = binding;
+        if budget.meshes == COPY_MESHES_PER_FRAME {
+            break;
         }
         let Some(mesh) = meshes.get(*id) else {
             continue;
@@ -176,6 +248,10 @@ fn run(
         };
         if target.range.end - target.range.start < *vertices {
             continue;
+        }
+        if !budget.admit(*vertices) {
+            // Keep FIFO order among ready meshes, including a large oldest mesh.
+            break;
         }
         encoder.copy_buffer_to_buffer(
             source,
@@ -246,6 +322,21 @@ mod tests {
     use crate::plugins::MeshOp;
     use blockloom_core::scene::Mode;
     use blockloom_plugin_api::mesh::{ColliderKind, GpuVertices, MeshData};
+
+    #[test]
+    fn mesh_copy_budget_bounds_bytes_and_submissions_without_starving_large_meshes() {
+        let max = blockloom_plugin_api::mesh::MAX_VERTICES as u32;
+        let mut budget = CopyBudget::default();
+        assert!(budget.admit(max));
+        assert!(!budget.admit(3));
+        assert_eq!(budget.bytes, COPY_BYTES_PER_FRAME);
+        let mut budget = CopyBudget::default();
+        for _ in 0..COPY_MESHES_PER_FRAME {
+            assert!(budget.admit(3));
+        }
+        assert!(!budget.admit(3));
+        assert!(CopyBudget::default().admit(max));
+    }
 
     #[test]
     #[ignore = "needs a GPU or lavapipe"]
@@ -323,6 +414,91 @@ mod tests {
             .init_resource::<crate::plugin_meshes::PluginMeshes>()
             .add_systems(Update, crate::plugin_meshes::sync);
         register(&mut app);
+        let image = app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(Image::new_target_texture(
+                32,
+                32,
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+                None,
+            ));
+        let camera = app
+            .world_mut()
+            .spawn((
+                Camera3d::default(),
+                bevy::camera::RenderTarget::from(image),
+                Transform::from_xyz(1.5, 0.5, 5.0).looking_at(Vec3::new(1.5, 0.5, 0.0), Vec3::Y),
+            ))
+            .id();
+        app.world_mut()
+            .non_send_mut::<Engine>()
+            .plugins
+            .meshes
+            .push(MeshOp::Visibility {
+                plugin: "p".into(),
+                name: "triangle".into(),
+                visible: false,
+            });
+        for _ in 0..8 {
+            app.update();
+        }
+        assert!(
+            !app.world()
+                .non_send::<Engine>()
+                .plugins
+                .diagnostics
+                .metrics()
+                .iter()
+                .any(|(name, _)| name == "plugins/p/gpu_meshes")
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ComputeLink>()
+                .0
+                .lock()
+                .unwrap()
+                .meshes
+                .len(),
+            1
+        );
+        app.world_mut()
+            .non_send_mut::<Engine>()
+            .plugins
+            .meshes
+            .push(MeshOp::Visibility {
+                plugin: "p".into(),
+                name: "triangle".into(),
+                visible: true,
+            });
+        *app.world_mut().get_mut::<Transform>(camera).unwrap() =
+            Transform::from_xyz(100.0, 0.5, 5.0).looking_at(Vec3::new(100.0, 0.5, 0.0), Vec3::Y);
+        for _ in 0..8 {
+            app.update();
+        }
+        assert!(
+            !app.world()
+                .non_send::<Engine>()
+                .plugins
+                .diagnostics
+                .metrics()
+                .iter()
+                .any(|(name, _)| name == "plugins/p/gpu_meshes")
+        );
+        app.world_mut()
+            .non_send_mut::<Engine>()
+            .plugins
+            .meshes
+            .push(MeshOp::Instances {
+                plugin: "p".into(),
+                set: blockloom_plugin_api::rendering::InstanceData {
+                    name: "visible-copy".into(),
+                    mesh: "triangle".into(),
+                    positions: vec![100.0, 0.0, 0.0],
+                    yaw: vec![],
+                    scales: vec![],
+                },
+            });
         for _ in 0..8 {
             app.update();
         }

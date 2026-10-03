@@ -204,6 +204,47 @@ fn fracture_preserves_supported_and_budgeted_material_and_reloads_fragments() {
     assert_eq!(b.call_json("fracture", &args).unwrap()["detached_cells"], 1);
 }
 #[test]
+fn sparse_gpu_meshes_allocate_only_faces_and_retire_output_on_edits() {
+    let a = module(Arc::new(MemoryStore::new()));
+    start(
+        &a,
+        json!({"preset":"empty","size":[16,16,16],"gpu_meshing":true}),
+    );
+    for (op, args, vertices) in [
+        ("set", json!({"x":4,"y":4,"z":4,"material":"stone"}), 36),
+        ("set", json!({"x":5,"y":4,"z":4,"material":"glow"}), 60),
+        ("set", json!({"x":4,"y":4,"z":4,"material":"air"}), 36),
+    ] {
+        let result = a.call_json(op, &args).unwrap();
+        let meshes: Vec<blockloom_plugin_api::mesh::MeshData> = result["effects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["effect"] == "mesh")
+            .map(|e| serde_json::from_value(e.clone()).unwrap())
+            .collect();
+        assert_eq!(
+            meshes
+                .iter()
+                .map(|m| m.gpu.as_ref().unwrap().vertices)
+                .sum::<u32>(),
+            vertices
+        );
+        for mesh in meshes {
+            mesh.check().unwrap();
+        }
+        let count = a.call_json("count", &json!({})).unwrap();
+        assert_eq!(count["gpu_allocated_bytes"], u64::from(vertices) * 40);
+    }
+    a.call_json("set", &json!({"x":5,"y":4,"z":4,"material":"air"}))
+        .unwrap();
+    assert_eq!(
+        a.call_json("count", &json!({})).unwrap()["gpu_allocated_bytes"],
+        0
+    );
+}
+
+#[test]
 fn gpu_mesh_effects_are_bounded_and_ship_checked_kernels() {
     let a = module(Arc::new(MemoryStore::new()));
     let result = start(
@@ -232,7 +273,12 @@ fn gpu_mesh_effects_are_bounded_and_ship_checked_kernels() {
         .unwrap();
     let data: blockloom_plugin_api::mesh::MeshData = serde_json::from_value(mesh.clone()).unwrap();
     data.check().unwrap();
-    assert_eq!(data.gpu.unwrap().vertices, 147456);
+    let vertices = data.gpu.unwrap().vertices;
+    assert!(vertices >= data.indices.len() as u32);
+    assert!(
+        vertices < 147456 / 4,
+        "flat terrain should pack its active faces"
+    );
     let contributions: blockloom_plugin_api::schema::Contributions =
         serde_json::from_str(include_str!("../package/schemas/voxel.json")).unwrap();
     blockloom_plugin_gpu::check::check_kernel(

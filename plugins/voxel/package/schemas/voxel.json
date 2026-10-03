@@ -948,6 +948,11 @@
           "name": "vertices",
           "binding": 3,
           "kind": "read_write"
+        },
+        {
+          "name": "offsets",
+          "binding": 4,
+          "kind": "read"
         }
       ]
     }

@@ -16,7 +16,7 @@ fn engine() -> ComputeEngine {
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
     ComputeEngine::new(device, queue)
 }
-fn run(surface: &str, size: [i32; 3], centre: [i32; 3]) {
+fn run(surface: &str, size: [i32; 3], centre: [i32; 3], material: &str) {
     let native = unsafe {
         NativeModule::from_entry(
             blockloom_voxel::blockloom_plugin_entry_v1,
@@ -30,21 +30,18 @@ fn run(surface: &str, size: [i32; 3], centre: [i32; 3]) {
     let answer = native
         .call_json(
             "sphere",
-            &json!({"x":centre[0],"y":centre[1],"z":centre[2],"radius":3.2,"material":"stone"}),
+            &json!({"x":centre[0],"y":centre[1],"z":centre[2],"radius":if centre[0] == 7 { 3.0 } else { 3.2 },"material":material}),
         )
         .unwrap();
     let contributions: Contributions =
         serde_json::from_str(include_str!("../package/schemas/voxel.json")).unwrap();
     let mut engine = engine();
-    assert!(
-        engine
-            .set_kernels(&[LoadoutKernel {
-                plugin: "p".into(),
-                schema: contributions.kernels[0].clone(),
-                source: include_str!("../package/kernels/mesh.wgsl").into()
-            }])
-            .is_empty()
-    );
+    let errors = engine.set_kernels(&[LoadoutKernel {
+        plugin: "p".into(),
+        schema: contributions.kernels[0].clone(),
+        source: include_str!("../package/kernels/mesh.wgsl").into(),
+    }]);
+    assert!(errors.is_empty(), "{errors:?}");
     let mut meshes = Vec::new();
     for value in answer["effects"].as_array().unwrap() {
         let effect: Effect = serde_json::from_value(value.clone()).unwrap();
@@ -59,6 +56,10 @@ fn run(surface: &str, size: [i32; 3], centre: [i32; 3]) {
     assert!(!meshes.is_empty());
     for mesh in meshes {
         let gpu = mesh.gpu.as_ref().unwrap();
+        assert!(
+            gpu.vertices < 36 * 16 * 16 * 16,
+            "sparse geometry should be packed"
+        );
         engine
             .submit(
                 "p",
@@ -105,6 +106,10 @@ fn check_geometry(surface: &str, mesh: &blockloom_plugin_api::mesh::MeshData, ou
         let cross = cross(a, b);
         let length = dot(cross, cross).sqrt();
         if length < 1e-8 {
+            assert_eq!(
+                surface, "smooth",
+                "cubes must not reserve unused triangle slots"
+            );
             continue;
         }
         area += length / 2.0;
@@ -165,7 +170,9 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
 #[ignore = "needs a GPU or lavapipe"]
 fn gpu_cube_and_smooth_surfaces_match_cpu_geometry() {
     for surface in ["cubes", "smooth"] {
-        run(surface, [16; 3], [7; 3]);
-        run(surface, [33; 3], [31; 3]);
+        for material in ["stone", "glow"] {
+            run(surface, [16; 3], [7; 3], material);
+            run(surface, [33; 3], [31; 3], material);
+        }
     }
 }

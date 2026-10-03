@@ -347,13 +347,45 @@ Storage, reduction, coarse mesh production and selection are implemented in
   rejection preserves the installed cover. No staged seam reaches the renderer
   before the complete cut validates against its generation and revision.
 
+- The runtime extracts camera/frustum visibility for GPU-backed mesh assets.
+  Copies from completed plugin compute buffers into Bevy's vertex allocations
+  now wait until an asset has a visible mesh entity or instance. Explicitly
+  hidden fine meshes retain their colliders, bindings and completed compute
+  buffers; showing them later resumes the pending copy. Shared instances qualify
+  their source asset even when the original mesh is outside the camera.
+- Ready visible copies follow binding order, with at most 64 meshes and
+  10 MiB (262144 vertices at 40 bytes each) copied per render frame. The byte
+  limit admits any single API-valid mesh. An oldest ready mesh that does not fit
+  waits for the next frame, so later small meshes cannot starve it. Missing
+  render allocations or unfinished compute results do not block ready copies.
+  CPU fallback geometry remains available until each whole-mesh copy completes.
+  Completed copies are retained across visibility changes and retired on removal.
+  This bounds GPU-to-GPU copies, not compute dispatches, CPU asset preparation,
+  allocated vertex capacity or draw count. No depth occlusion traversal is added.
+
+- Fine GPU meshing now packs output using a CPU prefix sum over sampled topology.
+  Cubes reserve six vertices per exposed face in the requested emission group;
+  smooth cells reserve three or six vertices for each active tetrahedron using
+  the extractor's negative-density and first-inside-material rules. GPU work
+  still computes interpolated positions and normals. Empty cells, hidden faces
+  and other emission groups reserve no output space. Each cell owns a disjoint
+  output span, with no atomics or production GPU readback.
+- Output buffers, GPU-to-GPU copies and Bevy's raster vertex allocations use
+  the packed vertex count. A lone cube in a 16-cubed tile now needs 1440 output
+  bytes rather than the previous 5898240 bytes. Offset buffers are temporary and
+  freed after dispatch. Dispatch still visits bounded tile anchors, and smooth
+  zero-density degeneracies can leave zero triangles within active spans. Cube
+  output still uses individual faces rather than the CPU mesher's greedy quads.
+  The existing 64 MiB output budget and CPU collision/fallback meshes remain.
+  Visual LOD meshes still use their compacted CPU geometry and seam path.
+
 These are planar, watertight step joins, not interpolated density transitions.
 Smooth joins can retain a visible crease or flat ledge where reductions disagree.
 As with existing coarse geometry, overlapping shape proxies and density surfaces
 can retain internal faces inside the solid union. Visual LOD remains opt-in;
 all gameplay queries and collision stay canonical.
 The plugin compute API still needs renderer services for depth traversal,
-visibility queues and compact quad draw allocation.
+visibility queues and compact quad draw allocation beyond packed triangle buffers.
 
 ### Implementation order and qualification
 
@@ -362,7 +394,9 @@ bounded meshing for 32-cell sections, then voxel reduction and edit propagation.
 Camera inputs and coherent complete-cut publication now connect the selector
 to coarse jobs. Dependency-based tile reuse now avoids rebuilding the entire cut
 for unrelated edits. Mixed-resolution boundaries now have planar solid-difference
-joins. Next improve transition appearance and renderer visibility/compaction.
+joins. Renderer copies now use camera visibility and bounded FIFO scheduling;
+GPU triangle buffers now pack active topology. Next improve transition appearance,
+add depth visibility services and a compact quad draw path.
 
 Qualification includes non-multiple heights (1, 31, 33, 100), old checkpoints,
 column and section borders, thin structures, caves, shape proxies, smooth

@@ -1077,6 +1077,12 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   generation changes restart jobs. `lod_seam.rs` clips visual tiles and emits
   planar solid-difference joins for mixed cube/shape/smooth resolutions, keeping
   boundary caps within the cut budget. Seam clipping advances one tile per frame.
+  Renderer GPU mesh copies wait for a visible entity or instance, retaining hidden
+  fine buffers and colliders. Ready copies use FIFO order under 64-mesh/10-MiB
+  per-frame limits; CPU fallback remains until a whole-mesh copy completes.
+  Fine GPU meshing uses sampled topology prefix sums for packed triangle spans;
+  output allocation and raster vertex counts omit empty cells and hidden faces.
+  Temporary offsets are freed after dispatch; interpolation stays on the GPU.
   See `docs/voxel-lod-research.md` for the LOD implementation stages.
   Its manifest asks for `editor.preview`, `project-storage` and `gpu-compute`;
   preview does not load or write player saves. Saved edits are the `world` resource's
