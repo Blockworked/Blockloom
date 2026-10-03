@@ -327,6 +327,17 @@
       "action": {"do": "module", "op": "lod_sample"}
     },
     {
+      "name": "voxel_lod_mesh",
+      "summary": "Build a coarse mesh preview incrementally. Coordinates address 8-sample tiles at the chosen level; repeat until ready.",
+      "args": [
+        {"name": "level", "type": "int", "min": 1, "max": 4, "default": 1},
+        {"name": "x", "type": "int", "default": 0},
+        {"name": "y", "type": "int", "default": 0},
+        {"name": "z", "type": "int", "default": 0}
+      ],
+      "action": {"do": "module", "op": "lod_mesh"}
+    },
+    {
       "name": "save_voxels",
       "summary": "Save voxel edits",
       "args": [

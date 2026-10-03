@@ -151,7 +151,7 @@ These are proposed Blockloom decisions, not claims about Voxy:
 
 ### Implementation status
 
-The storage and reduction stages are implemented in `plugins/voxel`:
+Storage, reduction and coarse mesh production are implemented in `plugins/voxel`:
 
 - Storage uses sparse 32-cubed sections and distinct X/Z column addresses.
   All world dimensions retain their exact cell bounds. Empty resident sections
@@ -178,7 +178,8 @@ The storage and reduction stages are implemented in `plugins/voxel`:
 - `count` reports drawn columns (`chunks`), `column_counts`, `resident_columns`,
   `drawn_sections`, `resident_sections`, dense-cell `allocated_bytes`,
   `gpu_allocated_bytes`, `lod_nodes`, `lod_samples`, `lod_sample_limit` and
-  `voxel_revision`.
+  `voxel_revision`. Coarse jobs add `lod_mesh_tiles`, `lod_mesh_tile_limit`
+  and `lod_generation`.
   `resident` and `pending` still count sections.
 - `lod.rs` defines reduction version 1 for levels 0 through 4. Sample addresses
   use each level's lattice; node addresses group 32-cubed samples at that level.
@@ -211,8 +212,42 @@ The storage and reduction stages are implemented in `plugins/voxel`:
   material, opacity proxy, density, density material, child mask, revision and
   reduction version. These queries do not alter rendered or collision meshes.
 
-Camera-driven selection, coarse mesh boundary invalidation, coherent
-parent/child replacement and cross-resolution seams remain to be implemented.
+- `lod_mesh.rs` builds coarse CPU geometry through the existing cube and smooth
+  meshers. Coarse render tiles span at most 8 samples per axis, independently of
+  the 32-sample hierarchy node. Positions scale by `2^level * voxel_size`;
+  emission groups retain their material identity. Smooth jobs use reduced
+  density materials and add whole-cell proxies for selected non-cube shapes.
+  Outer edge vertices project onto the exact world box; degenerate triangles
+  are removed and moved triangles receive geometric normals.
+- Mesh jobs sample a conservative two-sample halo, including smooth gradients
+  and diagonal neighbors. Their dependency box covers those samples in base
+  cell coordinates. Edits invalidate intersecting ready and partial jobs,
+  including neighboring tiles across a boundary. Changed cells are accumulated
+  into one bounding box per flush, which can invalidate additional tiles when
+  separate edits span a large region. Disjoint jobs remain cached. Regeneration
+  and successful restore/load clear the cache and advance a plugin-local
+  generation identity, retained across world stop/start. The response also
+  includes the job's original grid revision.
+- A mesh poll debits at most 65536 potential base-cell visits. Each in-bounds
+  sample costs `8^level` even when it is already cached; out-of-bounds samples
+  cost zero. This bounds sampling work without requiring full-detail residency.
+  Sampling continues on the next poll, and geometry is exposed only after its
+  entire halo is ready. The cache retains at most four partial/complete tiles,
+  evicting the oldest request when full. Each tile has a 1 MiB geometry payload
+  limit; oversized output fails the request. Vector capacity, sample storage,
+  meshing scratch and serialized responses are outside that payload limit.
+- `voxel_lod_mesh` (`lod_mesh` op) polls this pipeline for inspection. X/Y/Z
+  address 8-sample tiles at the chosen level, not base cells or hierarchy nodes.
+  For example, level 2 tile `[1,0,0]` starts at base cell X=32 and spans up to
+  32 base cells. Repeat until `ready` is true; `meshes` is empty while pending.
+  The response reports sample progress, the conservative `base_visit_bound`,
+  dependencies, revision and generation identities. Mesh names start with
+  `lod/<level>/<x>/<y>/<z>`, with an optional glow suffix. These meshes have no
+  collision or GPU allocation and are returned as data, not renderer effects.
+  Existing full-detail meshes continue to provide drawing and gameplay.
+
+Camera-driven selection, coherent parent/child replacement and
+cross-resolution seams remain to be implemented.
 There is no distant visual LOD yet; all gameplay queries remain canonical.
 The plugin compute API still needs renderer services for depth traversal,
 visibility queues and compact quad draw allocation.
@@ -221,8 +256,8 @@ visibility queues and compact quad draw allocation.
 
 First implement column/section addressing and checkpoint migration, then
 bounded meshing for 32-cell sections, then voxel reduction and edit propagation.
-Next add coarse mesh production, boundary dependencies, screen-space selection
-and coherent mesh replacement.
+Next add screen-space selection and coherent mesh replacement using the coarse
+mesh jobs and their boundary dependencies.
 Finish seam handling for both surface modes and renderer visibility/compaction.
 
 Qualification includes non-multiple heights (1, 31, 33, 100), old checkpoints,

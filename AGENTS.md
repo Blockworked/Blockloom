@@ -1061,7 +1061,10 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   `lod.rs` caches derived samples at levels 1 through 4, bounded to 8192 records,
   with shape occupancy proxies, averaged smooth densities and edit invalidation
   along the ancestor chain. `voxel_lod_sample` inspects them in level lattice
-  coordinates; they do not drive rendering or collision yet.
+  coordinates. `lod_mesh.rs` builds cube/smooth coarse CPU previews in 8-sample
+  tiles, with two-sample halos, edit dependencies, a 65536-base-visit poll budget
+  and four cached jobs. `voxel_lod_mesh` polls them until ready; these mesh data
+  have no collision and do not replace full-detail renderer meshes yet.
   See `docs/voxel-lod-research.md` for the LOD implementation stages.
   Its manifest asks for `editor.preview`, `project-storage` and `gpu-compute`;
   preview does not load or write player saves. Saved edits are the `world` resource's

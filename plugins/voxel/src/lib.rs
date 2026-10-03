@@ -9,6 +9,7 @@ mod fracture;
 mod gpu_mesh;
 mod grid;
 mod lod;
+mod lod_mesh;
 mod mesher;
 mod palette;
 mod ray;
@@ -107,6 +108,8 @@ enum Surface {
 
 struct World {
     grid: Grid,
+    lod_meshes: lod_mesh::Cache,
+    lod_generation: u64,
     palette: Palette,
     voxel: f32,
     origin: [f32; 3],
@@ -359,6 +362,8 @@ impl World {
         validate_save_slot(&settings.save_slot)?;
         Ok(World {
             grid,
+            lod_meshes: lod_mesh::Cache::default(),
+            lod_generation: 0,
             palette: Palette::new(&settings.palette_colors, &settings.palette_emission)?,
             voxel: settings.voxel_size as f32,
             origin: settings.origin.map(|v| v as f32),
@@ -381,6 +386,11 @@ impl World {
         })
     }
 
+    fn reset_lod_meshes(&mut self) {
+        self.lod_meshes = lod_mesh::Cache::default();
+        self.lod_generation = self.lod_generation.wrapping_add(1);
+    }
+
     fn generate(&mut self, preset: &str, seed: i64) -> Result<(), String> {
         if !terrain::PRESETS.contains(&preset) {
             return Err(format!(
@@ -388,6 +398,7 @@ impl World {
                 terrain::PRESETS.join(", ")
             ));
         }
+        self.reset_lod_meshes();
         if self.settings.streamed {
             self.grid.stream(preset, seed);
             self.pending.extend(&self.visible);
@@ -587,6 +598,7 @@ impl World {
 
     /// Meshes every dirty section and says what the game should now draw.
     fn flush(&mut self) -> Vec<Value> {
+        self.lod_meshes.invalidate(self.grid.take_lod_changes());
         let mut effects = Vec::new();
         self.pending.extend(self.grid.take_dirty());
         if self.settings.streamed {
@@ -711,6 +723,7 @@ fn serde_value(mesh: &MeshData) -> Value {
 struct Voxel {
     world: Option<World>,
     invokers: Vec<String>,
+    lod_generation: u64,
 }
 
 fn int(args: &Value, key: &str) -> Result<i32, Error> {
@@ -769,6 +782,7 @@ impl Voxel {
             serde_json_from(payload).map_err(|e| Error::new(format!("the world resource: {e}")))?
         };
         let mut world = World::new(&settings).map_err(Error::new)?;
+        world.lod_generation = self.lod_generation;
         world
             .generate(&settings.preset, settings.seed)
             .map_err(Error::new)?;
@@ -797,6 +811,7 @@ impl Voxel {
                 Ok(Some((grid, fragments, seed))) => {
                     world.seed = seed;
                     world.grid = grid;
+                    world.reset_lod_meshes();
                     world.fragments = fragments;
                     world.next_fragment =
                         world.fragments.keys().next_back().copied().unwrap_or(0) + 1;
@@ -1095,6 +1110,7 @@ impl Plugin for Voxel {
                 let (grid, fragments, seed) = decode_checkpoint(world, args["state"].clone())?;
                 let mut effects = world.replace_fragments(fragments)?;
                 world.grid = grid;
+                world.reset_lod_meshes();
                 world.seed = seed;
                 world.pending.extend(&world.visible);
                 if !world.settings.streamed {
@@ -1119,6 +1135,7 @@ impl Plugin for Voxel {
                     .ok_or_else(|| Error::new("no voxel save in this slot"))?;
                 let mut effects = world.replace_fragments(fragments)?;
                 world.grid = grid;
+                world.reset_lod_meshes();
                 world.seed = seed;
                 world.pending.extend(&world.visible);
                 if !world.settings.streamed {
@@ -1227,6 +1244,68 @@ impl Plugin for Voxel {
                     "density_material":sample.density_material,"children":sample.children,
                     "revision":grid.revision(),"reduction_version":lod::REDUCTION_VERSION}))
             }
+            "lod_mesh" => {
+                let tile = cell(&args)?;
+                let level = int(&args, "level")?;
+                if !(1..=i32::from(lod::MAX_LEVEL)).contains(&level) {
+                    return Err(Error::bad_argument(
+                        "coarse mesh level must be between 1 and 4",
+                    ));
+                }
+                let world = self.world()?;
+                let result = world
+                    .lod_meshes
+                    .poll(
+                        lod_mesh::Key {
+                            level: level as u8,
+                            tile,
+                        },
+                        &mut world.grid,
+                        &world.palette,
+                        world.surface,
+                        world.voxel,
+                    )
+                    .map_err(Error::new)?;
+                let mut meshes = Vec::new();
+                for (glow, group) in result.groups.iter().flatten() {
+                    let [x, y, z] = tile;
+                    let name = format!(
+                        "lod/{level}/{x}/{y}/{z}{}",
+                        glow.map_or(String::new(), |m| format!("/glow{m}"))
+                    );
+                    let mesh = MeshData {
+                        name,
+                        positions: group.positions.clone(),
+                        normals: group.normals.clone(),
+                        colors: group.colors.clone(),
+                        indices: group.indices.clone(),
+                        origin: [0, 1, 2].map(|a| {
+                            world.origin[a]
+                                + result.base[a] as f32 * (1 << level) as f32 * world.voxel
+                        }),
+                        emission: glow
+                            .and_then(|m| world.palette.get(m))
+                            .map(|m| m.color.map(|c| c * m.emission)),
+                        roughness: 0.9,
+                        collider: false,
+                        collider_kind: ColliderKind::Trimesh,
+                        gpu: None,
+                        body: None,
+                    };
+                    mesh.check().map_err(Error::new)?;
+                    meshes.push(serde_value(&mesh));
+                }
+                let (dependency_lo, dependency_hi) = result.dependencies();
+                Ok(
+                    json!({"ready":result.groups.is_some(),"meshes":meshes,"level":level,"tile":tile,
+                    "tile_width":lod_mesh::TILE,"base":result.base,"extent":result.extent,
+                    "sample_width":1 << level,"samples_ready":result.progress(),"samples_total":result.total(),
+                    "base_visit_budget":lod_mesh::BASE_VISITS_PER_POLL,"base_visit_bound":result.visits,
+                    "dependency_lo":dependency_lo,"dependency_hi":dependency_hi,
+                    "built_revision":result.revision,"revision":world.grid.revision(),
+                    "generation":world.lod_generation,"reduction_version":lod::REDUCTION_VERSION}),
+                )
+            }
             "height" => {
                 let (x, z) = (int(&args, "x")?, int(&args, "z")?);
                 let top = self.world()?.grid.height_at(x, z).map_or(-1, i64::from);
@@ -1249,6 +1328,9 @@ impl Plugin for Voxel {
                     "lod_nodes": world.grid.lod_nodes(),
                     "lod_samples": world.grid.lod_samples(),
                     "lod_sample_limit": lod::MAX_SAMPLES,
+                    "lod_mesh_tiles": world.lod_meshes.len(),
+                    "lod_mesh_tile_limit": lod_mesh::MAX_TILES,
+                    "lod_generation": world.lod_generation,
                     "voxel_revision": world.grid.revision(),
                     "size": world.grid.size(),
                     "resident": world.grid.resident_pages(),
@@ -1257,6 +1339,10 @@ impl Plugin for Voxel {
             }
             _ => Err(Error::unsupported(op)),
         }?;
+        self.lod_generation = self
+            .world
+            .as_ref()
+            .map_or(self.lod_generation, |w| w.lod_generation);
         if matches!(
             op,
             "set"

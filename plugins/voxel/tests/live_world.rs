@@ -681,16 +681,93 @@ fn mip_queries_survive_residency_eviction_and_fracture_removals() {
     );
     a.call_json("stream", &json!({"x":0,"y":0,"z":0})).unwrap();
     assert_eq!(a.call_json("lod_sample", &query).unwrap(), before);
+    assert!(
+        !coarse_mesh(&a, 1, [4, 0, 0])["meshes"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     a.call_json(
         "fracture",
         &json!({"x1":63,"y1":5,"z1":5,"x2":64,"y2":5,"z2":5}),
     )
     .unwrap();
+    assert_eq!(coarse_mesh(&a, 1, [4, 0, 0])["meshes"], json!([]));
     let after = a.call_json("lod_sample", &query).unwrap();
     assert_eq!(after["material"], 0);
     assert!(after["revision"].as_u64().unwrap() > before["revision"].as_u64().unwrap());
     assert!(
         a.call_json("lod_sample", &json!({"level":-1,"x":0,"y":0,"z":0}))
             .is_err()
+    );
+}
+
+fn coarse_mesh(module: &NativeModule, level: i32, tile: [i32; 3]) -> Value {
+    for _ in 0..150 {
+        let value = module
+            .call_json(
+                "lod_mesh",
+                &json!({"level":level,"x":tile[0],"y":tile[1],"z":tile[2]}),
+            )
+            .unwrap();
+        assert!(
+            value["base_visit_bound"].as_u64().unwrap()
+                <= value["base_visit_budget"].as_u64().unwrap()
+        );
+        if value["ready"] == true {
+            return value;
+        }
+        assert_eq!(value["meshes"], json!([]));
+    }
+    panic!("coarse mesh job did not finish");
+}
+
+#[test]
+fn coarse_mesh_previews_preserve_gameplay_and_reset_after_restore() {
+    let a = module(Arc::new(MemoryStore::new()));
+    start(
+        &a,
+        json!({"size":[256,32,32],"preset":"empty","streamed":true,
+        "stream_radius":0,"vertical_radius":0,"max_pages":1,"pages_per_tick":1,
+        "origin":[10,20,30],"voxel_size":2}),
+    );
+    a.call_json("set", &json!({"x":17,"y":4,"z":4,"material":"glow"}))
+        .unwrap();
+    let before = material(&a, [17, 4, 4]);
+    let resident = a.call_json("count", &json!({})).unwrap()["resident"].clone();
+    let saved = a.call_json("world.save", &json!({})).unwrap();
+    let ready = coarse_mesh(&a, 4, [0; 3]);
+    let mesh = &ready["meshes"][0];
+    assert_eq!(mesh["name"], "lod/4/0/0/0/glow7");
+    assert_eq!(mesh["origin"], json!([10.0, 20.0, 30.0]));
+    assert_eq!(mesh["collider"], false);
+    assert!(mesh["gpu"].is_null());
+    assert!(ready["effects"].is_null());
+    assert_eq!(material(&a, [17, 4, 4]), before);
+    assert_eq!(
+        a.call_json("count", &json!({})).unwrap()["resident"],
+        resident
+    );
+    a.call_json("set", &json!({"x":240,"y":4,"z":4,"material":"stone"}))
+        .unwrap();
+    let unchanged = coarse_mesh(&a, 4, [0; 3]);
+    assert_eq!(unchanged["meshes"], ready["meshes"]);
+    assert_eq!(unchanged["built_revision"], ready["built_revision"]);
+    a.call_json("set", &json!({"x":17,"y":4,"z":4,"material":"air"}))
+        .unwrap();
+    assert_eq!(coarse_mesh(&a, 4, [0; 3])["meshes"], json!([]));
+    a.call_json("world.restore", &saved).unwrap();
+    let restored = coarse_mesh(&a, 4, [0; 3]);
+    assert_eq!(restored["meshes"], ready["meshes"]);
+    assert!(restored["generation"].as_u64().unwrap() > ready["generation"].as_u64().unwrap());
+    assert!(
+        a.call_json("lod_mesh", &json!({"level":4,"x":100,"y":0,"z":0}))
+            .is_err()
+    );
+    a.call_json("world.stop", &json!({})).unwrap();
+    start(&a, json!({"size":[16,16,16],"preset":"empty"}));
+    assert!(
+        coarse_mesh(&a, 1, [0; 3])["generation"].as_u64().unwrap()
+            > restored["generation"].as_u64().unwrap()
     );
 }

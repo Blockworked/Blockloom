@@ -152,6 +152,20 @@ pub(crate) fn mesh_region(
     extent: [i32; 3],
     voxel: f32,
 ) -> BTreeMap<Option<u8>, Group> {
+    let mut groups = mesh_samples(palette, base, extent, voxel, |cell| {
+        (grid.density(cell), grid.get(cell))
+    });
+    mesh_shapes(grid, palette, base, extent, voxel, true, &mut groups);
+    groups
+}
+
+pub(crate) fn mesh_samples(
+    palette: &Palette,
+    base: [i32; 3],
+    extent: [i32; 3],
+    voxel: f32,
+    sample_at: impl Fn([i32; 3]) -> (i16, u8),
+) -> BTreeMap<Option<u8>, Group> {
     let mut groups = BTreeMap::<Option<u8>, Group>::new();
     let mut vertices = BTreeMap::<Option<u8>, BTreeMap<[u32; 4], u32>>::new();
     let lo = base.map(|c| if c == 0 { -1 } else { c });
@@ -170,8 +184,9 @@ pub(crate) fn mesh_region(
         for y in sample_lo[1]..=sample_hi[1] {
             for x in sample_lo[0]..=sample_hi[0] {
                 let at = [x, y, z];
-                samples[index(at)] = grid.density(at);
-                materials[index(at)] = grid.get(at);
+                let (density, material) = sample_at(at);
+                samples[index(at)] = density;
+                materials[index(at)] = material;
             }
         }
     }
@@ -247,7 +262,6 @@ pub(crate) fn mesh_region(
             }
         }
     }
-    mesh_shapes(grid, palette, base, extent, voxel, true, &mut groups);
     groups
 }
 

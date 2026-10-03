@@ -148,6 +148,24 @@ pub(crate) fn mesh_region(
     extent: [i32; 3],
     voxel: f32,
 ) -> BTreeMap<Option<u8>, Group> {
+    let mut groups = mesh_cubes(palette, base, extent, voxel, |cell| {
+        if grid.is_full(cell) {
+            grid.get(cell)
+        } else {
+            0
+        }
+    });
+    mesh_shapes(grid, palette, base, extent, voxel, false, &mut groups);
+    groups
+}
+
+pub(crate) fn mesh_cubes(
+    palette: &Palette,
+    base: [i32; 3],
+    extent: [i32; 3],
+    voxel: f32,
+    material_at: impl Fn([i32; 3]) -> u8,
+) -> BTreeMap<Option<u8>, Group> {
     let mut groups: BTreeMap<Option<u8>, Group> = BTreeMap::new();
     for axis in 0..3 {
         let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
@@ -163,14 +181,13 @@ pub(crate) fn mesh_region(
                         at[u] = i;
                         at[v] = j;
                         let cell = [base[0] + at[0], base[1] + at[1], base[2] + at[2]];
-                        // Shaped cells are drawn on their own, below.
-                        if !grid.is_full(cell) {
+                        let material = material_at(cell);
+                        if material == 0 {
                             continue;
                         }
-                        let material = grid.get(cell);
                         let mut next = cell;
                         next[axis] += sign;
-                        if !grid.is_full(next) {
+                        if material_at(next) == 0 {
                             mask[j as usize * n + i as usize] = material;
                         }
                     }
@@ -215,7 +232,6 @@ pub(crate) fn mesh_region(
             }
         }
     }
-    mesh_shapes(grid, palette, base, extent, voxel, false, &mut groups);
     groups
 }
 

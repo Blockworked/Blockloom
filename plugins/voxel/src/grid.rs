@@ -33,6 +33,7 @@ pub struct Grid {
     dirty: BTreeSet<[i32; 3]>,
     lod: crate::lod::Cache,
     revision: u64,
+    lod_changes: Option<([i32; 3], [i32; 3])>,
 }
 
 fn decoded_cell(section: SectionAddress, index: usize, width: i32) -> [i32; 3] {
@@ -64,6 +65,7 @@ impl Grid {
             dirty: BTreeSet::new(),
             lod: crate::lod::Cache::default(),
             revision: 0,
+            lod_changes: None,
         }
     }
 
@@ -73,6 +75,10 @@ impl Grid {
 
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    pub fn take_lod_changes(&mut self) -> Option<([i32; 3], [i32; 3])> {
+        self.lod_changes.take()
     }
 
     pub fn lod_nodes(&self) -> usize {
@@ -224,6 +230,11 @@ impl Grid {
     fn dirty_sample(&mut self, cell: [i32; 3]) {
         self.revision = self.revision.wrapping_add(1);
         self.lod.invalidate(cell);
+        let (lo, hi) = self.lod_changes.get_or_insert((cell, cell));
+        for a in 0..3 {
+            lo[a] = lo[a].min(cell[a]);
+            hi[a] = hi[a].max(cell[a]);
+        }
         let lo = cell.map(|v| (v - 2).max(0).div_euclid(SECTION));
         let hi = cell.map(|v| (v + 1).div_euclid(SECTION));
         for z in lo[2]..=hi[2] {
@@ -518,6 +529,7 @@ impl Grid {
     pub fn clip_legacy(&mut self, size: [i32; 3]) {
         self.lod = crate::lod::Cache::default();
         self.revision = self.revision.wrapping_add(1);
+        self.lod_changes = Some(([0; 3], self.size.map(|s| s - 1)));
         if self.generator.is_some() {
             self.generator_size = Some(self.size);
         }
@@ -561,6 +573,7 @@ impl Grid {
     pub fn clear(&mut self) {
         self.lod = crate::lod::Cache::default();
         self.revision = self.revision.wrapping_add(1);
+        self.lod_changes = Some(([0; 3], self.size.map(|s| s - 1)));
         self.sections.clear();
         self.resident.clear();
         self.edits.clear();
