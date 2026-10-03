@@ -657,3 +657,40 @@ fn partial_sections_submit_bounded_cpu_and_gpu_mesh_tiles() {
         }
     }
 }
+
+#[test]
+fn mip_queries_survive_residency_eviction_and_fracture_removals() {
+    let a = module(Arc::new(MemoryStore::new()));
+    start(
+        &a,
+        json!({"size":[128,32,32],"preset":"empty","streamed":true,
+        "stream_radius":0,"vertical_radius":0,"max_pages":1,"pages_per_tick":1}),
+    );
+    for x in [63, 64] {
+        a.call_json("set", &json!({"x":x,"y":5,"z":5,"material":"wood"}))
+            .unwrap();
+    }
+    let query = json!({"level":4,"x":4,"y":0,"z":0});
+    let before = a.call_json("lod_sample", &query).unwrap();
+    assert_eq!(before["material"], 5);
+    assert!(
+        a.call_json("count", &json!({})).unwrap()["lod_nodes"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    a.call_json("stream", &json!({"x":0,"y":0,"z":0})).unwrap();
+    assert_eq!(a.call_json("lod_sample", &query).unwrap(), before);
+    a.call_json(
+        "fracture",
+        &json!({"x1":63,"y1":5,"z1":5,"x2":64,"y2":5,"z2":5}),
+    )
+    .unwrap();
+    let after = a.call_json("lod_sample", &query).unwrap();
+    assert_eq!(after["material"], 0);
+    assert!(after["revision"].as_u64().unwrap() > before["revision"].as_u64().unwrap());
+    assert!(
+        a.call_json("lod_sample", &json!({"level":-1,"x":0,"y":0,"z":0}))
+            .is_err()
+    );
+}

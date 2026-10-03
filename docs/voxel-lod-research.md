@@ -1,7 +1,7 @@
 # Voxy LOD research and Blockloom design
 
 Research date: 2026-10-03. This is a source review and implementation design;
-the first implementation stage now uses 32-cell sections and has no visual LOD.
+storage and derived mip samples are implemented, with no visual LOD yet.
 
 ## Requested chunk dimensions
 
@@ -151,7 +151,7 @@ These are proposed Blockloom decisions, not claims about Voxy:
 
 ### Implementation status
 
-The first stage is implemented in `plugins/voxel`:
+The storage and reduction stages are implemented in `plugins/voxel`:
 
 - Storage uses sparse 32-cubed sections and distinct X/Z column addresses.
   All world dimensions retain their exact cell bounds. Empty resident sections
@@ -176,10 +176,42 @@ The first stage is implemented in `plugins/voxel`:
   GPU allocations are outside the dense-cell byte budget; GPU output retains
   its existing independent 64 MiB budget.
 - `count` reports drawn columns (`chunks`), `column_counts`, `resident_columns`,
-  `drawn_sections`, `resident_sections`, dense-cell `allocated_bytes`, `gpu_allocated_bytes` and
-  `lod_nodes` (currently zero). `resident` and `pending` still count sections.
+  `drawn_sections`, `resident_sections`, dense-cell `allocated_bytes`,
+  `gpu_allocated_bytes`, `lod_nodes`, `lod_samples`, `lod_sample_limit` and
+  `voxel_revision`.
+  `resident` and `pending` still count sections.
+- `lod.rs` defines reduction version 1 for levels 0 through 4. Sample addresses
+  use each level's lattice; node addresses group 32-cubed samples at that level.
+  Queries recursively reduce canonical terrain and edits without loading base
+  sections. A FIFO cache retains at most 8192 derived sample records and queue
+  entries, including cached air; nodes currently contain only requested samples.
+  This is a record-count budget separate from dense-cell and GPU budgets, not an
+  exact heap-byte limit. Mip caches are disposable and are omitted from saves.
+- Cubic reduction selects the child with greatest shape occupancy proxy:
+  cube 255, stair 192, slab/ramp 128 and post 64. Ties keep the first corner in
+  `x + 2*y + 4*z` order. All current materials are opaque; this ranking models
+  shape coverage, not palette alpha. One occupied child survives, so thin
+  structures thicken at coarse levels. An eight-bit mask records occupied child
+  octants. Coarse samples are whole-cell proxies, not scaled copies of shapes.
+- Smooth reduction averages signed child densities and halves their magnitude
+  to express distance in the coarser lattice. Zero maps to positive 1, except
+  a negative sum truncated to zero maps to -1. A negative result carries the
+  material of the most negative child, with the same corner tie rule. Shaped
+  cells remain outside the smooth field. This filter can erase thin smooth
+  features and does not provide transition geometry.
+- Every material, shape, density and fracture removal invalidates the exact
+  cached sample on each ancestor level. Unrelated samples remain usable.
+  Regeneration and logical-bound changes discard the cache; restore starts
+  with a fresh cache. A grid revision changes on edits for future mesh result
+  validation, but is local to that grid lifetime, not a saved generation id.
+  Nonprocedural authoritative sections are protected from residency eviction.
+- `voxel_lod_sample` (`lod_sample` module op) exposes these samples for inspection.
+  Its X/Y/Z arguments are coordinates in the chosen level's lattice, so level 4
+  sample `[2,0,0]` covers base X cells 32 through 47. The response includes
+  material, opacity proxy, density, density material, child mask, revision and
+  reduction version. These queries do not alter rendered or collision meshes.
 
-Voxel reduction, ancestor invalidation, camera-driven selection, coherent
+Camera-driven selection, coarse mesh boundary invalidation, coherent
 parent/child replacement and cross-resolution seams remain to be implemented.
 There is no distant visual LOD yet; all gameplay queries remain canonical.
 The plugin compute API still needs renderer services for depth traversal,
@@ -188,8 +220,9 @@ visibility queues and compact quad draw allocation.
 ### Implementation order and qualification
 
 First implement column/section addressing and checkpoint migration, then
-bounded meshing for 32-cell sections. Next add voxel reduction and edit
-propagation, followed by screen-space selection and coherent mesh replacement.
+bounded meshing for 32-cell sections, then voxel reduction and edit propagation.
+Next add coarse mesh production, boundary dependencies, screen-space selection
+and coherent mesh replacement.
 Finish seam handling for both surface modes and renderer visibility/compaction.
 
 Qualification includes non-multiple heights (1, 31, 33, 100), old checkpoints,

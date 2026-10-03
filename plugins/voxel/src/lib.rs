@@ -8,6 +8,7 @@
 mod fracture;
 mod gpu_mesh;
 mod grid;
+mod lod;
 mod mesher;
 mod palette;
 mod ray;
@@ -1212,6 +1213,20 @@ impl Plugin for Voxel {
                     json!({"material": material, "shape": shape, "density": f64::from(grid.density(at))/256.0, "value": material}),
                 )
             }
+            "lod_sample" => {
+                let at = cell(&args)?;
+                let level = int(&args, "level")?;
+                if !(0..=i32::from(lod::MAX_LEVEL)).contains(&level) {
+                    return Err(Error::new("voxel LOD level must be between 0 and 4"));
+                }
+                let grid = &mut self.world()?.grid;
+                let sample = grid.lod_sample(level as u8, at).map_err(Error::new)?;
+                Ok(json!({"level":level,"cell":at,"sample_width":1 << level,
+                    "material":sample.material,"opacity":sample.opacity,
+                    "density":f64::from(sample.density)/256.0,
+                    "density_material":sample.density_material,"children":sample.children,
+                    "revision":grid.revision(),"reduction_version":lod::REDUCTION_VERSION}))
+            }
             "height" => {
                 let (x, z) = (int(&args, "x")?, int(&args, "z")?);
                 let top = self.world()?.grid.height_at(x, z).map_or(-1, i64::from);
@@ -1231,7 +1246,10 @@ impl Plugin for Voxel {
                     "resident_sections": world.grid.resident_pages(),
                     "allocated_bytes": world.grid.allocated_bytes(),
                     "gpu_allocated_bytes": world.gpu_buffers.values().flatten().map(|(_, words)| u64::from(*words) * 4).sum::<u64>(),
-                    "lod_nodes": 0,
+                    "lod_nodes": world.grid.lod_nodes(),
+                    "lod_samples": world.grid.lod_samples(),
+                    "lod_sample_limit": lod::MAX_SAMPLES,
+                    "voxel_revision": world.grid.revision(),
                     "size": world.grid.size(),
                     "resident": world.grid.resident_pages(),
                     "pending": world.pending.len(),

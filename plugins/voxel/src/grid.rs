@@ -31,6 +31,8 @@ pub struct Grid {
     /// Sections whose meshes are out of date: those written to, and the
     /// neighbours that see one of their cells across a boundary.
     dirty: BTreeSet<[i32; 3]>,
+    lod: crate::lod::Cache,
+    revision: u64,
 }
 
 fn decoded_cell(section: SectionAddress, index: usize, width: i32) -> [i32; 3] {
@@ -60,11 +62,58 @@ impl Grid {
             shapes: BTreeMap::new(),
             densities: BTreeMap::new(),
             dirty: BTreeSet::new(),
+            lod: crate::lod::Cache::default(),
+            revision: 0,
         }
     }
 
     pub fn size(&self) -> [i32; 3] {
         self.size
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub fn lod_nodes(&self) -> usize {
+        self.lod.nodes()
+    }
+
+    pub fn lod_samples(&self) -> usize {
+        self.lod.samples()
+    }
+
+    /// Build only requested samples; full-detail section residency is independent.
+    pub fn lod_sample(&mut self, level: u8, cell: [i32; 3]) -> Result<crate::lod::Sample, String> {
+        if level > crate::lod::MAX_LEVEL {
+            return Err("voxel LOD level must be between 0 and 4".into());
+        }
+        let scale = 1 << level;
+        if (0..3).any(|a| cell[a] < 0 || cell[a] >= (self.size[a] + scale - 1) / scale) {
+            return Ok(crate::lod::Sample {
+                density: 256 >> level,
+                ..crate::lod::Sample::AIR
+            });
+        }
+        if level == 0 {
+            return Ok(crate::lod::Sample::base(self, cell));
+        }
+        let address = crate::lod::Address { level, cell };
+        if let Some(sample) = self.lod.get(address) {
+            return Ok(sample);
+        }
+        let mut children = [crate::lod::Sample::AIR; 8];
+        for (i, child) in children.iter_mut().enumerate() {
+            let at = [
+                cell[0] * 2 + (i & 1) as i32,
+                cell[1] * 2 + ((i >> 1) & 1) as i32,
+                cell[2] * 2 + ((i >> 2) & 1) as i32,
+            ];
+            *child = self.lod_sample(level - 1, at)?;
+        }
+        let sample = crate::lod::Sample::reduce(children);
+        self.lod.insert(address, sample);
+        Ok(sample)
     }
 
     /// How many sections intersect the logical bounds on each axis.
@@ -173,6 +222,8 @@ impl Grid {
 
     /// Include the density-gradient halo and diagonal neighbours.
     fn dirty_sample(&mut self, cell: [i32; 3]) {
+        self.revision = self.revision.wrapping_add(1);
+        self.lod.invalidate(cell);
         let lo = cell.map(|v| (v - 2).max(0).div_euclid(SECTION));
         let hi = cell.map(|v| (v + 1).div_euclid(SECTION));
         for z in lo[2]..=hi[2] {
@@ -302,6 +353,10 @@ impl Grid {
     }
 
     pub fn retain_pages(&mut self, pages: &BTreeSet<[i32; 3]>) {
+        // Nonprocedural sections are authoritative, so residency cannot evict them.
+        if self.generator.is_none() {
+            return;
+        }
         self.sections.retain(|c, _| pages.contains(c));
         self.resident.retain(|c| pages.contains(c));
     }
@@ -461,6 +516,8 @@ impl Grid {
     }
 
     pub fn clip_legacy(&mut self, size: [i32; 3]) {
+        self.lod = crate::lod::Cache::default();
+        self.revision = self.revision.wrapping_add(1);
         if self.generator.is_some() {
             self.generator_size = Some(self.size);
         }
@@ -502,6 +559,8 @@ impl Grid {
     }
 
     pub fn clear(&mut self) {
+        self.lod = crate::lod::Cache::default();
+        self.revision = self.revision.wrapping_add(1);
         self.sections.clear();
         self.resident.clear();
         self.edits.clear();

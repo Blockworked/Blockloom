@@ -7,7 +7,7 @@
         {"name": "preset", "type": "choice", "options": ["island", "caves", "flat", "empty"], "default": "island", "description": "The terrain the world starts as."},
         {"name": "surface", "type": "choice", "options": ["cubes", "smooth"], "default": "cubes", "description": "Cubes keep square edges; smooth interpolates a density field. Sphere brushes sculpt smooth worlds; shaped cells stay crisp."},
         {"name": "seed", "type": "int", "min": -2147483648, "max": 2147483647, "default": 1337, "description": "The same seed and size always make the same world."},
-        {"name": "size", "type": "vec3", "default": [64, 32, 64], "description": "Cells along x, y and z, rounded up to whole 16-cell chunks. At most 4 million cells."},
+        {"name": "size", "type": "vec3", "default": [64, 32, 64], "description": "Exact cell bounds along x, y and z. Stored in sparse 32-cell sections. At most 4 million cells."},
         {"name": "voxel_size", "type": "number", "min": 0.05, "max": 64, "default": 1, "description": "How big one cell is in world units."},
         {"name": "origin", "type": "vec3", "default": [0, 0, 0], "description": "Where the world's low corner stands."},
         {"name": "solid", "type": "bool", "default": true, "description": "Whether the cells collide."},
@@ -314,6 +314,17 @@
         "do": "module",
         "op": "count"
       }
+    },
+    {
+      "name": "voxel_lod_sample",
+      "summary": "Inspect a derived LOD sample in level lattice coordinates.",
+      "args": [
+        {"name": "level", "type": "int", "min": 0, "max": 4, "default": 1},
+        {"name": "x", "type": "int", "default": 0},
+        {"name": "y", "type": "int", "default": 0},
+        {"name": "z", "type": "int", "default": 0}
+      ],
+      "action": {"do": "module", "op": "lod_sample"}
     },
     {
       "name": "save_voxels",

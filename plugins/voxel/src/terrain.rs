@@ -79,7 +79,7 @@ fn column(size: [i32; 3], preset: &str, seed: u32, x: i32, z: i32) -> (i32, bool
         }
         _ => ((0.3 + 0.35 * fbm(seed, fx / 36.0, fz / 36.0, 4)) * height) as i32,
     }
-    .clamp(1, sy - 1);
+    .clamp(1.min(sy - 1), sy - 1);
     (top, preset == "island" && top <= (height * 0.22) as i32 + 1)
 }
 
@@ -200,7 +200,7 @@ pub fn generate(grid: &mut Grid, preset: &str, seed: i64) -> Result<(), String> 
                 }
                 _ => ((0.3 + 0.35 * fbm(seed, fx / 36.0, fz / 36.0, 4)) * height) as i32,
             }
-            .clamp(1, sy - 1);
+            .clamp(1.min(sy - 1), sy - 1);
             let beach = preset == "island" && top <= sea + 1;
             for y in 0..=top {
                 if preset == "caves" && y > 1 && y < top - 2 {

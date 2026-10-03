@@ -701,7 +701,13 @@ fn smooth_worlds_match_native_and_portable_execution() {
             "cast",
             json!({"x":16.5,"y":30,"z":16.5,"dx":0,"dy":-1,"dz":0,"reach":100}),
         ),
+        ("lod_sample", json!({"level":4,"x":1,"y":0,"z":1})),
+        ("set", json!({"x":31,"y":1,"z":31,"material":"glow"})),
+        ("lod_sample", json!({"level":4,"x":1,"y":0,"z":1})),
+        ("lod_sample", json!({"level":1,"x":15,"y":0,"z":15})),
+        ("count", json!({})),
         ("generate", json!({"preset":"empty","seed":3})),
+        ("lod_sample", json!({"level":4,"x":1,"y":0,"z":1})),
     ] {
         assert_eq!(
             native.call_json(op, &args).unwrap(),
