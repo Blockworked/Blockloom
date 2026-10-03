@@ -1,7 +1,7 @@
 # Voxy LOD research and Blockloom design
 
 Research date: 2026-10-03. This is a source review and implementation design;
-the runtime still uses its existing 16-cell pages and has no visual LOD.
+the first implementation stage now uses 32-cell sections and has no visual LOD.
 
 ## Requested chunk dimensions
 
@@ -149,25 +149,41 @@ These are proposed Blockloom decisions, not claims about Voxy:
    exposes buffers and dispatches, but does not expose Voxy's depth texture,
    traversal queues or compact quad draw pipeline as ready-made services.
 
-### Constraints in the current implementation
+### Implementation status
 
-`grid.rs` uses `CHUNK = 16`, 4096-entry pages, hard-coded save-page index
-decoding and all-axis rounded bounds. Merely changing the constant would
-misdecode old saves and round world heights. Version 1 checkpoints need an
-explicit 16-cell page decoder and migration to cell coordinates before
-repacking; they cannot be interpreted as 32-cell pages.
+The first stage is implemented in `plugins/voxel`:
 
-`gpu_mesh.rs` reserves 36 vertices per lattice cell. At 32 cubed this becomes
-1,179,648 vertices per section, or 1,293,732 with a 33-cubed boundary lattice.
-Both exceed the current 262,144-vertex mesh limit. Full-height meshes would
-be larger still. Section storage must be separated from bounded mesh jobs,
-using tiled outputs initially or a compacted output pipeline. Preserve CPU
-collision and fallback geometry while changing allocation.
+- Storage uses sparse 32-cubed sections and distinct X/Z column addresses.
+  All world dimensions retain their exact cell bounds. Empty resident sections
+  carry residency metadata without a dense cell allocation.
+- Checkpoint version 2 records the page width explicitly. Version 1 pages
+  decode at their original 16-cell width and repack by cell coordinate.
+  Migration clips cells outside the configured logical bounds, including old
+  rounded padding. Legacy procedural worlds retain their original generator
+  bounds so in-bounds terrain does not change when saved again. Shapes,
+  density overrides and detached-body snapshots keep their cell coordinates.
+- Render and collision outputs use at most 16-cubed mesh tiles within each
+  section. CPU and GPU jobs share clipped tile bounds and canonical halo
+  samples. Existing `chunk/x/y/z` mesh names continue to address those tiles;
+  they are not column or storage-section addresses. GPU capacity checks retain
+  CPU rendering and collision when an output cannot be allocated.
+- `stream_radius` measures horizontal distance in 32-cell columns.
+  `vertical_radius` independently limits vertical section selection (default 2).
+  Selection prioritizes horizontal proximity, then vertical proximity, under
+  `max_pages` (resident section count) and `max_resident_bytes` (dense section
+  cells, default 16 MiB). `pages_per_tick` budgets section rebuilds, each of
+  which can publish multiple tiles. Sparse edits, metadata, temporary jobs and
+  GPU allocations are outside the dense-cell byte budget; GPU output retains
+  its existing independent 64 MiB budget.
+- `count` reports drawn columns (`chunks`), `column_counts`, `resident_columns`,
+  `drawn_sections`, `resident_sections`, dense-cell `allocated_bytes`, `gpu_allocated_bytes` and
+  `lod_nodes` (currently zero). `resident` and `pending` still count sections.
 
-Streaming radii currently address 3D 16-cell pages. With full-height columns,
-horizontal distance, vertical section residency, collision radius and visual
-LOD distance need distinct meanings. Status reporting should count columns,
-resident sections, LOD nodes and allocated bytes separately.
+Voxel reduction, ancestor invalidation, camera-driven selection, coherent
+parent/child replacement and cross-resolution seams remain to be implemented.
+There is no distant visual LOD yet; all gameplay queries remain canonical.
+The plugin compute API still needs renderer services for depth traversal,
+visibility queues and compact quad draw allocation.
 
 ### Implementation order and qualification
 

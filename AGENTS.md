@@ -1027,7 +1027,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   and the portable module (`just voxel-plugin` seals the wasm). Its `world`
   resource (preset `island|caves|flat|empty`, seed, size, voxel size, origin,
   solid, palette colors/emission) is read at `world.start`; `grid.rs` holds
-  16-cell chunks of `u8` material ids (air chunks unallocated, a boundary edit
+  32-cell sections of `u8` material ids with exact logical bounds and full-height
+  32 by 32 columns (air sections unallocated, a boundary edit
   dirties the neighbour), `terrain.rs` generates from hashes of each cell's own
   coordinates (the same seed always gives the same cells, trees and ore
   included), `mesher.rs` is the greedy cube mesher (visible faces only, faces
@@ -1049,12 +1050,15 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   collision (including actual shaped faces). Cube mode remains the default.
   Runtime edits can persist through `save_voxels` or `persistent: true`, using
   player storage and versioned compressed checkpoints. `streamed: true` uses
-  bounded page residency around invoker components or `stream_voxels`; canonical
+  bounded section residency around invoker components or `stream_voxels`, with
+  horizontal column radius, vertical radius and a dense-cell byte budget; canonical
   queries and sparse edits survive eviction. `gpu_meshing: true` adds GPU vertex
   generation with CPU collision and fallback meshes. `fracture_voxels` detaches
   unsupported six-connected regions into editable convex bodies, retaining cells
   when fragment budgets are exhausted. See the voxel milestone in
-  `docs/plugin-adr-0001.md` for settings, limits and validation. LOD is deferred.
+  `docs/plugin-adr-0001.md` for settings, limits and validation. Render jobs stay
+  in bounded 16-cell tiles; checkpoint v2 migrates v1 pages by cell coordinate.
+  See `docs/voxel-lod-research.md` for the LOD implementation stages.
   Its manifest asks for `editor.preview`, `project-storage` and `gpu-compute`;
   preview does not load or write player saves. Saved edits are the `world` resource's
   `edits` lines (`set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`,

@@ -1,7 +1,7 @@
 //! Cube and smooth voxel worlds with live edits, player checkpoints and paging.
 //!
 //! Cells and sparse edits are authoritative; meshes are disposable. Streamed
-//! worlds publish bounded pages near invokers, with optional GPU vertex output.
+//! worlds publish bounded sections near invokers, with optional GPU vertex output.
 //! Explicit fracture detaches unsupported regions into editable moving bodies.
 //! Project edit lines seed each run; persistent worlds restore player saves.
 
@@ -17,7 +17,9 @@ mod terrain;
 
 use blockloom_plugin_api::mesh::{ColliderKind, MeshData};
 use blockloom_plugin_sdk::{Error, Host, Plugin, Value, export_plugin, json};
-use grid::{CHUNK, Grid, Shape};
+use grid::{Grid, SECTION, Shape};
+
+const MESH_TILE: i32 = 16;
 use palette::Palette;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -44,6 +46,8 @@ struct Settings {
     save_slot: String,
     streamed: bool,
     stream_radius: i32,
+    vertical_radius: i32,
+    max_resident_bytes: usize,
     max_pages: usize,
     pages_per_tick: usize,
     stream_center: [f64; 3],
@@ -71,6 +75,8 @@ impl Default for Settings {
             save_slot: "world".into(),
             streamed: false,
             stream_radius: 2,
+            vertical_radius: 2,
+            max_resident_bytes: 16 * 1024 * 1024,
             max_pages: 64,
             pages_per_tick: 2,
             stream_center: [0.0; 3],
@@ -187,7 +193,7 @@ impl World {
     }
 
     fn checkpoint(&self) -> Value {
-        json!({"version":1,"settings":self.settings,"active_seed":self.seed,"grid":self.grid.snapshot(),"fragments":self.fragments.values().collect::<Vec<_>>()})
+        json!({"version":2,"settings":self.settings,"active_seed":self.seed,"grid":self.grid.snapshot(),"fragments":self.fragments.values().collect::<Vec<_>>()})
     }
 
     fn save(&self, host: &Host, slot: &str) -> Result<(), Error> {
@@ -206,7 +212,8 @@ impl World {
 type Checkpoint = (Grid, BTreeMap<u64, fracture::Fragment>, i64);
 
 fn decode_checkpoint(world: &World, value: Value) -> Result<Checkpoint, Error> {
-    if value["version"] != 1 {
+    let version = value["version"].as_u64().unwrap_or(0);
+    if ![1, 2].contains(&version) {
         return Err(Error::new("unsupported voxel checkpoint version"));
     }
     let settings: Settings = serde_json_from(value["settings"].clone()).map_err(Error::new)?;
@@ -216,11 +223,21 @@ fn decode_checkpoint(world: &World, value: Value) -> Result<Checkpoint, Error> {
         ));
     }
     let snapshot: grid::Snapshot = serde_json_from(value["grid"].clone()).map_err(Error::new)?;
-    if snapshot.size != world.grid.size() || snapshot.generator.is_some() != world.settings.streamed
+    let expected = if version == 1 {
+        world.settings.size.map(|s| (s as i32 + 15) / 16 * 16)
+    } else {
+        world.grid.size()
+    };
+    if snapshot.size != expected
+        || snapshot.page_size != if version == 1 { 16 } else { SECTION }
+        || snapshot.generator.is_some() != world.settings.streamed
     {
         return Err(Error::new("voxel checkpoint bounds or storage mode differ"));
     }
-    let grid = Grid::restore(snapshot, world.palette.len()).map_err(Error::new)?;
+    let mut grid = Grid::restore(snapshot, world.palette.len()).map_err(Error::new)?;
+    if version == 1 {
+        grid.clip_legacy(world.grid.size());
+    }
     let fragments: Vec<fracture::Fragment> =
         serde_json_from(value.get("fragments").cloned().unwrap_or(json!([])))
             .map_err(Error::new)?;
@@ -228,7 +245,7 @@ fn decode_checkpoint(world: &World, value: Value) -> Result<Checkpoint, Error> {
         return Err(Error::new("voxel checkpoint exceeds fragment budget"));
     }
     let mut table = BTreeMap::new();
-    for fragment in fragments {
+    for mut fragment in fragments {
         if fragment.grid.generator.is_some()
             || fragment.id == 0
             || fragment.id >= 1000000000
@@ -237,13 +254,12 @@ fn decode_checkpoint(world: &World, value: Value) -> Result<Checkpoint, Error> {
         {
             return Err(Error::new("invalid checkpoint fragment"));
         }
-        if Grid::restore(fragment.grid.clone(), world.palette.len())
-            .map_err(Error::new)?
-            .solid_count()
-            > world.settings.max_fragment_cells as u64
-        {
+        let fragment_grid =
+            Grid::restore(fragment.grid.clone(), world.palette.len()).map_err(Error::new)?;
+        if fragment_grid.solid_count() > world.settings.max_fragment_cells as u64 {
             return Err(Error::new("checkpoint fragment cell budget exceeded"));
         }
+        fragment.grid = fragment_grid.snapshot();
         fragment.mesh(world)?;
         table.insert(fragment.id, fragment);
     }
@@ -317,6 +333,8 @@ impl World {
             return Err("the voxel size must be 0.05 to 64".to_string());
         }
         if !(0..=8).contains(&settings.stream_radius)
+            || !(0..=8).contains(&settings.vertical_radius)
+            || !(grid::SECTION_CELLS..=16777216).contains(&settings.max_resident_bytes)
             || !(1..=512).contains(&settings.max_pages)
             || !(1..=16).contains(&settings.pages_per_tick)
             || settings
@@ -356,7 +374,9 @@ impl World {
             visible: BTreeSet::new(),
             pending: BTreeSet::new(),
             pending_fragments: BTreeMap::new(),
-            centre: settings.stream_center.map(|v| (v as i32).div_euclid(CHUNK)),
+            centre: settings
+                .stream_center
+                .map(|v| (v as i32).div_euclid(SECTION)),
         })
     }
 
@@ -384,12 +404,12 @@ impl World {
         if !self.settings.streamed {
             return Vec::new();
         }
-        let n = self.grid.chunk_counts();
+        let n = self.grid.section_counts();
         let radius = self.settings.stream_radius;
         let mut candidates = BTreeSet::new();
         for &centre in centres {
             for z in -radius..=radius {
-                for y in -radius..=radius {
+                for y in -self.settings.vertical_radius..=self.settings.vertical_radius {
                     for x in -radius..=radius {
                         let page = [centre[0] + x, centre[1] + y, centre[2] + z];
                         if (0..3).all(|a| page[a] >= 0 && page[a] < n[a]) {
@@ -404,13 +424,26 @@ impl World {
             (
                 centres
                     .iter()
-                    .map(|at| distance(*c, *at))
+                    .map(|at| {
+                        let dx = i64::from(c[0] - at[0]);
+                        let dz = i64::from(c[2] - at[2]);
+                        dx * dx + dz * dz
+                    })
+                    .min()
+                    .unwrap_or(0),
+                centres
+                    .iter()
+                    .map(|at| (c[1] - at[1]).abs())
                     .min()
                     .unwrap_or(0),
                 *c,
             )
         });
-        candidates.truncate(self.settings.max_pages);
+        candidates.truncate(
+            self.settings
+                .max_pages
+                .min(self.settings.max_resident_bytes / grid::SECTION_CELLS),
+        );
         let next: BTreeSet<_> = candidates.into_iter().collect();
         self.pending.extend(next.difference(&self.visible));
         let mut effects = Vec::new();
@@ -551,7 +584,7 @@ impl World {
         }
     }
 
-    /// Meshes every dirty chunk and says what the game should now draw.
+    /// Meshes every dirty section and says what the game should now draw.
     fn flush(&mut self) -> Vec<Value> {
         let mut effects = Vec::new();
         self.pending.extend(self.grid.take_dirty());
@@ -571,40 +604,64 @@ impl World {
             if self.settings.streamed {
                 self.grid.load_page(chunk);
             }
-            let groups = match self.surface {
-                Surface::Cubes => mesher::mesh_chunk(&self.grid, &self.palette, chunk, self.voxel),
-                Surface::Smooth => smooth::mesh_chunk(&self.grid, &self.palette, chunk, self.voxel),
-            };
-            let origin = [0, 1, 2].map(|a| self.origin[a] + (chunk[a] * CHUNK) as f32 * self.voxel);
             let mut names = BTreeSet::new();
-            for (glow, group) in groups {
-                let name = chunk_name(chunk, glow);
-                let emission = glow.and_then(|m| self.palette.get(m)).map(|m| {
-                    [
-                        m.color[0] * m.emission,
-                        m.color[1] * m.emission,
-                        m.color[2] * m.emission,
-                    ]
-                });
-                let gpu = gpu_mesh::build(self, chunk, glow, &mut effects);
-                let mesh = MeshData {
-                    name: name.clone(),
-                    positions: group.positions,
-                    normals: group.normals,
-                    colors: group.colors,
-                    indices: group.indices,
-                    origin,
-                    emission,
-                    roughness: 0.9,
-                    collider: self.solid,
-                    collider_kind: ColliderKind::Trimesh,
-                    gpu,
-                    body: None,
-                };
-                let mut effect = serde_value(&mesh);
-                effect["effect"] = json!("mesh");
-                effects.push(effect);
-                names.insert(name);
+            for z in 0..SECTION / MESH_TILE {
+                for y in 0..SECTION / MESH_TILE {
+                    for x in 0..SECTION / MESH_TILE {
+                        let tile = [x, y, z];
+                        let base = [0, 1, 2].map(|a| chunk[a] * SECTION + tile[a] * MESH_TILE);
+                        let extent =
+                            [0, 1, 2].map(|a| (self.grid.size()[a] - base[a]).clamp(0, MESH_TILE));
+                        if extent.contains(&0) {
+                            continue;
+                        }
+                        let groups = match self.surface {
+                            Surface::Cubes => mesher::mesh_region(
+                                &self.grid,
+                                &self.palette,
+                                base,
+                                extent,
+                                self.voxel,
+                            ),
+                            Surface::Smooth => smooth::mesh_region(
+                                &self.grid,
+                                &self.palette,
+                                base,
+                                extent,
+                                self.voxel,
+                            ),
+                        };
+                        let origin =
+                            [0, 1, 2].map(|a| self.origin[a] + base[a] as f32 * self.voxel);
+                        for (glow, group) in groups {
+                            // Keep mesh names stable while storage uses larger sections.
+                            let name = chunk_name(base.map(|c| c / MESH_TILE), glow);
+                            let emission = glow
+                                .and_then(|m| self.palette.get(m))
+                                .map(|m| m.color.map(|c| c * m.emission));
+                            let gpu =
+                                gpu_mesh::build(self, chunk, base, extent, glow, &mut effects);
+                            let mesh = MeshData {
+                                name: name.clone(),
+                                positions: group.positions,
+                                normals: group.normals,
+                                colors: group.colors,
+                                indices: group.indices,
+                                origin,
+                                emission,
+                                roughness: 0.9,
+                                collider: self.solid,
+                                collider_kind: ColliderKind::Trimesh,
+                                gpu,
+                                body: None,
+                            };
+                            let mut effect = serde_value(&mesh);
+                            effect["effect"] = json!("mesh");
+                            effects.push(effect);
+                            names.insert(name);
+                        }
+                    }
+                }
             }
             let before = self.published.remove(&chunk).unwrap_or_default();
             for gone in before.difference(&names) {
@@ -756,7 +813,7 @@ impl Voxel {
         }
         effects.extend(problems);
         let line = format!(
-            "voxel world {}x{}x{}, {} chunks drawn",
+            "voxel world {}x{}x{}, {} sections drawn",
             world.grid.size()[0],
             world.grid.size()[1],
             world.grid.size()[2],
@@ -1083,7 +1140,7 @@ impl Plugin for Voxel {
                 let point = triple(&args, ["x", "y", "z"])?;
                 let centre = [0, 1, 2].map(|a| {
                     (((point[a] - f64::from(world.origin[a])) / f64::from(world.voxel)) as i32)
-                        .div_euclid(CHUNK)
+                        .div_euclid(SECTION)
                 });
                 let mut effects = world.invoke(&[centre]);
                 effects.extend(world.flush());
@@ -1107,7 +1164,7 @@ impl Plugin for Voxel {
                         [0, 1, 2].map(|a| {
                             (((point[a] - f64::from(world.origin[a])) / f64::from(world.voxel))
                                 as i32)
-                                .div_euclid(CHUNK)
+                                .div_euclid(SECTION)
                         })
                     })
                     .collect();
@@ -1167,7 +1224,14 @@ impl Plugin for Voxel {
                 let world = self.world()?;
                 Ok(json!({
                     "solid": world.grid.solid_count(),
-                    "chunks": world.published.len(),
+                    "chunks": world.published.keys().map(|c| [c[0], c[2]]).collect::<BTreeSet<_>>().len(),
+                    "column_counts": world.grid.column_counts(),
+                    "resident_columns": world.grid.resident_columns(),
+                    "drawn_sections": world.published.len(),
+                    "resident_sections": world.grid.resident_pages(),
+                    "allocated_bytes": world.grid.allocated_bytes(),
+                    "gpu_allocated_bytes": world.gpu_buffers.values().flatten().map(|(_, words)| u64::from(*words) * 4).sum::<u64>(),
+                    "lod_nodes": 0,
                     "size": world.grid.size(),
                     "resident": world.grid.resident_pages(),
                     "pending": world.pending.len(),

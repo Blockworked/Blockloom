@@ -118,7 +118,7 @@ fn streamed_pages_stay_bounded_and_unloaded_edits_survive_teleports_and_saves() 
             .iter()
             .filter(|e| e["effect"] == "mesh")
             .count()
-            <= 1
+            <= 8
     );
     a.call_json("set", &json!({"x":2048,"y":2,"z":2048,"material":"glow"}))
         .unwrap();
@@ -276,7 +276,7 @@ fn huge_streamed_bounds_and_rejected_brushes_do_not_allocate_or_mutate_the_world
 #[test]
 fn preview_pages_finish_in_slices_without_touching_player_storage() {
     let a = module(Arc::new(MemoryStore::new()));
-    a.call_json("world.start",&json!({"preview":true,"resources":[{"type_id":"world","payload":{"streamed":true,"persistent":true,"size":[32,16,32],"preset":"flat","max_pages":4,"pages_per_tick":1}}]})).unwrap();
+    a.call_json("world.start",&json!({"preview":true,"resources":[{"type_id":"world","payload":{"streamed":true,"persistent":true,"size":[64,16,64],"preset":"flat","max_pages":4,"pages_per_tick":1}}]})).unwrap();
     assert!(
         a.call_json("count", &json!({})).unwrap()["pending"]
             .as_u64()
@@ -473,6 +473,36 @@ fn streamed_gpu_fracture_checkpoints_match_in_the_portable_player() {
         let actual = portable.call_json(op, &args).unwrap();
         assert_eq!(actual, expected, "portable {op}");
     }
+    for surface in ["cubes", "smooth"] {
+        let args = json!({"resources":[{"type_id":"world","payload":{
+            "preset":"empty","size":[33,33,33],"surface":surface,"gpu_meshing":true}}]});
+        assert_eq!(
+            portable.call_json("world.start", &args).unwrap(),
+            native.call_json("world.start", &args).unwrap()
+        );
+        let args = json!({"x":31,"y":31,"z":31,"radius":3.2,"material":"glow"});
+        assert_eq!(
+            portable.call_json("sphere", &args).unwrap(),
+            native.call_json("sphere", &args).unwrap()
+        );
+        let state = native.call_json("world.save", &json!({})).unwrap();
+        assert_eq!(
+            portable.call_json("world.restore", &state).unwrap(),
+            native.call_json("world.restore", &state).unwrap()
+        );
+        let mut legacy = native.call_json("world.save", &json!({})).unwrap();
+        legacy["state"]["version"] = json!(1);
+        legacy["state"]["grid"] = json!({"size":[48,48,48],"generator":null,
+            "cells":[[[32,32,32],1]],"shapes":[],"densities":[]});
+        assert_eq!(
+            portable.call_json("world.restore", &legacy).unwrap(),
+            native.call_json("world.restore", &legacy).unwrap()
+        );
+        assert_eq!(
+            portable.call_json("world.save", &json!({})).unwrap(),
+            native.call_json("world.save", &json!({})).unwrap()
+        );
+    }
 }
 
 #[test]
@@ -495,11 +525,11 @@ fn streamed_fracture_waits_for_source_collider_replacements() {
     let a = module(Arc::new(MemoryStore::new()));
     start(
         &a,
-        json!({"preset":"empty","size":[32,16,16],"streamed":true,"stream_radius":1,"max_pages":2,"pages_per_tick":1}),
+        json!({"preset":"empty","size":[64,16,16],"streamed":true,"stream_radius":1,"max_pages":2,"pages_per_tick":1}),
     );
     a.call_json(
         "fill",
-        &json!({"x1":15,"y1":5,"z1":5,"x2":16,"y2":5,"z2":5,"material":"stone"}),
+        &json!({"x1":31,"y1":5,"z1":5,"x2":32,"y2":5,"z2":5,"material":"stone"}),
     )
     .unwrap();
     a.call_json("hook.stream", &json!({"tick":1,"dt":0.016}))
@@ -507,7 +537,7 @@ fn streamed_fracture_waits_for_source_collider_replacements() {
     let broken = a
         .call_json(
             "fracture",
-            &json!({"x1":14,"y1":4,"z1":4,"x2":17,"y2":6,"z2":6}),
+            &json!({"x1":30,"y1":4,"z1":4,"x2":33,"y2":6,"z2":6}),
         )
         .unwrap();
     assert_eq!(broken["detached_cells"], 2);
@@ -527,4 +557,103 @@ fn streamed_fracture_waits_for_source_collider_replacements() {
         .position(|e| e["name"] == "fragment/1")
         .unwrap();
     assert!(effects[..body].iter().any(|e| e["effect"] == "remove_mesh"));
+}
+
+#[test]
+fn legacy_pages_migrate_by_cell_coordinate_and_keep_shapes_and_density() {
+    let a = module(Arc::new(MemoryStore::new()));
+    start(
+        &a,
+        json!({"preset":"empty","size":[65,100,33],"surface":"smooth"}),
+    );
+    let mut state = a.call_json("world.save", &json!({})).unwrap();
+    state["state"]["version"] = json!(1);
+    state["state"]["grid"] = json!({
+        "size":[80,112,48], "generator":null,
+        "pages":[{"chunk":[2,6,2],"runs":[[50,0],[1,2],[1,1],[14,0],[1,3],[4029,0]]}],
+        "shapes":[[[35,99,32],"slab"]],
+        "densities":[[[34,99,32],-64]]
+    });
+    state["state"]["fragments"] = json!([{
+        "id":1,"grid":{"size":[16,16,16],"generator":null,
+            "cells":[[[1,2,3],1]],"shapes":[],"densities":[]},
+        "origin":[1,2,3],"rotation":[0,0,0,1],"velocity":[0,0,0]
+    }]);
+    a.call_json("world.restore", &state).unwrap();
+    assert_eq!(material(&a, [35, 99, 32])["material"], 1);
+    assert_eq!(material(&a, [35, 99, 32])["shape"], "slab");
+    assert_eq!(material(&a, [34, 99, 32])["density"], -0.25);
+    assert_eq!(material(&a, [34, 100, 32])["material"], 0);
+    let upgraded = a.call_json("world.save", &json!({})).unwrap();
+    assert_eq!(upgraded["state"]["version"], 2);
+    assert_eq!(upgraded["state"]["fragments"][0]["grid"]["page_size"], 32);
+    assert_eq!(upgraded["state"]["grid"]["page_size"], 32);
+    assert_eq!(upgraded["state"]["grid"]["size"], json!([65, 100, 33]));
+    a.call_json("world.restore", &upgraded).unwrap();
+    assert_eq!(material(&a, [35, 99, 32])["material"], 1);
+}
+
+#[test]
+fn column_streaming_has_independent_vertical_and_byte_budgets() {
+    let a = module(Arc::new(MemoryStore::new()));
+    start(
+        &a,
+        json!({"streamed":true,"preset":"empty","size":[96,100,96],
+        "stream_radius":1,"vertical_radius":1,"max_pages":10,"pages_per_tick":16,
+        "max_resident_bytes":65536}),
+    );
+    let count = a.call_json("count", &json!({})).unwrap();
+    assert_eq!(count["column_counts"], json!([3, 3]));
+    assert_eq!(count["resident_sections"], 2);
+    assert_eq!(count["resident_columns"], 1);
+    assert_eq!(count["allocated_bytes"], 0);
+    a.call_json("set", &json!({"x":1,"y":33,"z":1,"material":"stone"}))
+        .unwrap();
+    assert_eq!(
+        a.call_json("count", &json!({})).unwrap()["allocated_bytes"],
+        32768
+    );
+    a.call_json("stream", &json!({"x":80,"y":99,"z":80}))
+        .unwrap();
+    assert_eq!(material(&a, [1, 33, 1])["material"], 1);
+    let count = a.call_json("count", &json!({})).unwrap();
+    assert!(count["allocated_bytes"].as_u64().unwrap() <= 65536);
+    assert!(count["resident_sections"].as_u64().unwrap() <= 2);
+}
+
+#[test]
+fn partial_sections_submit_bounded_cpu_and_gpu_mesh_tiles() {
+    for surface in ["cubes", "smooth"] {
+        for height in [1, 31, 33, 100] {
+            let a = module(Arc::new(MemoryStore::new()));
+            start(
+                &a,
+                json!({"preset":"empty","size":[33,height,33],"surface":surface,"gpu_meshing":true}),
+            );
+            let answer = a
+                .call_json(
+                    "fill",
+                    &json!({"x1":0,"y1":0,"z1":0,
+                "x2":32,"y2":height-1,"z2":32,"material":"stone"}),
+                )
+                .unwrap();
+            let meshes: Vec<blockloom_plugin_api::mesh::MeshData> = answer["effects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| e["effect"] == "mesh")
+                .map(|e| serde_json::from_value(e.clone()).unwrap())
+                .collect();
+            assert!(!meshes.is_empty());
+            assert!(meshes.iter().any(|m| m.gpu.is_some()));
+            for mesh in meshes {
+                mesh.check().unwrap();
+            }
+            assert_eq!(material(&a, [32, height - 1, 32])["material"], 1);
+            assert_eq!(material(&a, [32, height, 32])["material"], 0);
+            let state = a.call_json("world.save", &json!({})).unwrap();
+            a.call_json("world.restore", &state).unwrap();
+            assert_eq!(material(&a, [32, height - 1, 32])["material"], 1);
+        }
+    }
 }

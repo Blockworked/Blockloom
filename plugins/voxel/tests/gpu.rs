@@ -16,7 +16,7 @@ fn engine() -> ComputeEngine {
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
     ComputeEngine::new(device, queue)
 }
-fn run(surface: &str) {
+fn run(surface: &str, size: [i32; 3], centre: [i32; 3]) {
     let native = unsafe {
         NativeModule::from_entry(
             blockloom_voxel::blockloom_plugin_entry_v1,
@@ -25,12 +25,12 @@ fn run(surface: &str) {
         )
     }
     .unwrap();
-    let args = json!({"resources":[{"type_id":"world","payload":{"surface":surface,"preset":"empty","size":[16,16,16],"gpu_meshing":true}}]});
+    let args = json!({"resources":[{"type_id":"world","payload":{"surface":surface,"preset":"empty","size":size,"gpu_meshing":true}}]});
     native.call_json("world.start", &args).unwrap();
     let answer = native
         .call_json(
             "sphere",
-            &json!({"x":7,"y":7,"z":7,"radius":3.2,"material":"stone"}),
+            &json!({"x":centre[0],"y":centre[1],"z":centre[2],"radius":3.2,"material":"stone"}),
         )
         .unwrap();
     let contributions: Contributions =
@@ -45,48 +45,54 @@ fn run(surface: &str) {
             }])
             .is_empty()
     );
-    let mut mesh = None;
+    let mut meshes = Vec::new();
     for value in answer["effects"].as_array().unwrap() {
         let effect: Effect = serde_json::from_value(value.clone()).unwrap();
         if let Effect::Mesh(data) = &effect {
-            mesh = Some(data.clone());
+            data.check().unwrap();
+            meshes.push(data.clone());
         }
         if let Some(command) = effect.gpu_command() {
             engine.submit("p", command.unwrap()).unwrap();
         }
     }
-    let mesh = mesh.unwrap();
-    let gpu = mesh.gpu.as_ref().unwrap();
-    engine
-        .submit(
-            "p",
-            blockloom_plugin_api::compute::GpuCommand::Read {
-                buffer: gpu.buffer.clone(),
-                offset: 0,
-                words: gpu.vertices * 10,
-                tag: "oracle".into(),
-                as_type: blockloom_plugin_api::compute::ReadAs::F32,
-            },
-        )
-        .unwrap();
-    let mut reports = engine.run();
-    for _ in 0..1000 {
-        reports.extend(engine.collect());
-        if reports.iter().any(|r| matches!(r, Report::Read { .. })) {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(2));
-    }
-    let mut output = None;
-    for report in reports {
-        match report {
-            Report::Read { words, .. } => {
-                output = Some(words.into_iter().map(f32::from_bits).collect::<Vec<_>>())
+    assert!(!meshes.is_empty());
+    for mesh in meshes {
+        let gpu = mesh.gpu.as_ref().unwrap();
+        engine
+            .submit(
+                "p",
+                blockloom_plugin_api::compute::GpuCommand::Read {
+                    buffer: gpu.buffer.clone(),
+                    offset: 0,
+                    words: gpu.vertices * 10,
+                    tag: "oracle".into(),
+                    as_type: blockloom_plugin_api::compute::ReadAs::F32,
+                },
+            )
+            .unwrap();
+        let mut reports = engine.run();
+        for _ in 0..1000 {
+            reports.extend(engine.collect());
+            if reports.iter().any(|r| matches!(r, Report::Read { .. })) {
+                break;
             }
-            Report::Error { message, .. } => panic!("{message}"),
+            std::thread::sleep(std::time::Duration::from_millis(2));
         }
+        let mut output = None;
+        for report in reports {
+            match report {
+                Report::Read { words, .. } => {
+                    output = Some(words.into_iter().map(f32::from_bits).collect::<Vec<_>>())
+                }
+                Report::Error { message, .. } => panic!("{message}"),
+            }
+        }
+        check_geometry(surface, &mesh, output.expect("GPU read finished"));
     }
-    let output = output.expect("GPU read finished");
+}
+
+fn check_geometry(surface: &str, mesh: &blockloom_plugin_api::mesh::MeshData, output: Vec<f32>) {
     let mut actual = Vec::new();
     let mut area = 0.0;
     for tri in output.as_chunks::<30>().0 {
@@ -158,6 +164,8 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
 #[test]
 #[ignore = "needs a GPU or lavapipe"]
 fn gpu_cube_and_smooth_surfaces_match_cpu_geometry() {
-    run("cubes");
-    run("smooth");
+    for surface in ["cubes", "smooth"] {
+        run(surface, [16; 3], [7; 3]);
+        run(surface, [33; 3], [31; 3]);
+    }
 }

@@ -7,7 +7,7 @@
 //! Glowing materials go in a group of their own each, since the world gives
 //! emission to a whole mesh. Positions are in the chunk's own frame.
 
-use crate::grid::{CHUNK, Grid};
+use crate::grid::{Grid, SECTION};
 use crate::palette::Palette;
 use std::collections::BTreeMap;
 
@@ -132,19 +132,32 @@ pub fn mesh_chunk(
     chunk: [i32; 3],
     voxel: f32,
 ) -> BTreeMap<Option<u8>, Group> {
+    mesh_region(
+        grid,
+        palette,
+        chunk.map(|c| c * SECTION),
+        [SECTION; 3],
+        voxel,
+    )
+}
+
+pub(crate) fn mesh_region(
+    grid: &Grid,
+    palette: &Palette,
+    base: [i32; 3],
+    extent: [i32; 3],
+    voxel: f32,
+) -> BTreeMap<Option<u8>, Group> {
     let mut groups: BTreeMap<Option<u8>, Group> = BTreeMap::new();
-    if grid.chunk(chunk).is_none() {
-        return groups;
-    }
-    let base = chunk.map(|c| c * CHUNK);
-    let n = CHUNK as usize;
     for axis in 0..3 {
         let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
         for sign in [1, -1] {
-            for slice in 0..CHUNK {
-                let mut mask = vec![0u8; n * n];
-                for j in 0..CHUNK {
-                    for i in 0..CHUNK {
+            for slice in 0..extent[axis] {
+                let n = extent[u] as usize;
+                let rows = extent[v] as usize;
+                let mut mask = vec![0u8; n * rows];
+                for j in 0..extent[v] {
+                    for i in 0..extent[u] {
                         let mut at = [0; 3];
                         at[axis] = slice;
                         at[u] = i;
@@ -162,7 +175,7 @@ pub fn mesh_chunk(
                         }
                     }
                 }
-                for j in 0..n {
+                for j in 0..rows {
                     let mut i = 0;
                     while i < n {
                         let material = mask[j * n + i];
@@ -175,7 +188,8 @@ pub fn mesh_chunk(
                             w += 1;
                         }
                         let mut h = 1;
-                        while j + h < n && (i..i + w).all(|k| mask[(j + h) * n + k] == material) {
+                        while j + h < rows && (i..i + w).all(|k| mask[(j + h) * n + k] == material)
+                        {
                             h += 1;
                         }
                         for row in j..j + h {
@@ -201,20 +215,23 @@ pub fn mesh_chunk(
             }
         }
     }
-    mesh_shapes(grid, palette, chunk, voxel, false, &mut groups);
+    mesh_shapes(grid, palette, base, extent, voxel, false, &mut groups);
     groups
 }
 
 pub(crate) fn mesh_shapes(
     grid: &Grid,
     palette: &Palette,
-    chunk: [i32; 3],
+    base: [i32; 3],
+    extent: [i32; 3],
     voxel: f32,
     smooth: bool,
     groups: &mut BTreeMap<Option<u8>, Group>,
 ) {
-    let base = chunk.map(|c| c * CHUNK);
-    for (cell, shape) in grid.shaped_in(chunk) {
+    for (cell, shape) in grid.shaped_in(base.map(|c| c.div_euclid(SECTION))) {
+        if !(0..3).all(|a| (base[a]..base[a] + extent[a]).contains(&cell[a])) {
+            continue;
+        }
         let Some(look) = palette.get(grid.get(cell)) else {
             continue;
         };
@@ -367,10 +384,10 @@ mod tests {
 
     #[test]
     fn faces_across_a_chunk_boundary_follow_the_neighbour() {
-        let mut grid = Grid::new([32, 16, 16]);
-        grid.set([15, 2, 2], STONE);
+        let mut grid = Grid::new([64, 16, 16]);
+        grid.set([31, 2, 2], STONE);
         assert_eq!(lit(&mesh_chunk(&grid, &palette(), [0, 0, 0], 1.0)), 12);
-        grid.set([16, 2, 2], STONE);
+        grid.set([32, 2, 2], STONE);
         assert_eq!(lit(&mesh_chunk(&grid, &palette(), [0, 0, 0], 1.0)), 10);
         assert_eq!(lit(&mesh_chunk(&grid, &palette(), [1, 0, 0], 1.0)), 10);
     }

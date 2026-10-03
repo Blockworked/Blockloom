@@ -153,7 +153,7 @@ fn a_run_draws_the_world_and_edits_redraw_only_what_they_touch() {
     let mut world = hosted(CodeModule::Native(module()));
     let mut scene = Scene::default();
     scene.apply(world.start(&resources(small_flat())));
-    // A flat 32x16x32 world is two chunks wide, one tall: four chunks, the
+    // A flat 32x16x32 world is one section with four mesh tiles, the
     // ground in each, and a few triangles apiece.
     assert_eq!(scene.meshes.len(), 4, "{:?}", scene.meshes.keys());
     assert!(scene.said[0].contains("32x16x32"), "{:?}", scene.said);
@@ -162,7 +162,7 @@ fn a_run_draws_the_world_and_edits_redraw_only_what_they_touch() {
     let first = &scene.meshes["chunk/0/0/0"];
     assert_eq!(first.origin, [10.0, 0.0, -4.0]);
     assert!(first.collider);
-    // A chunk is 16 cells of half a unit: positions stay within 8.
+    // A mesh tile is 16 cells of half a unit: positions stay within 8.
     assert!(first.positions.iter().all(|&p| (0.0..=8.0).contains(&p)));
 
     // A flat world of height 16 is ground up to y 4, grass on top.
@@ -179,7 +179,7 @@ fn a_run_draws_the_world_and_edits_redraw_only_what_they_touch() {
         json!(3)
     );
 
-    // A tower inside one chunk redraws that chunk alone.
+    // A tower redraws the four occupied tiles of its section.
     let before = scene.meshes.clone();
     let outcomes = world.run_block(
         ID,
@@ -206,7 +206,7 @@ fn a_run_draws_the_world_and_edits_redraw_only_what_they_touch() {
                 }
             ))
             .count(),
-        1
+        4
     );
     assert!(outcomes.iter().any(|o| matches!(
         o,
@@ -220,7 +220,7 @@ fn a_run_draws_the_world_and_edits_redraw_only_what_they_touch() {
     assert_ne!(scene.meshes["chunk/0/0/0"], before["chunk/0/0/0"]);
     assert_eq!(scene.meshes["chunk/1/0/1"], before["chunk/1/0/1"]);
 
-    // A cell on a chunk's edge redraws its neighbour too.
+    // A cell on a tile edge redraws the covering section.
     let outcomes = world.run_block(
         ID,
         "set_voxel",
@@ -238,7 +238,7 @@ fn a_run_draws_the_world_and_edits_redraw_only_what_they_touch() {
                 }
             ))
             .count(),
-        2
+        4
     );
 
     // Digging a hole through the floor shows in the reporters.

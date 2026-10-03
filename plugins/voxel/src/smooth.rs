@@ -1,7 +1,7 @@
 //! CPU isosurface extraction over shared cell-centre samples. Every cube uses
 //! the same six tetrahedra, so ambiguous faces agree across chunk borders.
 
-use crate::grid::{CHUNK, Grid};
+use crate::grid::{Grid, SECTION};
 use crate::mesher::{Group, mesh_shapes};
 use crate::palette::Palette;
 use std::collections::BTreeMap;
@@ -136,11 +136,26 @@ pub fn mesh_chunk(
     chunk: [i32; 3],
     voxel: f32,
 ) -> BTreeMap<Option<u8>, Group> {
+    mesh_region(
+        grid,
+        palette,
+        chunk.map(|c| c * SECTION),
+        [SECTION; 3],
+        voxel,
+    )
+}
+
+pub(crate) fn mesh_region(
+    grid: &Grid,
+    palette: &Palette,
+    base: [i32; 3],
+    extent: [i32; 3],
+    voxel: f32,
+) -> BTreeMap<Option<u8>, Group> {
     let mut groups = BTreeMap::<Option<u8>, Group>::new();
     let mut vertices = BTreeMap::<Option<u8>, BTreeMap<[u32; 4], u32>>::new();
-    let base = chunk.map(|c| c * CHUNK);
     let lo = base.map(|c| if c == 0 { -1 } else { c });
-    let hi = base.map(|c| c + CHUNK);
+    let hi = [0, 1, 2].map(|a| base[a] + extent[a]);
     // Read the shared halo once rather than eight times per lattice cube.
     let sample_lo = lo.map(|v| v - 1);
     let sample_hi = hi.map(|v| v + 1);
@@ -232,7 +247,7 @@ pub fn mesh_chunk(
             }
         }
     }
-    mesh_shapes(grid, palette, chunk, voxel, true, &mut groups);
+    mesh_shapes(grid, palette, base, extent, voxel, true, &mut groups);
     groups
 }
 
@@ -307,12 +322,12 @@ mod tests {
 
     #[test]
     fn fractional_density_and_diagonal_chunks_share_identical_seams() {
-        let mut grid = Grid::new([32; 3]);
-        for z in 12..20 {
-            for y in 12..20 {
-                for x in 12..20 {
+        let mut grid = Grid::new([64; 3]);
+        for z in 28..36 {
+            for y in 28..36 {
+                for x in 28..36 {
                     let distance =
-                        ((x - 16i32).pow(2) + (y - 16i32).pow(2) + (z - 16i32).pow(2)) as f32;
+                        ((x - 32i32).pow(2) + (y - 32i32).pow(2) + (z - 32i32).pow(2)) as f32;
                     grid.set_density([x, y, z], ((distance.sqrt() - 3.2) * 256.0) as i16, STONE);
                 }
             }
@@ -325,7 +340,7 @@ mod tests {
                 .as_chunks::<3>()
                 .0
                 .iter()
-                .filter(|p| (p[0] + offset - 16.5).abs() < 1e-5)
+                .filter(|p| (p[0] + offset - 32.5).abs() < 1e-5)
                 .map(|p| {
                     [
                         (p[1] * 10000.0).round() as i32,
@@ -334,16 +349,16 @@ mod tests {
                 })
                 .collect()
         };
-        // Lattice cubes on either side share the plane through sample 16.
+        // Lattice cubes on either side share the plane through sample 32.
         assert!(!seam(&a[&None], 0.0).is_empty());
-        assert_eq!(seam(&a[&None], 0.0), seam(&b[&None], 16.0));
+        assert_eq!(seam(&a[&None], 0.0), seam(&b[&None], 32.0));
         let normals = |g: &Group, offset: f32| -> BTreeMap<_, _> {
             g.positions
                 .as_chunks::<3>()
                 .0
                 .iter()
                 .zip(g.normals.as_chunks::<3>().0)
-                .filter(|(p, _)| (p[0] + offset - 16.5).abs() < 1e-5)
+                .filter(|(p, _)| (p[0] + offset - 32.5).abs() < 1e-5)
                 .map(|(p, n)| {
                     (
                         [
@@ -355,13 +370,13 @@ mod tests {
                 })
                 .collect()
         };
-        assert_eq!(normals(&a[&None], 0.0), normals(&b[&None], 16.0));
+        assert_eq!(normals(&a[&None], 0.0), normals(&b[&None], 32.0));
         check(&a[&None]);
         check(&b[&None]);
         grid.take_dirty();
-        grid.set_density([16; 3], -100, STONE);
+        grid.set_density([32; 3], -100, STONE);
         assert_eq!(grid.take_dirty().len(), 8);
-        assert!(!grid.set_density([16; 3], -100, STONE));
+        assert!(!grid.set_density([32; 3], -100, STONE));
     }
 
     #[test]

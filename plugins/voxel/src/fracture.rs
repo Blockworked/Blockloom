@@ -45,7 +45,7 @@ impl Fragment {
                 .unwrap_or(1000.0);
             mass += density as f32 * volume * world.voxel.powi(3);
         }
-        let n = grid.chunk_counts();
+        let n = grid.section_counts();
         for z in 0..n[2] {
             for y in 0..n[1] {
                 for x in 0..n[0] {
@@ -61,9 +61,9 @@ impl Fragment {
                         let base = merged.positions.len() as u32 / 3;
                         for p in group.positions.as_chunks::<3>().0 {
                             merged.positions.extend([
-                                p[0] + (x * grid::CHUNK) as f32 * world.voxel,
-                                p[1] + (y * grid::CHUNK) as f32 * world.voxel,
-                                p[2] + (z * grid::CHUNK) as f32 * world.voxel,
+                                p[0] + (x * grid::SECTION) as f32 * world.voxel,
+                                p[1] + (y * grid::SECTION) as f32 * world.voxel,
+                                p[2] + (z * grid::SECTION) as f32 * world.voxel,
                             ]);
                         }
                         if let Some(m) = glow
@@ -231,8 +231,8 @@ pub fn detach(world: &mut World, a: [i32; 3], b: [i32; 3]) -> Result<Value, Erro
         let mut pages = BTreeSet::new();
         for cell in region {
             // Wait for every old source collider, including the smooth halo.
-            let lo = cell.map(|v| (v - 2).max(0) / grid::CHUNK);
-            let hi = cell.map(|v| (v + 1) / grid::CHUNK);
+            let lo = cell.map(|v| (v - 2).max(0) / grid::SECTION);
+            let hi = cell.map(|v| (v + 1) / grid::SECTION);
             for z in lo[2]..=hi[2] {
                 for y in lo[1]..=hi[1] {
                     for x in lo[0]..=hi[0] {

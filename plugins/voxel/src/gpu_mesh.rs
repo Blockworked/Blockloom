@@ -1,18 +1,19 @@
 //! CPU samples feed bounded GPU meshing; collision keeps the CPU reference.
-use crate::{Surface, World, grid::CHUNK};
+use crate::{Surface, World};
 use blockloom_plugin_api::mesh::GpuVertices;
 use blockloom_plugin_sdk::{Value, gpu};
 
 pub fn build(
     world: &mut World,
     chunk: [i32; 3],
+    base: [i32; 3],
+    extent: [i32; 3],
     glow: Option<u8>,
     effects: &mut Vec<Value>,
 ) -> Option<GpuVertices> {
     if !world.settings.gpu_meshing || !world.grid.shaped_in(chunk).is_empty() {
         return None;
     }
-    let base = chunk.map(|v| v * CHUNK);
     let lo = base.map(|v| {
         if world.surface == Surface::Smooth && v == 0 {
             -1
@@ -20,9 +21,12 @@ pub fn build(
             0
         }
     });
-    let anchors = lo.map(|v| CHUNK - v);
+    let anchors = [0, 1, 2].map(|a| extent[a] - lo[a]);
     let n = anchors.map(|v| v + 3);
     let vertices = (anchors.iter().product::<i32>() * 36) as u32;
+    if vertices as usize > blockloom_plugin_api::mesh::MAX_VERTICES {
+        return None;
+    }
     let words = vertices * 10;
     if world
         .gpu_buffers
