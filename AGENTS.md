@@ -2477,9 +2477,10 @@ thread the thread-local sensor snapshot lives on. Keep it that way.
 
 `blockloom-runtime/src/simulation.rs` is the half of `add_world` that a server
 could register alone: `add_simulation` inserts the engine, `Dimension`,
-`PendingEffects`, the nav mesh, both Rapier pipelines (in the fixed schedule),
-the contact relay and the whole fixed-step simulation chain, plus
-`FixedPostUpdate`'s parenting and pose recording. Each fixed-step simulation
+`PendingEffects`, the nav mesh, both Rapier pipelines (in the fixed schedule,
+with the collision hooks), motors, controllers, constraints and the whole
+fixed-step simulation chain, plus `FixedPostUpdate`'s parenting, pose recording
+and contact tracking. The physics debug renderer stays with presentation. Each fixed-step simulation
 system sits in a `SimStep` set and the sets are chained in the order the old
 single chain ran. The systems that used to sit inside that chain but present
 something (interface bindings and effects, exposure, HDR, lights, ray tracing,

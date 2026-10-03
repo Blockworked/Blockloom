@@ -71,7 +71,7 @@ Evidence is `blockloom-runtime/src/lib.rs::add_world` and the files it registers
 
 | System | Why it must move | Source |
 | --- | --- | --- |
-| `dim2/dim3::relay_collisions` | Reads Rapier contact messages once per frame, so several fixed steps in one frame coalesce into one batch of `touch` events. The plan wants contacts per simulation step. | `dim3.rs:943` |
+| `dim2/dim3::relay_collisions` | Was reading Rapier contact messages once per frame, so several fixed steps in one frame coalesced into one batch of `touch` events. The physics work replaced it with per-step tracking (`dim2/dim3::track_contacts`, `contacts.rs`). | `dim3.rs:943` (before the physics work) |
 | `world::publish_sensors` | Rebuilds the snapshot every frame. Reporters therefore see frame-time state, not tick state, except for the fields explicitly sampled on the tick (atmosphere, water, level, scene, which the code comments call out). | `lib.rs` Update chain |
 | `world::detect_clicks`, `type_into_focused_input` | Pointer picking and UI hit tests read `PrimaryWindow` and the camera. They are intent input and belong in the client. | `world.rs:1780`, `1932` |
 | `world::rebuild_world`, `pump_editor` | Scene build and control messages share one frame system with presentation setup. | `lib.rs` Update chain |
@@ -151,7 +151,7 @@ Facts about the clocks that matter for the plan's section 6:
 Status as of the first Phase 1 slices (the same branch as Phase 0):
 
 1. **Done, partly:** `add_world` is split into `simulation::add_simulation` and the presentation registration. The fixed step and physics are separated with unchanged order (each simulation system is a `SimStep`, presentation systems order against the steps they sat between). The `Update` chain and `rebuild_world`/`apply_lifetimes` are still interleaved with presentation and are the next extraction.
-2. **Done:** contacts relay on the fixed tick (`world::register_contacts`). The tick-sampled part of `publish_sensors` is not moved yet.
+2. **Done, by the physics work:** contacts are tracked per fixed step (`dim2/dim3::track_contacts`, `contacts.rs`) and delivered on the next tick (`world::deliver_contacts`). The tick-sampled part of `publish_sensors` is not moved yet.
 3. **Done:** `volumes::VolumeEye` lets a world with no camera weigh volumes at an actor or a point. The server still needs to set it, and presentation blends per client later.
 4. **Done for the fixed step:** `simulation::tests` run a 2D and a 3D project headless over `MinimalPlugins`, check determinism, and check native logic against the VM. Needs the asset stores (CPU-only collections) until `rebuild_world` is split.
 5. **Done:** clocks (real `wall`, `elapsed_secs_f64`). Still open: Bevy's 250 ms virtual delta cap and the server's own accumulator.
