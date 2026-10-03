@@ -22,7 +22,81 @@ from hub_process import bundle_rust
 
 def copy_tree(source, destination):
     shutil.copytree(source, destination, dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns("*.a", "*.lib", "*.pdb", "*.prl", "*.debug"))
+                    ignore=shutil.ignore_patterns("*.a", "*.lib", "*.o", "*.obj", "*.pdb", "*.prl", "*.debug"))
+
+
+def elf_type(path):
+    """Return the ELF e_type of a file, or None if it has no ELF header."""
+    with open(path, "rb") as stream:
+        header = stream.read(20)
+    if len(header) < 20 or header[:4] != b"\x7fELF":
+        return None
+    if header[5] == 1:
+        order = "little"
+    elif header[5] == 2:
+        order = "big"
+    else:
+        return None
+    return int.from_bytes(header[16:18], order)
+
+
+def macho_filetypes(path):
+    """Return the Mach-O filetype of each slice, or [] if not a Mach-O binary."""
+    import struct
+    with open(path, "rb") as stream:
+        magic = stream.read(4)
+        if magic in (b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"):
+            count = stream.read(4)
+            if len(count) < 4:
+                return []
+            arches = []
+            for _ in range(struct.unpack(">I", count)[0]):
+                entry = stream.read(20)
+                if len(entry) < 20:
+                    break
+                _, _, offset, _, _ = struct.unpack(">5I", entry)
+                arches.append(offset)
+            types = []
+            for offset in arches:
+                stream.seek(offset)
+                header = stream.read(16)
+                if len(header) < 16:
+                    continue
+                kind = header[:4]
+                rest = header[12:16]
+                if kind in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"):
+                    types.append(struct.unpack("<I", rest)[0])
+                elif kind in (b"\xfe\xed\xfa\xcf", b"\xfe\xed\xfa\xce"):
+                    types.append(struct.unpack(">I", rest)[0])
+            return types
+        if magic in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"):
+            rest = stream.read(12)
+            return [struct.unpack("<I", rest[8:12])[0]] if len(rest) == 12 else []
+        if magic in (b"\xfe\xed\xfa\xcf", b"\xfe\xed\xfa\xce"):
+            rest = stream.read(12)
+            return [struct.unpack(">I", rest[8:12])[0]] if len(rest) == 12 else []
+    return []
+
+
+def macho_needs_rpath(path):
+    """Check whether a Mach-O file is linked output, not a relocatable object."""
+    types = macho_filetypes(path)
+    return any(kind in (2, 6, 8) for kind in types)
+
+
+def existing_rpaths(path):
+    """List the LC_RPATH entries already present in a Mach-O binary."""
+    output = subprocess.check_output(["otool", "-l", str(path)], text=True)
+    found = []
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        if "cmd LC_RPATH" in line:
+            for following in lines[index + 1:index + 5]:
+                text = following.strip()
+                if text.startswith("path "):
+                    found.append(text.split()[1])
+                    break
+    return found
 
 
 def deploy_qt(directory, qmake):
@@ -45,21 +119,37 @@ def deploy_qt(directory, qmake):
             elif ".so" in file.name or file.suffix == ".dylib":
                 shutil.copy2(file, output / file.name)
         for file in directory.rglob("*"):
-            if not file.is_file():
+            if not file.is_file() or file.is_symlink():
+                continue
+            # The bundled Rust toolchain is self-contained and its deep
+            # binaries lack room for longer load commands, so leave it alone.
+            try:
+                top = file.relative_to(directory).parts[0]
+            except (ValueError, IndexError):
+                top = ""
+            if top == "tools":
                 continue
             with file.open("rb") as stream:
                 magic = stream.read(4)
             relative = os.path.relpath(output, file.parent).replace(os.sep, "/")
             if sys.platform == "linux" and magic == b"\x7fELF":
+                # Qt ships intermediate relocatable objects next to its QML
+                # files; patchelf only handles executables and shared objects.
+                if elf_type(file) not in (2, 3):
+                    continue
                 subprocess.run(["patchelf", "--set-rpath", f"$ORIGIN:$ORIGIN/{relative}", str(file)], check=True)
             elif sys.platform == "darwin" and magic in (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe"):
+                if not macho_needs_rpath(file):
+                    continue
                 dependencies = subprocess.check_output(["otool", "-L", str(file)], text=True).splitlines()[1:]
                 for line in dependencies:
                     name = line.strip().split(" (", 1)[0]
                     if name.startswith(str(libraries) + "/"):
                         new = "@rpath/" + name[len(str(libraries)) + 1:]
                         subprocess.run(["install_name_tool", "-change", name, new, str(file)], check=True)
-                subprocess.run(["install_name_tool", "-add_rpath", f"@loader_path/{relative}", str(file)], check=True)
+                wanted = f"@loader_path/{relative}"
+                if wanted not in existing_rpaths(file):
+                    subprocess.run(["install_name_tool", "-add_rpath", wanted, str(file)], check=True)
                 subprocess.run(["codesign", "--force", "--sign", "-", str(file)], check=True)
     (directory / "qt.conf").write_text("[Paths]\nPrefix=.\nLibraries=lib\nPlugins=plugins\nQmlImports=qml\n", encoding="utf-8")
 

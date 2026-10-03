@@ -43,6 +43,32 @@ class PackageTests(unittest.TestCase):
             with zipfile.ZipFile(archive) as data:
                 self.assertEqual(data.namelist(), ["editor", "players/web.wasm"])
 
+    def test_deploy_helpers_skip_objects_and_tools(self):
+        import struct
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for etype in (1, 2, 3):
+                header = (b"\x7fELF" + bytes([2, 1, 1, 0]) + b"\x00" * 8
+                          + struct.pack("<H", etype) + b"\x00" * 34)
+                (root / f"elf{etype}").write_bytes(header)
+                self.assertEqual(packaging.elf_type(root / f"elf{etype}"), etype)
+            self.assertIsNone(packaging.elf_type(Path(__file__)))
+            for ftype, needs in ((1, False), (2, True), (6, True), (8, True)):
+                binary = (root / f"thin{ftype}")
+                binary.write_bytes(b"\xcf\xfa\xed\xfe" + struct.pack("<III", 0x0100000C, 2, ftype) + b"\x00" * 16)
+                self.assertEqual(packaging.macho_filetypes(binary), [ftype])
+                self.assertEqual(packaging.macho_needs_rpath(binary), needs)
+            self.assertEqual(packaging.macho_filetypes(Path(__file__)), [])
+            source = root / "source"
+            (source / "nested").mkdir(parents=True)
+            (source / "keep.so").write_bytes(b"lib")
+            (source / "skip.o").write_bytes(b"object")
+            (source / "nested" / "skip.cpp.o").write_bytes(b"object")
+            packaging.copy_tree(source, root / "destination")
+            self.assertTrue((root / "destination/keep.so").is_file())
+            self.assertFalse((root / "destination/skip.o").exists())
+            self.assertFalse((root / "destination/nested/skip.cpp.o").exists())
+
     def test_ci_profiles_and_no_system_install(self):
         for shipping in (False, True):
             for component in ("editor", "native", "web"):
