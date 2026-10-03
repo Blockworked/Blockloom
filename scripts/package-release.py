@@ -117,13 +117,18 @@ def framework_root(path, directory):
     return root
 
 
+def _is_windows():
+    """Platform switch for deploy_qt, patched by tests to cover other hosts."""
+    return os.name == "nt"
+
+
 def deploy_qt(directory, qmake):
     def query(name):
         return Path(subprocess.check_output([qmake, "-query", name], text=True).strip())
     copy_tree(query("QT_INSTALL_PLUGINS"), directory / "plugins")
     copy_tree(query("QT_INSTALL_QML"), directory / "qml")
-    libraries = query("QT_INSTALL_BINS" if os.name == "nt" else "QT_INSTALL_LIBS")
-    if os.name == "nt":
+    libraries = query("QT_INSTALL_BINS" if _is_windows() else "QT_INSTALL_LIBS")
+    if _is_windows():
         for file in libraries.glob("*.dll"):
             shutil.copy2(file, directory / file.name)
         subprocess.run([str(query("QT_INSTALL_BINS") / "windeployqt.exe"), "--release",

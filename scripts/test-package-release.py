@@ -90,8 +90,11 @@ class PackageTests(unittest.TestCase):
             libs = root / "qtlib"
             (libs / "Foo.framework" / "Versions" / "A").mkdir(parents=True)
             (libs / "Foo.framework" / "Versions" / "A" / "Foo").write_bytes(header)
-            (libs / "Foo.framework" / "Versions" / "Current").symlink_to("A", target_is_directory=True)
-            (libs / "Foo.framework" / "Foo").symlink_to("Versions/Current/Foo")
+            try:
+                (libs / "Foo.framework" / "Versions" / "Current").symlink_to("A", target_is_directory=True)
+                (libs / "Foo.framework" / "Foo").symlink_to("Versions/Current/Foo")
+            except OSError as error:
+                self.skipTest(f"cannot create symlinks here: {error}")
             (libs / "libplain.dylib").write_bytes(header)
             plugins = root / "qtplugins"
             plugins.mkdir()
@@ -117,6 +120,7 @@ class PackageTests(unittest.TestCase):
 
             with patch.object(packaging.subprocess, "check_output", side_effect=check_output), \
                     patch.object(packaging.subprocess, "run", side_effect=run), \
+                    patch.object(packaging, "_is_windows", return_value=False), \
                     patch.object(packaging.sys, "platform", "darwin"):
                 packaging.deploy_qt(directory, "qmake")
             copied = directory / "lib" / "Foo.framework"
