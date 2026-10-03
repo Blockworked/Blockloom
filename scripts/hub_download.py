@@ -1,11 +1,14 @@
 """Bounded HTTPS downloads and archive extraction for Hub installations."""
 
 import hashlib
+import http.client
 import io
 import json
 import os
 import platform
 import posixpath
+import socket
+import ssl
 from pathlib import Path, PurePosixPath
 import re
 import shutil
@@ -15,16 +18,55 @@ import tarfile
 import tempfile
 import time
 import tomllib
+import urllib.error
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 import zipfile
 import xml.etree.ElementTree as ET
 
-from hub_process import checkpoint, copy_file
+from hub_process import Cancelled, checkpoint, copy_file
 
 MAX_ARCHIVE = 8 * 1024**3
 MAX_EXTRACTED = 24 * 1024**3
 MAX_MEMBERS = 100000
+
+READ_TIMEOUT = 30
+DOWNLOAD_ATTEMPTS = 8
+MAX_RETRY_DELAY = 30
+
+TRANSIENT_ERRORS = (TimeoutError, ConnectionError, urllib.error.URLError,
+                    http.client.HTTPException, ssl.SSLError, socket.gaierror)
+
+
+class DownloadMismatch(ValueError):
+    """A finished download failed its size/hash check; likely truncated, so retry."""
+
+
+def sleep_interruptible(delay):
+    steps = max(1, int(delay / 0.2))
+    for _ in range(steps):
+        time.sleep(delay / steps)
+        checkpoint()
+
+
+def transient_failure(action, url):
+    for attempt in range(DOWNLOAD_ATTEMPTS):
+        try:
+            return action()
+        except Cancelled:
+            raise
+        except (TRANSIENT_ERRORS + (DownloadMismatch,)) as error:
+            checkpoint()
+            if attempt + 1 >= DOWNLOAD_ATTEMPTS:
+                raise ValueError(
+                    f"Download failed after {DOWNLOAD_ATTEMPTS} attempts: {url} ({error}). "
+                    "Check your connection and retry."
+                ) from error
+            delay = min(2 ** (attempt + 1), MAX_RETRY_DELAY)
+            print(f"Download stalled ({error}); retrying {attempt + 2}/{DOWNLOAD_ATTEMPTS} in {delay}s...",
+                  file=sys.stderr, flush=True)
+            sleep_interruptible(delay)
+            checkpoint()
 
 
 def secure_url(url):
@@ -42,23 +84,28 @@ class SecureRedirect(HTTPRedirectHandler):
         return super().redirect_request(request, response, code, message, headers, new_url)
 
 
-def response(url):
+def response(url, start=0):
     checkpoint()
-    return build_opener(SecureRedirect()).open(Request(secure_url(url), headers={
-        "User-Agent": "Blockloom-Hub", "Accept-Encoding": "identity"}), timeout=5)
+    headers = {"User-Agent": "Blockloom-Hub", "Accept-Encoding": "identity"}
+    if start:
+        headers["Range"] = f"bytes={start}-"
+    return build_opener(SecureRedirect()).open(Request(secure_url(url), headers=headers),
+                                               timeout=READ_TIMEOUT)
 
 
 def read_remote(url, limit=2 * 1024**2):
-    data = bytearray()
-    with response(url) as stream:
-        while True:
-            checkpoint()
-            chunk = stream.read(min(65536, limit + 1 - len(data)))
-            if not chunk:
-                return bytes(data)
-            data.extend(chunk)
-            if len(data) > limit:
-                raise ValueError("Remote manifest exceeds the size limit")
+    def fetch():
+        data = bytearray()
+        with response(url) as stream:
+            while True:
+                checkpoint()
+                chunk = stream.read(min(65536, limit + 1 - len(data)))
+                if not chunk:
+                    return bytes(data)
+                data.extend(chunk)
+                if len(data) > limit:
+                    raise ValueError("Remote manifest exceeds the size limit")
+    return transient_failure(fetch, url)
 
 
 def version(value):
@@ -115,32 +162,92 @@ def download(url, destination, sha256, size=None, limit=MAX_ARCHIVE, algorithm="
     if not isinstance(sha256, str) or not re.fullmatch(rf"[0-9a-fA-F]{{{length}}}", sha256):
         raise ValueError("Archive must declare its checksum")
     expected = sha256.lower()
-    amount, last, hash_value = 0, 0, hashlib.new(algorithm)
-    created = False
-    try:
-        with response(url) as stream, destination.open("xb") as output:
-            created = True
-            while True:
-                checkpoint()
-                chunk = stream.read(256 * 1024)
-                if not chunk:
-                    break
-                amount += len(chunk)
-                if amount > limit or (size is not None and amount > size):
-                    raise ValueError("Download exceeds the declared size")
-                output.write(chunk)
-                hash_value.update(chunk)
-                now = time.monotonic()
-                if now - last >= 1:
-                    print(f"Downloading: {amount / 1024**2:.1f} MiB" +
-                          (f" / {size / 1024**2:.1f} MiB" if size else ""), file=sys.stderr, flush=True)
-                    last = now
-        if (size is not None and amount != size) or hash_value.hexdigest() != expected:
-            raise ValueError(f"Download size or {algorithm} does not match the manifest")
-        checkpoint()
-    except BaseException:
-        if created:
+
+    def fetch():
+        try:
+            start = destination.stat().st_size if destination.exists() else 0
+        except OSError:
+            start = 0
+        if size is not None and start > size:
             destination.unlink(missing_ok=True)
+            start = 0
+        hash_value = hashlib.new(algorithm)
+        if start:
+            try:
+                with destination.open("rb") as existing:
+                    while chunk := existing.read(1024 * 1024):
+                        checkpoint()
+                        hash_value.update(chunk)
+            except OSError:
+                destination.unlink(missing_ok=True)
+                start = 0
+                hash_value = hashlib.new(algorithm)
+            else:
+                print(f"Resuming download from {start / 1024**2:.1f} MiB...",
+                      file=sys.stderr, flush=True)
+        amount, last = start, 0
+        try:
+            try:
+                stream = response(url, start)
+            except urllib.error.HTTPError as error:
+                if error.code == 416 and start:
+                    destination.unlink(missing_ok=True)
+                    hash_value = hashlib.new(algorithm)
+                    amount, start = 0, 0
+                    stream = response(url)
+                else:
+                    raise
+            if start:
+                status = getattr(stream, "status", 200)
+                content_range = None
+                headers = getattr(stream, "headers", None)
+                if headers is not None:
+                    content_range = headers.get("Content-Range")
+                if status != 206 or (content_range is not None
+                                     and not content_range.startswith(f"bytes {start}-")):
+                    stream.close()
+                    destination.unlink(missing_ok=True)
+                    hash_value = hashlib.new(algorithm)
+                    amount, start = 0, 0
+                    stream = response(url)
+            with stream, destination.open("ab" if start else "xb") as output:
+                while True:
+                    checkpoint()
+                    chunk = stream.read(256 * 1024)
+                    if not chunk:
+                        break
+                    amount += len(chunk)
+                    if amount > limit or (size is not None and amount > size):
+                        raise ValueError("Download exceeds the declared size")
+                    output.write(chunk)
+                    hash_value.update(chunk)
+                    now = time.monotonic()
+                    if now - last >= 1:
+                        print(f"Downloading: {amount / 1024**2:.1f} MiB" +
+                              (f" / {size / 1024**2:.1f} MiB" if size else ""), file=sys.stderr, flush=True)
+                        last = now
+            if (size is not None and amount != size) or hash_value.hexdigest() != expected:
+                raise DownloadMismatch(
+                    f"Download size or {algorithm} does not match the manifest: {url} "
+                    f"(got {amount} bytes, expected {size} bytes; got {algorithm} "
+                    f"{hash_value.hexdigest()}, expected {expected})")
+            checkpoint()
+        except (DownloadMismatch,) + TRANSIENT_ERRORS:
+            raise
+        except Cancelled:
+            destination.unlink(missing_ok=True)
+            raise
+        except BaseException:
+            destination.unlink(missing_ok=True)
+            raise
+
+    try:
+        return transient_failure(fetch, url)
+    except Cancelled:
+        destination.unlink(missing_ok=True)
+        raise
+    except ValueError:
+        destination.unlink(missing_ok=True)
         raise
 
 

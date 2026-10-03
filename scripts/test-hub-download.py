@@ -34,7 +34,8 @@ class DownloadTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), value)
         for checksum, size in (("0" * 64, len(value)), (hashlib.sha256(value).hexdigest(), 1)):
             path.unlink()
-            with patch.object(downloads, "response", return_value=io.BytesIO(value)):
+            with patch.object(downloads, "response", return_value=io.BytesIO(value)), \
+                    patch.object(downloads, "sleep_interruptible", return_value=None):
                 with self.assertRaises(ValueError):
                     downloads.download("https://example.org/editor.zip", path, checksum, size)
             self.assertFalse(path.exists())
@@ -48,7 +49,9 @@ class DownloadTests(unittest.TestCase):
                                hashlib.sha1(value).hexdigest(), len(value), algorithm="sha1")
         self.assertEqual(path.read_bytes(), value)
         path.unlink()
-        with patch.object(downloads, "response", return_value=io.BytesIO(value)), self.assertRaises(ValueError):
+        with patch.object(downloads, "response", return_value=io.BytesIO(value)), \
+                patch.object(downloads, "sleep_interruptible", return_value=None), \
+                self.assertRaises(ValueError):
             downloads.download("https://dl.google.com/android/repository/tools.zip", path, "0" * 40, algorithm="sha1")
         self.assertFalse(path.exists())
 
@@ -138,7 +141,7 @@ class DownloadTests(unittest.TestCase):
                 temporary = self.root / (host + "-temporary")
                 temporary.mkdir()
                 with patch.object(downloads, "read_remote", side_effect=metadata), \
-                        patch.object(downloads, "response", side_effect=lambda url: io.BytesIO(archives[url])), \
+                        patch.object(downloads, "response", side_effect=lambda url, *args: io.BytesIO(archives[url])), \
                         patch.object(downloads.sys, "platform", python_os), \
                         patch.object(downloads.platform, "machine", return_value=machine):
                     tools = downloads.install_android_tools(destination, versions, hub.OPTIONAL_TOOLS, temporary)
@@ -276,7 +279,7 @@ class DownloadTests(unittest.TestCase):
         artifacts[url] = manifest
         artifacts[url + ".sha256"] = hashlib.sha256(manifest).hexdigest().encode()
         rust = self.root / "rust"
-        with patch.object(downloads, "response", side_effect=lambda address: io.BytesIO(artifacts[address])):
+        with patch.object(downloads, "response", side_effect=lambda address, *args: io.BytesIO(artifacts[address])):
             downloads.install_rust_targets(rust, "1.98.1", hub.ANDROID_TARGETS, self.root)
         for target in hub.ANDROID_TARGETS:
             self.assertEqual((rust / "lib/rustlib" / target / "lib/libstd.rlib").read_bytes(), b"std")

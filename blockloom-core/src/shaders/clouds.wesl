@@ -28,10 +28,17 @@ struct CloudUniforms {
     noise_shape: vec4<f32>,
     noise_detail: vec4<f32>,
 }
-fn atlas_uv(q: vec3<f32>, page: vec4<f32>) -> vec3<f32> {
-    // Repeat lives inside the page's corner: fract first, then scale, so
-    // negative world coords wrap into the page rather than the padding.
-    return vec3<f32>(fract(q.xy) * page.xy, page.z + fract(q.z) * page.w);
+fn atlas_uv(q: vec3<f32>, page: vec4<f32>, dims: vec3<f32>) -> vec3<f32> {
+    // Pages share one atlas with no gutter between them, so clamp the
+    // sample half a texel inside the page: linear filtering at the wrap
+    // would otherwise read the neighbouring page and step the density
+    // along every tile boundary plane. The bake wraps its lattice, so the
+    // clamped edges still meet seamlessly.
+    let origin = vec3<f32>(0.0, 0.0, page.z * dims.z);
+    let size = vec3<f32>(page.xy * dims.xy, page.w * dims.z);
+    let half = vec3<f32>(0.5);
+    let local = clamp(fract(q) * size, half, max(size - half, half));
+    return (origin + local) / dims;
 }
 // How far a sample's footprint (metres: the march step or the pixel's width
 // there, whichever is wider) outgrows a feature: 0 resolves it, 1 has lost it.
@@ -43,8 +50,9 @@ const EROSION_MEAN = 0.45;
 fn density(p: vec3<f32>, c: CloudUniforms, noise_tex: texture_3d<f32>, repeat: sampler, footprint: f32) -> f32 {
     let h = (p.y-c.layer.x) / (c.layer.y-c.layer.x);
     if h <= 0.0 || h >= 1.0 || c.shape.x <= 0.0 { return 0.0; }
+    let dims = vec3<f32>(textureDimensions(noise_tex));
     let q = (p-c.drift.xyz-vec3<f32>(c.shear.x,0.0,c.shear.y)*h) / c.layer.z;
-    let n = textureSampleLevel(noise_tex,repeat,atlas_uv(q,c.noise_shape),0.0);
+    let n = textureSampleLevel(noise_tex,repeat,atlas_uv(q,c.noise_shape,dims),0.0);
     // Past what the march can resolve, soften the shape's edges towards a
     // plain ramp (its finest octave is a 32nd of the tile) instead of
     // aliasing, and let erosion settle to its mean.
@@ -57,8 +65,8 @@ fn density(p: vec3<f32>, c: CloudUniforms, noise_tex: texture_3d<f32>, repeat: s
     let kept = 1.0 - lost(footprint, c.layer.z / max(c.detail.x,0.001) / 8.0);
     if kept > 0.0 {
         let dq=(p-c.erosion_drift.xyz)*c.detail.x/c.layer.z;
-        let curl=textureSampleLevel(noise_tex,repeat,atlas_uv(dq.yzx,c.noise_detail),0.0).yzx-textureSampleLevel(noise_tex,repeat,atlas_uv(dq.zxy,c.noise_detail),0.0).zxy;
-        e = mix(e,textureSampleLevel(noise_tex,repeat,atlas_uv(dq+curl*0.15,c.noise_detail),0.0).xyz,kept);
+        let curl=textureSampleLevel(noise_tex,repeat,atlas_uv(dq.yzx,c.noise_detail,dims),0.0).yzx-textureSampleLevel(noise_tex,repeat,atlas_uv(dq.zxy,c.noise_detail,dims),0.0).zxy;
+        e = mix(e,textureSampleLevel(noise_tex,repeat,atlas_uv(dq+curl*0.15,c.noise_detail,dims),0.0).xyz,kept);
     }
     let erosion = dot(e,vec3<f32>(0.625,0.25,0.125))*c.detail.y*mix(0.5,1.0,c.shape.z);
     return max(base*height-erosion*(1.0-base*0.5),0.0)*c.shape.y*0.004;

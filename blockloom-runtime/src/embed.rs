@@ -3306,6 +3306,66 @@ mod tests {
         );
     }
 
+    /// A tile wrap plane near the camera must not draw a line in the sky:
+    /// steep sightlines pierce the detail volume's wrap planes inside the
+    /// slab, and filtering across the shared atlas page edge would step the
+    /// erosion there. Fails while the seam is present; keep as a regression.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn cloud_tile_wrap_leaves_no_vertical_seam() {
+        let size = UVec2::new(320, 180);
+        let mut room = dark_room(false);
+        // Right beside a detail-tile wrap plane (tiles every
+        // tiling/detail_scale metres in x here), looking steeply up.
+        room.world.camera.position = [48.0, 17.5, 48.0];
+        room.world.camera.look_at = [0.0, 1500.0, 0.0];
+        room.world.background = "#87B5E0".into();
+        room.world.lighting.illuminance = 42000.0;
+        room.world.lighting.light_color = "#FFCF9E".into();
+        room.world.lighting.light_direction = [0.85, 0.35, -0.39];
+        room.world.clouds.enabled = true;
+        room.world.clouds.coverage = 0.44;
+        room.world.clouds.density = 0.6;
+        room.world.clouds.bottom = 1200.0;
+        room.world.clouds.top = 2800.0;
+        room.world.clouds.tiling_km = 8.0;
+        room.world.clouds.quality = blockloom_core::clouds::CloudQuality::Low;
+        let frames = run_world_frames(room, size, game_camera(), 40, 4);
+        for (index, frame) in frames.iter().enumerate() {
+            let bytes: Vec<u8> = frame.iter().flatten().copied().collect();
+            if let (Some(dir), Some(image)) = (
+                std::env::var_os("BLOCKLOOM_TEST_DUMP"),
+                image::RgbImage::from_raw(size.x, size.y, bytes),
+            ) {
+                let _ =
+                    image.save(std::path::Path::new(&dir).join(format!("seam-probe-{index}.png")));
+            }
+        }
+        // Sharpest vertical step per column, over sky rows of every frame.
+        let luma = |frame: &Vec<[u8; 3]>, x: usize, y: usize| {
+            let [r, g, b] = frame[y * size.x as usize + x];
+            0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32
+        };
+        let mut worst = (0.0f32, 0usize);
+        for frame in frames.iter() {
+            for y in 10..150usize {
+                for x in 0..size.x as usize - 1 {
+                    let step = (luma(frame, x + 1, y) - luma(frame, x, y)).abs();
+                    if step > worst.0 {
+                        worst = (step, x);
+                    }
+                }
+            }
+        }
+        println!("worst vertical step {0:.1} at column {1}", worst.0, worst.1);
+        assert!(
+            worst.0 < 8.0,
+            "vertical seam in the clouds: step {0:.1} at column {1}",
+            worst.0,
+            worst.1
+        );
+    }
+
     #[test]
     #[ignore = "needs a GPU"]
     fn volumetric_clouds_read_an_authored_shape_volume() {

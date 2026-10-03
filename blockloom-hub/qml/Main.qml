@@ -711,10 +711,52 @@ ApplicationWindow {
         height: window.height - 100
         title: "Operation log"
         modal: true
-        function followLog() {
-            if (followOutput.checked)
-                logViewport.contentY = Math.max(0, logViewport.contentHeight - logViewport.height)
+        function atBottom() {
+            const bottom = logViewport.contentHeight - logViewport.height
+            if (bottom <= 0) return false
+            return logViewport.contentY >= bottom - 4
         }
+        function followLog() {
+            if (!followOutput.checked) return
+            if (logViewport.count > 0) logViewport.positionViewAtEnd()
+            logViewport.contentY = Math.max(0, logViewport.contentHeight - logViewport.height)
+        }
+        property string syncedLog: ""
+        function syncLog() {
+            const full = service.log || ""
+            if (full === syncedLog) return
+            if (syncedLog.length === 0 || full.length < syncedLog.length || !full.startsWith(syncedLog)) {
+                logModel.clear()
+                if (full.length > 0) {
+                    const parts = full.split("\n")
+                    for (let i = 0; i < parts.length; ++i) {
+                        if (i === parts.length - 1 && parts[i] === "") break
+                        logModel.append({ line: parts[i] })
+                    }
+                }
+            } else {
+                const diff = full.slice(syncedLog.length)
+                if (diff.length > 0) {
+                    const parts = diff.split("\n")
+                    let start = 0
+                    if (!syncedLog.endsWith("\n") && logModel.count > 0) {
+                        const last = logModel.count - 1
+                        logModel.set(last, { line: logModel.get(last).line + parts[0] })
+                        start = 1
+                    }
+                    for (let i = start; i < parts.length; ++i) {
+                        if (i === parts.length - 1 && parts[i] === "") break
+                        logModel.append({ line: parts[i] })
+                    }
+                }
+            }
+            syncedLog = full
+            if (followOutput.checked) Qt.callLater(logDialog.followLog)
+        }
+        ListModel { id: logModel }
+        Connections { target: service; function onLogChanged() { logDialog.syncLog() } }
+        Component.onCompleted: syncLog()
+        onOpened: syncLog()
         footer: Item {
             implicitHeight: logFooter.implicitHeight + 24
             RowLayout {
@@ -750,20 +792,27 @@ ApplicationWindow {
                 y: 2
                 width: 14
                 height: logScroll.height - 4
-                onPressedChanged: if (pressed) followOutput.checked = false
+                onPressedChanged: {
+                    if (pressed) followOutput.checked = false
+                    else if (logDialog.atBottom()) followOutput.checked = true
+                }
             }
             rightPadding: 16
             background: Rectangle { color: "#141922"; radius: 6; border.color: "#46516a" }
-            Flickable {
+            ListView {
                 id: logViewport
                 objectName: "smokeLogViewport"
-                contentWidth: width
-                contentHeight: logText.implicitHeight
+                model: logModel
+                clip: true
                 boundsBehavior: Flickable.StopAtBounds
-                flickableDirection: Flickable.VerticalFlick
+                topMargin: 14
+                bottomMargin: 14
                 onContentHeightChanged: if (followOutput.checked) Qt.callLater(logDialog.followLog)
                 onHeightChanged: if (followOutput.checked) Qt.callLater(logDialog.followLog)
+                onCountChanged: if (followOutput.checked) Qt.callLater(logDialog.followLog)
+                onContentYChanged: if (!followOutput.checked && logDialog.atBottom()) followOutput.checked = true
                 onMovementStarted: followOutput.checked = false
+                onMovementEnded: if (logDialog.atBottom()) followOutput.checked = true
                 WheelHandler {
                     target: null
                     blocking: false
@@ -773,20 +822,30 @@ ApplicationWindow {
                             followOutput.checked = false
                     }
                 }
-                TextArea {
-                    id: logText
-                    width: logViewport.width
-                    text: service.log || "No output for this operation."
+                delegate: TextEdit {
+                    required property string line
+                    width: ListView.view.width - 28
+                    x: 14
+                    text: line
                     color: "#dbe2f2"
                     selectionColor: "#5b4d94"
                     selectedTextColor: "#ffffff"
-                    background: null
-                    padding: 14
                     readOnly: true
                     wrapMode: TextEdit.Wrap
+                    textFormat: TextEdit.PlainText
                     font.family: Qt.platform.os === "windows" ? "Consolas" : "monospace"
                     font.pixelSize: 13
                     selectByMouse: true
+                    selectByKeyboard: true
+                    persistentSelection: true
+                }
+                Text {
+                    text: "No output for this operation."
+                    color: "#a7b0c4"
+                    font.pixelSize: 13
+                    x: 14
+                    y: 14
+                    visible: logViewport.count === 0
                 }
             }
         }

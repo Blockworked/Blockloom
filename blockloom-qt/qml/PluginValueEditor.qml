@@ -38,7 +38,14 @@ ColumnLayout {
     // The asset kinds the tray names differ from the schema's for sounds.
     function acceptOf(kind) { return kind === "any" || !kind ? [] : [kind === "sound" ? "audio" : kind]; }
     function choices(t) { return (t.options || []).map(o => ({ value: o, label: o })); }
-    function vec(v) { return Array.isArray(v) && v.length === 3 ? v : [0, 0, 0]; }
+    // QVariantList values (initial properties, C++) fail Array.isArray
+    // where a JS array passes; read either shape as a real array.
+    function toArray(v) {
+        if (Array.isArray(v)) return v;
+        if (v !== null && typeof v === "object" && typeof v.length === "number") return Array.prototype.slice.call(v);
+        return null;
+    }
+    function vec(v) { const a = toArray(v); return a && a.length === 3 ? a : [0, 0, 0]; }
     function withComponent(v, i, n) { const next = vec(v).slice(); next[i] = n; return next; }
     // A color keeps the alpha pair it had when only the swatch is picked.
     function recolor(old, picked) { return String(old).length === 9 ? picked + String(old).slice(7) : picked; }
@@ -49,7 +56,7 @@ ColumnLayout {
         if (t.ui && t.ui.step) return t.ui.step;
         return t.type === "int" ? 1 : (t.max - t.min) / 100;
     }
-    readonly property var items: kind === "list" && Array.isArray(value) ? value : []
+    readonly property var items: kind === "list" ? (toArray(value) || []) : []
 
     Loader {
         Layout.fillWidth: true
@@ -114,16 +121,32 @@ ColumnLayout {
         ChoiceField { options: root.actors; value: root.value || ""; placeholder: "nothing"; onChosen: v => root.edited(v) } }
 
     // A list is its items, each edited as its own value, and a way to add one.
+    // Items load through a Loader: this file cannot name its own type
+    // directly, which the engine refuses as a recursive instantiation.
     Repeater {
         model: root.kind === "list" ? root.items.length : 0
         delegate: RowLayout {
             required property int index
             Layout.fillWidth: true; spacing: 4
-            PluginValueEditor {
+            Loader {
+                id: itemLoader
                 Layout.fillWidth: true
-                app: root.app; ty: root.ty.item || ({ type: "text" }); actors: root.actors
-                value: root.items[index]
-                onEdited: next => { const list = root.items.slice(); list[index] = next; root.edited(list); }
+                source: Qt.resolvedUrl("PluginValueEditor.qml")
+                onLoaded: {
+                    item.app = root.app;
+                    item.ty = Qt.binding(() => root.ty.item || ({ type: "text" }));
+                    item.actors = Qt.binding(() => root.actors);
+                    item.value = Qt.binding(() => root.items[index]);
+                    item.width = Qt.binding(() => itemLoader.width);
+                }
+                Connections {
+                    target: itemLoader.item
+                    function onEdited(next) {
+                        const list = root.items.slice();
+                        list[index] = next;
+                        root.edited(list);
+                    }
+                }
             }
             IconButton { iconName: "x"; tip: "Remove this item"; implicitWidth: 24; implicitHeight: 24
                 onClicked: { const list = root.items.slice(); list.splice(index, 1); root.edited(list); } }

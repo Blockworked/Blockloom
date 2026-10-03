@@ -77,7 +77,7 @@ TestCase {
     function test_resourcesAreEditedFromTheirSchema() {
         compare(dialog.resourceTypes.length, 1);
         compare(dialog.resourcePayload(dialog.resourceTypes[0]).damage_scale, 2);
-        verify(findChild(dialog, "resource-com.example.health/Difficulty") !== null);
+        verify(findChild(dialog.contentItem, "resource-com.example.health/Difficulty") !== null);
         dialog.writeResource(dialog.resourceTypes[0], { damage_scale: 3 });
         const set = calls.filter(c => c.command === "set_plugin_resource")[0];
         compare(set.args.resource, "com.example.health/Difficulty");
