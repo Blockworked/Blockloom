@@ -60,9 +60,23 @@ Hub/
     dev-<canonical-repo-hash>/
       blockloom-installation.json
       ...
+  tool-cache/
+    rust-<channel>-<host-target>/
+    rust-std-<channel>-<android-target>/
+    java-<version>-<host>-<arch>/
+    android-sdk-<platform-tools>-<host>-<arch>-<packages-hash>/
+    android-ndk-<version>-<host>-<arch>/
   .operation-lock/
   backups/<canonical-project-hash>/<timestamp>-<id>.zip
 ```
+
+Tool versions are cached under `tool-cache/` the first time they are bundled
+or downloaded, and reused by later editors that need the exact same version
+instead of downloading it again. `install`, `install-dev` and `prepare-dev`
+populate the cache; successful installs delete cached versions no installed
+editor references anymore. `tool-cache` lists the cache, `prune-tools`
+removes dead entries manually, and `uninstall` removes an editor slot (refused
+while projects use it or its editor runs) and then prunes.
 
 Release payloads have a manifest with a version and host target. They must be
 portable bundles with the editor, runtime, players and Qt dependencies. Publish

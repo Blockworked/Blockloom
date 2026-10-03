@@ -789,15 +789,17 @@ ApplicationWindow {
                 parent: logScroll
                 orientation: Qt.Vertical
                 x: logScroll.width - width - 2
-                y: 2
+                y: logViewport.y + 2
                 width: 14
-                height: logScroll.height - 4
-                onPressedChanged: {
-                    if (pressed) followOutput.checked = false
-                    else if (logDialog.atBottom()) followOutput.checked = true
-                }
+                height: logViewport.height - 4
             }
             rightPadding: 16
+            // Breathing room as viewport padding, not scrollable content:
+            // the first/last lines sit 14px inside the frame but the scroll
+            // range stays exactly the lines, so follow math is exact and
+            // there is no gap to overscroll past either end.
+            topPadding: 14
+            bottomPadding: 14
             background: Rectangle { color: "#141922"; radius: 6; border.color: "#46516a" }
             ListView {
                 id: logViewport
@@ -805,21 +807,48 @@ ApplicationWindow {
                 model: logModel
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
-                topMargin: 14
-                bottomMargin: 14
+                // Wheel scrolls become fling velocity, which Flickable clamps
+                // at maximumFlickVelocity: the default cap saturates fast/big
+                // scrolls so they travel no farther than small ones. A higher
+                // cap plus gentler deceleration keeps big scrolls proportional
+                // and moves a few more lines per notch.
+                maximumFlickVelocity: 6000
+                flickDeceleration: 1200
                 onContentHeightChanged: if (followOutput.checked) Qt.callLater(logDialog.followLog)
                 onHeightChanged: if (followOutput.checked) Qt.callLater(logDialog.followLog)
                 onCountChanged: if (followOutput.checked) Qt.callLater(logDialog.followLog)
-                onContentYChanged: if (!followOutput.checked && logDialog.atBottom()) followOutput.checked = true
-                onMovementStarted: followOutput.checked = false
-                onMovementEnded: if (logDialog.atBottom()) followOutput.checked = true
+                onContentYChanged: {
+                    // Mirror the scroll position in the checkbox. This only
+                    // flips the checkbox, never snaps the view, so an active
+                    // drag cannot fight followLog the way the old press/move
+                    // handlers did. The scrollable guard keeps a cleared or
+                    // short log from unchecking follow under new output.
+                    if (logViewport.contentHeight > logViewport.height)
+                        followOutput.checked = logDialog.atBottom()
+                }
                 WheelHandler {
-                    target: null
-                    blocking: false
+                    id: logWheel
+                    // One notch (120 angle units) moves this many pixels, about
+                    // four log lines. Trackpad pixel deltas pass through 1:1.
+                    property real notchStep: 76
                     acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                     onWheel: event => {
-                        if (event.angleDelta.y > 0 || event.pixelDelta.y > 0)
-                            followOutput.checked = false
+                        // Move contentY directly instead of letting Flickable
+                        // turn the wheel into a fling: fling velocity is
+                        // clamped, so one big scroll travels no farther than
+                        // a small one. Direct moves stay proportional no
+                        // matter how large the gesture is.
+                        let dy = 0
+                        if (event.pixelDelta.y !== 0)
+                            dy = -event.pixelDelta.y
+                        else if (event.angleDelta.y !== 0)
+                            dy = -(event.angleDelta.y / 120) * logWheel.notchStep
+                        if (dy === 0) return
+                        const bottom = Math.max(0, logViewport.contentHeight - logViewport.height)
+                        logViewport.cancelFlick()
+                        logViewport.contentY = Math.max(0, Math.min(bottom, logViewport.contentY + dy))
+                        if (dy < 0) followOutput.checked = false
+                        event.accepted = true
                     }
                 }
                 delegate: TextEdit {
@@ -844,7 +873,7 @@ ApplicationWindow {
                     color: "#a7b0c4"
                     font.pixelSize: 13
                     x: 14
-                    y: 14
+                    y: 2
                     visible: logViewport.count === 0
                 }
             }

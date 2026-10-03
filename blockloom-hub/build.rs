@@ -19,6 +19,7 @@ fn main() {
                 .file(QResourceFile::new("../scripts/hub_download.py").alias("hub_download.py"))
                 .file(QResourceFile::new("../scripts/hub_github.py").alias("hub_github.py"))
                 .file(QResourceFile::new("../scripts/hub_backup.py").alias("hub_backup.py"))
+                .file(QResourceFile::new("../scripts/hub_tools.py").alias("hub_tools.py"))
                 .file(QResourceFile::new("../scripts/replace.py").alias("replace.py")),
         ),
     )

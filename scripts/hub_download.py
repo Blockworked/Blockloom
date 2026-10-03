@@ -378,12 +378,28 @@ def extract(archive, destination, format, limit=MAX_EXTRACTED, allow_file_links=
     checkpoint()
 
 
-def install_rust_targets(rust, channel, targets, temporary):
+def install_rust_targets(rust, channel, targets, temporary, cache_dir=None):
     missing = [target for target in targets if not (rust / "lib/rustlib" / target / "lib").is_dir()]
     if not missing:
         return
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", channel):
         raise ValueError("Android targets require a pinned Rust version")
+    if cache_dir is not None:
+        import hub_tools
+        still_missing = []
+        for target in missing:
+            key = hub_tools.rust_target_key(channel, target)
+            cached = Path(cache_dir) / key
+            if cached.is_dir() and hub_tools.valid_rust_target(cached):
+                print(f"Reusing cached Rust target {target} for Rust {channel}...",
+                      file=sys.stderr, flush=True)
+                checkpoint()
+                shutil.copytree(cached, rust / "lib/rustlib" / target, copy_function=copy_file)
+                continue
+            still_missing.append(target)
+        missing = still_missing
+        if not missing:
+            return
     url = f"https://static.rust-lang.org/dist/channel-rust-{channel}.toml"
     print(f"Checking Android targets for Rust {channel}...", file=sys.stderr, flush=True)
     manifest = read_remote(url)
@@ -410,6 +426,13 @@ def install_rust_targets(rust, channel, targets, temporary):
         if len(matches) != 1 or not any((matches[0] / "lib").iterdir()):
             raise ValueError("Rust component archive has an unexpected layout")
         shutil.copytree(matches[0], rust / "lib/rustlib" / target, copy_function=copy_file)
+        if cache_dir is not None:
+            import hub_tools
+            try:
+                hub_tools.store(Path(cache_dir), hub_tools.rust_target_key(channel, target),
+                                rust / "lib/rustlib" / target, checkpoint)
+            except ValueError:
+                pass
 
 
 def android_versions(repo):
@@ -435,10 +458,20 @@ def tool_archive(url, checksum, size, temporary, name, algorithm="sha256"):
     return roots[0]
 
 
-def install_android_tools(directory, versions, components, temporary):
+def _reuse_cached(cache, key, destination):
+    import hub_tools
+    try:
+        return hub_tools.reuse(cache, key, destination, checkpoint)
+    except ValueError:
+        shutil.rmtree(Path(cache) / key, ignore_errors=True)
+        return False
+
+
+def install_android_tools(directory, versions, components, temporary, cache_dir=None):
     selected = {}
     host = {"win32": "windows", "darwin": "macosx"}.get(sys.platform, "linux")
     arch = "aarch64" if platform.machine().lower() in ("arm64", "aarch64") else "x64"
+    cache = Path(cache_dir) if cache_dir is not None else None
     if "java" in components:
         java_os = "mac" if host == "macosx" else host
         url = (f"https://api.adoptium.net/v3/assets/latest/{versions['JDK_MAJOR']}/hotspot"
@@ -453,11 +486,28 @@ def install_android_tools(directory, versions, components, temporary):
         package = assets[0]["binary"]["package"]
         if urlsplit(package["link"]).hostname != "github.com" or not urlsplit(package["link"]).path.startswith("/adoptium/"):
             raise ValueError("Java package must come from Adoptium")
-        root = tool_archive(package["link"], package["checksum"], package["size"], temporary, "java-download")
-        if (root / "Contents/Home").is_dir():
-            root = root / "Contents/Home"
-        shutil.copytree(root, directory / "tools/java", copy_function=copy_file)
-        selected["java"] = {"version": java_version}
+        if cache is not None:
+            import hub_tools
+            key = hub_tools.java_key(java_version)
+            destination = directory / "tools/java"
+            if _reuse_cached(cache, key, destination):
+                selected["java"] = {"version": java_version}
+            else:
+                root = tool_archive(package["link"], package["checksum"], package["size"], temporary, "java-download")
+                if (root / "Contents/Home").is_dir():
+                    root = root / "Contents/Home"
+                shutil.copytree(root, destination, copy_function=copy_file)
+                selected["java"] = {"version": java_version}
+                try:
+                    hub_tools.store(cache, key, destination, checkpoint)
+                except ValueError:
+                    pass
+        else:
+            root = tool_archive(package["link"], package["checksum"], package["size"], temporary, "java-download")
+            if (root / "Contents/Home").is_dir():
+                root = root / "Contents/Home"
+            shutil.copytree(root, directory / "tools/java", copy_function=copy_file)
+            selected["java"] = {"version": java_version}
     if not any(name in components for name in ("android-sdk", "android-ndk")):
         return selected
     print("Checking official Android packages...", file=sys.stderr, flush=True)
@@ -513,26 +563,76 @@ def install_android_tools(directory, versions, components, temporary):
         ET.ElementTree(repository).write(destination / "package.xml", encoding="utf-8", xml_declaration=True)
         return ".".join(map(str, revision(node)))
 
+    def package_revision(key, catalog=main_repository):
+        catalog_packages = catalog[-1]
+        node = catalog_packages.get(key)
+        if node is None:
+            raise ValueError(f"Android repository does not publish {key}")
+        archives = [item for item in node.findall("archives/archive")
+                    if item.findtext("host-os", host) == host and item.findtext("host-arch", arch) == arch]
+        if len(archives) != 1:
+            raise ValueError(f"Android package {key} does not support this host")
+        return ".".join(map(str, revision(node)))
+
     if "android-sdk" in components:
         sdk = directory / "tools/android-sdk"
-        versions_installed = {}
-        for key, relative, label in (("cmdline-tools;latest", "cmdline-tools/latest", "command-tools"),
-                                     ("platform-tools", "platform-tools", "platform-tools"),
-                                     ("platforms;" + versions["PLATFORM"], "platforms/" + versions["PLATFORM"], "platform"),
-                                     ("build-tools;" + versions["BUILD_TOOLS"], "build-tools/" + versions["BUILD_TOOLS"], "build-tools"),
-                                     ("emulator", "emulator", "emulator")):
-            versions_installed[key] = install_package(key, sdk / relative, label)
         image = versions.get("EMULATOR_IMAGE", f"system-images;{versions['PLATFORM']};google_apis;x86_64")
         image_parts = image.split(";")
         if len(image_parts) != 4 or image_parts[0] != "system-images" or any(not re.fullmatch(r"[a-zA-Z0-9_-]+", part) for part in image_parts):
             raise ValueError("Repository has an invalid emulator image pin")
-        image_repository = repository(f"https://dl.google.com/android/repository/sys-img/{image_parts[2]}/", "sys-img2-3.xml")
-        versions_installed[image] = install_package(image, sdk.joinpath(*image_parts), "system-image", image_repository)
-        selected["android-sdk"] = {"version": versions_installed["platform-tools"], "packages": versions_installed}
+        sdk_keys = (("cmdline-tools;latest", "cmdline-tools/latest", "command-tools"),
+                    ("platform-tools", "platform-tools", "platform-tools"),
+                    ("platforms;" + versions["PLATFORM"], "platforms/" + versions["PLATFORM"], "platform"),
+                    ("build-tools;" + versions["BUILD_TOOLS"], "build-tools/" + versions["BUILD_TOOLS"], "build-tools"),
+                    ("emulator", "emulator", "emulator"))
+        sdk_key_value = None
+        sdk_fingerprint = None
+        image_repository = None
+        if cache is not None:
+            import hub_tools
+            image_repository = repository(f"https://dl.google.com/android/repository/sys-img/{image_parts[2]}/", "sys-img2-3.xml")
+            versions_preview = {}
+            for key, _relative, _label in sdk_keys:
+                versions_preview[key] = package_revision(key)
+            versions_preview[image] = package_revision(image, image_repository)
+            sdk_key_value = hub_tools.sdk_key(versions_preview, versions_preview["platform-tools"])
+            if _reuse_cached(cache, sdk_key_value, sdk):
+                selected["android-sdk"] = {"version": versions_preview["platform-tools"],
+                                           "packages": versions_preview}
+                sdk_fingerprint = versions_preview
+        if sdk_fingerprint is None:
+            versions_installed = {}
+            for key, relative, label in sdk_keys:
+                versions_installed[key] = install_package(key, sdk / relative, label)
+            if image_repository is None:
+                image_repository = repository(f"https://dl.google.com/android/repository/sys-img/{image_parts[2]}/", "sys-img2-3.xml")
+            versions_installed[image] = install_package(image, sdk.joinpath(*image_parts), "system-image", image_repository)
+            selected["android-sdk"] = {"version": versions_installed["platform-tools"], "packages": versions_installed}
+            if cache is not None:
+                import hub_tools
+                try:
+                    hub_tools.store(cache, hub_tools.sdk_key(versions_installed, versions_installed["platform-tools"]),
+                                    sdk, checkpoint)
+                except ValueError:
+                    pass
     if "android-ndk" in components:
         ndks = [key for key in packages if key.startswith("ndk;" + versions["NDK_MAJOR"] + ".")]
         if not ndks:
             raise ValueError("Android repository does not publish the pinned NDK major")
         key = max(ndks, key=lambda item: revision(packages[item]))
-        selected["android-ndk"] = {"version": install_package(key, directory / "tools/android-ndk", "ndk")}
+        if cache is not None:
+            import hub_tools
+            preview = ".".join(map(str, revision(packages[key])))
+            ndk_key_value = hub_tools.ndk_key(preview)
+            destination = directory / "tools/android-ndk"
+            if _reuse_cached(cache, ndk_key_value, destination):
+                selected["android-ndk"] = {"version": preview}
+            else:
+                selected["android-ndk"] = {"version": install_package(key, destination, "ndk")}
+                try:
+                    hub_tools.store(cache, ndk_key_value, destination, checkpoint)
+                except ValueError:
+                    pass
+        else:
+            selected["android-ndk"] = {"version": install_package(key, directory / "tools/android-ndk", "ndk")}
     return selected

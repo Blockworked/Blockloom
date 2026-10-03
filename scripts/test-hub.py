@@ -424,7 +424,7 @@ class HubTests(unittest.TestCase):
     def test_dev_optional_tools_are_downloaded_into_private_installation(self):
         dev = self.prepare_fake_dev()
 
-        def download(directory, versions, components, temporary):
+        def download(directory, versions, components, temporary, cache_dir=None):
             self.assertNotEqual(directory, self.service.slot(dev["id"]))
             self.assertEqual(versions["JDK_MAJOR"], "25")
             self.assertEqual(versions["NDK_MAJOR"], "27")

@@ -18,6 +18,7 @@ import uuid
 import hub_download
 import hub_github
 import hub_backup
+import hub_tools
 
 from hub_install import MANIFEST, editor_name, promote, stage, validate_payload
 from replace import host_target, just_exe
@@ -161,6 +162,50 @@ class Hub:
                 entry["prepared"] = True
         return entries
 
+    def tool_cache_dir(self):
+        return hub_tools.cache_dir(self.root)
+
+    def cache_installations(self):
+        """Manifests for garbage collection; skip corrupt slots instead of failing."""
+        directory = self.root / "installations"
+        if not directory.exists():
+            return []
+        entries = []
+        for path in sorted(directory.iterdir()):
+            if not path.is_dir() or path.name.startswith("."):
+                continue
+            try:
+                entries.append(self.installation(path.name))
+            except (OSError, ValueError, KeyError):
+                continue
+        return entries
+
+    def tool_cache(self):
+        return hub_tools.summary(self.root, self.cache_installations())
+
+    def prune_tools(self):
+        with self.mutation():
+            removed = hub_tools.collect_garbage(self.root, self.cache_installations())
+            return {"removed": removed, **hub_tools.summary(self.root, self.cache_installations())}
+
+    def uninstall(self, identity):
+        with self.mutation():
+            manifest = self.installation(identity)
+            self.require_installation_idle(identity)
+            bound = [p for p in self.projects()
+                     if not p.get("error") and p.get("installation") == identity]
+            if bound:
+                names = ", ".join(sorted({p.get("name") or p["path"] for p in bound}))
+                raise ValueError(f"Installation {identity} is used by projects: {names}. "
+                                 "Assign those projects another editor first")
+            checkpoint()
+            shutil.rmtree(self.slot(identity))
+            candidate = self.candidate_path(identity)
+            if candidate.exists():
+                shutil.rmtree(candidate)
+            hub_tools.collect_garbage(self.root, self.cache_installations())
+            return {"id": identity, "kind": manifest.get("kind"), "version": manifest.get("version")}
+
     def running_editors(self):
         path = self.root / "running.json"
         records = read_json(path).get("editors", []) if path.exists() else []
@@ -279,6 +324,11 @@ class Hub:
                   "target": host_target(), "status": "ready", "tools": selected}
         with self.mutation():
             stage(bundle, self.slot(identity), result, excluded=excluded, checkpoint=checkpoint)
+            # Share this bundle's tool versions with future editors, then
+            # drop cached versions no installed editor references anymore.
+            hub_tools.store_installation(self.tool_cache_dir(), self.slot(identity),
+                                         selected, checkpoint)
+            hub_tools.collect_garbage(self.root, self.cache_installations())
         return result
 
     def release_settings(self, source=None, url=None, repo=None):
@@ -400,10 +450,21 @@ class Hub:
                     log_file=self.root / "logs" / f"{identity}-build.log")
                 checkpoint()
                 channel = tomllib.loads((repo / "rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
-                print(f"Bundling Rust {channel} for the prepared editor...", file=sys.stderr)
-                rustc = subprocess.check_output(["rustup", "which", "--toolchain", channel, "rustc"],
-                                               cwd=repo, text=True).strip()
-                bundle_rust(Path(rustc).parent.parent, tool_path(output, "rust"), channel, exclude_targets=ANDROID_TARGETS)
+                cache = self.tool_cache_dir()
+                key = hub_tools.rust_key(channel)
+                try:
+                    cached = hub_tools.reuse(cache, key, tool_path(output, "rust"), checkpoint)
+                except ValueError:
+                    shutil.rmtree(cache / key, ignore_errors=True)
+                    cached = False
+                if cached:
+                    print(f"Reusing cached Rust {channel} for the prepared editor...", file=sys.stderr)
+                else:
+                    print(f"Bundling Rust {channel} for the prepared editor...", file=sys.stderr)
+                    rustc = subprocess.check_output(["rustup", "which", "--toolchain", channel, "rustc"],
+                                                    cwd=repo, text=True).strip()
+                    bundle_rust(Path(rustc).parent.parent, tool_path(output, "rust"), channel, exclude_targets=ANDROID_TARGETS)
+                    hub_tools.store(cache, key, tool_path(output, "rust"), checkpoint)
                 manifest["tools"] = {"rust": {"channel": channel}}
                 validate_tools(output, manifest["tools"])
                 manifest.pop("sources", None)
@@ -448,12 +509,13 @@ class Hub:
                 output = Path(temporary) / "installation"
                 print("Preparing editor and Rust toolchain...", file=sys.stderr)
                 stage(candidate, output, excluded=excluded, checkpoint=checkpoint)
+                cache = self.tool_cache_dir()
                 if components:
                     versions = manifest.get("android_versions") or hub_download.android_versions(Path(manifest["repo"]))
-                    selected.update(hub_download.install_android_tools(output, versions, components, Path(temporary)))
+                    selected.update(hub_download.install_android_tools(output, versions, components, Path(temporary), cache))
                 if android_rust_targets:
                     hub_download.install_rust_targets(tool_path(output, "rust"), selected["rust"]["channel"],
-                                                      ANDROID_TARGETS, Path(temporary))
+                                                      ANDROID_TARGETS, Path(temporary), cache)
                 manifest.pop("sources", None)
                 manifest.pop("android_targets_available", None)
                 manifest["tools"] = selected
@@ -461,6 +523,8 @@ class Hub:
                 checkpoint()
                 print("Saving development installation...", file=sys.stderr)
                 promote(output, self.slot(identity), manifest, replace=True, checkpoint=checkpoint)
+                hub_tools.store_installation(cache, self.slot(identity), selected, checkpoint)
+                hub_tools.collect_garbage(self.root, self.cache_installations())
             print("Development installation ready.", file=sys.stderr)
             return manifest
 
@@ -517,8 +581,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, help="Override the per-user Hub directory")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("projects", "installations"):
+    for name in ("projects", "installations", "tool-cache"):
         commands.add_parser(name)
+    commands.add_parser("prune-tools")
+    commands.add_parser("uninstall").add_argument("installation")
     for name, argument in (("add-dev", "repo"), ("open", "project"), ("remember", "project")):
         commands.add_parser(name).add_argument(argument)
     commands.add_parser("dev-options").add_argument("installation")
@@ -562,6 +628,12 @@ def main(argv=None):
             result = hub.projects()
         elif args.command == "installations":
             result = hub.installations()
+        elif args.command == "tool-cache":
+            result = hub.tool_cache()
+        elif args.command == "prune-tools":
+            result = hub.prune_tools()
+        elif args.command == "uninstall":
+            result = hub.uninstall(args.installation)
         elif args.command == "add-dev":
             result = hub.add_dev(args.repo)
         elif args.command == "remember":
