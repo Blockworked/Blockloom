@@ -37,6 +37,7 @@ Rectangle {
     function pluginType(name) { return pluginTypes.find(t => t.name === name) || null; }
     function componentTitle(c) {
         if (c.component === "Collider") return c.collider && c.collider.name ? "Collider: " + c.collider.name : "Collider";
+        if (c.component === "Constraint") return c.constraint && c.constraint.name ? "Constraint: " + c.constraint.name : "Constraint: " + (c.constraint ? c.constraint.kind : "");
         if (c.component !== "Plugin") return componentName(c);
         const t = pluginType(componentName(c));
         return t ? t.displayName : c.record.type_id;
@@ -50,6 +51,7 @@ Rectangle {
     function removeComponent(c) {
         if (!actor) return;
         if (c.component === "Collider") app.invoke("remove_collider", { colliderId: c.collider.id });
+        else if (c.component === "Constraint") app.invoke("remove_constraint", { constraintId: c.constraint.id });
         else if (c.component === "Rigidbody") app.invoke("remove_rigidbody", { actorId: actor.id });
         else if (c.component === "CharacterController") app.invoke("remove_character_controller", { actorId: actor.id });
         else if (c.component === "CharacterMotor") app.invoke("remove_character_motor", { actorId: actor.id });
@@ -356,10 +358,10 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Rigidbody","Collider","CharacterController","CharacterMotor","PlayerCamera","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
+        return ["Look","Render","Body","Rigidbody","Collider","Constraint","CharacterController","CharacterMotor","PlayerCamera","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
             .filter(n => n !== "Sprite" || !is3d)
             .filter(n => n !== "Fracture" || is3d)
-            .filter(n => n === "Custom" || n === "Collider" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }))
+            .filter(n => n === "Custom" || n === "Collider" || n === "Constraint" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }))
             .concat(pluginTypes.filter(t => t.kind === "component" && held.indexOf(t.name) < 0).map(t => ({ value: "plugin:" + t.name, label: t.displayName + " (" + t.pluginName + ")" })));
     }
     function blank(name) {
@@ -402,6 +404,10 @@ Rectangle {
         if (name === "Rigidbody") { app.invoke("set_rigidbody", { actorId: actor.id, rigidbody: { body_type: "Dynamic" } }); return; }
         if (name === "Collider") {
             app.invoke("add_collider", { actorId: actor.id, collider: { geometry: { kind: "Shape", shape: is3d ? { kind: "Box", size: [1, 1, 1] } : { kind: "Rect", size: [60, 60] } } } });
+            return;
+        }
+        if (name === "Constraint") {
+            app.invoke("add_constraint", { actorId: actor.id, constraint: is3d ? { kind: "Hinge", axis: [0, 0, 1], connected_axis: [0, 0, 1] } : { kind: "Hinge" } });
             return;
         }
         if (name.indexOf("plugin:") === 0) { app.invoke("add_plugin_component", { actorId: actor.id, component: name.slice(7) }); return; }
@@ -473,7 +479,7 @@ Rectangle {
                             Loader {
                                 Layout.fillWidth: true
                                 readonly property var c: card.c
-                                sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Rigidbody: rigidbodyCard, Collider: colliderCard, CharacterController: controllerCard, CharacterMotor: motorCard, PlayerCamera: playerCameraCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
+                                sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Rigidbody: rigidbodyCard, Collider: colliderCard, Constraint: constraintCard, CharacterController: controllerCard, CharacterMotor: motorCard, PlayerCamera: playerCameraCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
                                                     Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard, Plugin: pluginCard })[card.c.component] || null
                             }
                         }
@@ -850,6 +856,13 @@ Rectangle {
     Component {
         id: motorCard
         CharacterMotorForm {
+            readonly property var c: parent.c
+            app: root.app; actorId: root.actor ? root.actor.id : ""; component: c; is3d: root.is3d
+        }
+    }
+    Component {
+        id: constraintCard
+        ConstraintForm {
             readonly property var c: parent.c
             app: root.app; actorId: root.actor ? root.actor.id : ""; component: c; is3d: root.is3d
         }

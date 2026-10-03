@@ -59,3 +59,7 @@ id_type!(
     /// survive the same edits a [`ColliderId`] does.
     ComponentId
 );
+id_type!(
+    /// Names one constraint on one actor for the life of the document.
+    ConstraintId
+);

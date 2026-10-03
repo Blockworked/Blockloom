@@ -20,7 +20,7 @@ use crate::animation::AnimationSpec;
 use crate::material::{ParticleSpec, SurfaceMaterial, TrailSpec};
 use crate::physics::controller::CharacterControllerSpec;
 use crate::physics::motor::CharacterMotorSpec;
-use crate::physics::{ColliderId, ColliderSpec, RigidbodySpec};
+use crate::physics::{ColliderId, ColliderSpec, ConstraintId, ConstraintSpec, RigidbodySpec};
 use crate::player_camera::PlayerCameraSpec;
 use crate::probe::ProbeSpec;
 use crate::scene::{Physics, Placement, Visual};
@@ -42,6 +42,7 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "Body",
     "Rigidbody",
     "Collider",
+    "Constraint",
     "CharacterController",
     "CharacterMotor",
     "PlayerCamera",
@@ -328,6 +329,9 @@ pub enum ActorComponent {
     /// One collision shape. Repeatable: an actor may carry several, each addressed
     /// by its [`ColliderId`], never by name.
     Collider { collider: ColliderSpec },
+    /// A joint to another body or the world. Repeatable: addressed by its
+    /// [`ConstraintId`], never by name.
+    Constraint { constraint: ConstraintSpec },
     /// A capsule moved by blocks or scripts against the world (see
     /// [`crate::physics::controller`]). At most one per actor.
     CharacterController { controller: CharacterControllerSpec },
@@ -426,6 +430,7 @@ impl ActorComponent {
             ActorComponent::Body { .. } => "Body",
             ActorComponent::Rigidbody { .. } => "Rigidbody",
             ActorComponent::Collider { .. } => "Collider",
+            ActorComponent::Constraint { .. } => "Constraint",
             ActorComponent::CharacterController { .. } => "CharacterController",
             ActorComponent::CharacterMotor { .. } => "CharacterMotor",
             ActorComponent::PlayerCamera { .. } => "PlayerCamera",
@@ -455,6 +460,13 @@ impl ActorComponent {
     }
 
     /// The id of a collider component, which is how a repeated one is addressed.
+    pub fn constraint_id(&self) -> Option<&ConstraintId> {
+        match self {
+            ActorComponent::Constraint { constraint } => Some(&constraint.id),
+            _ => None,
+        }
+    }
+
     pub fn collider_id(&self) -> Option<&ColliderId> {
         match self {
             ActorComponent::Collider { collider } => Some(&collider.id),
@@ -612,6 +624,23 @@ impl Components {
                 }
             };
         }
+        if let ActorComponent::Constraint { constraint } = &component {
+            let id = constraint.id.clone();
+            return match self
+                .0
+                .iter_mut()
+                .find(|slot| slot.constraint_id() == Some(&id))
+            {
+                Some(slot) => {
+                    *slot = component;
+                    false
+                }
+                None => {
+                    self.0.push(component);
+                    true
+                }
+            };
+        }
         match self.get_mut(component.name()) {
             Some(slot) => {
                 *slot = component;
@@ -682,6 +711,27 @@ impl Components {
     /// Takes the collider with `id` off. Returns whether there was one.
     pub fn remove_collider(&mut self, id: &ColliderId) -> bool {
         let Some(index) = self.0.iter().position(|c| c.collider_id() == Some(id)) else {
+            return false;
+        };
+        self.0.remove(index);
+        true
+    }
+
+    /// Every constraint, in list order.
+    pub fn constraints(&self) -> impl Iterator<Item = &ConstraintSpec> {
+        self.0.iter().filter_map(|c| match c {
+            ActorComponent::Constraint { constraint } => Some(constraint),
+            _ => None,
+        })
+    }
+
+    pub fn constraint(&self, id: &ConstraintId) -> Option<&ConstraintSpec> {
+        self.constraints().find(|c| &c.id == id)
+    }
+
+    /// Takes the constraint with `id` off. Returns whether there was one.
+    pub fn remove_constraint(&mut self, id: &ConstraintId) -> bool {
+        let Some(index) = self.0.iter().position(|c| c.constraint_id() == Some(id)) else {
             return false;
         };
         self.0.remove(index);

@@ -847,6 +847,9 @@ pub fn run_op(actor: &str, op: &str, vector: [f32; 3]) -> Result<u32, String> {
     if let Some(rest) = op.strip_prefix("motor ") {
         return super::motor::run_op(actor, rest, vector).map(|()| 0);
     }
+    if let Some(rest) = op.strip_prefix("joint ") {
+        return super::joints::run_op(actor, rest, vector[0]).map(|()| 0);
+    }
     if let Some(name) = op.strip_prefix("set ") {
         let property = ControllerProperty::parse(name)
             .ok_or_else(|| format!("a controller has no setting called \"{name}\""))?;
@@ -891,6 +894,10 @@ pub fn fall_speed(actor: &str) -> f32 {
 pub fn read_number(actor: &str, field: &str, n: usize) -> f64 {
     if let Some(rest) = field.trim().strip_prefix("motor ") {
         return super::motor::read_number(actor, rest);
+    }
+    if let Some(rest) = field.trim().strip_prefix("joint ") {
+        let (field, name) = rest.split_once('|').unwrap_or((rest, ""));
+        return super::joints::read_number(actor, name, field);
     }
     let Some(last) = last_move(actor) else {
         return match field.trim().to_ascii_lowercase().as_str() {

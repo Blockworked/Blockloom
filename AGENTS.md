@@ -633,6 +633,53 @@ Commands (dispatch, shell and MCP): `preview-player-preset`,
 Open: no collision gizmos in the scene view, profile instance overrides and
 reset-to-profile, QML not run here (no Qt), GPU paths not run.
 
+### Constraints and integration (Phase 7)
+
+`blockloom-core/src/physics/joints.rs` is `ConstraintSpec`, the repeatable
+`ActorComponent::Constraint` (addressed by `ConstraintId`; the old single
+`Joint` component is untouched). Kinds: Fixed, Hinge, Ball (3D), Slider,
+Spring, Distance, Wheel, Configurable. An empty `target` anchors to the world.
+Both ends need Rigidbodies. Lengths are document units (2D pixels), angles
+degrees. With `auto_configure` the other end's frame is worked out from where
+the actors stand, so Play starts with no snap. `blueprint()` is the backend
+neutral recipe (locked axes, limits in radians, motors, `coupled_linear`), and
+`plan_constraints` validates and resolves frames into `PhysicsPlan.constraints`.
+Break force/torque thresholds snap the joint and may broadcast `break_message`.
+
+`blockloom-runtime/src/constraints.rs` maps the recipe onto Rapier's
+`GenericJoint`, one child entity per constraint (an `ImpulseJoint` is one per
+entity). `drive` runs after `PhysicsSet::Writeback`: queued commands, rebuild on
+motor/spring change, break detection off `ImpulseJointImpulses`, and status
+(`position`, `speed`, `force`, `torque`) published for reporters.
+
+Blocks/scripts use the op channel, so `ABI_VERSION` and `LOGIC_ABI_VERSION` are
+unchanged: `JointAct` lowers to `Action::Controller` op `joint <verb>|<name>`
+(`controller::run_op` routes the "joint " prefix) and `JointNumber` is an
+ExtOperator over `joints::read_number`. A name is the constraint's `name` or its
+1-based place. Scripts: `Actor::joint`, `joint_number`. Commands (dispatch,
+shell, MCP): `add-constraint`, `set-constraint`, `remove-constraint`,
+`list-constraints`. QML: `ConstraintForm.qml`, "Constraint" in Add component.
+
+Integration: a buoyant body is sized by its colliders (`water/buoy.rs`
+`collider_extents`), falling back to its Look, so it needs no Look. Fracture
+shards keep the source collider's `CollisionGroups`, `SolverGroups`, friction and
+restitution and share its body mass (`destruction.rs` `Sources`). A clone made
+mid-run gets its Rigidbody, colliders and constraints through
+`physics_install::install_actor` (fresh ids from `Actor::refresh_physics_ids`,
+constraints appended with `constraints::install_more`); its mesh colliders and
+CharacterController/Motor are not installed.
+
+Physics Debug: `SceneView.physics` (`PhysicsDebug`: shapes, aabbs, contacts,
+joints, axes; `PROTOCOL_VERSION` 30) switches Rapier's own debug renderer
+(`physics_debug::sync`), off by default. The profiler gets
+`physics/{bodies,active_bodies,sleeping_bodies,colliders,joints,step_ms}`.
+The scene view has a box button that opens the panel (`PreviewPanel.qml`).
+
+Open: no joint gizmo editing, no ragdoll handoff from animation, AI/navigation
+still drives its own movement rather than the motor, collision streaming is not
+separate from visual LOD, no single-step or fixture replay, no pair/contact
+counts in the profiler, QML and GPU paths not run here.
+
 ### Actors that come and go
 
 An actor's id is what everything keys it by, and a run can mint ids the

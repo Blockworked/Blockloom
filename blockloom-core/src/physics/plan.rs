@@ -142,6 +142,7 @@ pub struct PhysicsPlan {
     pub colliders: Vec<ColliderPlan>,
     pub controllers: Vec<ControllerPlan>,
     pub motors: Vec<MotorInstall>,
+    pub constraints: Vec<super::joints::ConstraintPlan>,
     pub issues: Vec<PhysicsIssue>,
     /// True when a pair rule needs the exact test from a hook (an include override
     /// or a priority is in play) instead of group masks alone.
@@ -262,6 +263,8 @@ impl PhysicsPlan {
         for body_index in 0..plan.bodies.len() {
             plan_mass(&mut plan, body_index, mode, &mut issues);
         }
+        // Validation already reported endpoint problems; this keeps the runnable ones.
+        plan.constraints = super::joints::plan_constraints(actors, mode, &mut Vec::new());
         plan.issues = issues;
         plan
     }
@@ -282,6 +285,7 @@ impl PhysicsPlan {
             && self.colliders.is_empty()
             && self.controllers.is_empty()
             && self.motors.is_empty()
+            && self.constraints.is_empty()
     }
 
     pub fn collider(&self, id: &ColliderId) -> Option<&ColliderPlan> {

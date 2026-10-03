@@ -460,6 +460,26 @@ impl Backend {
                 app,
                 arg(&args, "colliderId")?,
             )?),
+            "add_constraint" => to_json(commands::physics::add_constraint(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "constraint")?,
+            )?),
+            "set_constraint" => to_json(commands::physics::set_constraint(
+                state,
+                app,
+                arg(&args, "constraint")?,
+            )?),
+            "remove_constraint" => to_json(commands::physics::remove_constraint(
+                state,
+                app,
+                arg(&args, "constraintId")?,
+            )?),
+            "list_constraints" => to_json(commands::physics::list_constraints(
+                state,
+                arg(&args, "actorId").ok(),
+            )?),
             "fit_collider_to_look" => to_json(commands::physics::fit_collider_to_look(
                 state,
                 app,

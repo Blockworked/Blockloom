@@ -1969,6 +1969,28 @@ impl Actor {
         self.motor_op("stop", 0.0, 0.0, 0.0);
     }
 
+    /// Commands one of this actor's constraints by name: `"motor speed"`,
+    /// `"motor target"`, `"motor force"`, `"motor off"`, `"stiffness"`,
+    /// `"damping"`, `"enable"`, `"disable"` or `"break"`.
+    pub fn joint(&self, action: &str, joint: &str, value: f64) {
+        let op = format!("joint {action}|{joint}");
+        self.act(
+            ACT_CONTROLLER,
+            Str::borrow(&op),
+            Str::EMPTY,
+            Str::EMPTY,
+            value,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// A reading of the named constraint: `angle`, `position`, `speed`,
+    /// `force`, `torque`, `broken`, `enabled`. Zero when it isn't there.
+    pub fn joint_number(&self, joint: &str, field: &str) -> f64 {
+        self.controller_number(&format!("joint {field}|{joint}"), 0)
+    }
+
     /// Changes one motor setting for the run: `"walk speed"`, `"jump
     /// height"`, `"max jumps"`, `"air control"` and so on.
     pub fn set_motor(&self, property: &str, value: f64) {

@@ -109,6 +109,17 @@ const CONTROLLER_PROPERTIES: &[&str] = &[
     "DetectCollisions",
     "OverlapRecovery",
 ];
+const JOINT_ACTIONS: &[&str] = &[
+    "MotorSpeed",
+    "MotorTarget",
+    "MotorForce",
+    "MotorOff",
+    "Stiffness",
+    "Damping",
+    "Enable",
+    "Disable",
+    "Break",
+];
 const MOTOR_ACTIONS: &[&str] = &[
     "Intent",
     "Jump",
@@ -1053,6 +1064,25 @@ pub const BLOCKS: &[BlockSpec] = &[
             options: MOTOR_ACTIONS,
         }],
         strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "JointAct",
+        category: "Physics",
+        purpose: "Commands one of this actor's constraints, named in `joint` (or by its place: 1 is the first). MotorSpeed and MotorTarget switch the motor to a speed (degrees or units a second) or a place (degrees or units); MotorForce limits it; MotorOff stops it; Stiffness and Damping change a spring; Enable and Disable switch the joint; Break snaps it for good. The value is ignored by the last four.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "value",
+            id: "JointValue",
+            value: "Any",
+        }],
+        dropdowns: &[Dropdown {
+            field: "action",
+            options: JOINT_ACTIONS,
+        }],
+        strings: &["joint"],
         bools: NO_BOOLS,
         bodies: NO_BODIES,
     },

@@ -2590,6 +2590,71 @@ fn motor_blocks_steer_set_and_read_the_actors_motor() {
 }
 
 #[test]
+fn joint_blocks_command_a_named_constraint_and_read_it_back() {
+    use blockloom_core::physics::joints::{
+        self, ConstraintKind, ConstraintPlan, ConstraintSpec, JointStatus, JointVerb,
+        resolve_frames,
+    };
+    use blockloom_core::scene::Mode;
+    let project = project_with(vec![started(vec![
+        InstructionKind::JointAct {
+            action: JointVerb::MotorSpeed,
+            joint: "Axle".to_string(),
+            value: Value::number(45.0),
+        },
+        InstructionKind::JointAct {
+            action: JointVerb::Break,
+            joint: "nope".to_string(),
+            value: Value::number(0.0),
+        },
+        InstructionKind::Say {
+            text: Value::op(
+                Op::from_name("JointNumber"),
+                vec![Value::text("angle"), Value::text("axle")],
+            ),
+        },
+    ])]);
+    let id = project.active_scene().actors[0].id.clone();
+    let mut spec = ConstraintSpec::of(ConstraintKind::Hinge, Mode::ThreeD);
+    spec.name = "Axle".to_string();
+    let frames = resolve_frames(&spec, &glam::Mat4::IDENTITY, None);
+    joints::register_plan(&[ConstraintPlan {
+        actor: id.clone(),
+        target: None,
+        handle: "Axle".to_string(),
+        spec,
+        frames,
+    }]);
+    joints::publish(
+        &id,
+        "Axle",
+        JointStatus {
+            enabled: true,
+            position: 30.0,
+            ..Default::default()
+        },
+    );
+    let effects = Harness::started(&project).run(1);
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::Say { text, .. } if text == "30"
+    )));
+    let errors = effects
+        .iter()
+        .filter(|effect| matches!(effect, Effect::Error { .. }))
+        .count();
+    assert_eq!(
+        errors, 1,
+        "a joint that isn't there is an error: {effects:?}"
+    );
+    let queued = joints::take_commands();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].verb, JointVerb::MotorSpeed);
+    assert_eq!(queued[0].value, 45.0);
+    joints::reset();
+}
+
+#[test]
 fn a_query_with_no_world_reports_why_and_reads_as_a_miss() {
     use blockloom_core::physics::query::{self, TriggerPolicy};
     let project = project_with(vec![started(vec![

@@ -1410,6 +1410,53 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "add-constraint",
+        cmd: "add_constraint",
+        aliases: &[],
+        summary: "Add a joint to an actor and answer its id. The object is a constraint spec: {kind: Fixed|Hinge|Ball|Slider|Spring|Distance|Wheel|Configurable, name, target (an actor id; empty anchors to the world), anchor, axis, limit: {enabled, min, max}, motor: {mode: Off|Velocity|Position, target, max_force}, spring, min_distance, max_distance, break_force, break_torque, break_message, enable_collision}. The actor and its target need Rigidbodies.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "constraint",
+                ty: "object {\"kind\", ...}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "set-constraint",
+        cmd: "set_constraint",
+        aliases: &[],
+        summary: "Replace the constraint whose id the object carries, in place. The id never changes.",
+        args: &[ArgSpec {
+            name: "constraint",
+            ty: "object {\"id\", \"kind\", ...}",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "remove-constraint",
+        cmd: "remove_constraint",
+        aliases: &[],
+        summary: "Remove a constraint by id. Answers the actor it was on.",
+        args: &[ArgSpec {
+            name: "constraintId",
+            ty: "id",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "list-constraints",
+        cmd: "list_constraints",
+        aliases: &[],
+        summary: "List the active scene's constraints with the name blocks use for each, optionally for one actor.",
+        args: &[ArgSpec {
+            name: "actorId",
+            ty: "id",
+            required: false,
+        }],
+    },
+    CommandSpec {
         name: "fit-collider-to-look",
         cmd: "fit_collider_to_look",
         aliases: &[],

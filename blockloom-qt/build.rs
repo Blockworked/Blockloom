@@ -32,6 +32,7 @@ fn main() {
                 "qml/ColliderForm.qml",
                 "qml/CharacterControllerForm.qml",
                 "qml/CharacterMotorForm.qml",
+                "qml/ConstraintForm.qml",
                 "qml/PlayerCameraForm.qml",
                 "qml/PlayerSetupCard.qml",
                 "qml/InspectorRow.qml",

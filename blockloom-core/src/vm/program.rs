@@ -2017,6 +2017,14 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             op: format!("motor {}", action.op()),
             vector: [x.clone(), y.clone(), z.clone()],
         })),
+        K::JointAct {
+            action,
+            joint,
+            value,
+        } => steps.push(Step::Action(Action::Controller {
+            op: format!("joint {}|{}", action.name(), joint.trim()),
+            vector: [value.clone(), Value::number(0.0), Value::number(0.0)],
+        })),
         K::SetMotor { property, value } => steps.push(Step::Action(Action::Controller {
             op: format!("motor set {}", property.name()),
             vector: [value.clone(), Value::number(0.0), Value::number(0.0)],

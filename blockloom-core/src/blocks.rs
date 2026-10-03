@@ -570,6 +570,16 @@ pub enum InstructionKind {
         y: Value,
         z: Value,
     },
+    /// Commands one of this actor's constraints by name (or place): switch it
+    /// on or off, break it, or change its motor or spring for the run. The
+    /// value is a speed, a target, a force, a stiffness or a damping.
+    JointAct {
+        #[serde(default)]
+        action: crate::physics::joints::JointVerb,
+        #[serde(default)]
+        joint: String,
+        value: Value,
+    },
     /// Changes one setting of this actor's character motor for the run.
     SetMotor {
         property: crate::physics::motor::MotorProperty,
@@ -1224,6 +1234,7 @@ impl BlockKind for InstructionKind {
             | K::SetMass { mass: v }
             | K::SetController { value: v, .. }
             | K::SetMotor { value: v, .. }
+            | K::JointAct { value: v, .. }
             | K::SetCollisionLayer { layer: v }
             | K::SetCollisionMask { mask: v }
             | K::Say { text: v }

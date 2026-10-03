@@ -706,6 +706,23 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |args| controller_field(args, true),
     },
     ExtOperator {
+        kind: "JointNumber",
+        op: "JointNumber",
+        arity: 2,
+        default_args: || vec![text("angle"), text("")],
+        // One reading of the named constraint on this actor: angle or position,
+        // speed, force, torque, broken?, enabled?. Zero for one that isn't there.
+        eval: |args| {
+            let field = args[0].as_text();
+            let name = args[1].as_text();
+            Ok(Evaluated::Number(
+                sense::current_actor().map_or(0.0, |actor| {
+                    crate::physics::joints::read_number(&actor, &name, &field)
+                }),
+            ))
+        },
+    },
+    ExtOperator {
         kind: "MotorNumber",
         op: "MotorNumber",
         arity: 1,

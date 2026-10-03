@@ -32,6 +32,7 @@ mod capture;
 mod cinematic;
 mod cloud_layers;
 mod clouds;
+mod constraints;
 mod contacts;
 mod controller;
 mod culling;
@@ -68,6 +69,7 @@ mod overlay;
 mod passes;
 mod pbr_patch;
 mod performance;
+mod physics_debug;
 mod physics_install;
 pub mod player;
 #[cfg(feature = "plugins")]
@@ -409,6 +411,27 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         bevy_rapier3d::prelude::RapierPhysicsPlugin::<physics_install::d3::Hooks3>::default()
             .in_fixed_schedule(),
     );
+    // Physics Debug view: Rapier's gizmo renderer, off until the scene view asks.
+    app.add_plugins(bevy_rapier2d::render::RapierDebugRenderPlugin::default().disabled());
+    app.add_plugins(bevy_rapier3d::render::RapierDebugRenderPlugin::default().disabled());
+    app.add_systems(Update, physics_debug::sync);
+    app.add_systems(
+        FixedUpdate,
+        (
+            physics_debug::d3::begin
+                .before(bevy_rapier3d::prelude::PhysicsSet::SyncBackend)
+                .run_if(is_3d),
+            physics_debug::d3::end
+                .after(bevy_rapier3d::prelude::PhysicsSet::Writeback)
+                .run_if(is_3d),
+            physics_debug::d2::begin
+                .before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend)
+                .run_if(is_2d),
+            physics_debug::d2::end
+                .after(bevy_rapier2d::prelude::PhysicsSet::Writeback)
+                .run_if(is_2d),
+        ),
+    );
     // The veil and the audio scale follow the live scene, not the launch
     // mode, so they run once outside the gated dimension blocks.
     app.add_systems(Update, transition::drive_veil);
@@ -638,6 +661,15 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             )
                 .before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend)
                 .before(bevy_rapier3d::prelude::PhysicsSet::SyncBackend),
+        )
+        .add_systems(
+            FixedUpdate,
+            (
+                constraints::d2::drive.run_if(is_2d),
+                constraints::d3::drive.run_if(is_3d),
+            )
+                .after(bevy_rapier2d::prelude::PhysicsSet::Writeback)
+                .after(bevy_rapier3d::prelude::PhysicsSet::Writeback),
         )
         .configure_sets(
             FixedUpdate,

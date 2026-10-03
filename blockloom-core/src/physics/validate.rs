@@ -377,6 +377,7 @@ pub fn validate_scene_with(
     decomposed: Option<&dyn Fn(&str) -> bool>,
 ) -> Vec<PhysicsIssue> {
     let mut issues = Vec::new();
+    super::joints::plan_constraints(actors, mode, &mut issues);
     let mut seen_colliders: HashMap<&ColliderId, &str> = HashMap::new();
     let mut seen_bodies: HashMap<&str, &str> = HashMap::new();
 

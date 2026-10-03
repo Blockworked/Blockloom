@@ -218,6 +218,22 @@ impl Actor {
             joint.anchor = joint.anchor.map(length);
             joint.length = length(joint.length);
         }
+        for component in self.components.iter_mut() {
+            if let ActorComponent::Constraint { constraint } = component {
+                constraint.anchor = constraint.anchor.map(length);
+                constraint.connected_anchor = constraint.connected_anchor.map(length);
+                constraint.min_distance = length(constraint.min_distance);
+                constraint.max_distance = length(constraint.max_distance);
+                constraint.spring.rest_length = length(constraint.spring.rest_length);
+                if matches!(
+                    constraint.kind,
+                    crate::physics::ConstraintKind::Slider | crate::physics::ConstraintKind::Wheel
+                ) {
+                    constraint.limit.min = length(constraint.limit.min);
+                    constraint.limit.max = length(constraint.limit.max);
+                }
+            }
+        }
     }
 
     /// The actor this one hangs off, by id.
@@ -376,6 +392,15 @@ impl Scene {
                 .is_some_and(|joint| joint.target == id)
             {
                 actor.components.remove("Joint");
+            }
+            let dangling: Vec<_> = actor
+                .components
+                .constraints()
+                .filter(|c| c.target == id)
+                .map(|c| c.id.clone())
+                .collect();
+            for constraint in dangling {
+                actor.components.remove_constraint(&constraint);
             }
             if let Some(ActorComponent::Brain { brain }) = actor.components.get_mut("Brain")
                 && (brain.target == id || brain.target.eq_ignore_ascii_case(&removed.name))
@@ -1534,6 +1559,13 @@ impl Project {
                 let mut joint = joint.clone();
                 joint.target = next.clone();
                 actor.components.insert(ActorComponent::Joint { joint });
+            }
+            for component in actor.components.iter_mut() {
+                if let ActorComponent::Constraint { constraint } = component
+                    && let Some(next) = remap.get(&constraint.target)
+                {
+                    constraint.target = next.clone();
+                }
             }
         }
         let new_id = copy.id.clone();

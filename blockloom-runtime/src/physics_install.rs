@@ -16,7 +16,7 @@ use blockloom_core::physics::{
     ColliderFilter, ColliderId, CollisionLookup, ExtraMass, LayerSettings, PhysicsPlan,
     PlannedMaterial, PlannedShape,
 };
-use blockloom_core::project::Project;
+use blockloom_core::project::{Actor, Project};
 use blockloom_core::scene::Mode;
 use blockloom_core::vm::Effect;
 use std::collections::HashMap;
@@ -150,6 +150,7 @@ pub fn install_with(
     }
     crate::controller::clear();
     crate::motor::clear();
+    crate::constraints::clear();
     commands.insert_resource(crate::controller::ControllerEntities::default());
     if !plan.is_runnable() || plan.is_empty() {
         return;
@@ -162,9 +163,71 @@ pub fn install_with(
         Mode::ThreeD => crate::controller::d3::install(commands, &plan, entities),
         Mode::TwoD => crate::controller::d2::install(commands, &plan, entities),
     };
+    match mode {
+        Mode::ThreeD => crate::constraints::d3::install(commands, &plan.constraints, entities),
+        Mode::TwoD => crate::constraints::d2::install(commands, &plan.constraints, entities),
+    }
+    blockloom_core::physics::joints::register_plan(&plan.constraints);
     crate::controller::register_plan(&plan);
     crate::motor::register_plan(&plan);
     commands.insert_resource(installed);
+}
+
+/// Installs the physics of one actor that came into a run after it began (a
+/// clone). `actor` already carries fresh ids; its constraints keep the targets
+/// the template had. Mesh colliders and controllers are left out.
+pub fn install_actor(
+    commands: &mut Commands,
+    project: &Project,
+    actor: &Actor,
+    others: &[Actor],
+    entities: &HashMap<String, Entity>,
+) {
+    let mode = project.world.mode;
+    let mut actors = vec![actor.clone()];
+    actors.extend(others.iter().cloned());
+    let mut plan = PhysicsPlan::build(&actors, mode, &project.physics);
+    plan.bodies.retain(|b| b.actor == actor.id);
+    plan.colliders
+        .retain(|c| c.actor == actor.id || c.body_actor.as_deref() == Some(actor.id.as_str()));
+    plan.constraints.retain(|c| c.actor == actor.id);
+    plan.controllers.clear();
+    plan.motors.clear();
+    if plan
+        .errors()
+        .any(|i| i.actor.as_deref() == Some(actor.id.as_str()))
+    {
+        for issue in plan.errors() {
+            warn!("physics: {}", issue.message);
+        }
+        return;
+    }
+    if plan.bodies.is_empty() && plan.colliders.is_empty() && plan.constraints.is_empty() {
+        return;
+    }
+    let filters: Vec<_> = plan
+        .colliders
+        .iter()
+        .map(|c| (c.actor.clone(), c.filter))
+        .collect();
+    commands.queue(move |world: &mut World| {
+        if let Some(mut layers) = world.get_resource_mut::<PhysicsLayers>() {
+            for (id, filter) in filters {
+                layers.askers.entry(id).or_insert(filter);
+            }
+        }
+    });
+    match mode {
+        Mode::ThreeD => {
+            d3::install(commands, &plan, entities);
+            crate::constraints::d3::install_more(commands, &plan.constraints, entities);
+        }
+        Mode::TwoD => {
+            d2::install(commands, &plan, entities);
+            crate::constraints::d2::install_more(commands, &plan.constraints, entities);
+        }
+    }
+    blockloom_core::physics::joints::extend_plan(&plan.constraints);
 }
 
 /// The backend shape of a cooked mesh.
@@ -1896,13 +1959,11 @@ mod tests {
                 .iter()
                 .filter(|e| e.phase != ContactPhase::Stay)
                 .map(|e| {
-                    (
-                        e.phase,
-                        e.kind,
-                        names[&e.a.actor].clone(),
-                        names[&e.b.actor].clone(),
-                        e.reason,
-                    )
+                    // Which end the backend lists first is its own business.
+                    let mut ends = [names[&e.a.actor].clone(), names[&e.b.actor].clone()];
+                    ends.sort();
+                    let [first, second] = ends;
+                    (e.phase, e.kind, first, second, e.reason)
                 })
                 .collect::<Vec<_>>()
         };
@@ -3673,5 +3734,242 @@ mod controller_tests_2d {
         let y2 = app.world().get::<Transform>(entity).unwrap().translation.y;
         assert!((y2 - y0).abs() < 6.0, "landed again: {y0} -> {y2}");
         assert!(blockloom_core::physics::motor::read_number(&actor, "grounded") > 0.5);
+    }
+}
+
+#[cfg(test)]
+mod constraint_tests {
+    use super::tests::{add, at, ball, body, run};
+    use super::*;
+    use bevy_rapier3d::prelude as rp;
+    use blockloom_core::physics::RigidbodySpec;
+    use blockloom_core::physics::joints::{
+        self, ConstraintKind, ConstraintSpec, Limit, Motor, MotorMode,
+    };
+    use std::time::Duration;
+
+    fn start(project: &Project) -> (App, HashMap<String, Entity>) {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(TransformPlugin);
+        app.init_resource::<Assets<Mesh>>();
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f32(1.0 / 60.0),
+        ));
+        app.insert_resource(Time::<Fixed>::from_hz(60.0));
+        app.init_resource::<PhysicsLayers>();
+        app.add_plugins(rp::RapierPhysicsPlugin::<d3::Hooks3>::default().in_fixed_schedule());
+        let mut ids = HashMap::new();
+        for actor in &project.actors {
+            let entity = app
+                .world_mut()
+                .spawn(crate::world::transform_for(actor))
+                .id();
+            ids.insert(actor.id.clone(), entity);
+        }
+        let mut commands = app.world_mut().commands();
+        install_with(
+            &mut commands,
+            project,
+            &ids,
+            &blockloom_core::physics::cook::NoCollisionData,
+        );
+        app.world_mut().flush();
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = crate::engine::Engine::new(incoming, Mode::ThreeD);
+        engine.entities = ids.clone();
+        app.insert_non_send(engine);
+        app.add_systems(
+            FixedUpdate,
+            crate::constraints::d3::drive.after(rp::PhysicsSet::Writeback),
+        );
+        run(&mut app, 2);
+        (app, ids)
+    }
+
+    fn weightless() -> RigidbodySpec {
+        RigidbodySpec {
+            use_gravity: false,
+            ..RigidbodySpec::default()
+        }
+    }
+
+    fn constrain(project: &mut Project, id: &str, spec: ConstraintSpec) {
+        let library = project.physics.materials.clone();
+        project
+            .active_scene_mut()
+            .add_constraint(id, spec, &library)
+            .unwrap();
+    }
+
+    #[test]
+    fn a_hinged_pendulum_swings_on_a_fixed_radius() {
+        let mut p = super::tests::project();
+        let bob = add(&mut p, "Bob", [2.0, 5.0, 0.0]);
+        body(&mut p, &bob, RigidbodySpec::default(), vec![ball()]);
+        let mut spec = ConstraintSpec::of(ConstraintKind::Hinge, Mode::ThreeD);
+        spec.name = "pivot".into();
+        spec.anchor = [-2.0, 0.0, 0.0];
+        spec.axis = [0.0, 0.0, 1.0];
+        constrain(&mut p, &bob, spec);
+        let (mut app, ids) = start(&p);
+        // About a quarter swing: a full half swing lands level again.
+        run(&mut app, 40);
+        let position = at(&app, ids[&bob]);
+        assert!(position.y < 4.5, "it swung down: {position}");
+        let radius = (position - Vec3::new(0.0, 5.0, 0.0)).length();
+        assert!((radius - 2.0).abs() < 0.15, "radius {radius}");
+        let status = joints::status(&bob, "pivot").expect("published");
+        assert!(status.position.abs() > 10.0, "angle {}", status.position);
+        assert!(!status.broken);
+    }
+
+    #[test]
+    fn a_rope_stops_a_fall_at_its_length() {
+        let mut p = super::tests::project();
+        let weight = add(&mut p, "Weight", [0.0, 5.0, 0.0]);
+        body(&mut p, &weight, RigidbodySpec::default(), vec![ball()]);
+        let mut spec = ConstraintSpec::of(ConstraintKind::Distance, Mode::ThreeD);
+        spec.max_distance = 2.0;
+        spec.anchor = [0.0, 0.0, 0.0];
+        constrain(&mut p, &weight, spec);
+        // Anchored where the weight starts: the world point is its own position.
+        let (mut app, ids) = start(&p);
+        run(&mut app, 180);
+        let y = at(&app, ids[&weight]).y;
+        assert!(y < 5.0 && y > 2.9, "hanging at {y}");
+    }
+
+    #[test]
+    fn a_clone_made_mid_run_gets_its_body_and_its_own_rope() {
+        let mut p = super::tests::project();
+        let weight = add(&mut p, "Weight", [0.0, 5.0, 0.0]);
+        body(&mut p, &weight, RigidbodySpec::default(), vec![ball()]);
+        let mut spec = ConstraintSpec::of(ConstraintKind::Distance, Mode::ThreeD);
+        spec.max_distance = 2.0;
+        spec.name = "rope".into();
+        constrain(&mut p, &weight, spec);
+        let template = p
+            .active_scene()
+            .actors
+            .iter()
+            .find(|a| a.id == weight)
+            .unwrap()
+            .clone();
+        // The run starts with nothing in it, then a copy turns up.
+        let empty = {
+            let mut e = p.clone();
+            e.active_scene_mut().actors.clear();
+            e
+        };
+        let (mut app, mut ids) = start(&empty);
+        let mut copy = template.clone();
+        copy.id = "~1".into();
+        copy.refresh_physics_ids();
+        assert_ne!(
+            copy.components.constraints().next().unwrap().id,
+            template.components.constraints().next().unwrap().id
+        );
+        let entity = app
+            .world_mut()
+            .spawn(crate::world::transform_for(&copy))
+            .id();
+        ids.insert(copy.id.clone(), entity);
+        let mut commands = app.world_mut().commands();
+        install_actor(&mut commands, &p, &copy, &[], &ids);
+        app.world_mut().flush();
+        run(&mut app, 180);
+        let y = at(&app, entity).y;
+        assert!(y < 5.0 && y > 2.9, "hanging at {y}");
+        assert!(
+            joints::status("~1", "rope").is_none() || !joints::status("~1", "rope").unwrap().broken
+        );
+    }
+
+    #[test]
+    fn one_actor_carries_several_constraints() {
+        let mut p = super::tests::project();
+        let slab = add(&mut p, "Slab", [0.0, 3.0, 0.0]);
+        body(&mut p, &slab, RigidbodySpec::default(), vec![ball()]);
+        let mut left = ConstraintSpec::of(ConstraintKind::Fixed, Mode::ThreeD);
+        left.name = "left".into();
+        let mut right = ConstraintSpec::of(ConstraintKind::Distance, Mode::ThreeD);
+        right.name = "right".into();
+        constrain(&mut p, &slab, left);
+        constrain(&mut p, &slab, right);
+        let (mut app, ids) = start(&p);
+        assert_eq!(
+            app.world()
+                .resource::<crate::constraints::Constraints>()
+                .len(),
+            2
+        );
+        run(&mut app, 120);
+        let y = at(&app, ids[&slab]).y;
+        assert!((y - 3.0).abs() < 0.1, "held at {y}");
+    }
+
+    #[test]
+    fn a_joint_past_its_break_force_lets_go_and_says_so() {
+        let mut p = super::tests::project();
+        let load = add(&mut p, "Load", [0.0, 5.0, 0.0]);
+        body(&mut p, &load, RigidbodySpec::default(), vec![ball()]);
+        let mut spec = ConstraintSpec::of(ConstraintKind::Fixed, Mode::ThreeD);
+        spec.name = "bolt".into();
+        spec.break_force = Some(2.0);
+        spec.break_message = "bolt broke".into();
+        constrain(&mut p, &load, spec);
+        let (mut app, ids) = start(&p);
+        run(&mut app, 120);
+        let status = joints::status(&load, "bolt").unwrap();
+        assert!(status.broken, "{status:?}");
+        assert!(at(&app, ids[&load]).y < 4.0, "it fell once free");
+    }
+
+    #[test]
+    fn a_velocity_motor_turns_a_hinge_and_a_statement_changes_it() {
+        let mut p = super::tests::project();
+        let wheel = add(&mut p, "Wheel", [0.0, 5.0, 0.0]);
+        body(&mut p, &wheel, weightless(), vec![ball()]);
+        let mut spec = ConstraintSpec::of(ConstraintKind::Hinge, Mode::ThreeD);
+        spec.name = "axle".into();
+        spec.axis = [0.0, 0.0, 1.0];
+        spec.motor = Motor {
+            mode: MotorMode::Velocity,
+            target: 90.0,
+            damping: 50.0,
+            ..Motor::default()
+        };
+        constrain(&mut p, &wheel, spec);
+        let (mut app, _ids) = start(&p);
+        run(&mut app, 60);
+        let turned = joints::status(&wheel, "axle").unwrap().position;
+        assert!(turned.abs() > 30.0, "turned {turned}");
+        // Reverse it: the statement queues and the next tick applies it.
+        joints::run_op(&wheel, "motor speed|axle", -90.0).unwrap();
+        run(&mut app, 120);
+        let back = joints::status(&wheel, "axle").unwrap();
+        assert!(back.speed < 0.0 || back.position < turned, "{back:?}");
+    }
+
+    #[test]
+    fn a_limited_hinge_stops_at_its_limit() {
+        let mut p = super::tests::project();
+        let door = add(&mut p, "Door", [1.0, 5.0, 0.0]);
+        body(&mut p, &door, RigidbodySpec::default(), vec![ball()]);
+        let mut spec = ConstraintSpec::of(ConstraintKind::Hinge, Mode::ThreeD);
+        spec.name = "hinge".into();
+        spec.anchor = [-1.0, 0.0, 0.0];
+        spec.axis = [0.0, 0.0, 1.0];
+        spec.limit = Limit {
+            enabled: true,
+            min: -30.0,
+            max: 30.0,
+        };
+        constrain(&mut p, &door, spec);
+        let (mut app, _ids) = start(&p);
+        run(&mut app, 240);
+        let angle = joints::status(&door, "hinge").unwrap().position;
+        assert!(angle.abs() < 35.0 && angle.abs() > 20.0, "angle {angle}");
     }
 }

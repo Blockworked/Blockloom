@@ -23,6 +23,7 @@ TestCase {
     Component { id: motorFactory; Editor.CharacterMotorForm { app: stubApp; actorId: "a1" } }
     Component { id: cameraFactory; Editor.PlayerCameraForm { app: stubApp; actorId: "a1" } }
     Component { id: setupFactory; Editor.PlayerSetupCard { app: stubApp; actorId: "a1" } }
+    Component { id: constraintFactory; Editor.ConstraintForm { app: stubApp; actorId: "a1" } }
     Component { id: controllerFactory; Editor.CharacterControllerForm { app: stubApp; actorId: "a1" } }
 
     function init() { calls = []; results = ({}); }
@@ -185,5 +186,53 @@ TestCase {
         card.convert = true;
         card.apply();
         compare(last().args.convert, true);
+    }
+
+    function test_aBlankConstraintShowsItsDefaults() {
+        const form = createTemporaryObject(constraintFactory, test, { component: { component: "Constraint", constraint: { id: "k1", kind: "Hinge" } } });
+        compare(form.k.kind, "Hinge");
+        compare(form.k.enabled, true);
+        compare(form.k.auto_configure, true);
+        compare(form.hasMotor, true);
+        compare(form.hasAxis, true);
+    }
+    function test_aConstraintEditSendsTheWholeSpecWithItsId() {
+        const form = createTemporaryObject(constraintFactory, test, { component: { component: "Constraint", constraint: { id: "k1", name: "door", kind: "Hinge", break_force: 50 } } });
+        form.writeIn("limit", { enabled: true, min: -30, max: 90 });
+        compare(last().command, "set_constraint");
+        compare(last().args.constraint.id, "k1");
+        compare(last().args.constraint.name, "door");
+        compare(last().args.constraint.break_force, 50);
+        compare(last().args.constraint.limit.max, 90);
+        compare(last().args.constraint.motor.mode, "Off");
+    }
+    function test_aBreakThresholdOfZeroMeansItNeverBreaks() {
+        const form = createTemporaryObject(constraintFactory, test, { component: { constraint: { id: "k1", kind: "Fixed", break_force: 10 } } });
+        form.write({ break_force: form.threshold(0) });
+        compare(last().args.constraint.break_force, null);
+        form.write({ break_torque: form.threshold(5) });
+        compare(last().args.constraint.break_torque, 5);
+    }
+    function test_theTargetListHasTheWorldAndEveryOtherActor() {
+        stubApp.appState = { project: { physics: { layers: { names: [] } }, actors: [{ id: "a1", name: "Door" }, { id: "a2", name: "Frame" }] } };
+        const form = createTemporaryObject(constraintFactory, test, { component: { constraint: { kind: "Fixed" } } });
+        compare(form.targetChoices.length, 2);
+        compare(form.targetChoices[0].label, "The world");
+        compare(form.targetChoices[1].value, "a2");
+        stubApp.appState = { project: { physics: { layers: { names: ["Ground", "Player"] } } } };
+    }
+    function test_twoDimensionalConstraintsHaveNoBallOrAxis() {
+        const form = createTemporaryObject(constraintFactory, test, { component: { constraint: { kind: "Hinge" } }, is3d: false });
+        compare(form.hasAxis, false);
+        verify(form.kindChoices.every(c => c.value !== "Ball"));
+        compare(form.kindChoices.length, 7);
+    }
+    function test_onlyDrivenKindsOfferAMotor() {
+        const spring = createTemporaryObject(constraintFactory, test, { component: { constraint: { kind: "Spring" } } });
+        compare(spring.hasMotor, false);
+        compare(spring.hasLimit, true);
+        const rope = createTemporaryObject(constraintFactory, test, { component: { constraint: { kind: "Distance" } } });
+        compare(rope.hasMotor, false);
+        compare(rope.hasLimit, false);
     }
 }

@@ -8,7 +8,8 @@
 use std::collections::HashSet;
 
 use super::controller::CharacterControllerSpec;
-use super::ids::{ColliderId, ComponentId};
+use super::ids::{ColliderId, ComponentId, ConstraintId};
+use super::joints::ConstraintSpec;
 use super::material::MaterialLibrary;
 use super::migrate::shape_from_look;
 use super::motor::CharacterMotorSpec;
@@ -36,6 +37,13 @@ impl Scene {
         self.actors
             .iter()
             .find(|a| a.components.collider(id).is_some())
+    }
+
+    /// The actor that carries constraint `id`.
+    pub fn constraint_actor(&self, id: &ConstraintId) -> Option<&Actor> {
+        self.actors
+            .iter()
+            .find(|a| a.components.constraint(id).is_some())
     }
 
     fn collider_in_use(&self, id: &ColliderId) -> bool {
@@ -131,6 +139,63 @@ impl Scene {
         let touched = vec![id.to_string()];
         self.transact(&actor_id, &touched, library, |components| {
             components.remove_collider(id);
+            Ok(())
+        })?;
+        Ok(actor_id)
+    }
+
+    /// Adds a constraint to `actor_id`. An empty id gets a fresh one; an id
+    /// already used in the scene is refused.
+    pub fn add_constraint(
+        &mut self,
+        actor_id: &str,
+        mut spec: ConstraintSpec,
+        library: &MaterialLibrary,
+    ) -> Result<ConstraintId, String> {
+        if spec.id.is_empty() {
+            spec.id = ConstraintId::generate();
+        }
+        if self.constraint_actor(&spec.id).is_some() {
+            return Err(format!("Constraint id \"{}\" is already in use", spec.id));
+        }
+        let id = spec.id.clone();
+        let touched = vec![id.to_string()];
+        self.transact(actor_id, &touched, library, |components| {
+            components.insert(ActorComponent::Constraint { constraint: spec });
+            Ok(())
+        })?;
+        Ok(id)
+    }
+
+    /// Replaces the constraint whose id is `spec.id`, in place.
+    pub fn set_constraint(
+        &mut self,
+        spec: ConstraintSpec,
+        library: &MaterialLibrary,
+    ) -> Result<(), String> {
+        let Some(actor) = self.constraint_actor(&spec.id) else {
+            return Err(format!("No constraint with id \"{}\"", spec.id));
+        };
+        let actor_id = actor.id.clone();
+        let touched = vec![spec.id.to_string()];
+        self.transact(&actor_id, &touched, library, |components| {
+            components.insert(ActorComponent::Constraint { constraint: spec });
+            Ok(())
+        })
+    }
+
+    /// Removes a constraint; returns the actor it was on.
+    pub fn remove_constraint(
+        &mut self,
+        id: &ConstraintId,
+        library: &MaterialLibrary,
+    ) -> Result<String, String> {
+        let Some(actor) = self.constraint_actor(id) else {
+            return Err(format!("No constraint with id \"{id}\""));
+        };
+        let actor_id = actor.id.clone();
+        self.transact(&actor_id, &[id.to_string()], library, |components| {
+            components.remove_constraint(id);
             Ok(())
         })?;
         Ok(actor_id)
@@ -333,6 +398,7 @@ impl Scene {
     pub fn normalize_physics_ids(&mut self) -> usize {
         let mut seen_colliders = HashSet::new();
         let mut seen_bodies = HashSet::new();
+        let mut seen_constraints = HashSet::new();
         let mut changed = 0;
         for actor in &mut self.actors {
             for component in actor.components.iter_mut() {
@@ -342,6 +408,19 @@ impl Scene {
                             collider.id = loop {
                                 let fresh = ColliderId::generate();
                                 if seen_colliders.insert(fresh.clone()) {
+                                    break fresh;
+                                }
+                            };
+                            changed += 1;
+                        }
+                    }
+                    ActorComponent::Constraint { constraint } => {
+                        if constraint.id.is_empty()
+                            || !seen_constraints.insert(constraint.id.clone())
+                        {
+                            constraint.id = loop {
+                                let fresh = ConstraintId::generate();
+                                if seen_constraints.insert(fresh.clone()) {
                                     break fresh;
                                 }
                             };
@@ -377,6 +456,9 @@ impl Actor {
             match component {
                 ActorComponent::Collider { collider } => collider.id = ColliderId::generate(),
                 ActorComponent::Rigidbody { rigidbody } => rigidbody.id = ComponentId::generate(),
+                ActorComponent::Constraint { constraint } => {
+                    constraint.id = ConstraintId::generate()
+                }
                 _ => {}
             }
         }

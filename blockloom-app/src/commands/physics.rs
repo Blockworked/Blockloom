@@ -16,11 +16,12 @@ use blockloom_core::physics::controller::CharacterControllerSpec;
 use blockloom_core::physics::cook::{
     CollisionLookup, CookControl, Decompose, FolderCollision, NoCollisionData, Source, cook_project,
 };
+use blockloom_core::physics::joints::ConstraintSpec;
 use blockloom_core::physics::motor::CharacterMotorSpec;
 use blockloom_core::physics::presets::{PlayerPreset, PlayerProfile};
 use blockloom_core::physics::{
-    ColliderId, ColliderSpec, CompatibilityProfile, MaterialBody, MaterialLibrary, MaterialRef,
-    PhysicsOwnership, RigidbodySpec, Severity, meta,
+    ColliderId, ColliderSpec, CompatibilityProfile, ConstraintId, MaterialBody, MaterialLibrary,
+    MaterialRef, PhysicsOwnership, RigidbodySpec, Severity, meta,
 };
 use blockloom_core::project::{Project, Scene};
 use blockloom_core::scene::Mode;
@@ -122,6 +123,72 @@ pub(crate) fn remove_collider(
             scene.remove_collider(&ColliderId::from(collider_id.as_str()), library)
         })
     })
+}
+
+pub(crate) fn add_constraint(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    constraint: ConstraintSpec,
+) -> Result<String, String> {
+    edit(state, app, None, |project| {
+        with_scene(project, |scene, library| {
+            scene
+                .add_constraint(&actor_id, constraint, library)
+                .map(|id| id.to_string())
+        })
+    })
+}
+
+pub(crate) fn set_constraint(
+    state: &SharedState,
+    app: &AppHandle,
+    constraint: ConstraintSpec,
+) -> Result<(), String> {
+    let session = Some(format!("physics-constraint:{}", constraint.id));
+    edit(state, app, session, |project| {
+        with_scene(project, |scene, library| {
+            scene.set_constraint(constraint, library)
+        })
+    })
+}
+
+pub(crate) fn remove_constraint(
+    state: &SharedState,
+    app: &AppHandle,
+    constraint_id: String,
+) -> Result<String, String> {
+    edit(state, app, None, |project| {
+        with_scene(project, |scene, library| {
+            scene.remove_constraint(&ConstraintId::from(constraint_id.as_str()), library)
+        })
+    })
+}
+
+/// `list-constraints`: every constraint of the active scene (or of one actor)
+/// with the name blocks use for it.
+pub(crate) fn list_constraints(
+    state: &SharedState,
+    actor_id: Option<String>,
+) -> Result<Value, String> {
+    let s = lock(state)?;
+    let project = s.project().ok_or("No project is open")?;
+    let scene = project.active_scene();
+    let mut out = Vec::new();
+    for actor in &scene.actors {
+        if actor_id.as_deref().is_some_and(|id| id != actor.id) {
+            continue;
+        }
+        for (index, constraint) in actor.components.constraints().enumerate() {
+            out.push(json!({
+                "actorId": actor.id,
+                "actor": actor.name,
+                "handle": constraint.handle(index),
+                "constraint": constraint,
+            }));
+        }
+    }
+    Ok(Value::Array(out))
 }
 
 pub(crate) fn fit_collider_to_look(
@@ -711,6 +778,10 @@ pub(crate) fn refuse_generic(component: &ActorComponent) -> Result<(), String> {
         ActorComponent::CharacterMotor { .. } => {
             Err("Use set-character-motor for a CharacterMotor".to_string())
         }
+        ActorComponent::Constraint { .. } => Err(
+            "Use add-constraint and set-constraint for constraints: they are addressed by id"
+                .to_string(),
+        ),
         _ => Ok(()),
     }
 }

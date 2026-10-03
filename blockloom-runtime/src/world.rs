@@ -3512,6 +3512,7 @@ pub fn apply_lifetimes(
                     continue;
                 };
                 copy.id = clone.clone();
+                copy.refresh_physics_ids();
                 if let Some(entity) = engine.entities.get(of).copied() {
                     if let Ok(transform) = transforms.get(entity) {
                         let stretch = copy.placement().stretch;
@@ -3685,6 +3686,20 @@ fn spawn_runtime_actor(
         engine.parents.insert(actor.id.clone(), parent.to_string());
     }
     engine.entities.insert(actor.id.clone(), entity);
+    // Its colliders, body and constraints, installed the way a rebuild would.
+    let targets: Vec<Actor> = actor
+        .components
+        .constraints()
+        .filter(|c| !c.target.is_empty())
+        .filter_map(|c| engine.actor(&c.target).cloned())
+        .collect();
+    crate::physics_install::install_actor(
+        commands,
+        &engine.project,
+        &actor,
+        &targets,
+        &engine.entities,
+    );
     // A scripted actor's library is opened here rather than when the world
     // was built, because this one didn't exist then.
     open_script_for(engine, &actor);
@@ -4125,6 +4140,13 @@ pub fn report_status(
                 unit: "count".into(),
             });
         }
+    }
+    for (name, value) in crate::physics_debug::metrics() {
+        render_metrics.push(RenderMetric {
+            name: name.into(),
+            value,
+            unit: if name.ends_with("_ms") { "ms" } else { "count" }.into(),
+        });
     }
     for (name, value) in crate::plugins::report(&mut engine) {
         render_metrics.push(RenderMetric {

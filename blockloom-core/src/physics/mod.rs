@@ -17,6 +17,7 @@ pub mod cook;
 pub mod edit;
 pub mod geometry;
 pub mod ids;
+pub mod joints;
 pub mod layers;
 pub mod material;
 pub mod meta;
@@ -35,7 +36,11 @@ pub use contacts::{
     ContactTracker, Endpoint, ExitReason,
 };
 pub use cook::{CollisionLookup, CookSettings, Cooked, MeshKind};
-pub use ids::{ColliderId, ComponentId};
+pub use ids::{ColliderId, ComponentId, ConstraintId};
+pub use joints::{
+    AxisMode, ConstraintKind, ConstraintPlan, ConstraintSpec, JointCommand, JointStatus, JointVerb,
+    Limit, Motor, MotorMode, SpringSpec,
+};
 pub use layers::{ColliderFilter, LayerSettings, layer_bit, needs_exact, pair_collides};
 pub use material::{
     CombineMode, MaterialBody, MaterialDef, MaterialLibrary, MaterialOverrides, MaterialRef,
