@@ -69,6 +69,67 @@ class PackageTests(unittest.TestCase):
             self.assertFalse((root / "destination/skip.o").exists())
             self.assertFalse((root / "destination/nested/skip.cpp.o").exists())
 
+    def test_framework_root_selects_outermost_bundle(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / "editor"
+            bundle = directory / "lib" / "Foo.framework"
+            inner = bundle / "Versions" / "A" / "Foo"
+            top = bundle / "Foo"
+            plain = directory / "lib" / "libplain.dylib"
+            self.assertEqual(packaging.framework_root(inner, directory), bundle)
+            self.assertEqual(packaging.framework_root(top, directory), bundle)
+            self.assertIsNone(packaging.framework_root(plain, directory))
+            self.assertIsNone(packaging.framework_root(bundle / ".." / "other", root / "elsewhere"))
+
+    def test_deploy_qt_signs_frameworks_as_bundles(self):
+        import struct
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            header = (b"\xcf\xfa\xed\xfe" + struct.pack("<III", 0x0100000C, 2, 2) + b"\x00" * 16)
+            libs = root / "qtlib"
+            (libs / "Foo.framework" / "Versions" / "A").mkdir(parents=True)
+            (libs / "Foo.framework" / "Versions" / "A" / "Foo").write_bytes(header)
+            (libs / "Foo.framework" / "Foo").write_bytes(header)
+            (libs / "libplain.dylib").write_bytes(header)
+            plugins = root / "qtplugins"
+            plugins.mkdir()
+            (plugins / "libqcocoa.dylib").write_bytes(header)
+            qml = root / "qtqml"
+            qml.mkdir()
+            queries = {"QT_INSTALL_PLUGINS": plugins, "QT_INSTALL_QML": qml, "QT_INSTALL_LIBS": libs}
+            directory = root / "editor"
+            directory.mkdir()
+            calls = []
+
+            def check_output(cmd, text=False):
+                if cmd[1] == "-query":
+                    return str(queries[cmd[2]])
+                if cmd[0] == "otool" and cmd[1] == "-L":
+                    return cmd[2] + ":\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n"
+                if cmd[0] == "otool" and cmd[1] == "-l":
+                    return ""
+                raise AssertionError(cmd)
+
+            def run(cmd, check=False):
+                calls.append(cmd)
+
+            with patch.object(packaging.subprocess, "check_output", side_effect=check_output), \
+                    patch.object(packaging.subprocess, "run", side_effect=run), \
+                    patch.object(packaging.sys, "platform", "darwin"):
+                packaging.deploy_qt(directory, "qmake")
+            signed = [cmd[-1] for cmd in calls if cmd[0] == "codesign"]
+            bundle = str(directory / "lib" / "Foo.framework")
+            self.assertEqual(signed.count(bundle), 1)
+            for target in signed:
+                self.assertFalse(target.endswith("Foo.framework/Foo"))
+                self.assertFalse(target.endswith("Versions/A/Foo"))
+            self.assertIn(str(directory / "lib" / "libplain.dylib"), signed)
+            self.assertIn(str(directory / "plugins" / "libqcocoa.dylib"), signed)
+            patched = [cmd[-1] for cmd in calls if cmd[0] == "install_name_tool"]
+            self.assertIn(str(directory / "lib" / "Foo.framework" / "Versions" / "A" / "Foo"), patched)
+            self.assertTrue((directory / "qt.conf").is_file())
+
     def test_ci_profiles_and_no_system_install(self):
         for shipping in (False, True):
             for component in ("editor", "native", "web"):

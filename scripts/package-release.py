@@ -99,6 +99,24 @@ def existing_rpaths(path):
     return found
 
 
+def framework_root(path, directory):
+    """Return the outermost .framework bundle containing path, or None.
+
+    Codesign refuses to sign a framework's inner binary on its own (the
+    bundle format is ambiguous), so callers sign the bundle directory
+    instead once its binaries are patched.
+    """
+    root = None
+    for parent in Path(path).parents:
+        try:
+            parent.relative_to(directory)
+        except ValueError:
+            break
+        if parent.suffix == ".framework":
+            root = parent
+    return root
+
+
 def deploy_qt(directory, qmake):
     def query(name):
         return Path(subprocess.check_output([qmake, "-query", name], text=True).strip())
@@ -118,6 +136,7 @@ def deploy_qt(directory, qmake):
                 copy_tree(file, output / file.name)
             elif ".so" in file.name or file.suffix == ".dylib":
                 shutil.copy2(file, output / file.name)
+        frameworks = set()
         for file in directory.rglob("*"):
             if not file.is_file() or file.is_symlink():
                 continue
@@ -150,7 +169,15 @@ def deploy_qt(directory, qmake):
                 wanted = f"@loader_path/{relative}"
                 if wanted not in existing_rpaths(file):
                     subprocess.run(["install_name_tool", "-add_rpath", wanted, str(file)], check=True)
+                root = framework_root(file, directory)
+                if root is not None:
+                    # Signing the inner binary directly fails with
+                    # "bundle format is ambiguous"; the bundle is signed below.
+                    frameworks.add(root)
+                    continue
                 subprocess.run(["codesign", "--force", "--sign", "-", str(file)], check=True)
+        for framework in sorted(frameworks):
+            subprocess.run(["codesign", "--force", "--sign", "-", str(framework)], check=True)
     (directory / "qt.conf").write_text("[Paths]\nPrefix=.\nLibraries=lib\nPlugins=plugins\nQmlImports=qml\n", encoding="utf-8")
 
 
