@@ -17,6 +17,7 @@ use blockloom_core::physics::cook::{
     CollisionLookup, CookControl, Decompose, FolderCollision, NoCollisionData, Source, cook_project,
 };
 use blockloom_core::physics::motor::CharacterMotorSpec;
+use blockloom_core::physics::presets::{PlayerPreset, PlayerProfile};
 use blockloom_core::physics::{
     ColliderId, ColliderSpec, CompatibilityProfile, MaterialBody, MaterialLibrary, MaterialRef,
     PhysicsOwnership, RigidbodySpec, Severity, meta,
@@ -511,6 +512,176 @@ pub(crate) fn physics_properties() -> Value {
     })
 }
 
+fn preset_named(word: &str) -> Result<PlayerPreset, String> {
+    PlayerPreset::parse(word).ok_or_else(|| {
+        let all: Vec<&str> = PlayerPreset::ALL.iter().map(|p| p.name()).collect();
+        format!("Unknown player preset \"{word}\"; use {}", all.join(", "))
+    })
+}
+
+/// `preview-player-preset`: what a preset would add, replace and convert on
+/// an actor. Nothing is changed.
+pub(crate) fn preview_player_preset(
+    state: &SharedState,
+    actor_id: String,
+    preset: String,
+) -> Result<Value, String> {
+    let preset = preset_named(&preset)?;
+    let s = lock(state)?;
+    let project = s.project().ok_or("No project is open")?;
+    let preview = project
+        .active_scene()
+        .preview_player_preset(&actor_id, preset);
+    serde_json::to_value(preview).map_err(|e| e.to_string())
+}
+
+/// `apply-player-preset`: installs a preset as one undo step. An actor that
+/// already moves some other way needs `convert`.
+pub(crate) fn apply_player_preset(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    preset: String,
+    convert: bool,
+) -> Result<Value, String> {
+    let preset = preset_named(&preset)?;
+    let preview = edit(state, app, None, |project| {
+        with_scene(project, |scene, library| {
+            scene.apply_player_preset(&actor_id, preset, convert, library)
+        })
+    })?;
+    serde_json::to_value(preview).map_err(|e| e.to_string())
+}
+
+/// Where a project keeps its saved player profiles.
+fn profile_dir(state: &SharedState) -> Result<std::path::PathBuf, String> {
+    let s = lock(state)?;
+    let dir = s.project_dir().ok_or("No project is open")?;
+    Ok(dir.join("assets").join("profiles"))
+}
+
+/// A profile's file stem: letters, digits, spaces, dashes and underscores.
+fn profile_stem(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+    {
+        return Err(
+            "A profile name uses letters, digits, spaces, dashes and underscores".to_string(),
+        );
+    }
+    Ok(name.to_string())
+}
+
+fn profile_path(state: &SharedState, name: &str) -> Result<std::path::PathBuf, String> {
+    Ok(profile_dir(state)?.join(format!("{}.profile.json", profile_stem(name)?)))
+}
+
+/// `save-player-profile`: writes an actor's controller, motor, camera and
+/// input actions to `assets/profiles/<name>.profile.json`.
+pub(crate) fn save_player_profile(
+    state: &SharedState,
+    actor_id: String,
+    name: String,
+) -> Result<String, String> {
+    let path = profile_path(state, &name)?;
+    let profile = {
+        let s = lock(state)?;
+        let project = s.project().ok_or("No project is open")?;
+        PlayerProfile::capture(project.active_scene(), &actor_id, name.trim())?
+    };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(&profile).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    Ok(format!(
+        "assets/profiles/{}",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+    ))
+}
+
+/// `list-player-profiles`: the saved profiles, with the dimension each suits.
+pub(crate) fn list_player_profiles(state: &SharedState) -> Result<Value, String> {
+    let dir = profile_dir(state)?;
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(stem) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix(".profile.json"))
+            else {
+                continue;
+            };
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            match serde_json::from_str::<PlayerProfile>(&text) {
+                Ok(profile) => out.push(json!({
+                    "name": stem,
+                    "mode": profile.mode,
+                    "version": profile.version,
+                    "valid": true,
+                })),
+                Err(why) => {
+                    out.push(json!({"name": stem, "valid": false, "error": why.to_string()}))
+                }
+            }
+        }
+    }
+    out.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    Ok(Value::Array(out))
+}
+
+/// `apply-player-profile`: installs a saved profile on an actor as one undo
+/// step.
+pub(crate) fn apply_player_profile(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    name: String,
+    convert: bool,
+) -> Result<Value, String> {
+    let path = profile_path(state, &name)?;
+    let text = std::fs::read_to_string(&path)
+        .map_err(|_| format!("No saved profile called \"{}\"", name.trim()))?;
+    let profile: PlayerProfile =
+        serde_json::from_str(&text).map_err(|e| format!("The profile is unreadable: {e}"))?;
+    let preview = edit(state, app, None, |project| {
+        with_scene(project, |scene, library| {
+            profile.apply(scene, &actor_id, convert, library)
+        })
+    })?;
+    serde_json::to_value(preview).map_err(|e| e.to_string())
+}
+
+/// `import-player-profile`: copies a profile file from another project into
+/// this one, checking it reads first.
+pub(crate) fn import_player_profile(state: &SharedState, path: String) -> Result<String, String> {
+    let source = std::path::PathBuf::from(&path);
+    let text = std::fs::read_to_string(&source).map_err(|e| format!("Can't read {path}: {e}"))?;
+    let profile: PlayerProfile =
+        serde_json::from_str(&text).map_err(|e| format!("That is not a player profile: {e}"))?;
+    let target = profile_path(state, &profile.name)?;
+    if let Some(dir) = target.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    if target.exists() {
+        return Err(format!(
+            "This project already has a profile called \"{}\"; rename one first",
+            profile.name
+        ));
+    }
+    std::fs::write(&target, text).map_err(|e| e.to_string())?;
+    Ok(profile.name)
+}
+
 /// `physics-migration-preview`: what converting each legacy `Body` would
 /// store. Nothing is changed; the runtime still reads `Body`.
 pub(crate) fn physics_migration_preview(state: &SharedState) -> Result<Value, String> {
@@ -536,6 +707,9 @@ pub(crate) fn refuse_generic(component: &ActorComponent) -> Result<(), String> {
         ActorComponent::Rigidbody { .. } => Err("Use set-rigidbody for a Rigidbody".to_string()),
         ActorComponent::CharacterController { .. } => {
             Err("Use set-character-controller for a CharacterController".to_string())
+        }
+        ActorComponent::CharacterMotor { .. } => {
+            Err("Use set-character-motor for a CharacterMotor".to_string())
         }
         _ => Ok(()),
     }

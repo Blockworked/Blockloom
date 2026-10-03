@@ -1484,6 +1484,90 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[A],
     },
     CommandSpec {
+        name: "preview-player-preset",
+        cmd: "preview_player_preset",
+        aliases: &[],
+        summary: "What a player preset would add, replace or convert on an actor, and why it might be refused. Changes nothing. Presets: first-person-3d, third-person-3d, top-down-3d, platformer-2d, top-down-2d.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "preset",
+                ty: "first-person-3d|third-person-3d|top-down-3d|platformer-2d|top-down-2d",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "apply-player-preset",
+        cmd: "apply_player_preset",
+        aliases: &[],
+        summary: "Make an actor a playable character in one undoable step: a visual if it has none, a CharacterController, a CharacterMotor, the Camera and PlayerCamera, and the standard Move, Look, Jump, Sprint, Crouch and Interact actions. An actor that already moves another way (a dynamic Rigidbody, a legacy Body) needs convert=true.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "preset",
+                ty: "first-person-3d|third-person-3d|top-down-3d|platformer-2d|top-down-2d",
+                required: true,
+            },
+            ArgSpec {
+                name: "convert",
+                ty: "bool",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "save-player-profile",
+        cmd: "save_player_profile",
+        aliases: &[],
+        summary: "Save an actor's controller, motor, camera and input actions as assets/profiles/<name>.profile.json, to reuse here or in another project. Answers the file's project path.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "list-player-profiles",
+        cmd: "list_player_profiles",
+        aliases: &[],
+        summary: "The player profiles saved in this project.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "apply-player-profile",
+        cmd: "apply_player_profile",
+        aliases: &[],
+        summary: "Install a saved player profile on an actor as one undoable step. Input actions the project already has keep their own bindings.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "convert",
+                ty: "bool",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "import-player-profile",
+        cmd: "import_player_profile",
+        aliases: &[],
+        summary: "Copy a profile file from another project into this one. Answers the profile's name.",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "file path",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "set-physics-profile",
         cmd: "set_physics_profile",
         aliases: &[],

@@ -31,7 +31,6 @@ use bevy::window::CursorGrabMode;
 #[cfg(target_os = "android")]
 use bevy::window::Ime;
 use bevy::window::{CursorOptions, PrimaryWindow, WindowFocused};
-use blockloom_core::components::CameraView;
 use blockloom_core::input::{ActionSense, LiveInput, normalize_pad_axis, normalize_pad_button};
 use blockloom_core::nav;
 use blockloom_core::project::Actor;
@@ -2959,62 +2958,98 @@ pub fn drive_camera(
     engine: NonSend<Engine>,
     dimension: Res<Dimension>,
     editor: Option<Res<crate::edit::SceneEditor>>,
-    rigs: Query<(&CameraRig, &Transform), Without<WorldCamera>>,
-    mut cameras: Query<(&mut Transform, Option<&mut Projection>), With<WorldCamera>>,
+    time: Res<Time>,
+    mut wheel: MessageReader<MouseWheel>,
+    // The query service reads every Transform, so the camera's write is a separate set member.
+    mut sets: ParamSet<(
+        crate::queries::QueryAccess,
+        Query<(&mut Transform, Option<&mut Projection>), With<WorldCamera>>,
+    )>,
+    mut facing: ResMut<crate::player_camera::BodyFacing>,
+    mut state: Local<crate::player_camera::RigState>,
+    mut rigs: Query<(&mut CameraRig, &Transform, Option<&ActorId>), Without<WorldCamera>>,
 ) {
+    // Scroll is read every frame so none queues up behind a held-off camera.
+    let scroll: f32 = wheel
+        .read()
+        .map(|w| match w.unit {
+            MouseScrollUnit::Line => w.y,
+            MouseScrollUnit::Pixel => w.y / 40.0,
+        })
+        .sum();
     // The scene view flies the camera itself.
     if editor.is_some_and(|editor| crate::edit::editing(&engine, &editor)) {
         return;
     }
-    let Some((rig, target)) = rigs.iter().next() else {
+    let Some((mut rig, target, id)) = rigs.iter_mut().next() else {
         return;
     };
+    let id = id.map_or("", |id| id.0.as_str());
+    let Ok(live) = sets.p1().single_mut().map(|(t, _)| *t) else {
+        return;
+    };
+    let spec = engine
+        .actor(id)
+        .and_then(|actor| actor.components.player_camera().copied())
+        .filter(|spec| spec.enabled);
+    facing.0.clear();
+    let mut next = live;
+    let dt = time.delta_secs();
+    let mode = dimension.0;
+    match (&spec, mode) {
+        (Some(spec), Mode::TwoD) => {
+            crate::player_camera::follow_2d(spec, &mut state, &rig.0, target, &mut next, dt, id);
+            write_camera(&mut sets.p1(), next, None);
+            return;
+        }
+        (None, Mode::TwoD) => {
+            let offset = Vec3::from(rig.0.offset);
+            next.translation = Vec3::new(
+                target.translation.x + offset.x,
+                target.translation.y + offset.y,
+                next.translation.z,
+            );
+            write_camera(&mut sets.p1(), next, None);
+            return;
+        }
+        _ => {}
+    }
+    let live_rig = rig.0;
+    let mut edited = live_rig;
+    let access = sets.p0();
+    crate::player_camera::pose_3d(
+        &engine,
+        &access,
+        spec.as_ref(),
+        &mut state,
+        &mut edited,
+        target,
+        id,
+        scroll,
+        dt,
+        &mut next,
+        &mut facing,
+    );
+    if edited != live_rig {
+        rig.0 = edited;
+    }
+    write_camera(&mut sets.p1(), next, Some(edited.fov));
+}
+
+/// Lays the camera's pose (and its field of view, when the rig owns it) on the world camera.
+fn write_camera(
+    cameras: &mut Query<(&mut Transform, Option<&mut Projection>), With<WorldCamera>>,
+    next: Transform,
+    fov: Option<f32>,
+) {
     let Ok((mut live, projection)) = cameras.single_mut() else {
         return;
     };
-    // Written only when it moves, so a still camera stays unchanged.
-    let mut next = *live;
-    let camera = &mut next;
-    let rig = rig.0;
-    let offset = Vec3::from(rig.offset);
-    if let Mode::TwoD = dimension.0 {
-        camera.translation = Vec3::new(
-            target.translation.x + offset.x,
-            target.translation.y + offset.y,
-            camera.translation.z,
-        );
-        live.set_if_neq(next);
-        return;
-    }
-    // The offset is in the actor's own frame, so an eye stays on its head
-    // however the actor is turned.
-    let pivot = target.translation + target.rotation * offset;
-    match rig.view {
-        CameraView::FirstPerson => {
-            camera.translation = pivot;
-            // Yaw from the body, pitch from the rig: the FPS composition,
-            // where turning the body never weakens looking up and down.
-            camera.rotation = target.rotation * Quat::from_rotation_x(rig.pitch.to_radians());
-        }
-        CameraView::ThirdPerson => {
-            let pitch = rig.pitch.to_radians();
-            let back = -forward_of(target, Mode::ThreeD) * rig.distance * pitch.cos();
-            camera.translation = pivot + back + Vec3::Y * rig.distance * pitch.sin();
-            camera.look_at(pivot, Vec3::Y);
-        }
-        CameraView::Follow => {
-            let settings = &engine.project.world.camera;
-            let boom = Vec3::from(settings.position) - Vec3::from(settings.look_at);
-            camera.translation = target.translation + boom;
-            camera.look_at(target.translation, Vec3::Y);
-        }
-    }
     live.set_if_neq(next);
-    if dimension.0 == Mode::ThreeD
-        && let Some(mut projection) = projection
+    if let (Some(fov), Some(mut projection)) = (fov, projection)
         && let Projection::Perspective(perspective) = projection.as_mut()
     {
-        perspective.fov = rig.fov.clamp(30.0, 110.0).to_radians();
+        perspective.fov = fov.clamp(30.0, 110.0).to_radians();
     }
 }
 
@@ -4462,7 +4497,13 @@ pub fn apply_cursor_lock(
     let wanted = engine.wants_cursor_locked;
     if !engine.running {
         engine.wants_cursor_locked = false;
+        engine.look_lock_offered = false;
     } else {
+        // A look camera takes the pointer once per run; a block can free it.
+        if !engine.look_lock_offered && crate::player_camera::wants_lock(&engine) {
+            engine.look_lock_offered = true;
+            engine.wants_cursor_locked = true;
+        }
         for effect in &effects.0 {
             if let Effect::SetMouseLocked { locked } = effect {
                 engine.wants_cursor_locked = *locked;
@@ -5093,6 +5134,9 @@ mod tests {
         let (_sender, incoming) = std::sync::mpsc::channel();
         let mut app = App::new();
         app.insert_resource(Dimension(mode));
+        app.init_resource::<Time>();
+        app.init_resource::<crate::player_camera::BodyFacing>();
+        app.add_message::<MouseWheel>();
         app.insert_non_send(Engine::new(incoming, mode));
         let camera = app
             .world_mut()

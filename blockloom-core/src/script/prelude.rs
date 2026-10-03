@@ -1935,6 +1935,71 @@ impl Actor {
         self.controller_number("grounded", 0) != 0.0
     }
 
+    /// Steers this actor's character motor: a direction, length 1 for full
+    /// speed. Needs a CharacterMotor owned by a script or an AI.
+    pub fn motor_steer(&self, x: f32, y: f32, z: f32) {
+        self.motor_op("intent", x, y, z);
+    }
+
+    /// Presses jump on this actor's motor.
+    pub fn motor_jump(&self) {
+        self.motor_op("jump", 0.0, 0.0, 0.0);
+    }
+
+    /// Lets go of jump, which cuts a rising jump short.
+    pub fn motor_release_jump(&self) {
+        self.motor_op("jump release", 0.0, 0.0, 0.0);
+    }
+
+    pub fn motor_sprint(&self, on: bool) {
+        self.motor_op(if on { "sprint on" } else { "sprint off" }, 0.0, 0.0, 0.0);
+    }
+
+    pub fn motor_crouch(&self, on: bool) {
+        self.motor_op(if on { "crouch on" } else { "crouch off" }, 0.0, 0.0, 0.0);
+    }
+
+    /// Knockback that fades by the motor's external drag.
+    pub fn motor_push(&self, x: f32, y: f32, z: f32) {
+        self.motor_op("push", x, y, z);
+    }
+
+    /// Clears every intent and the motor's speed.
+    pub fn motor_stop(&self) {
+        self.motor_op("stop", 0.0, 0.0, 0.0);
+    }
+
+    /// Changes one motor setting for the run: `"walk speed"`, `"jump
+    /// height"`, `"max jumps"`, `"air control"` and so on.
+    pub fn set_motor(&self, property: &str, value: f64) {
+        self.motor_op(&format!("set {property}"), value as f32, 0.0, 0.0);
+    }
+
+    fn motor_op(&self, op: &str, x: f32, y: f32, z: f32) {
+        let op = format!("motor {op}");
+        self.act(
+            ACT_CONTROLLER,
+            Str::borrow(&op),
+            Str::EMPTY,
+            Str::EMPTY,
+            x as f64,
+            y as f64,
+            z as f64,
+        );
+    }
+
+    /// A number from this actor's motor: `grounded`, `rising`, `falling`,
+    /// `landed`, `jumped`, `speed`, `vertical speed`, `jumps left`, `slope`,
+    /// `knockback` and more. Zero without a motor.
+    pub fn motor_number(&self, field: &str) -> f64 {
+        self.controller_number(&format!("motor {field}"), 0)
+    }
+
+    /// Words from this actor's motor: `state`, `support`, `owner`, `warning`.
+    pub fn motor_text(&self, field: &str) -> String {
+        self.controller_text(&format!("motor {field}"), 0)
+    }
+
     /// The same for a torque. A 2D body turns about z only.
     pub fn add_torque(&self, mode: &str, x: f32, y: f32, z: f32) {
         self.act(

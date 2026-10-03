@@ -52,7 +52,14 @@ Rectangle {
         if (c.component === "Collider") app.invoke("remove_collider", { colliderId: c.collider.id });
         else if (c.component === "Rigidbody") app.invoke("remove_rigidbody", { actorId: actor.id });
         else if (c.component === "CharacterController") app.invoke("remove_character_controller", { actorId: actor.id });
+        else if (c.component === "CharacterMotor") app.invoke("remove_character_motor", { actorId: actor.id });
         else remove(componentName(c));
+    }
+    function motor2dDefaults() {
+        const k = 48;
+        return { space: "World", walk_speed: 5 * k, sprint_speed: 8 * k, crouch_speed: 2.5 * k, ground_acceleration: 50 * k, ground_braking: 60 * k,
+                 air_acceleration: 15 * k, turn_speed: 0, terminal_fall_speed: 50 * k, ground_snap_distance: 0.3 * k, slide_speed: 6 * k,
+                 jump_height: 1.2 * k, crouch_height: 32, external_drag: 20 * k };
     }
     function copy(o) { return JSON.parse(JSON.stringify(o)); }
     function withIndex(array, index, value) { const next = array.slice(); next[index] = value; return next; }
@@ -349,7 +356,7 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Rigidbody","Collider","CharacterController","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
+        return ["Look","Render","Body","Rigidbody","Collider","CharacterController","CharacterMotor","PlayerCamera","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
             .filter(n => n !== "Sprite" || !is3d)
             .filter(n => n !== "Fracture" || is3d)
             .filter(n => n === "Custom" || n === "Collider" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }))
@@ -362,6 +369,7 @@ Rectangle {
         case "Body": return { component: "Body", physics: { body: "Dynamic", gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5, density: 1, mass: null, trigger: false, collision_layer: 1, collision_mask: 255 } };
         case "Joint": return { component: "Joint", joint: jointOf({}) };
         case "Brain": return { component: "Brain", brain: brainOf({}) };
+        case "PlayerCamera": return { component: "PlayerCamera", player_camera: is3d ? {} : { look: false, collision: false, smoothing: 0.15, dead_zone: [48, 32], look_ahead: 64 } };
         case "Camera": return { component: "Camera", camera: { view: "ThirdPerson", offset: [0, 0.6, 0], distance: 6, pitch: 15, fov: 75 } };
         case "Parent": return { component: "Parent", parent: "", offset: null };
         case "Material": return { component: "Material", material: materialOf({}) };
@@ -389,6 +397,7 @@ Rectangle {
         if (!actor) return;
         // A script needs a file on disk, so the backend makes both at once.
         if (name === "Script") { app.invoke("create_script", { actorId: actor.id }); return; }
+        if (name === "CharacterMotor") { app.invoke("set_character_motor", { actorId: actor.id, motor: is3d ? {} : motor2dDefaults() }); return; }
         if (name === "CharacterController") { app.invoke("set_character_controller", { actorId: actor.id, controller: is3d ? {} : { radius: 16, height: 64, step_offset: 12, skin_width: 2, min_move_distance: 0.05 } }); return; }
         if (name === "Rigidbody") { app.invoke("set_rigidbody", { actorId: actor.id, rigidbody: { body_type: "Dynamic" } }); return; }
         if (name === "Collider") {
@@ -444,6 +453,11 @@ Rectangle {
                             onEditingFinished: if (root.actor && text !== root.actor.name) root.app.invoke("rename_actor", { actorId: root.actor.id, name: text })
                         }
                     }
+                    PlayerSetupCard {
+                        Layout.fillWidth: true
+                        app: root.app; actorId: root.actor ? root.actor.id : ""; is3d: root.is3d
+                        isPlayer: !!root.actor && root.actor.components.some(c => c.component === "CharacterController")
+                    }
                     // A count rather than the array: a new snapshot with the same
                     // components updates the cards in place instead of rebuilding them.
                     Repeater {
@@ -459,7 +473,7 @@ Rectangle {
                             Loader {
                                 Layout.fillWidth: true
                                 readonly property var c: card.c
-                                sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Rigidbody: rigidbodyCard, Collider: colliderCard, CharacterController: controllerCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
+                                sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Rigidbody: rigidbodyCard, Collider: colliderCard, CharacterController: controllerCard, CharacterMotor: motorCard, PlayerCamera: playerCameraCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
                                                     Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard, Plugin: pluginCard })[card.c.component] || null
                             }
                         }
@@ -822,6 +836,20 @@ Rectangle {
     Component {
         id: controllerCard
         CharacterControllerForm {
+            readonly property var c: parent.c
+            app: root.app; actorId: root.actor ? root.actor.id : ""; component: c; is3d: root.is3d
+        }
+    }
+    Component {
+        id: playerCameraCard
+        PlayerCameraForm {
+            readonly property var c: parent.c
+            app: root.app; actorId: root.actor ? root.actor.id : ""; component: c; is3d: root.is3d
+        }
+    }
+    Component {
+        id: motorCard
+        CharacterMotorForm {
             readonly property var c: parent.c
             app: root.app; actorId: root.actor ? root.actor.id : ""; component: c; is3d: root.is3d
         }

@@ -496,6 +496,35 @@ impl Backend {
                 app,
                 arg(&args, "actorId")?,
             )?),
+            "preview_player_preset" => to_json(commands::physics::preview_player_preset(
+                state,
+                arg(&args, "actorId")?,
+                arg(&args, "preset")?,
+            )?),
+            "apply_player_preset" => to_json(commands::physics::apply_player_preset(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "preset")?,
+                arg(&args, "convert").unwrap_or_default(),
+            )?),
+            "save_player_profile" => to_json(commands::physics::save_player_profile(
+                state,
+                arg(&args, "actorId")?,
+                arg(&args, "name")?,
+            )?),
+            "list_player_profiles" => to_json(commands::physics::list_player_profiles(state)?),
+            "apply_player_profile" => to_json(commands::physics::apply_player_profile(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "name")?,
+                arg(&args, "convert").unwrap_or_default(),
+            )?),
+            "import_player_profile" => to_json(commands::physics::import_player_profile(
+                state,
+                arg(&args, "path")?,
+            )?),
             "set_physics_profile" => to_json(commands::physics::set_physics_profile(
                 state,
                 app,

@@ -11,17 +11,21 @@ TestCase {
     when: windowShown
 
     property var calls: []
+    property var results: ({})
     QtObject {
         id: stubApp
         property var assetDrag: ({ kind: "" })
         property var appState: ({ project: { physics: { layers: { names: ["Ground", "Player"] } } } })
-        function invoke(command, args, done, failed) { test.calls.push({ command: command, args: args }); if (done) done({}); }
+        function invoke(command, args, done, failed) { test.calls.push({ command: command, args: args }); if (done) done(test.results[command] !== undefined ? test.results[command] : {}); }
     }
     Component { id: bodyFactory; Editor.RigidbodyForm { app: stubApp; actorId: "a1" } }
     Component { id: colliderFactory; Editor.ColliderForm { app: stubApp } }
+    Component { id: motorFactory; Editor.CharacterMotorForm { app: stubApp; actorId: "a1" } }
+    Component { id: cameraFactory; Editor.PlayerCameraForm { app: stubApp; actorId: "a1" } }
+    Component { id: setupFactory; Editor.PlayerSetupCard { app: stubApp; actorId: "a1" } }
     Component { id: controllerFactory; Editor.CharacterControllerForm { app: stubApp; actorId: "a1" } }
 
-    function init() { calls = []; }
+    function init() { calls = []; results = ({}); }
     function last() { return calls[calls.length - 1]; }
 
     function test_aBlankRigidbodyShowsUnityDefaults() {
@@ -124,5 +128,62 @@ TestCase {
         compare(last().args.controller.id, "cc");
         compare(last().args.controller.slope_limit, 30);
         compare(last().args.controller.step_offset, 0.5);
+    }
+
+    function test_aBlankMotorShowsTheDefaultsOfItsDimension() {
+        const three = createTemporaryObject(motorFactory, test, { component: { component: "CharacterMotor", motor: {} } });
+        compare(three.m.walk_speed, 5);
+        compare(three.m.space, "Camera");
+        const two = createTemporaryObject(motorFactory, test, { component: { motor: {} }, is3d: false });
+        compare(two.m.walk_speed, 240);
+        compare(two.m.space, "World");
+        compare(two.m.turn_speed, 0);
+    }
+    function test_aMotorEditSendsTheWholeNextSpec() {
+        const form = createTemporaryObject(motorFactory, test, { component: { motor: { id: "mm", jump_height: 2 } } });
+        form.write({ max_jumps: 2 });
+        compare(last().command, "set_character_motor");
+        compare(last().args.actorId, "a1");
+        compare(last().args.motor.id, "mm");
+        compare(last().args.motor.jump_height, 2);
+        compare(last().args.motor.max_jumps, 2);
+    }
+
+    function test_aBlankPlayerCameraShowsTheDefaultsOfItsDimension() {
+        const three = createTemporaryObject(cameraFactory, test, { component: { component: "PlayerCamera", player_camera: {} } });
+        compare(three.p.look, true);
+        compare(three.p.collision, true);
+        const two = createTemporaryObject(cameraFactory, test, { component: { player_camera: {} }, is3d: false });
+        compare(two.p.look, false);
+        compare(two.p.dead_zone.length, 2);
+    }
+    function test_aPlayerCameraEditSendsTheWholeNextSpec() {
+        const form = createTemporaryObject(cameraFactory, test, { component: { player_camera: { sensitivity: 0.2 } } });
+        form.write({ invert_y: true });
+        compare(last().command, "set_actor_component");
+        compare(last().args.name, "PlayerCamera");
+        compare(last().args.component.component, "PlayerCamera");
+        compare(last().args.component.player_camera.sensitivity, 0.2);
+        compare(last().args.component.player_camera.invert_y, true);
+    }
+    function test_theSetupCardPreviewsAPresetForTheDimension() {
+        results = { preview_player_preset: { steps: [{ component: "CharacterMotor", kind: "Add", detail: "" }], conflicts: [], blocked: null }, list_player_profiles: [] };
+        const card = createTemporaryObject(setupFactory, test, {});
+        compare(card.presets.length, 3);
+        compare(card.preset, "first-person-3d");
+        compare(card.summary(), "adds CharacterMotor");
+        const flat = createTemporaryObject(setupFactory, test, { is3d: false });
+        compare(flat.preset, "platformer-2d");
+    }
+    function test_aConflictNeedsTheConversionBeforeApplying() {
+        results = { preview_player_preset: { steps: [], conflicts: [{ component: "Rigidbody", reason: "dynamic", conversion: "kinematic" }], blocked: null }, list_player_profiles: [] };
+        const card = createTemporaryObject(setupFactory, test, {});
+        compare(card.conflicts.length, 1);
+        card.apply();
+        compare(last().command, "apply_player_preset");
+        compare(last().args.convert, false);
+        card.convert = true;
+        card.apply();
+        compare(last().args.convert, true);
     }
 }

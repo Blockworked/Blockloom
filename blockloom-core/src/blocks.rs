@@ -560,6 +560,21 @@ pub enum InstructionKind {
         y: Value,
         z: Value,
     },
+    /// Steers this actor's character motor or fires one of its actions: a
+    /// direction, jump, sprint, crouch, a knockback push or a stop. Needs a
+    /// CharacterMotor component; a player-owned motor reads the keys itself.
+    MotorAct {
+        #[serde(default)]
+        action: crate::physics::motor::MotorAction,
+        x: Value,
+        y: Value,
+        z: Value,
+    },
+    /// Changes one setting of this actor's character motor for the run.
+    SetMotor {
+        property: crate::physics::motor::MotorProperty,
+        value: Value,
+    },
     /// Changes one setting of this actor's character controller for the run.
     SetController {
         property: crate::physics::controller::ControllerProperty,
@@ -1208,6 +1223,7 @@ impl BlockKind for InstructionKind {
             | K::SetDensity { density: v }
             | K::SetMass { mass: v }
             | K::SetController { value: v, .. }
+            | K::SetMotor { value: v, .. }
             | K::SetCollisionLayer { layer: v }
             | K::SetCollisionMask { mask: v }
             | K::Say { text: v }
@@ -1238,6 +1254,7 @@ impl BlockKind for InstructionKind {
             | K::AddForce { x, y, z, .. }
             | K::AddTorque { x, y, z, .. }
             | K::ControllerMove { x, y, z, .. }
+            | K::MotorAct { x, y, z, .. }
             | K::SetGravity { x, y, z } => {
                 f(x, InputValueType::Any);
                 f(y, InputValueType::Any);

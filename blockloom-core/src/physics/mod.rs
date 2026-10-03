@@ -25,6 +25,7 @@ pub mod motor;
 pub mod ops;
 pub mod ownership;
 pub mod plan;
+pub mod presets;
 pub mod query;
 pub mod spec;
 pub mod validate;

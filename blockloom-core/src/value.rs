@@ -706,6 +706,24 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |args| controller_field(args, true),
     },
     ExtOperator {
+        kind: "MotorNumber",
+        op: "MotorNumber",
+        arity: 1,
+        default_args: || vec![text("grounded")],
+        // One reading of this actor's character motor: grounded, speed,
+        // vertical speed, jumps left and so on. Zero without a motor.
+        eval: |args| motor_field(args, false),
+    },
+    ExtOperator {
+        kind: "MotorText",
+        op: "MotorText",
+        arity: 1,
+        default_args: || vec![text("state")],
+        // Words from this actor's character motor: its state, the support
+        // it stands on, its owner or a warning.
+        eval: |args| motor_field(args, true),
+    },
+    ExtOperator {
         kind: "Atmosphere",
         op: "Atmosphere",
         arity: 1,
@@ -1166,6 +1184,29 @@ fn query_field(args: &[Evaluated], text: bool) -> Result<Evaluated, String> {
     Ok(match query::read_field(&actor, index, field, actor_name) {
         query::HitValue::Number(n) => Evaluated::Number(n),
         query::HitValue::Text(t) => Evaluated::Text(t),
+    })
+}
+
+/// Reads a field of the running actor's character motor.
+fn motor_field(args: &[Evaluated], text: bool) -> Result<Evaluated, String> {
+    let name = args[0].as_text();
+    let actor = sense::current_actor();
+    Ok(if text {
+        Evaluated::Text(match actor {
+            Some(actor) => {
+                let words = crate::physics::motor::read_text(&actor, &name);
+                if name.trim().eq_ignore_ascii_case("support") && !words.is_empty() {
+                    actor_name(&words)
+                } else {
+                    words
+                }
+            }
+            None => String::new(),
+        })
+    } else {
+        Evaluated::Number(actor.map_or(0.0, |actor| {
+            crate::physics::motor::read_number(&actor, &name)
+        }))
     })
 }
 

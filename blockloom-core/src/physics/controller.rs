@@ -843,6 +843,10 @@ fn file(actor: &str, result: MoveResult, moved: Option<[f32; 3]>, fall_speed: f3
 /// grounded) or why it was refused.
 pub fn run_op(actor: &str, op: &str, vector: [f32; 3]) -> Result<u32, String> {
     let op = op.trim();
+    // The motor shares this channel so every adapter reaches it for free.
+    if let Some(rest) = op.strip_prefix("motor ") {
+        return super::motor::run_op(actor, rest, vector).map(|()| 0);
+    }
     if let Some(name) = op.strip_prefix("set ") {
         let property = ControllerProperty::parse(name)
             .ok_or_else(|| format!("a controller has no setting called \"{name}\""))?;
@@ -885,6 +889,9 @@ pub fn fall_speed(actor: &str) -> f32 {
 /// A number from `actor`'s last move, by the name a reporter gives it. A hit
 /// field reads hit `n` (from 1); anything missing reads zero.
 pub fn read_number(actor: &str, field: &str, n: usize) -> f64 {
+    if let Some(rest) = field.trim().strip_prefix("motor ") {
+        return super::motor::read_number(actor, rest);
+    }
     let Some(last) = last_move(actor) else {
         return match field.trim().to_ascii_lowercase().as_str() {
             "controller exists" | "exists" => f64::from(has(actor)),
@@ -935,6 +942,9 @@ pub fn read_number(actor: &str, field: &str, n: usize) -> f64 {
 /// Words from the actor's last move: a hit's actor, body or collider, or the
 /// error. Anything missing reads empty.
 pub fn read_text(actor: &str, field: &str, n: usize) -> String {
+    if let Some(rest) = field.trim().strip_prefix("motor ") {
+        return super::motor::read_text(actor, rest);
+    }
     let Some(last) = last_move(actor) else {
         return String::new();
     };

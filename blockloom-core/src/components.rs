@@ -21,6 +21,7 @@ use crate::material::{ParticleSpec, SurfaceMaterial, TrailSpec};
 use crate::physics::controller::CharacterControllerSpec;
 use crate::physics::motor::CharacterMotorSpec;
 use crate::physics::{ColliderId, ColliderSpec, RigidbodySpec};
+use crate::player_camera::PlayerCameraSpec;
 use crate::probe::ProbeSpec;
 use crate::scene::{Physics, Placement, Visual};
 use crate::sprite2d::SpriteSpec;
@@ -43,6 +44,7 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "Collider",
     "CharacterController",
     "CharacterMotor",
+    "PlayerCamera",
     "Joint",
     "Brain",
     "Camera",
@@ -332,6 +334,9 @@ pub enum ActorComponent {
     /// The reusable movement layer over a CharacterController (see
     /// [`crate::physics::motor`]). Needs the controller; at most one per actor.
     CharacterMotor { motor: CharacterMotorSpec },
+    /// Look input, wall avoidance and dead zones for the actor's Camera (see
+    /// [`crate::player_camera`]). Configures that camera; never adds one.
+    PlayerCamera { player_camera: PlayerCameraSpec },
     /// Constrains this body to another actor. A chain of hinged bodies makes
     /// a ragdoll while the usual parent hierarchy remains independent.
     Joint { joint: JointSpec },
@@ -423,6 +428,7 @@ impl ActorComponent {
             ActorComponent::Collider { .. } => "Collider",
             ActorComponent::CharacterController { .. } => "CharacterController",
             ActorComponent::CharacterMotor { .. } => "CharacterMotor",
+            ActorComponent::PlayerCamera { .. } => "PlayerCamera",
             ActorComponent::Joint { .. } => "Joint",
             ActorComponent::Brain { .. } => "Brain",
             ActorComponent::Camera { .. } => "Camera",
@@ -702,6 +708,14 @@ impl Components {
     pub fn character_motor(&self) -> Option<&CharacterMotorSpec> {
         self.0.iter().find_map(|c| match c {
             ActorComponent::CharacterMotor { motor } => Some(motor),
+            _ => None,
+        })
+    }
+
+    /// The PlayerCamera, if the actor has one.
+    pub fn player_camera(&self) -> Option<&PlayerCameraSpec> {
+        self.0.iter().find_map(|c| match c {
+            ActorComponent::PlayerCamera { player_camera } => Some(player_camera),
             _ => None,
         })
     }

@@ -109,6 +109,35 @@ const CONTROLLER_PROPERTIES: &[&str] = &[
     "DetectCollisions",
     "OverlapRecovery",
 ];
+const MOTOR_ACTIONS: &[&str] = &[
+    "Intent",
+    "Jump",
+    "JumpRelease",
+    "SprintOn",
+    "SprintOff",
+    "CrouchOn",
+    "CrouchOff",
+    "Push",
+    "Stop",
+];
+const MOTOR_PROPERTIES: &[&str] = &[
+    "Enabled",
+    "WalkSpeed",
+    "SprintSpeed",
+    "CrouchSpeed",
+    "Acceleration",
+    "Braking",
+    "AirAcceleration",
+    "AirControl",
+    "TurnSpeed",
+    "GravityScale",
+    "TerminalSpeed",
+    "JumpHeight",
+    "MaxJumps",
+    "CoyoteTime",
+    "JumpBuffer",
+    "SlideOnSteep",
+];
 const RAY_HITS: &[&str] = &["Nearest", "Every"];
 const TRIGGER_POLICIES: &[&str] = &["UseGlobal", "Ignore", "Include"];
 const CLOUD_LAYER_PROPERTIES: &[&str] = &["Coverage", "Opacity", "Contrast", "Altitude", "Spin"];
@@ -991,6 +1020,56 @@ pub const BLOCKS: &[BlockSpec] = &[
         dropdowns: &[Dropdown {
             field: "mode",
             options: MOVE_MODES,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "MotorAct",
+        category: "Physics",
+        purpose: "Steers this actor's character motor or fires one of its actions. Intent takes a direction (length 1 is full speed, turned by the motor's move space); Jump presses jump, JumpRelease lets go of it; Sprint and Crouch switch on and off; Push adds knockback that fades; Stop clears every intent and the motor's speed. A motor owned by the player reads the keys itself, so these are for Script and Ai motors.",
+        header: false,
+        three_d: false,
+        slots: &[
+            Slot {
+                field: "x",
+                id: "ControllerX",
+                value: "Any",
+            },
+            Slot {
+                field: "y",
+                id: "ControllerY",
+                value: "Any",
+            },
+            Slot {
+                field: "z",
+                id: "ControllerZ",
+                value: "Any",
+            },
+        ],
+        dropdowns: &[Dropdown {
+            field: "action",
+            options: MOTOR_ACTIONS,
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "SetMotor",
+        category: "Physics",
+        purpose: "Changes one setting of this actor's character motor for the rest of the run. Enabled and Slide on steep read zero as off. A change that would make the motor invalid is refused with an error.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "value",
+            id: "ControllerValue",
+            value: "Any",
+        }],
+        dropdowns: &[Dropdown {
+            field: "property",
+            options: MOTOR_PROPERTIES,
         }],
         strings: NO_STRINGS,
         bools: NO_BOOLS,

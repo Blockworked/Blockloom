@@ -59,6 +59,8 @@ mod logic;
 mod luminance;
 mod materials;
 mod model;
+mod motor;
+mod player_camera;
 mod wind;
 // Plumbing the Phase 5 passes build on; nothing reads most of it yet.
 mod overlay;
@@ -284,6 +286,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         .insert_resource(Dimension(mode))
         .init_resource::<PendingEffects>()
         .init_resource::<world::NavMesh>()
+        .init_resource::<player_camera::BodyFacing>()
         .init_resource::<ui::UiManager>()
         .init_resource::<ui_design::DesignSession>()
         .init_resource::<ui::DeviceInsets>()
@@ -501,6 +504,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 world::apply_saved_data,
                 (world::apply_lifetimes, world::sync_navmesh).chain(),
                 (
+                    motor::drive_motors,
                     controller::apply_motion,
                     world::apply_common,
                     environment::apply_exposure_effects,
@@ -693,6 +697,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .after(world::rebuild_world)
                     .run_if(is_3d),
                 tiles::publish_level.after(world::publish_sensors),
+                motor::latch_player_input.after(world::publish_sensors),
                 tiles::confine_camera
                     .after(world::drive_camera)
                     .before(edit::apply_view),

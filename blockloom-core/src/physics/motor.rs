@@ -36,6 +36,100 @@ pub enum MoveSpace {
     Camera,
 }
 
+/// What a motor statement does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum MotorAction {
+    /// Steer: the vector is the direction wanted (length 1 is full speed).
+    #[default]
+    Intent,
+    Jump,
+    JumpRelease,
+    SprintOn,
+    SprintOff,
+    CrouchOn,
+    CrouchOff,
+    /// Knockback: the vector is added and fades by the external drag.
+    Push,
+    Stop,
+}
+
+impl MotorAction {
+    pub const ALL: [MotorAction; 9] = [
+        Self::Intent,
+        Self::Jump,
+        Self::JumpRelease,
+        Self::SprintOn,
+        Self::SprintOff,
+        Self::CrouchOn,
+        Self::CrouchOff,
+        Self::Push,
+        Self::Stop,
+    ];
+
+    /// The op `run_op` takes.
+    pub fn op(self) -> &'static str {
+        match self {
+            Self::Intent => "intent",
+            Self::Jump => "jump",
+            Self::JumpRelease => "jump release",
+            Self::SprintOn => "sprint on",
+            Self::SprintOff => "sprint off",
+            Self::CrouchOn => "crouch on",
+            Self::CrouchOff => "crouch off",
+            Self::Push => "push",
+            Self::Stop => "stop",
+        }
+    }
+}
+
+/// A motor setting a block can change during a run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum MotorProperty {
+    Enabled,
+    #[default]
+    WalkSpeed,
+    SprintSpeed,
+    CrouchSpeed,
+    Acceleration,
+    Braking,
+    AirAcceleration,
+    AirControl,
+    TurnSpeed,
+    GravityScale,
+    TerminalSpeed,
+    JumpHeight,
+    MaxJumps,
+    CoyoteTime,
+    JumpBuffer,
+    SlideOnSteep,
+}
+
+impl MotorProperty {
+    pub const ALL: [MotorProperty; 16] = [
+        Self::Enabled,
+        Self::WalkSpeed,
+        Self::SprintSpeed,
+        Self::CrouchSpeed,
+        Self::Acceleration,
+        Self::Braking,
+        Self::AirAcceleration,
+        Self::AirControl,
+        Self::TurnSpeed,
+        Self::GravityScale,
+        Self::TerminalSpeed,
+        Self::JumpHeight,
+        Self::MaxJumps,
+        Self::CoyoteTime,
+        Self::JumpBuffer,
+        Self::SlideOnSteep,
+    ];
+
+    /// The name `set` takes; the same order as [`PROPERTIES`].
+    pub fn name(self) -> &'static str {
+        PROPERTIES[Self::ALL.iter().position(|p| *p == self).unwrap_or(0)]
+    }
+}
+
 /// A CharacterMotor component. Speeds are world units a second and sizes
 /// world units: metres in 3D, pixels in 2D (see [`CharacterMotorSpec::for_mode`]).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -44,6 +138,9 @@ pub struct CharacterMotorSpec {
     pub id: ComponentId,
     pub enabled: bool,
     pub owner: MotorOwner,
+    /// Which local player's actions drive it (0 is the first), when owned
+    /// by the player.
+    pub player: u8,
     pub space: MoveSpace,
     /// 2D only: move across the whole plane with no up, gravity or jump.
     pub top_down: bool,
@@ -98,6 +195,7 @@ impl CharacterMotorSpec {
             id: ComponentId::generate(),
             enabled: true,
             owner: MotorOwner::Player,
+            player: 0,
             space: if mode == Mode::ThreeD {
                 MoveSpace::Camera
             } else {
@@ -307,6 +405,8 @@ pub struct MotorState {
     /// Which way the motor wants the actor to face (radians about up).
     pub face: Option<f32>,
     pub warning: Option<String>,
+    /// What happened on the last driven tick, for reporters.
+    pub last_events: Vec<MotorEvent>,
 }
 
 /// What `plan` decided.
@@ -809,6 +909,10 @@ pub fn read_number(actor: &str, field: &str) -> f64 {
             "rising" => n(!t.state.grounded && t.state.vertical > 0.01),
             "falling" => n(!t.state.grounded && t.state.vertical < -0.01),
             "landed" => n(t.state.landed),
+            "jumped" => n(t.state.last_events.contains(&MotorEvent::Jump)),
+            "left ground" => n(t.state.last_events.contains(&MotorEvent::LeftGround)),
+            "hit head" => n(t.state.last_events.contains(&MotorEvent::HeadHit)),
+            "changed stance" => n(t.state.last_events.contains(&MotorEvent::StanceChanged)),
             "crouching" => n(t.state.crouching),
             "speed" => f64::from(t.state.speed),
             "desired speed" => f64::from(t.state.desired_speed),
@@ -973,6 +1077,7 @@ pub fn drive(actor: &str, yaw: f32, carry: [f32; 3]) -> Result<Driven, String> {
         } else {
             t.state.warning = result.error.clone();
         }
+        t.state.last_events = events.clone();
         Driven {
             face: t.state.face,
             turn_speed: t.spec.turn_speed,

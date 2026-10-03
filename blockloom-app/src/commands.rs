@@ -1934,6 +1934,7 @@ pub(crate) fn add_actor_component(
     mut component: ActorComponent,
 ) -> Result<String, String> {
     physics::refuse_generic(&component)?;
+    check_player_camera(&component)?;
     let mut s = lock(state)?;
     check_parent(s.project(), &actor_id, &component)?;
     push_undo(&mut s);
@@ -1966,6 +1967,7 @@ pub(crate) fn set_actor_component(
     mut component: ActorComponent,
 ) -> Result<(), String> {
     physics::refuse_generic(&component)?;
+    check_player_camera(&component)?;
     let mut s = lock(state)?;
     check_parent(s.project(), &actor_id, &component)?;
     if let ActorComponent::Material { material } = &mut component {
@@ -1994,6 +1996,22 @@ pub(crate) fn set_actor_component(
     sync_runtime(&mut s);
     emit(app, &s);
     result
+}
+
+/// A player camera with a nonsense setting is refused with the field named.
+fn check_player_camera(component: &ActorComponent) -> Result<(), String> {
+    let ActorComponent::PlayerCamera { player_camera } = component else {
+        return Ok(());
+    };
+    let problems = player_camera.validate();
+    if problems.is_empty() {
+        return Ok(());
+    }
+    Err(problems
+        .iter()
+        .map(|(field, why)| format!("{field}: {why}"))
+        .collect::<Vec<_>>()
+        .join("; "))
 }
 
 /// A `Parent` has to name another actor that isn't already hanging off this

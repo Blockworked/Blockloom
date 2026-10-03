@@ -551,6 +551,88 @@ and `remove-character-controller`.
   --lib controller` (headless Rapier worlds in 3D and 2D: floor, step, slope, wall,
   trigger, overlap recovery, idle then move).
 
+### Character motor and input actions (Phase 5)
+
+A `CharacterMotor` component (`ActorComponent::CharacterMotor`, `physics/motor.rs`,
+`CharacterMotorSpec`) is the reusable gameplay layer over a `CharacterController`: walk,
+sprint and crouch speeds, ground and air acceleration, air control, turn speed, gravity
+scale, terminal speed, ground snap, steep-slope sliding, jump height, max jumps, jump
+cut, coyote time, jump buffer, crouch height and knockback drag. `owner` says who steers
+it (`Player` reads the project's actions, `Script` is blocks and scripts, `Ai` is for
+brains), `space` what a direction is measured against (`World`, `Actor`, `Camera`), and
+`player` which local player's actions drive it. `validate` and the `set_character_motor`
+edit refuse a motor without a controller, a second motor, or bad numbers.
+
+- **Split**: `MotorState::plan` is pure (intent and environment in, displacement and
+  events out) and `settle` takes the move's hits back (landing, head hits, slope,
+  sliding, support). `motor::drive` is the glue that calls the controller service
+  (`probe_move` for crouch headroom, `move_call(Move)` for the displacement, a second
+  call for ground snap). It lives in core so the runtime stays thin.
+- **Runtime** (`blockloom-runtime/src/motor.rs`): `latch_player_input` (Update, after
+  `publish_sensors`) copies the Move/Jump/Sprint/Crouch actions (`Move P2` for the
+  second player) into the intent of every player-owned motor; `drive_motors` runs first
+  in the fixed chain, before `controller::apply_motion`, with the camera's yaw, the
+  actor's facing, platform carry (the support actor's movement since last tick, ignored
+  past 5 m as a teleport) and turning towards the move at `turn_speed`.
+- **Blocks**: `MotorAct` (steer, jump, let go of jump, sprint/crouch on and off, push,
+  stop) and `SetMotor` ride the controller op channel (`"motor <op>"` through
+  `controller::run_op`, so no ABI change); `MotorNumber`/`MotorText` read the motor
+  (`grounded`, `speed`, `jumps left`, `jumped`, `landed`, ...). Scripts get
+  `motor_steer`, `motor_jump`, `motor_sprint`, `motor_crouch`, `motor_push`,
+  `motor_stop`, `set_motor`, `motor_number` and `motor_text`. Events are exposed as
+  one-tick reporter flags (`jumped`, `landed`, `left ground`, `hit head`); there is no
+  `when I land` hat yet.
+- **Input** (`input.rs`): actions have a `kind` (Button, Axis, Vector2), a four-key
+  `composite`, `processors` (dead zone, scale, invert, normalize), a `map` that can be
+  switched off with `set_map_enabled`, and a `player`. `InputBinding::MouseDelta` binds
+  look. `InputConfig::add_player_actions` adds the standard Gameplay map (Move, Look,
+  Jump, Sprint, Crouch, Interact) and `player_copy` makes per-player copies. The
+  runtime publishes each pad on its own, so a second player reads only their pad.
+- **Inspector**: `CharacterMotorForm.qml`. Shell: `set-character-motor`,
+  `remove-character-motor`.
+- Tests: `cargo test -p blockloom-core motor input`, `cargo test -p blockloom-runtime
+  --lib controller_tests_2d` (a headless 2D motor walking, braking and jumping).
+
+### Player camera, presets and profiles (Phase 6)
+
+`blockloom-core/src/player_camera.rs` is `PlayerCameraSpec`, the
+`ActorComponent::PlayerCamera` that *configures* the actor's existing `Camera`
+(it never adds one): look sensitivity and stick speed, invert Y, pitch limits,
+`turn_body`, smoothing, wall avoidance (`collision`, radius, `min_distance`),
+scroll zoom, a 2D dead zone and look-ahead, and `eye_follows_stance`. The maths
+(`look_turn`, `clamp_pitch`, `clear_distance`, `follow_2d`, `lead`) is pure and
+tested in core. The generic `add_actor_component`/`set_actor_component` path
+carries it and refuses a bad setting by field name (`check_player_camera`).
+
+`blockloom-runtime/src/player_camera.rs` installs it inside `world::drive_camera`.
+The stored `rig.pitch` is the look state, so `set camera pitch` blocks and look
+input share it; yaw lives in `RigState`. Mouse look applies only while
+`mouse_locked`; sticks use the "rightstickx/y" axes (0.1 dead zone). Third-person
+pitch is elevation. Wall avoidance is a swept ball `QueryRequest::Cast` from the
+pivot that skips the target and triggers. `BodyFacing` (actor to yaw) is how a
+first-person `turn_body` camera hands its yaw to `motor::drive_motors`.
+`Engine.look_lock_offered`: `apply_cursor_lock` takes the pointer once per run
+when a `PlayerCamera` with look sits beside a `Camera`.
+
+`blockloom-core/src/physics/presets.rs` is `PlayerPreset` (first person, third
+person, top down 3D, platformer 2D, top down 2D). `Scene::preview_player_preset`
+lists what applying would add, replace, keep, remove or convert;
+`apply_player_preset` installs a visual, controller, motor, camera, player camera
+and the input actions in one undo step. A dynamic Rigidbody or legacy Body is a
+conflict that needs `convert`, and a refused apply leaves no trace.
+`PlayerProfile` (version 1) captures a finished setup as
+`assets/profiles/<name>.profile.json` and applies it to another actor.
+
+Commands (dispatch, shell and MCP): `preview-player-preset`,
+`apply-player-preset`, `save-player-profile`, `list-player-profiles`,
+`apply-player-profile`, `import-player-profile`. QML: `PlayerSetupCard.qml`
+(under the Name row: preset, preview, convert, profiles), `PlayerCameraForm.qml`
+(the component card, "PlayerCamera" in Add component). Tests:
+`tst_PhysicsInspector.qml`.
+
+Open: no collision gizmos in the scene view, profile instance overrides and
+reset-to-profile, QML not run here (no Qt), GPU paths not run.
+
 ### Actors that come and go
 
 An actor's id is what everything keys it by, and a run can mint ids the

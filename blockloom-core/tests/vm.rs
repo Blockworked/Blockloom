@@ -2548,6 +2548,48 @@ fn a_controller_block_with_no_controller_reports_why_and_reads_as_nothing() {
 }
 
 #[test]
+fn motor_blocks_steer_set_and_read_the_actors_motor() {
+    use blockloom_core::physics::motor::{self, CharacterMotorSpec, MotorAction, MotorProperty};
+    let project = project_with(vec![started(vec![
+        InstructionKind::MotorAct {
+            action: MotorAction::Intent,
+            x: Value::number(1.0),
+            y: Value::number(0.0),
+            z: Value::number(0.0),
+        },
+        InstructionKind::SetMotor {
+            property: MotorProperty::WalkSpeed,
+            value: Value::number(7.0),
+        },
+        InstructionKind::Say {
+            text: Value::op(
+                Op::from_name("MotorNumber"),
+                vec![Value::text("walk speed")],
+            ),
+        },
+        InstructionKind::SetMotor {
+            property: MotorProperty::AirControl,
+            value: Value::number(9.0),
+        },
+    ])]);
+    let id = project.active_scene().actors[0].id.clone();
+    motor::reset();
+    motor::register(&id, CharacterMotorSpec::default());
+    let effects = Harness::started(&project).run(1);
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::Say { text, .. } if text == "7"
+    )));
+    let errors = effects
+        .iter()
+        .filter(|effect| matches!(effect, Effect::Error { .. }))
+        .count();
+    assert_eq!(errors, 1, "an air control past 1 is refused: {effects:?}");
+    assert_eq!(motor::spec_of(&id).unwrap().walk_speed, 7.0);
+    motor::reset();
+}
+
+#[test]
 fn a_query_with_no_world_reports_why_and_reads_as_a_miss() {
     use blockloom_core::physics::query::{self, TriggerPolicy};
     let project = project_with(vec![started(vec![

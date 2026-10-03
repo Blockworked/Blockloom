@@ -149,6 +149,7 @@ pub fn install_with(
         }
     }
     crate::controller::clear();
+    crate::motor::clear();
     commands.insert_resource(crate::controller::ControllerEntities::default());
     if !plan.is_runnable() || plan.is_empty() {
         return;
@@ -162,6 +163,7 @@ pub fn install_with(
         Mode::TwoD => crate::controller::d2::install(commands, &plan, entities),
     };
     crate::controller::register_plan(&plan);
+    crate::motor::register_plan(&plan);
     commands.insert_resource(installed);
 }
 
@@ -3474,6 +3476,10 @@ mod controller_tests_2d {
     }
 
     fn start(project: &Project) -> (App, String, Entity) {
+        start_with(project, false)
+    }
+
+    fn start_with(project: &Project, motors: bool) -> (App, String, Entity) {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.add_plugins(TransformPlugin);
@@ -3501,23 +3507,36 @@ mod controller_tests_2d {
         install(&mut commands, project, &ids);
         app.world_mut().flush();
         let (_sender, incoming) = std::sync::mpsc::channel();
-        app.insert_non_send(crate::engine::Engine::new(incoming, Mode::TwoD));
+        let mut engine = crate::engine::Engine::new(incoming, Mode::TwoD);
+        engine.running = motors;
+        engine.entities = ids.clone();
+        app.insert_non_send(engine);
         let actor = project
             .actors
             .iter()
             .find(|a| a.name == "Player")
             .map(|a| a.id.clone())
             .unwrap();
+        app.init_resource::<crate::player_camera::BodyFacing>();
         app.insert_resource(Moves {
             actor: actor.clone(),
             ..Default::default()
         });
-        app.add_systems(
-            FixedUpdate,
-            (drive, controller::apply_motion)
-                .chain()
-                .before(rp::PhysicsSet::SyncBackend),
-        );
+        if motors {
+            app.add_systems(
+                FixedUpdate,
+                (crate::motor::drive_motors, controller::apply_motion)
+                    .chain()
+                    .before(rp::PhysicsSet::SyncBackend),
+            );
+        } else {
+            app.add_systems(
+                FixedUpdate,
+                (drive, controller::apply_motion)
+                    .chain()
+                    .before(rp::PhysicsSet::SyncBackend),
+            );
+        }
         run(&mut app, 4);
         let entity = ids[&actor];
         (app, actor, entity)
@@ -3609,5 +3628,50 @@ mod controller_tests_2d {
             }
         }
         assert!(above);
+    }
+
+    fn with_motor(mut p: Project, id: &str) -> Project {
+        let mut spec = blockloom_core::physics::motor::CharacterMotorSpec::for_mode(Mode::TwoD);
+        spec.owner = blockloom_core::physics::motor::MotorOwner::Script;
+        let library = p.physics.materials.clone();
+        p.active_scene_mut()
+            .set_character_motor(id, spec, &library)
+            .unwrap();
+        p
+    }
+
+    fn motor_op(actor: &str, op: &str, vector: [f32; 3]) {
+        blockloom_core::physics::motor::run_op(actor, op, vector).unwrap();
+    }
+
+    #[test]
+    fn a_motor_walks_stops_at_a_wall_and_jumps() {
+        let (p, id) = level();
+        let p = with_motor(p, &id);
+        let (mut app, actor, entity) = start_with(&p, true);
+        run(&mut app, 30);
+        assert!(blockloom_core::physics::motor::read_number(&actor, "grounded") > 0.5);
+        let x0 = app.world().get::<Transform>(entity).unwrap().translation.x;
+        motor_op(&actor, "intent", [1.0, 0.0, 0.0]);
+        run(&mut app, 60);
+        let x1 = app.world().get::<Transform>(entity).unwrap().translation.x;
+        assert!(x1 > x0 + 40.0, "walked right: {x0} -> {x1}");
+        motor_op(&actor, "intent", [0.0; 3]);
+        run(&mut app, 30);
+        let x2 = app.world().get::<Transform>(entity).unwrap().translation.x;
+        run(&mut app, 30);
+        let x3 = app.world().get::<Transform>(entity).unwrap().translation.x;
+        assert!((x3 - x2).abs() < 1.0, "braked to a stop: {x2} -> {x3}");
+        // A jump leaves the floor and comes back.
+        let y0 = app.world().get::<Transform>(entity).unwrap().translation.y;
+        motor_op(&actor, "jump", [0.0; 3]);
+        run(&mut app, 12);
+        let y1 = app.world().get::<Transform>(entity).unwrap().translation.y;
+        assert!(y1 > y0 + 10.0, "rose: {y0} -> {y1}");
+        motor_op(&actor, "jump release", [0.0; 3]);
+        run(&mut app, 120);
+        let y2 = app.world().get::<Transform>(entity).unwrap().translation.y;
+        assert!((y2 - y0).abs() < 6.0, "landed again: {y0} -> {y2}");
+        assert!(blockloom_core::physics::motor::read_number(&actor, "grounded") > 0.5);
     }
 }

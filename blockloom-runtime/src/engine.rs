@@ -176,6 +176,8 @@ pub struct Engine {
     /// focused degrades to confined-or-nothing, so the runtime re-asserts
     /// from this flag until the real lock sticks.
     pub wants_cursor_locked: bool,
+    /// A look camera has already asked for the pointer this run.
+    pub look_lock_offered: bool,
     /// `Time::elapsed_secs` when the current pause began, if paused. Used to
     /// keep the `timer` reporter frozen while paused.
     pub pause_began: Option<f64>,
@@ -187,6 +189,8 @@ pub struct Engine {
     pub contacts: blockloom_core::physics::ContactTracker,
     /// Fixed ticks the contact tracker has closed this run.
     pub contact_ticks: u64,
+    /// Motor problems already logged this run.
+    pub motor_warned: std::collections::HashSet<String>,
     /// Actors whose collision filter changed since the last tick closed, so an
     /// Exit it causes says why.
     pub filter_touched: HashSet<String>,
@@ -355,11 +359,13 @@ impl Engine {
             paused: false,
             window_focused: false,
             wants_cursor_locked: false,
+            look_lock_offered: false,
             pause_began: None,
             started_at: 0.0,
             touching: HashMap::new(),
             contacts: Default::default(),
             contact_ticks: 0,
+            motor_warned: Default::default(),
             filter_touched: HashSet::new(),
             speech: HashMap::new(),
             next_report: 0.0,
