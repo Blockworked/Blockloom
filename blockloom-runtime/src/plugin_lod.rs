@@ -1,4 +1,5 @@
 //! Depth-pyramid traversal and bounded, asynchronous mesh upload requests.
+use crate::plugins::LodBridge;
 use bevy::camera::primitives::Aabb;
 use bevy::core_pipeline::{
     mip_generation::experimental::depth::{ViewDepthPyramid, early_downsample_depth},
@@ -8,29 +9,41 @@ use bevy::prelude::*;
 use bevy::render::renderer::{RenderContext, ViewQuery};
 use bevy::render::view::ExtractedView;
 use bevy::render::{Extract, ExtractSchedule, RenderApp};
+use blockloom_plugin_api::lod::Feedback;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
 
 const MAX_INSTANCES: usize = 2048;
 const MAX_REQUESTS: usize = 512;
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Target {
+    Mesh(AssetId<Mesh>),
+    Tile {
+        plugin: String,
+        set: String,
+        generation: u64,
+        revision: u64,
+        id: String,
+    },
+}
 #[derive(Clone, PartialEq)]
 struct Candidate {
-    asset: AssetId<Mesh>,
+    target: Target,
     lo: Vec3,
     hi: Vec3,
 }
 #[derive(Clone, Default)]
 struct Input {
     candidates: Vec<Candidate>,
-    assets: Vec<AssetId<Mesh>>,
+    targets: Vec<Target>,
     epoch: u64,
 }
 #[derive(Default)]
 struct Shared {
     input: Input,
     clip: Option<Mat4>,
-    ready: Option<(u64, Mat4, u64, HashSet<AssetId<Mesh>>)>,
+    ready: Option<(u64, Mat4, u64, HashSet<Target>)>,
     frame: u64,
     in_flight: usize,
 }
@@ -46,7 +59,7 @@ impl DepthRequests {
                 *epoch != state.input.epoch
                     || Some(*clip) != state.clip
                     || state.frame.saturating_sub(*frame) > 3
-                    || ready.contains(asset)
+                    || ready.contains(&Target::Mesh(*asset))
             })
     }
 }
@@ -54,6 +67,7 @@ impl DepthRequests {
 pub fn register(app: &mut App) {
     let shared = DepthRequests::default();
     app.insert_resource(shared.clone());
+    app.init_resource::<LodBridge>();
     if let Some(render) = app.get_sub_app_mut(RenderApp) {
         render
             .insert_resource(shared)
@@ -68,6 +82,7 @@ pub fn register(app: &mut App) {
 }
 fn extract(
     shared: Res<DepthRequests>,
+    lod: Extract<Res<LodBridge>>,
     link: Res<crate::plugin_compute::ComputeLink>,
     cameras: Extract<
         Query<
@@ -100,14 +115,30 @@ fn extract(
         let center = transform.transform_point3a(aabb.center);
         let half = transform.matrix3.abs() * aabb.half_extents;
         candidates.push(Candidate {
-            asset: mesh.id(),
+            target: Target::Mesh(mesh.id()),
             lo: (center - half).into(),
             hi: (center + half).into(),
         });
     }
+    let mut lod = lod.0.lock().unwrap();
+    for ((plugin, name), set) in &lod.sets {
+        for tile in &set.tiles {
+            candidates.push(Candidate {
+                target: Target::Tile {
+                    plugin: plugin.clone(),
+                    set: name.clone(),
+                    generation: set.generation,
+                    revision: set.revision,
+                    id: tile.id.clone(),
+                },
+                lo: Vec3::from_array(tile.min),
+                hi: Vec3::from_array(tile.max),
+            });
+        }
+    }
     candidates.sort_by_key(|c| {
         (
-            format!("{:?}", c.asset),
+            format!("{:?}", c.target),
             c.lo.to_array().map(f32::to_bits),
             c.hi.to_array().map(f32::to_bits),
         )
@@ -118,9 +149,9 @@ fn extract(
         state.input.epoch += 1;
         state.ready = None;
         let mut seen = HashSet::new();
-        state.input.assets = candidates
+        state.input.targets = candidates
             .iter()
-            .filter_map(|c| seen.insert(c.asset).then_some(c.asset))
+            .filter_map(|c| seen.insert(c.target.clone()).then_some(c.target.clone()))
             .collect();
         state.input.candidates = candidates;
     }
@@ -132,6 +163,51 @@ fn extract(
         state.clip = None;
         state.ready = None;
     }
+    lod.clip = state.clip;
+    lod.feedback = state.feedback(&lod.sets);
+}
+
+impl Shared {
+    fn feedback(
+        &self,
+        sets: &std::collections::BTreeMap<(String, String), blockloom_plugin_api::lod::TileSet>,
+    ) -> std::collections::BTreeMap<String, Vec<Feedback>> {
+        let mut feedback = std::collections::BTreeMap::<String, Vec<Feedback>>::new();
+        let Some((epoch, clip, frame, ready)) = &self.ready else {
+            return feedback;
+        };
+        if self.input.candidates.len() > MAX_INSTANCES
+            || *epoch != self.input.epoch
+            || Some(*clip) != self.clip
+            || self.frame.saturating_sub(*frame) > 3
+        {
+            return feedback;
+        }
+        for ((plugin, _), set) in sets {
+            let visible = set
+                .tiles
+                .iter()
+                .filter_map(|tile| {
+                    ready
+                        .contains(&Target::Tile {
+                            plugin: plugin.clone(),
+                            set: set.name.clone(),
+                            generation: set.generation,
+                            revision: set.revision,
+                            id: tile.id.clone(),
+                        })
+                        .then_some(tile.id.clone())
+                })
+                .collect();
+            feedback.entry(plugin.clone()).or_default().push(Feedback {
+                name: set.name.clone(),
+                generation: set.generation,
+                revision: set.revision,
+                visible,
+            });
+        }
+        feedback
+    }
 }
 
 #[repr(C)]
@@ -141,7 +217,7 @@ struct Node {
     hi: [f32; 4],
     links: [u32; 4],
 }
-fn tree(candidates: &mut [Candidate], assets: &[AssetId<Mesh>], nodes: &mut Vec<Node>) -> u32 {
+fn tree(candidates: &mut [Candidate], assets: &[Target], nodes: &mut Vec<Node>) -> u32 {
     let index = nodes.len() as u32;
     nodes.push(Node::default());
     let (lo, hi) = candidates.iter().fold(
@@ -154,7 +230,7 @@ fn tree(candidates: &mut [Candidate], assets: &[AssetId<Mesh>], nodes: &mut Vec<
             0,
             assets
                 .iter()
-                .position(|id| *id == candidates[0].asset)
+                .position(|id| *id == candidates[0].target)
                 .unwrap() as u32,
             1,
         ]
@@ -260,7 +336,7 @@ fn traverse(
     let device = ctx.render_device().wgpu_device();
     let pipeline = prepared.get_or_insert_with(|| pipeline(device));
     let mut nodes = Vec::with_capacity(input.candidates.len() * 2 - 1);
-    tree(&mut input.candidates.clone(), &input.assets, &mut nodes);
+    tree(&mut input.candidates.clone(), &input.targets, &mut nodes);
     let nodes = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("plugin LOD nodes"),
         contents: bytemuck::cast_slice(&nodes),
@@ -278,7 +354,7 @@ fn traverse(
         contents: bytemuck::cast_slice(&params),
         usage: wgpu::BufferUsages::UNIFORM,
     });
-    let words = 2 + MAX_REQUESTS + input.assets.len();
+    let words = 2 + MAX_REQUESTS + input.targets.len();
     let output = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("plugin LOD request queue"),
         contents: bytemuck::cast_slice(&vec![0u32; words]),
@@ -337,7 +413,7 @@ fn traverse(
                 if words[1] == 0 && words[0] as usize <= MAX_REQUESTS {
                     let ready = words[2..2 + words[0] as usize]
                         .iter()
-                        .filter_map(|id| input.assets.get(*id as usize).copied())
+                        .filter_map(|id| input.targets.get(*id as usize).cloned())
                         .collect();
                     state.ready = Some((input.epoch, clip, frame, ready));
                 } else {
@@ -351,6 +427,67 @@ fn traverse(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tile_feedback_is_scoped_versioned_and_expires() {
+        use blockloom_plugin_api::lod::{Tile, TileSet};
+        let lod = LodBridge::default();
+        let set = TileSet {
+            name: "visual".into(),
+            generation: 1,
+            revision: 2,
+            tiles: vec![Tile {
+                id: "tile".into(),
+                min: [0.; 3],
+                max: [1.; 3],
+            }],
+        };
+        lod.submit("a".into(), set.clone());
+        lod.submit("b".into(), set.clone());
+        let target = Target::Tile {
+            plugin: "a".into(),
+            set: set.name.clone(),
+            generation: 1,
+            revision: 2,
+            id: "tile".into(),
+        };
+        let mut state = Shared {
+            clip: Some(Mat4::IDENTITY),
+            ready: Some((0, Mat4::IDENTITY, 0, HashSet::from([target]))),
+            ..default()
+        };
+        let sets = &lod.0.lock().unwrap().sets.clone();
+        let feedback = state.feedback(sets);
+        assert_eq!(feedback["a"][0].visible, ["tile"]);
+        assert!(feedback["b"][0].visible.is_empty());
+        state.frame = 4;
+        assert!(state.feedback(sets).is_empty());
+        state.frame = 0;
+        state.input.epoch += 1;
+        assert!(state.feedback(sets).is_empty());
+        state.input.epoch = 0;
+        state.clip = None;
+        assert!(state.feedback(sets).is_empty());
+        lod.0.lock().unwrap().feedback = feedback;
+        lod.submit(
+            "a".into(),
+            TileSet {
+                revision: 3,
+                ..set.clone()
+            },
+        );
+        assert!(lod.0.lock().unwrap().feedback.is_empty());
+        lod.submit(
+            "a".into(),
+            TileSet {
+                tiles: Vec::new(),
+                ..set
+            },
+        );
+        assert_eq!(lod.0.lock().unwrap().sets.len(), 1);
+        lod.clear();
+        assert!(lod.0.lock().unwrap().sets.is_empty());
+    }
 
     #[test]
     fn traversal_shader_is_valid_and_feedback_expires() {
@@ -435,9 +572,9 @@ mod tests {
             depth.size(),
         );
         let depth = depth.create_view(&default());
-        let run = |mut candidates: Vec<Candidate>, assets: &[AssetId<Mesh>]| {
+        let run = |mut candidates: Vec<Candidate>, targets: &[Target]| {
             let mut nodes = Vec::new();
-            tree(&mut candidates, assets, &mut nodes);
+            tree(&mut candidates, targets, &mut nodes);
             let nodes = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
                 contents: bytemuck::cast_slice(&nodes),
@@ -452,7 +589,7 @@ mod tests {
             });
             let output = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
-                contents: bytemuck::cast_slice(&vec![0u32; 514 + assets.len()]),
+                contents: bytemuck::cast_slice(&vec![0u32; 514 + targets.len()]),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             });
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -510,7 +647,7 @@ mod tests {
             .map(|_| meshes.add(Cuboid::default()).id())
             .collect();
         let candidate = |asset, x: f32, z: f32| Candidate {
-            asset,
+            target: Target::Mesh(asset),
             lo: Vec3::new(x - 0.1, -0.1, z),
             hi: Vec3::new(x + 0.1, 0.1, z + 0.01),
         };
@@ -522,7 +659,11 @@ mod tests {
                 candidate(assets[2], 3.0, 0.8),
                 candidate(assets[3], 0.0, 1.1),
             ],
-            &assets[..4],
+            &assets[..4]
+                .iter()
+                .copied()
+                .map(Target::Mesh)
+                .collect::<Vec<_>>(),
         );
         assert_eq!((result[0], result[1]), (2, 0));
         assert_eq!(
@@ -531,8 +672,39 @@ mod tests {
         );
         let result = run(
             assets.iter().map(|&id| candidate(id, 0.0, 0.8)).collect(),
-            &assets,
+            &assets.iter().copied().map(Target::Mesh).collect::<Vec<_>>(),
         );
         assert_eq!((result[0], result[1]), (513, 1));
+        let targets: Vec<_> = ["a", "b"]
+            .into_iter()
+            .map(|plugin| Target::Tile {
+                plugin: plugin.into(),
+                set: "visual".into(),
+                generation: 1,
+                revision: 2,
+                id: "0/0/0/0".into(),
+            })
+            .collect();
+        let result = run(
+            vec![
+                Candidate {
+                    target: targets[0].clone(),
+                    lo: Vec3::new(-0.1, -0.1, 0.8),
+                    hi: Vec3::new(0.1, 0.1, 0.81),
+                },
+                Candidate {
+                    target: targets[0].clone(),
+                    lo: Vec3::new(-0.1, -0.1, 0.8),
+                    hi: Vec3::new(0.1, 0.1, 0.81),
+                },
+                Candidate {
+                    target: targets[1].clone(),
+                    lo: Vec3::new(-0.1, -0.1, 0.2),
+                    hi: Vec3::new(0.1, 0.1, 0.21),
+                },
+            ],
+            &targets,
+        );
+        assert_eq!((result[0], result[1], result[2]), (1, 0, 0));
     }
 }

@@ -956,7 +956,13 @@ fn visual_lod_swaps_complete_cuts_and_falls_back_without_removing_collision() {
             .is_empty()
     );
     let pending = module.call_json("hook.stream", &frame(-5)).unwrap();
-    assert!(pending["effects"].as_array().unwrap().is_empty());
+    let pending = pending["effects"].as_array().unwrap();
+    assert!(!pending.is_empty());
+    assert!(pending.iter().all(|e| e["effect"] == "lod_tiles"));
+    let requests: blockloom_plugin_api::lod::TileSet =
+        serde_json::from_value(pending[0].clone()).unwrap();
+    requests.check().unwrap();
+    assert!(!requests.tiles.is_empty());
     module
         .call_json("set", &json!({"x":4,"y":4,"z":4,"material":"stone"}))
         .unwrap();
@@ -1001,4 +1007,13 @@ fn visual_lod_swaps_complete_cuts_and_falls_back_without_removing_collision() {
         module.call_json("count", &json!({})).unwrap()["visual_lod_active"],
         false
     );
+    module.call_json("hook.stream", &frame(-5)).unwrap();
+    let stopped = module.call_json("world.stop", &json!({})).unwrap();
+    let effects = stopped["effects"].as_array().unwrap();
+    assert!(
+        effects
+            .iter()
+            .any(|e| e["effect"] == "lod_tiles" && e["tiles"] == json!([]))
+    );
+    assert!(effects.iter().any(|e| e["effect"] == "remove_mesh"));
 }

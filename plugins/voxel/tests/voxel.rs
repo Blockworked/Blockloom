@@ -764,12 +764,33 @@ fn visual_lod_publication_matches_native_and_portable_execution() {
         native.call_json("world.start", &start).unwrap(),
         portable.call_json("world.start", &start).unwrap()
     );
+    let mut saw_requests = false;
     for z in [-200, -5] {
-        let frame = json!({"view":{"position":[16,8,z],"forward":[0,0,1],"up":[0,1,0],"viewport_width":800,"viewport_height":800,"fov_y":90}});
+        let mut frame = json!({"view":{"position":[16,8,z],"forward":[0,0,1],"up":[0,1,0],"viewport_width":800,"viewport_height":800,"fov_y":90}});
         let mut ready = false;
         for _ in 0..150 {
             let response = native.call_json("hook.stream", &frame).unwrap();
             assert_eq!(response, portable.call_json("hook.stream", &frame).unwrap());
+            for effect in response["effects"].as_array().unwrap() {
+                if effect["effect"] == "lod_tiles" {
+                    let set: blockloom_plugin_api::lod::TileSet =
+                        serde_json::from_value(effect.clone()).unwrap();
+                    set.check().unwrap();
+                    saw_requests |= !set.tiles.is_empty();
+                    let visible: Vec<_> = set
+                        .tiles
+                        .last()
+                        .map(|tile| tile.id.clone())
+                        .into_iter()
+                        .collect();
+                    frame["lod_feedback"] = json!([blockloom_plugin_api::lod::Feedback {
+                        name: set.name,
+                        generation: set.generation,
+                        revision: set.revision,
+                        visible
+                    }]);
+                }
+            }
             let count = native.call_json("count", &json!({})).unwrap();
             assert_eq!(count, portable.call_json("count", &json!({})).unwrap());
             if count["visual_lod_active"] == true && count["visual_lod_pending"] == 0 {
@@ -779,6 +800,7 @@ fn visual_lod_publication_matches_native_and_portable_execution() {
         }
         assert!(ready);
     }
+    assert!(saw_requests);
     let edit = json!({"x":4,"y":4,"z":4,"material":"glow"});
     assert_eq!(
         native.call_json("set", &edit).unwrap(),

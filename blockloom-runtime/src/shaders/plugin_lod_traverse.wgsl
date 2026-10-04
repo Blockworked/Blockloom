@@ -40,7 +40,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let node = nodes[index];
         if !visible(node) { continue; }
         if node.links.w == 1u {
-            // Every instance contributes to one source asset's request bit.
+            // Mesh instances and tile descriptors share deduplicated request bits.
             let bit = 514u + node.links.z;
             if output[bit] == 0u {
                 output[bit] = 1u;

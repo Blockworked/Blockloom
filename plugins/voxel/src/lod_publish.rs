@@ -5,6 +5,7 @@ use crate::{
     lod_mesh::{self, Cache, Key},
     lod_seam::{self, Caps, Geometry, Join},
 };
+use blockloom_plugin_api::lod::{Feedback, Tile, TileSet};
 use blockloom_plugin_api::mesh::{ColliderKind, MeshData};
 use blockloom_plugin_sdk::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -44,15 +45,80 @@ pub struct Publisher {
     active_keys: Vec<Key>,
     installed: BTreeMap<Key, PublishedTile>,
     observed_revision: Option<u64>,
+    requested: BTreeSet<Key>,
+    working: Option<Key>,
+    submitted: Option<TileSet>,
 }
 
 impl Publisher {
+    pub fn feedback(&mut self, feedback: &[Feedback], world: &World) {
+        self.requested.clear();
+        let Some(build) = &self.build else { return };
+        if let Some(feedback) = feedback.iter().find(|f| {
+            f.name == "visual"
+                && (f.generation, f.revision) == (world.lod_generation, world.grid.revision())
+                && (f.generation, f.revision) == (build.generation, build.revision)
+        }) {
+            let visible: BTreeSet<_> = feedback.visible.iter().take(512).collect();
+            self.requested.extend(
+                build
+                    .keys
+                    .iter()
+                    .filter(|k| visible.contains(&tile_id(**k)))
+                    .copied(),
+            );
+        }
+    }
+
+    pub fn request_effect(&mut self, world: &World) -> Option<Value> {
+        let tiles = self
+            .build
+            .as_ref()
+            .map(|build| {
+                build
+                    .keys
+                    .iter()
+                    .filter(|k| !build.groups.contains_key(k))
+                    .filter_map(|&key| {
+                        let (lo, hi) = lod_seam::bounds(key, world.grid.size());
+                        if !(0..3).all(|a| lo[a] < hi[a]) {
+                            return None;
+                        }
+                        Some(Tile {
+                            id: tile_id(key),
+                            min: [0, 1, 2].map(|a| world.origin[a] + lo[a] as f32 * world.voxel),
+                            max: [0, 1, 2].map(|a| world.origin[a] + hi[a] as f32 * world.voxel),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let set = TileSet {
+            name: "visual".into(),
+            generation: world.lod_generation,
+            revision: world.grid.revision(),
+            tiles,
+        };
+        if (self.submitted.is_none() && set.tiles.is_empty())
+            || self.submitted.as_ref() == Some(&set)
+        {
+            return None;
+        }
+        self.submitted = Some(set.clone());
+        Some(
+            json!({"effect":"lod_tiles", "name":set.name, "generation":set.generation,
+            "revision":set.revision, "tiles":set.tiles}),
+        )
+    }
+
     pub fn reset_jobs(&mut self) {
         self.cache = Cache::default();
         self.build = None;
         self.failed = None;
         self.error = None;
         self.observed_revision = None;
+        self.working = None;
+        self.requested.clear();
         for tile in self.installed.values_mut() {
             tile.valid = false;
         }
@@ -115,7 +181,10 @@ impl Publisher {
                     .map(|name| json!({"effect":"mesh_visibility","name":name,"visible":true})),
             );
         }
+        // Keep the submitted identity until the empty replacement is sent.
+        let submitted = self.submitted.take();
         *self = Self::default();
+        self.submitted = submitted;
         effects
     }
 
@@ -151,6 +220,8 @@ impl Publisher {
             (b.generation, b.revision) != identity || roots(&b.keys).is_disjoint(&roots(&keys))
         });
         if restart {
+            self.working = None;
+            self.requested.clear();
             self.cache = Cache::default();
             self.failed = None;
             self.error = None;
@@ -176,7 +247,19 @@ impl Publisher {
             });
         }
         let build = self.build.as_mut().unwrap();
-        if let Some(&key) = build.keys.iter().find(|k| !build.groups.contains_key(k)) {
+        let next = self
+            .working
+            .filter(|k| build.keys.contains(k) && !build.groups.contains_key(k))
+            .or_else(|| {
+                build
+                    .keys
+                    .iter()
+                    .filter(|k| !build.groups.contains_key(k))
+                    .min_by_key(|k| (!self.requested.contains(k), **k))
+                    .copied()
+            });
+        if let Some(key) = next {
+            self.working = Some(key);
             let joins = lod_seam::joins(key, &build.keys, world.grid.size());
             let faces = std::array::from_fn(|face| joins.iter().any(|j| j.face == face));
             let result = self.cache.poll(
@@ -220,6 +303,7 @@ impl Publisher {
                 self.build = None;
                 return Err("visual LOD cut exceeds its 2 MiB geometry budget".into());
             }
+            self.working = None;
             build.words += words;
             build.groups.insert(key, Some(groups));
         }
@@ -376,6 +460,13 @@ impl Publisher {
     }
 }
 
+fn tile_id(key: Key) -> String {
+    format!(
+        "{}/{}/{}/{}",
+        key.level, key.tile[0], key.tile[1], key.tile[2]
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,6 +497,109 @@ mod tests {
         }
         panic!("visual cut did not finish");
     }
+    #[test]
+    fn missing_tile_requests_prioritize_jobs_without_partial_publication() {
+        let mut world = world();
+        let mut publisher = Publisher::default();
+        let keys = [0, 1, 2].map(|x| Key {
+            level: 0,
+            tile: [x, 0, 0],
+        });
+        assert!(
+            publisher
+                .advance(&mut world, keys.to_vec())
+                .unwrap()
+                .is_empty()
+        );
+        let effect = publisher.request_effect(&world).unwrap();
+        let set: TileSet = serde_json::from_value(effect).unwrap();
+        set.check().unwrap();
+        assert_eq!(
+            set.tiles.iter().map(|t| &t.id).collect::<Vec<_>>(),
+            vec![&tile_id(keys[1]), &tile_id(keys[2])]
+        );
+        assert_eq!(set.tiles[0].min, [8.0, 0.0, 0.0]);
+        assert!(publisher.request_effect(&world).is_none());
+        let feedback = Feedback {
+            name: "visual".into(),
+            generation: world.lod_generation,
+            revision: world.grid.revision(),
+            visible: vec![tile_id(keys[2])],
+        };
+        let mut stale = feedback.clone();
+        stale.revision += 1;
+        publisher.feedback(&[stale], &world);
+        assert!(publisher.requested.is_empty());
+        publisher.feedback(&[feedback], &world);
+        assert_eq!(publisher.requested, BTreeSet::from([keys[2]]));
+        assert!(
+            publisher
+                .advance(&mut world, keys.to_vec())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            publisher
+                .build
+                .as_ref()
+                .unwrap()
+                .groups
+                .contains_key(&keys[2])
+        );
+        assert!(
+            !publisher
+                .build
+                .as_ref()
+                .unwrap()
+                .groups
+                .contains_key(&keys[1])
+        );
+        // Occluded jobs still complete; they are required for the coherent cut.
+        assert!(!finish(&mut publisher, &mut world, &keys).is_empty());
+        let clear = publisher.request_effect(&world).unwrap();
+        assert_eq!(clear["tiles"], json!([]));
+        assert!(publisher.request_effect(&world).is_none());
+    }
+
+    #[test]
+    fn priorities_do_not_abandon_a_partially_sampled_tile() {
+        let mut world = world();
+        let mut publisher = Publisher::default();
+        let keys = [0, 1].map(|x| Key {
+            level: 3,
+            tile: [x, 0, 0],
+        });
+        publisher.advance(&mut world, keys.to_vec()).unwrap();
+        assert_eq!(publisher.working, Some(keys[0]));
+        publisher.feedback(
+            &[Feedback {
+                name: "visual".into(),
+                generation: world.lod_generation,
+                revision: world.grid.revision(),
+                visible: vec![tile_id(keys[1])],
+            }],
+            &world,
+        );
+        publisher.advance(&mut world, keys.to_vec()).unwrap();
+        assert_eq!(publisher.working, Some(keys[0]));
+        assert!(
+            !publisher
+                .build
+                .as_ref()
+                .unwrap()
+                .groups
+                .contains_key(&keys[1])
+        );
+        publisher.request_effect(&world).unwrap();
+        publisher.fallback(&world);
+        assert!(
+            publisher.request_effect(&world).unwrap()["tiles"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
     #[test]
     fn empty_camera_cut_keeps_near_terrain_until_a_replacement_is_ready() {
         let mut world = world();

@@ -28,6 +28,7 @@ pub mod data;
 pub mod generation;
 pub mod id;
 pub mod loadout;
+pub mod lod;
 pub mod manifest;
 pub mod mesh;
 pub mod record;

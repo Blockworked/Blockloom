@@ -222,6 +222,7 @@ pub fn sync(
     mut state: ResMut<PluginMeshes>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    lod: Option<Res<crate::plugins::LodBridge>>,
     images: Option<Res<AssetServer>>,
     link: Option<Res<ComputeLink>>,
     mut quad_materials: Option<ResMut<Assets<crate::plugin_quads::QuadMaterial>>>,
@@ -501,7 +502,15 @@ pub fn sync(
                     commands.entity(old).despawn();
                 }
             }
+            MeshOp::LodTiles { plugin, set } => {
+                if let Some(lod) = &lod {
+                    lod.submit(plugin, set);
+                }
+            }
             MeshOp::Clear => {
+                if let Some(lod) = &lod {
+                    lod.clear();
+                }
                 for (_, old) in state.live.drain() {
                     commands.entity(old).despawn();
                 }

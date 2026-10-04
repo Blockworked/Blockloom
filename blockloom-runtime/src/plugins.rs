@@ -29,7 +29,6 @@ use blockloom_plugin_api::loadout::Loadout;
 use blockloom_plugin_api::mesh::MeshData;
 use blockloom_plugin_api::rendering::InstanceData;
 use blockloom_plugin_api::schema::Stage;
-#[cfg(feature = "plugins")]
 use blockloom_protocol::RuntimeMessage;
 use serde_json::Value;
 #[cfg(feature = "plugins")]
@@ -42,10 +41,53 @@ use blockloom_plugin_host::world::{Effect, Outcome, WorldPlugins};
 #[cfg(feature = "plugins")]
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
+/// Plugin-scoped tile descriptors shared with render extraction.
+#[derive(Resource, Default)]
+pub struct LodBridge(pub std::sync::Mutex<LodState>);
+#[derive(Default)]
+pub struct LodState {
+    pub clip: Option<Mat4>,
+    pub sets: std::collections::BTreeMap<(String, String), blockloom_plugin_api::lod::TileSet>,
+    pub feedback: std::collections::BTreeMap<String, Vec<blockloom_plugin_api::lod::Feedback>>,
+}
+impl LodBridge {
+    pub fn submit(&self, plugin: String, set: blockloom_plugin_api::lod::TileSet) {
+        let mut state = self.0.lock().unwrap();
+        let key = (plugin.clone(), set.name.clone());
+        if state.sets.get(&key) == Some(&set) {
+            return;
+        }
+        state.feedback.clear();
+        if set.tiles.is_empty() {
+            state.sets.remove(&key);
+        } else {
+            // Bound aggregate descriptor storage across all loaded plugins.
+            let count: usize = state
+                .sets
+                .iter()
+                .filter(|(k, _)| **k != key)
+                .map(|(_, s)| s.tiles.len())
+                .sum();
+            if count + set.tiles.len() <= 2048 {
+                state.sets.insert(key, set);
+            } else {
+                state.sets.remove(&key);
+            }
+        }
+    }
+    pub fn clear(&self) {
+        *self.0.lock().unwrap() = LodState::default();
+    }
+}
+
 /// A change to the meshes plugins have drawn, waiting for
 /// `plugin_meshes::sync` to carry it out.
 #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
 pub enum MeshOp {
+    LodTiles {
+        plugin: String,
+        set: blockloom_plugin_api::lod::TileSet,
+    },
     Put {
         plugin: String,
         mesh: MeshData,
@@ -149,6 +191,10 @@ enum Applied {
         name: String,
         visible: bool,
     },
+    LodTiles {
+        plugin: String,
+        set: blockloom_plugin_api::lod::TileSet,
+    },
     NavDirty,
     Instances {
         plugin: String,
@@ -196,6 +242,7 @@ fn applied(outcomes: Vec<Outcome>) -> Vec<Applied> {
                     name,
                     visible,
                 },
+                Effect::LodTiles(set) => Applied::LodTiles { plugin, set },
                 Effect::NavDirty { .. } => Applied::NavDirty,
                 Effect::Instances(set) => Applied::Instances { plugin, set },
                 Effect::RemoveInstances { name } => Applied::RemoveInstances { plugin, name },
@@ -271,6 +318,9 @@ fn apply(engine: &mut Engine, outcomes: Vec<Applied>) {
                 .plugins
                 .meshes
                 .push(MeshOp::RemoveInstances { plugin, name }),
+            Applied::LodTiles { plugin, set } => {
+                engine.plugins.meshes.push(MeshOp::LodTiles { plugin, set })
+            }
             Applied::NavDirty => engine.plugins.nav_dirty.set(true),
             Applied::Gpu { plugin, command } => engine.plugins.gpu.push((plugin, command)),
         }
@@ -913,11 +963,13 @@ pub fn stage(
 ) -> impl FnMut(
     NonSendMut<Engine>,
     Res<Time>,
+    Option<Res<LodBridge>>,
     crate::queries::QueryAccess,
     Query<(&GlobalTransform, &Projection, &Camera), With<crate::world::WorldCamera>>,
 ) {
     move |mut engine: NonSendMut<Engine>,
           time: Res<Time>,
+          lod: Option<Res<LodBridge>>,
           queries: crate::queries::QueryAccess,
           cameras: Query<
         (&GlobalTransform, &Projection, &Camera),
@@ -975,7 +1027,24 @@ pub fn stage(
                 if matches!(stage, Stage::Input | Stage::Presentation) {
                     world.forget_reads();
                 }
-                let mut outcomes = world.run_stage_with_view(stage, tick, dt, view);
+                let feedback = lod
+                    .as_ref()
+                    .filter(|_| stage == Stage::Presentation)
+                    .map(|lod| {
+                        let mut active = cameras.iter().filter(|(_, _, c)| c.is_active);
+                        let clip = active.next().map(|(pose, projection, _)| {
+                            projection.get_clip_from_view() * pose.to_matrix().inverse()
+                        });
+                        let state = lod.0.lock().unwrap();
+                        if active.next().is_none() && clip.is_some() && clip == state.clip {
+                            state.feedback.clone()
+                        } else {
+                            Default::default()
+                        }
+                    })
+                    .unwrap_or_default();
+                let mut outcomes =
+                    world.run_stage_with_lod_feedback(stage, tick, dt, view, &feedback);
                 // Jobs get their slices once per fixed tick, after the hooks.
                 if stage == Stage::FixedSimulation {
                     outcomes.extend(world.run_jobs(JOB_BUDGET_MS));
@@ -985,7 +1054,7 @@ pub fn stage(
             apply(&mut engine, applied(outcomes));
         }
         #[cfg(not(feature = "plugins"))]
-        let _ = (&mut engine, &time, &queries, &cameras, stage);
+        let _ = (&mut engine, &time, &lod, &queries, &cameras, stage);
     }
 }
 

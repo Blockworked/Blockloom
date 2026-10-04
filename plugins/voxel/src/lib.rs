@@ -900,8 +900,12 @@ impl World {
         }
     }
 
-    fn visual_frame(&mut self, view: &Value) -> Vec<Value> {
+    fn visual_frame(&mut self, view: &Value, feedback: &Value) -> Vec<Value> {
         let mut publisher = std::mem::take(&mut self.lod_publisher);
+        let feedback =
+            serde_json_from::<Vec<blockloom_plugin_api::lod::Feedback>>(feedback.clone())
+                .unwrap_or_default();
+        publisher.feedback(&feedback, self);
         // Distant chunks drive the LOD reach: 128 chunks is 4096 blocks.
         let lod_distance = worldgen::lod_distance_for(self.settings.distant_chunks)
             .unwrap_or(self.settings.lod_distance);
@@ -948,8 +952,11 @@ impl World {
                 }
             }
         };
-        self.lod_publisher = publisher;
         let mut effects = effects;
+        if let Some(request) = publisher.request_effect(self) {
+            effects.push(request);
+        }
+        self.lod_publisher = publisher;
         effects.extend(self.release_fragments());
         effects
     }
@@ -1723,7 +1730,7 @@ impl Plugin for Voxel {
                     world.settings.pregen_distant = pregen;
                 }
                 let mut effects = world.flush();
-                effects.extend(world.visual_frame(&args["view"]));
+                effects.extend(world.visual_frame(&args["view"], &args["lod_feedback"]));
                 Ok(
                     json!({"effects":effects,"distant_chunks":chunks,"pregen_distant":world.settings.pregen_distant}),
                 )
@@ -1749,13 +1756,19 @@ impl Plugin for Voxel {
                     world.invoke(&centres)
                 };
                 effects.extend(world.flush());
-                effects.extend(world.visual_frame(&args["view"]));
+                effects.extend(world.visual_frame(&args["view"], &args["lod_feedback"]));
                 world.collision_needed.clear();
                 Ok(json!({"effects":effects}))
             }
             "world.stop" => {
                 let mut effects = Vec::new();
-                if let Some(world) = self.world.take() {
+                if let Some(mut world) = self.world.take() {
+                    let mut publisher = std::mem::take(&mut world.lod_publisher);
+                    publisher.reset_jobs();
+                    if let Some(request) = publisher.request_effect(&world) {
+                        effects.push(request);
+                    }
+                    world.lod_publisher = publisher;
                     if world.settings.persistent
                         && self.render_enabled
                         && !world.preview

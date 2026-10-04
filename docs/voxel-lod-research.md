@@ -397,9 +397,22 @@ Storage, reduction, coarse mesh production and selection are implemented in
   feedback, queue overflow, absent pyramids and multiple cameras retain CPU
   visibility scheduling. Hidden compute buffers and CPU fallback meshes remain
   available. Existing Bevy draw occlusion also applies to compact meshes.
-  This request queue controls triangle-buffer uploads, not voxel sampling,
-  tile selection or meshing. The CPU voxel selector and publisher still own those
-  jobs; missing-tile GPU requests and geometry residency need a typed plugin bridge.
+  The queue also traverses typed pending visual tile bounds, even before those
+  tiles have mesh assets. The `lod_tiles` effect replaces a plugin-scoped set of
+  at most 512 named jobs with generation/revision identities and finite world
+  bounds. The runtime holds at most 2048 tile descriptors across all plugins;
+  combined mesh-instance/tile traversal still has a 2048-candidate ceiling and
+  512 deduplicated output requests. Exceeding either limit uses CPU scheduling.
+- Presentation hooks receive optional typed `lod_feedback` for their own plugin.
+  Descriptor changes, camera changes, expiry, overflow and multiple cameras
+  invalidate feedback. An empty visible list differs from absent feedback.
+  Voxel publishes missing jobs from its captured visual cut and prioritizes
+  visible jobs at the next job boundary. Partially sampled jobs finish first;
+  other jobs still run, so occlusion cannot create holes or starve a finite cut.
+  Edits and generation changes reject stale priorities. Requests clear when
+  jobs finish, visual rendering falls back or the world stops. CPU selection,
+  mip sampling and complete-cut publication remain authoritative; GPU feedback
+  changes job order without changing gameplay or the selected cut.
 - Qualification covers quad CPU geometry parity, native/WASM effects, shared
   instance lifecycle, transition retirement bounds, complementary halfway-fade
   rendering with depth/motion prepasses, depth rejection, duplicate requests,
@@ -414,8 +427,9 @@ all gameplay queries and collision stay canonical.
 Interpolated density transition collars are still unfinished: an implicit collar
 prototype exceeded work limits and failed watertightness checks, so it was removed.
 Joint corners, world-edge contours and topology changes need a closed transition
-extractor before this can replace planar seams. GPU voxel traversal/missing-tile
-requests and a persistent suballocated quad arena also remain.
+extractor before this can replace planar seams. GPU traversal now prioritizes
+missing jobs via the typed bridge; GPU-driven hierarchy selection, persistent
+geometry residency and a suballocated quad arena remain.
 
 ### Implementation order and qualification
 
@@ -427,8 +441,9 @@ for unrelated edits. Mixed-resolution boundaries now have planar solid-differenc
 joins. Renderer copies now use camera visibility and bounded FIFO scheduling;
 GPU triangle buffers pack active topology, cube tiles draw persistent compact
 records, cut changes crossfade and depth traversal qualifies upload requests.
-Next implement closed interpolated density seams, expose typed GPU voxel tile
-requests and qualify persistent geometry residency/indirect allocation.
+Typed GPU tile requests now prioritize missing visual jobs. Next implement
+closed interpolated density seams and qualify persistent geometry residency,
+GPU hierarchy selection and indirect allocation.
 
 Qualification includes non-multiple heights (1, 31, 33, 100), old checkpoints,
 column and section borders, thin structures, caves, shape proxies, smooth

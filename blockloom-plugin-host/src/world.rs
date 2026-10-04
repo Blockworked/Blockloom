@@ -63,6 +63,8 @@ pub enum Effect {
     },
     /// Draws a mesh, replacing the plugin's mesh of the same name.
     Mesh(MeshData),
+    /// Replaces a bounded set of visual tile jobs for GPU visibility priorities.
+    LodTiles(blockloom_plugin_api::lod::TileSet),
     /// Takes the plugin's mesh of that name out of the world.
     RemoveMesh { name: String },
     /// Changes drawing without removing the mesh or its collider.
@@ -733,6 +735,18 @@ impl WorldPlugins {
         dt: f64,
         view: Value,
     ) -> Vec<Outcome> {
+        self.run_stage_with_lod_feedback(stage, tick, dt, view, &BTreeMap::new())
+    }
+
+    /// Supplies each plugin only its own advisory tile priorities.
+    pub fn run_stage_with_lod_feedback(
+        &mut self,
+        stage: Stage,
+        tick: u64,
+        dt: f64,
+        view: Value,
+        feedback: &BTreeMap<String, Vec<blockloom_plugin_api::lod::Feedback>>,
+    ) -> Vec<Outcome> {
         let hooks: Vec<HookRef> = self
             .order
             .iter()
@@ -756,6 +770,11 @@ impl WorldPlugins {
             });
             if !view.is_null() {
                 input["view"] = view.clone();
+            }
+            if stage == Stage::Presentation && !view.is_null() {
+                if let Some(feedback) = feedback.get(&hook.plugin) {
+                    input["lod_feedback"] = json!(feedback);
+                }
             }
             let op = format!("{}{}", ops::HOOK_PREFIX, hook.name);
             let (outcomes, missing) = self.call_op(&hook.plugin, &op, &input, false);
@@ -1044,6 +1063,10 @@ fn effects_of(plugin: &str, op: &str, answer: &Value, gpu_allowed: bool) -> Vec<
                     plugin: plugin.to_string(),
                     message: format!("{op}: GPU meshes need the gpu-compute capability"),
                 },
+                Ok(Effect::LodTiles(set)) if set.check().is_err() => Outcome::Error {
+                    plugin: plugin.to_string(),
+                    message: format!("{op}: {}", set.check().unwrap_err()),
+                },
                 Ok(Effect::Instances(set)) if set.check().is_err() => Outcome::Error {
                     plugin: plugin.to_string(),
                     message: format!("{op}: {}", set.check().unwrap_err()),
@@ -1120,7 +1143,7 @@ mod tests {
                 }
                 "hook.tick" => answer(
                     out,
-                    json!({"effects": [{"effect": "say", "text": if input["view"].is_null() {format!("tick {}", input["tick"])} else {format!("view {}",input["view"])}}]}),
+                    json!({"effects": [{"effect": "say", "text": if !input["lod_feedback"].is_null() {format!("feedback {}",input["lod_feedback"])} else if input["view"].is_null() {format!("tick {}", input["tick"])} else {format!("view {}",input["view"])}}]}),
                 ),
                 "hook.late" => answer(
                     out,
@@ -1329,6 +1352,73 @@ mod tests {
             said(&world.run_stage(Stage::FixedSimulation, 8, 0.02)),
             ["a: tick 8", "b: tick 8"]
         );
+    }
+
+    #[test]
+    fn lod_feedback_is_plugin_scoped_and_presentation_only() {
+        let mut world = two_plugins();
+        for hook in &mut world.order {
+            hook.stage = Stage::Presentation;
+        }
+        let view = json!({"position":[1,2,3]});
+        let feedback = blockloom_plugin_api::lod::Feedback {
+            name: "visual".into(),
+            generation: 1,
+            revision: 2,
+            visible: vec!["tile".into()],
+        };
+        let encoded = json!([feedback.clone()]);
+        let feedback = BTreeMap::from([("a".into(), vec![feedback])]);
+        assert_eq!(
+            said(&world.run_stage_with_lod_feedback(
+                Stage::Presentation,
+                1,
+                0.02,
+                view.clone(),
+                &feedback
+            )),
+            [format!("a: feedback {encoded}"), format!("b: view {view}")]
+        );
+        assert_eq!(
+            said(&world.run_stage_with_lod_feedback(
+                Stage::Presentation,
+                2,
+                0.02,
+                Value::Null,
+                &feedback
+            )),
+            ["a: tick 2", "b: tick 2"]
+        );
+        for hook in &mut world.order {
+            hook.stage = Stage::FixedSimulation;
+        }
+        assert_eq!(
+            said(&world.run_stage_with_lod_feedback(
+                Stage::FixedSimulation,
+                3,
+                0.02,
+                view.clone(),
+                &feedback
+            )),
+            [format!("a: view {view}"), format!("b: view {view}")]
+        );
+    }
+
+    #[test]
+    fn lod_effect_validation_refuses_duplicate_tile_descriptors() {
+        let tile = json!({"id":"tile","min":[0,0,0],"max":[1,1,1]});
+        let valid = json!({"effect":"lod_tiles","name":"visual","generation":1,"revision":2,"tiles":[tile]});
+        let mut invalid = valid.clone();
+        invalid["tiles"] = json!([tile, tile]);
+        let outcomes = effects_of("a", "hook", &json!({"effects":[valid, invalid]}), false);
+        assert!(matches!(
+            &outcomes[0],
+            Outcome::Effect {
+                effect: Effect::LodTiles(_),
+                ..
+            }
+        ));
+        assert!(matches!(&outcomes[1], Outcome::Error { .. }));
     }
 
     #[test]

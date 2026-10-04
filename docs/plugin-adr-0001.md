@@ -972,3 +972,24 @@ eviction, invalid bounds, oversized sweeps, and portable readiness across four
 boundary pages. Voxelvale was also run through the real menu/Create path with
 copied saves and full GPU rendering, checking the player's height every frame
 through 400 frames rather than only its final position.
+
+
+### Voxel 0.3.10: typed GPU tile requests
+
+Plugins can submit `lod_tiles` effects with a named set of up to 512 visual
+job ids, generation/revision identity and conservative world-space bounds.
+Empty sets remove requests. The host validates names, unique ids and finite
+positive extents. Runtime descriptor storage is capped at 2048 across plugins;
+the existing bounded depth traversal handles both mesh uploads and tile jobs.
+
+Presentation hooks receive only their plugin's `lod_feedback`. Changed
+requests/cameras, expired readbacks, overflow and multiple cameras use CPU
+scheduling. Voxel requests jobs missing from its captured visual cut and uses
+visible ids to prioritize the next job. A partially sampled tile finishes
+before switching, and every required tile still completes before publication.
+Collision, canonical queries, invoker residency and seam geometry are unchanged.
+Requests clear on completion, fallback and stop.
+
+Qualification includes descriptor validation, plugin isolation, stale feedback,
+job priorities without partial publication, in-progress job retention, GPU
+occlusion/deduplication/overflow and native/portable effect parity.
