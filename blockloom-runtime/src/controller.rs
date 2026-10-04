@@ -58,6 +58,36 @@ pub fn clear() {
     blockloom_core::physics::controller::reset();
 }
 
+fn streamed_collision_ready(
+    actor: &str,
+    start: Vec3,
+    delta: Vec3,
+    spec: &CharacterControllerSpec,
+) -> bool {
+    use blockloom_core::{sense, value::Evaluated};
+    // Enclose the whole tilted capsule and its sweep, including floor contact.
+    let extent = Vec3::splat(spec.height * 0.5 + spec.skin_width + 0.1);
+    let lo = start.min(start + delta) - extent;
+    let hi = start.max(start + delta) + extent;
+    let mut args = vec![Evaluated::Text(actor.into())];
+    args.extend(
+        lo.to_array()
+            .into_iter()
+            .chain(hi.to_array())
+            .map(|n| Evaluated::Number(f64::from(n))),
+    );
+    match sense::plugin_read("com.blockworked.voxel", "collision_ready", &args) {
+        Ok(Evaluated::Bool(ready)) => ready,
+        // Worlds without this plugin keep their normal controller behavior.
+        Err(why)
+            if why.contains("doesn't answer in this run") || why.contains("only answers while") =>
+        {
+            true
+        }
+        _ => false,
+    }
+}
+
 fn tilt_3d(up: [f32; 3]) -> Quat {
     Quat::from_rotation_arc(Vec3::Y, Vec3::from(up))
 }
@@ -343,6 +373,14 @@ pub mod d3 {
             let tilt = Quat::from_rotation_arc(Vec3::Y, up);
             let centre = transform.rotation * Vec3::from(spec.center);
             let start = transform.translation + Vec3::from(r.pending) + centre;
+            if spec.detect_collisions
+                && !streamed_collision_ready(r.actor, start, Vec3::from(r.displacement), spec)
+            {
+                return Ok(StepOutcome {
+                    grounded: true,
+                    ..StepOutcome::default()
+                });
+            }
             let controller = configured(spec, up);
             let dt = r.dt.max(1.0e-4);
 
@@ -656,5 +694,53 @@ pub mod d2 {
         fn mode(&self) -> Mode {
             Mode::TwoD
         }
+    }
+}
+
+#[cfg(test)]
+mod streaming_safety_tests {
+    use super::*;
+    use blockloom_core::{sense, value::Evaluated};
+
+    #[test]
+    fn guard_checks_the_entire_capsule_sweep_and_fails_closed() {
+        sense::set_plugin_reader(Some(Box::new(|plugin, block, args| {
+            assert_eq!(plugin, "com.blockworked.voxel");
+            assert_eq!(block, "collision_ready");
+            assert_eq!(args[0], Evaluated::Text("player".into()));
+            let numbers: Vec<_> = args[1..]
+                .iter()
+                .map(|v| match v {
+                    Evaluated::Number(n) => *n,
+                    _ => panic!("expected coordinate"),
+                })
+                .collect();
+            assert!(numbers[0] < 30.0 && numbers[3] > 34.0);
+            assert!(numbers[1] < 9.0 && numbers[4] > 12.0);
+            Ok(Evaluated::Bool(false))
+        })));
+        let spec = CharacterControllerSpec::default();
+        assert!(!streamed_collision_ready(
+            "player",
+            Vec3::new(30.0, 12.0, 4.0),
+            Vec3::new(4.0, -3.0, 0.0),
+            &spec
+        ));
+        sense::set_plugin_reader(Some(Box::new(|_, _, _| {
+            Err("portable module trapped".into())
+        })));
+        assert!(!streamed_collision_ready(
+            "player",
+            Vec3::ZERO,
+            Vec3::ZERO,
+            &spec
+        ));
+        sense::set_plugin_reader(None);
+        assert!(streamed_collision_ready(
+            "player",
+            Vec3::ZERO,
+            Vec3::ZERO,
+            &spec
+        ));
     }
 }

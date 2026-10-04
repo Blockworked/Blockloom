@@ -113,7 +113,8 @@ impl Loadout {
 /// the world treats as "nothing to do".
 pub mod ops {
     /// The world was built and the run began. Input: `{"plugin", "records",
-    /// "resources", "preview"}`, the plugin's own records from the project.
+    /// "resources", "preview", "mode"}`, with the active scene's records.
+    /// Actor records include their authored `position`; `mode` is `TwoD` or `ThreeD`.
     /// `preview` is true when the scene view hosts the module while nothing
     /// plays: it may draw, but hooks and blocks do not run.
     pub const START: &str = "world.start";

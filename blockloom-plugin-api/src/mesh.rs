@@ -55,6 +55,14 @@ pub struct MeshData {
     /// The shape of that collider; a trimesh unless the plugin says otherwise.
     #[serde(default)]
     pub collider_kind: ColliderKind,
+    /// x, y per vertex, into `texture` when one is set. Empty when untextured.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub uvs: Vec<f32>,
+    /// Project asset path of the texture the uvs read (for example
+    /// `assets/textures/grass_top.png`). The world loads it as the
+    /// surface's base color map; without it the vertex colors draw alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub texture: Option<String>,
     /// Compute triangle output or persistent compact quads for direct rendering.
     /// CPU arrays remain the collision mesh and the rendering fallback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -190,6 +198,19 @@ impl MeshData {
         if self.colors.len() != count * 4 {
             return Err(format!("mesh {name}: one rgba color per vertex"));
         }
+        if !self.uvs.is_empty() && self.uvs.len() != count * 2 {
+            return Err(format!("mesh {name}: one uv per vertex"));
+        }
+        if self.texture.is_some() && self.uvs.is_empty() {
+            return Err(format!("mesh {name}: a texture needs uvs"));
+        }
+        if let Some(texture) = &self.texture
+            && (texture.is_empty() || texture.len() > 256)
+        {
+            return Err(format!(
+                "mesh {name}: a texture path needs 1 to 256 characters"
+            ));
+        }
         if !self.indices.len().is_multiple_of(3) {
             return Err(format!("mesh {name}: indices are not a multiple of 3"));
         }
@@ -201,6 +222,7 @@ impl MeshData {
             .iter()
             .chain(&self.normals)
             .chain(&self.colors)
+            .chain(&self.uvs)
             .chain(&self.origin)
             .chain(self.emission.iter().flatten())
             .chain([&self.roughness])
@@ -229,9 +251,21 @@ mod tests {
             transition_ms: 0,
             collider: false,
             collider_kind: ColliderKind::Trimesh,
+            uvs: Vec::new(),
+            texture: None,
             gpu: None,
             body: None,
         }
+    }
+
+    #[test]
+    fn textured_meshes_carry_uvs_and_a_path() {
+        let mut mesh = triangle();
+        mesh.uvs = vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0];
+        mesh.texture = Some("assets/textures/grass.png".into());
+        assert!(mesh.check().is_ok());
+        mesh.uvs.pop();
+        assert!(mesh.check().is_err());
     }
 
     #[test]

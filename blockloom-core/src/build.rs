@@ -326,11 +326,11 @@ fn status(
 }
 
 /// The player to copy into a build for `target`: the payload staged for it,
-/// or - for this machine only - `fallback`, which the caller names since it is
-/// the runtime the editor itself plays with.
+/// or, for this machine, the newer of that payload and the editor's runtime.
+/// `fallback` names the runtime the editor itself plays with.
 pub fn player_for(target: &Target, fallback: &Path) -> Option<PathBuf> {
     if let Some(staged) = staged_player(target, fallback) {
-        return Some(staged);
+        return Some(select_player(target, staged, fallback));
     }
     if is_host(target) && fallback.is_file() {
         return Some(fallback.to_path_buf());
@@ -338,9 +338,21 @@ pub fn player_for(target: &Target, fallback: &Path) -> Option<PathBuf> {
     None
 }
 
+fn select_player(target: &Target, staged: PathBuf, fallback: &Path) -> PathBuf {
+    if is_host(target) && fallback.is_file() {
+        let modified = |path: &Path| std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        if let (Some(local_time), Some(staged_time)) = (modified(fallback), modified(&staged))
+            && local_time > staged_time
+        {
+            return fallback.to_path_buf();
+        }
+    }
+    staged
+}
+
 /// A payload under `players/<triple>/` beside this executable, or under
-/// `BLOCKLOOM_PLAYERS` when that is set. It wins even for this machine: it is
-/// the copy meant for shipping (see `just player`). The web player is its
+/// `BLOCKLOOM_PLAYERS` when that is set. A newer local runtime supersedes an
+/// older host payload. The web player is its
 /// wasm file, with its JS glue beside it (`just web-player`).
 fn staged_player(target: &Target, fallback: &Path) -> Option<PathBuf> {
     let stem = fallback.file_stem()?.to_string_lossy().into_owned();
@@ -1829,6 +1841,40 @@ fn make_executable(_path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::scene::Mode;
+
+    #[test]
+    fn host_exports_use_the_newer_runtime_but_cross_exports_keep_their_payload() {
+        use std::fs::{File, FileTimes};
+        use std::time::{Duration, UNIX_EPOCH};
+        let root = temp("player-freshness");
+        let staged = root.join("staged");
+        let local = root.join("local");
+        let write_at = |path: &Path, seconds| {
+            std::fs::write(path, b"runtime").unwrap();
+            File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(seconds)))
+                .unwrap();
+        };
+        let host = host().unwrap();
+        write_at(&staged, 100);
+        write_at(&local, 200);
+        assert_eq!(select_player(host, staged.clone(), &local), local);
+        write_at(&staged, 300);
+        assert_eq!(select_player(host, staged.clone(), &local), staged);
+        write_at(&local, 400);
+        let cross = TARGETS
+            .iter()
+            .find(|t| !is_host(t) && !t.is_web() && !t.is_android())
+            .unwrap();
+        assert_eq!(select_player(cross, staged.clone(), &local), staged);
+        std::fs::remove_file(&local).unwrap();
+        assert_eq!(select_player(host, staged.clone(), &local), staged);
+        assert_eq!(select_player(host, staged.clone(), &root), staged);
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn a_shipped_plugin_carries_its_manifest_beside_its_files() {

@@ -5,7 +5,7 @@
 use crate::grid::Grid;
 use crate::palette::{DIRT, GLOW, GRASS, LEAVES, SAND, STONE, WOOD};
 
-pub const PRESETS: [&str; 4] = ["island", "caves", "flat", "empty"];
+pub const PRESETS: [&str; 5] = ["island", "caves", "flat", "empty", "infinite"];
 
 fn hash(seed: u32, x: i32, y: i32, z: i32) -> u32 {
     let mut h = seed
@@ -98,7 +98,7 @@ fn tree(size: [i32; 3], preset: &str, seed: u32, x: i32, z: i32) -> Option<(i32,
 }
 
 pub fn height_bound(size: [i32; 3], preset: &str, seed: i64, x: i32, z: i32) -> i32 {
-    if preset == "empty" {
+    if preset == "empty" || preset == "infinite" {
         return -1;
     }
     let seed = seed32(seed);
@@ -115,6 +115,11 @@ pub fn height_bound(size: [i32; 3], preset: &str, seed: i64, x: i32, z: i32) -> 
 
 /// A canonical sample, including trees crossing page borders.
 pub fn sample(size: [i32; 3], preset: &str, seed: i64, cell: [i32; 3]) -> u8 {
+    if preset == "infinite" {
+        // Infinite cells need their worldgen config; Grid::base answers
+        // those directly. A bare terrain sample is air.
+        return 0;
+    }
     if preset == "empty" || (0..3).any(|a| cell[a] < 0 || cell[a] >= size[a]) {
         return 0;
     }
@@ -180,6 +185,9 @@ pub fn generate(grid: &mut Grid, preset: &str, seed: i64) -> Result<(), String> 
     grid.clear();
     if preset == "empty" {
         return Ok(());
+    }
+    if preset == "infinite" {
+        return Err("the infinite preset streams pages near the player; turn streamed on".into());
     }
     let seed = seed32(seed);
     let [sx, sy, sz] = grid.size();
@@ -278,6 +286,10 @@ mod tests {
     #[test]
     fn paged_samples_match_eager_generation_including_trees() {
         for preset in PRESETS {
+            // Infinite streams pages near the player; eager grids stay finite.
+            if preset == "infinite" {
+                continue;
+            }
             let mut grid = Grid::new([48, 32, 48]);
             generate(&mut grid, preset, 42).unwrap();
             for z in 0..48 {

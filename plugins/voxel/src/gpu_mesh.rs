@@ -9,10 +9,31 @@ pub fn build(
     base: [i32; 3],
     extent: [i32; 3],
     glow: Option<u8>,
+    group: &crate::mesher::Group,
     effects: &mut Vec<Value>,
 ) -> Option<GpuVertices> {
     if !world.settings.gpu_meshing || !world.grid.shaped_in(chunk).is_empty() {
         return None;
+    }
+    if world.surface == Surface::Cubes {
+        let output = visual(group, world.voxel)?;
+        let quads = output.quads.as_ref().unwrap();
+        let words = quads.records.len() as u32 * 12 + quads.palette.len() as u32 * 4;
+        let allocated = world
+            .gpu_buffers
+            .values()
+            .flatten()
+            .map(|(_, w)| u64::from(*w))
+            .sum::<u64>();
+        if allocated + u64::from(words) > 16 * 1024 * 1024 {
+            return None;
+        }
+        world
+            .gpu_buffers
+            .entry(chunk)
+            .or_default()
+            .push((None, words));
+        return Some(output);
     }
     let lo = base.map(|v| {
         if world.surface == Surface::Smooth && v == 0 {
@@ -43,52 +64,13 @@ pub fn build(
             }
         }
     }
-    let (offsets, vertices, invocations) = if world.surface == Surface::Cubes {
-        let mut quads = Vec::new();
-        crate::mesher::cube_quads(
-            &world.palette,
-            [0; 3],
-            extent,
-            |p| {
-                let p = p.map(|v| v + 1);
-                samples[((p[2] * n[1] + p[1]) * n[0] + p[0]) as usize * 2 + 1] as u8
-            },
-            |q, m| {
-                if (world.palette.get(m).unwrap().emission > 0.0).then_some(m) == glow {
-                    // Byte coordinates cover both fine tiles and coarse LOD tiles.
-                    let face = q.axis as u32 * 2 + u32::from(q.sign > 0);
-                    quads.extend([
-                        q.plane as u32
-                            | (q.at[0] as u32) << 8
-                            | (q.at[1] as u32) << 16
-                            | face << 24,
-                        q.size[0] as u32 | (q.size[1] as u32) << 8 | u32::from(m) << 16,
-                    ]);
-                }
-            },
-        );
-        let count = quads.len() as u32 / 2;
-        (quads, count * 6, count)
-    } else {
-        let offsets = packed_offsets(&samples, n, anchors, &world.palette, glow);
-        let vertices = *offsets.last().unwrap();
-        (offsets, vertices, anchors.iter().product::<i32>() as u32)
-    };
+    let offsets = packed_offsets(&samples, n, anchors, &world.palette, glow);
+    let vertices = *offsets.last().unwrap();
+    let invocations = anchors.iter().product::<i32>() as u32;
     if vertices == 0 || vertices as usize > blockloom_plugin_api::mesh::MAX_VERTICES {
         return None;
     }
-    let words = if world.surface == Surface::Cubes {
-        offsets.len() as u32 * 6
-            + 4 * offsets
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|r| (r[1] >> 16) & 255)
-                .collect::<std::collections::BTreeSet<_>>()
-                .len() as u32
-    } else {
-        vertices * 10
-    };
+    let words = vertices * 10;
     if world
         .gpu_buffers
         .values()
@@ -116,39 +98,6 @@ pub fn build(
         } else {
             0.0
         };
-    }
-    if world.surface == Surface::Cubes {
-        let mut palette_ids = std::collections::BTreeMap::new();
-        let mut compact_palette = Vec::new();
-        let records = offsets
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|[record, dimensions]| {
-                let material = (dimensions >> 16) & 255;
-                let next = palette_ids.len() as u32;
-                let index = *palette_ids.entry(material).or_insert_with(|| {
-                    let m = material as usize * 4;
-                    compact_palette.push([colors[m], colors[m + 1], colors[m + 2], 1.0]);
-                    next
-                });
-                [*record, (dimensions & 65535) | index << 16]
-            })
-            .collect();
-        world
-            .gpu_buffers
-            .entry(chunk)
-            .or_default()
-            .push((None, words));
-        return Some(GpuVertices {
-            buffer: output,
-            vertices,
-            quads: Some(CompactQuads {
-                records,
-                palette: compact_palette,
-                voxel: world.voxel,
-            }),
-        });
     }
     let parameters = [
         n[0] as f32,
@@ -255,7 +204,11 @@ fn packed_offsets(
 
 /// Pack axis-aligned rectangular triangle pairs, including clipped cube LOD seams.
 pub fn visual(group: &crate::mesher::Group, voxel: f32) -> Option<GpuVertices> {
-    if group.indices.is_empty() || group.indices.len() % 6 != 0 {
+    if group.texture.is_some()
+        || !group.uvs.is_empty()
+        || group.indices.is_empty()
+        || group.indices.len() % 6 != 0
+    {
         return None;
     }
     let mut records = Vec::new();
@@ -268,13 +221,14 @@ pub fn visual(group: &crate::mesher::Group, voxel: f32) -> Option<GpuVertices> {
             return None;
         }
         let color: [f32; 4] = group.colors[index * 4..index * 4 + 4].try_into().ok()?;
-        let material = if let Some(index) = palette.iter().position(|p| *p == color) {
+        let palette_color = color.map(|c| crate::round(c) as f32);
+        let material = if let Some(index) = palette.iter().position(|p| *p == palette_color) {
             index
         } else {
             if palette.len() == 256 {
                 return None;
             }
-            palette.push(color);
+            palette.push(color.map(|c| crate::round(c) as f32));
             palette.len() - 1
         };
         let mut points = Vec::new();
@@ -351,6 +305,12 @@ mod compact_tests {
         let quad = visual(&group, 1.0).unwrap().quads.unwrap();
         assert_eq!(quad.records, vec![[128 | 1 << 24, 32 | 127 << 8]]);
         assert_eq!(quad.palette, vec![[0.5, 0.25, 0.125, 1.0]]);
+        group.texture = Some("blocks/stone.png".into());
+        assert!(visual(&group, 1.0).is_none());
+        group.texture = None;
+        group.uvs = vec![0.0; group.positions.len() / 3 * 2];
+        assert!(visual(&group, 1.0).is_none());
+        group.uvs.clear();
         group.positions[0] = 127.5;
         assert!(visual(&group, 1.0).is_none());
     }

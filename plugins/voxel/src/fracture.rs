@@ -101,6 +101,8 @@ impl Fragment {
             collider: true,
             collider_kind: ColliderKind::ConvexHull,
             gpu: None,
+            uvs: Vec::new(),
+            texture: None,
             body: Some(MeshBody {
                 mass: mass.max(0.001),
                 velocity: self.velocity,

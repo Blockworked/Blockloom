@@ -321,6 +321,10 @@ mod tests {
     #[test]
     fn one_cell_high_generators_match_canonical_samples() {
         for preset in crate::terrain::PRESETS {
+            // Infinite streams pages near the player; eager grids stay finite.
+            if preset == "infinite" {
+                continue;
+            }
             let mut grid = Grid::new([9, 1, 9]);
             crate::terrain::generate(&mut grid, preset, 42).unwrap();
             for z in 0..9 {

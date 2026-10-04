@@ -1113,6 +1113,26 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   (ten blocks now), `shape X Y Z name` a saved edit line (`stair west`, `ramp north`). Writing a cube or air
   takes a shape away; cube-world rays treat a shaped cell as the whole cell,
   while smooth-world rays intersect its actual faces.
+  The `infinite` preset (0.3.x) streams edgeless terrain: editable `noise`
+  layers shape the land, `biomes` lines carve temperature/humidity rectangles
+  with their own surface and hills, and `features` lines spawn ponds, trees
+  and rocks, all canonical per cell so paging never changes the world.
+  `render_distance` (default 256 blocks, steps of 32) drives the streamed
+  radius, `distant_chunks` (default 128) drives the LOD reach, `pregen_distant`
+  warms far tiles in budgeted slices. `pages_per_tick` limits nearest-first
+  page work per call; portable infinite cube worlds process at most one
+  8-cell mesh tile, skipping empty tiles.
+  `chunk_workers` does not launch concurrent workers yet. Terrain features are
+  computed per column with a bounded 4096-column derived cache. Checkpoint
+  loads reattach the generator configuration before sampling unloaded cells.
+  The `blocks` list is the block registry: one JSON object per line
+  (`assets/blocks/*.json` import into it) with id, color, textures and model
+  (cube, shape or inline mesh with optional uvs); the cube mesher groups faces
+  by material and per-face texture (`top`, `bottom`, `side`, `all`) with planar
+  uvs, `MeshData` carries uvs plus a texture path the
+  runtime loads once and shares, and registry names resolve everywhere a
+  material does. Smooth terrain, coarse LOD, GPU meshing and fracture debris
+  stay vertex-colored.
 - **Importers and build hooks** (`blockloom-plugin-api/src/assets.rs`,
   `blockloom-plugin-host/src/imports.rs`): a package's schema may list
   `importers` (name, extensions, `limit_ms`) and `build` hooks (name,
@@ -2666,7 +2686,8 @@ machine's there (the `dist` profile - fat LTO, one codegen unit, stripped -
 while `just build` keeps the release profile's quicker link for the edit-run
 loop), and `just stage-player <triple> <file>` takes one built elsewhere. The
 machine doing the building always has one, since the runtime the editor plays
-with is a player. Scripts are native too, so a project with one can only be
+with is a player. Host exports use the newer of the staged player and that
+runtime, so a stale staged copy cannot undo a recent editor/runtime fix. Scripts are native too, so a project with one can only be
 built for a platform this machine's rustc can compile for; `script::compile_for`
 cross-builds them into `.blockloom/build/<triple>/`, leaving Play's own build
 where the runtime has always looked for it. `build::targets` answers both

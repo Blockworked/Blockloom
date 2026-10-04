@@ -7,6 +7,7 @@
 pub use crate::shape::Shape;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Mutex;
 
 pub const SECTION: i32 = 32;
 const LEGACY_PAGE: i32 = 16;
@@ -23,6 +24,11 @@ pub struct Grid {
     resident: BTreeSet<SectionAddress>,
     generator: Option<(String, i64)>,
     generator_size: Option<[i32; 3]>,
+    /// Infinite config for the `infinite` preset (noise, biomes, features).
+    worldgen: Option<crate::worldgen::Worldgen>,
+    /// Registry block names to ids for infinite sampling.
+    block_ids: BTreeMap<String, u8>,
+    columns: Mutex<BTreeMap<ColumnAddress, crate::worldgen::Column>>,
     edits: BTreeMap<[i32; 3], u8>,
     /// The cells that are not whole cubes.
     shapes: BTreeMap<[i32; 3], Shape>,
@@ -59,6 +65,9 @@ impl Grid {
             resident: BTreeSet::new(),
             generator: None,
             generator_size: None,
+            worldgen: None,
+            block_ids: BTreeMap::new(),
+            columns: Mutex::new(BTreeMap::new()),
             edits: BTreeMap::new(),
             shapes: BTreeMap::new(),
             densities: BTreeMap::new(),
@@ -71,6 +80,12 @@ impl Grid {
 
     pub fn size(&self) -> [i32; 3] {
         self.size
+    }
+
+    pub fn procedural_infinite(&self) -> bool {
+        self.generator
+            .as_ref()
+            .is_some_and(|(preset, _)| preset == "infinite")
     }
 
     pub fn revision(&self) -> u64 {
@@ -163,9 +178,37 @@ impl Grid {
             return 0;
         }
         self.edits.get(&cell).copied().unwrap_or_else(|| {
-            self.section(cell.map(|c| c.div_euclid(SECTION)))
-                .map_or_else(|| self.base(cell), |cells| cells[local(cell)])
+            let chunk = cell.map(|c| c.div_euclid(SECTION));
+            self.section(chunk).map_or_else(
+                || {
+                    if self.resident.contains(&chunk) {
+                        0
+                    } else {
+                        self.base(cell)
+                    }
+                },
+                |cells| cells[local(cell)],
+            )
         })
+    }
+
+    /// A loaded tile lies inside one section; air pages have no cell buffer.
+    pub fn loaded_region_has_solid(&self, base: [i32; 3], extent: [i32; 3]) -> bool {
+        let Some(cells) = self.section(base.map(|c| c.div_euclid(SECTION))) else {
+            return false;
+        };
+        for z in 0..extent[2] {
+            for y in 0..extent[1] {
+                let offset = local([base[0], base[1] + y, base[2] + z]);
+                if cells[offset..offset + extent[0] as usize]
+                    .iter()
+                    .any(|&m| m != 0)
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn shape_at(&self, cell: [i32; 3]) -> Shape {
@@ -320,6 +363,35 @@ impl Grid {
 
     fn base(&self, cell: [i32; 3]) -> u8 {
         self.generator.as_ref().map_or(0, |(preset, seed)| {
+            if preset == "infinite" {
+                if let Some(wg) = &self.worldgen {
+                    let address = [cell[0], cell[2]];
+                    if let Some(column) = self.columns.lock().unwrap().get(&address) {
+                        return column.sample(cell[1]);
+                    }
+                    let seed = crate::worldgen::seed32(*seed);
+                    let column = crate::worldgen::column(
+                        wg,
+                        seed,
+                        cell[0],
+                        cell[2],
+                        &|name| {
+                            self.block_ids
+                                .get(name)
+                                .copied()
+                                .unwrap_or_else(|| crate::worldgen::builtin_id(name))
+                        },
+                        &|x, z| wg.column_height(seed, x, z),
+                    );
+                    let mut columns = self.columns.lock().unwrap();
+                    if columns.len() == 4096 {
+                        columns.pop_first();
+                    }
+                    columns.insert(address, column);
+                    return column.sample(cell[1]);
+                }
+                return 0;
+            }
             crate::terrain::sample(
                 self.generator_size.unwrap_or(self.size),
                 preset,
@@ -327,6 +399,18 @@ impl Grid {
                 cell,
             )
         })
+    }
+
+    /// Attach the infinite config after `stream("infinite", seed)`.
+    pub fn set_worldgen(&mut self, wg: crate::worldgen::Worldgen) {
+        self.worldgen = Some(wg);
+        self.columns.get_mut().unwrap().clear();
+    }
+
+    /// Registry names for infinite sampling; built-ins fill the gaps.
+    pub fn set_block_ids(&mut self, ids: BTreeMap<String, u8>) {
+        self.block_ids = ids;
+        self.columns.get_mut().unwrap().clear();
     }
 
     pub fn stream(&mut self, preset: &str, seed: i64) {
@@ -345,15 +429,44 @@ impl Grid {
             return;
         }
         let mut cells = Box::new([0; SECTION_CELLS]);
-        for z in 0..SECTION {
-            for y in 0..SECTION {
-                for x in 0..SECTION {
-                    let cell = [
-                        chunk[0] * SECTION + x,
-                        chunk[1] * SECTION + y,
-                        chunk[2] * SECTION + z,
-                    ];
-                    cells[local(cell)] = self.get(cell);
+        if let (Some((preset, seed)), Some(wg)) = (&self.generator, &self.worldgen)
+            && preset == "infinite"
+        {
+            // One bulk fill beats 32k canonical samples; sparse edits land
+            // on top, exactly as `get` would answer them.
+            let seed = *seed;
+            let wg = wg.clone();
+            let ids = self.block_ids.clone();
+            crate::worldgen::fill_infinite_page_cached(
+                &wg,
+                &|name| {
+                    ids.get(name)
+                        .copied()
+                        .unwrap_or_else(|| crate::worldgen::builtin_id(name))
+                },
+                seed,
+                chunk,
+                &mut cells,
+                &mut self.columns.lock().unwrap(),
+            );
+            let lo = chunk.map(|c| c * SECTION);
+            let hi = lo.map(|c| c + SECTION);
+            for (cell, material) in &self.edits {
+                if (0..3).all(|a| (lo[a]..hi[a]).contains(&cell[a])) {
+                    cells[local(*cell)] = *material;
+                }
+            }
+        } else {
+            for z in 0..SECTION {
+                for y in 0..SECTION {
+                    for x in 0..SECTION {
+                        let cell = [
+                            chunk[0] * SECTION + x,
+                            chunk[1] * SECTION + y,
+                            chunk[2] * SECTION + z,
+                        ];
+                        cells[local(cell)] = self.get(cell);
+                    }
                 }
             }
         }
@@ -579,6 +692,9 @@ impl Grid {
         self.edits.clear();
         self.generator = None;
         self.generator_size = None;
+        self.worldgen = None;
+        self.block_ids.clear();
+        self.columns.get_mut().unwrap().clear();
         self.shapes.clear();
         self.densities.clear();
         self.dirty.clear();
@@ -597,13 +713,19 @@ impl Grid {
             return None;
         }
         let top = if let Some((preset, seed)) = &self.generator {
-            let base = crate::terrain::height_bound(
-                self.generator_size.unwrap_or(self.size),
-                preset,
-                *seed,
-                x,
-                z,
-            );
+            let base = if preset == "infinite" {
+                self.worldgen.as_ref().map_or(-1, |wg| {
+                    crate::worldgen::height_bound_infinite(wg, *seed, x, z)
+                })
+            } else {
+                crate::terrain::height_bound(
+                    self.generator_size.unwrap_or(self.size),
+                    preset,
+                    *seed,
+                    x,
+                    z,
+                )
+            };
             self.edits
                 .iter()
                 .filter(|(c, m)| c[0] == x && c[2] == z && **m != 0)

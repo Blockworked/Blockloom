@@ -2384,7 +2384,7 @@ fn resolve_scene(engine: &Engine, wanted: &str) -> Option<String> {
 /// fresh Play before its `when scene starts` strands run. Works across
 /// dimensions too: the rebuild swaps the dim2/dim3 pipeline live under the
 /// veil's cover.
-fn perform_scene_switch(
+pub(crate) fn perform_scene_switch(
     engine: &mut Engine,
     transforms: &Query<&Transform, With<ActorId>>,
     wanted: &str,
@@ -2471,6 +2471,7 @@ fn perform_scene_switch(
         }
     }
     engine.vm.load_scene_keep(&project, &keep);
+    crate::plugins::scene_changed(engine);
     engine.rebuild = true;
     engine.fire(Event::SceneStarted);
     // The swap lands under cover; the reveal waits out the rebuild's warmup.
@@ -2530,7 +2531,11 @@ pub fn apply_common(
     navmesh: Option<Res<NavMesh>>,
     mut exit: MessageWriter<AppExit>,
     mut manager: ResMut<crate::ui::UiManager>,
-    mut transforms: Query<(&mut Transform, &mut Visibility)>,
+    mut transforms: Query<(
+        &mut Transform,
+        &mut Visibility,
+        Option<&mut GlobalTransform>,
+    )>,
     mut controllers_2d: Query<&mut bevy_rapier2d::prelude::KinematicCharacterController>,
     mut controllers_3d: Query<&mut bevy_rapier3d::prelude::KinematicCharacterController>,
     mut velocities_2d: Query<&mut bevy_rapier2d::prelude::Velocity>,
@@ -2546,7 +2551,7 @@ pub fn apply_common(
             transforms
                 .get(*entity)
                 .ok()
-                .map(|(transform, _)| (id.clone(), transform.translation))
+                .map(|(transform, _, _)| (id.clone(), transform.translation))
         })
         .collect();
 
@@ -2571,7 +2576,7 @@ pub fn apply_common(
         let Some(entity) = engine.entities.get(actor).copied() else {
             continue;
         };
-        let Ok((mut transform, mut visibility)) = transforms.get_mut(entity) else {
+        let Ok((mut transform, mut visibility, mut global)) = transforms.get_mut(entity) else {
             continue;
         };
         match effect {
@@ -2587,7 +2592,20 @@ pub fn apply_common(
                 transform.translation += forward * *steps;
             }
             Effect::GoTo { position, .. } => {
+                let before = *transform;
                 transform.translation = vec3_in(dimension.0, *position, transform.translation);
+                // Controller roots have child colliders; physics reads their global pose.
+                if engine
+                    .actor(actor)
+                    .is_some_and(|a| a.components.character_controller().is_some())
+                    && let Some(global) = global.as_deref_mut()
+                {
+                    *global = GlobalTransform::from(
+                        global.affine()
+                            * before.compute_affine().inverse()
+                            * transform.compute_affine(),
+                    );
+                }
             }
             Effect::NavigateTo { target, speed, .. } => {
                 // One step along the baked mesh at `speed` units per second.
@@ -5890,6 +5908,54 @@ mod tests {
         let local = local_of(&parent, child);
         assert!((local[0] - 10.0).abs() < 0.001, "{local:?}");
         assert!(local[1].abs() < 0.001, "{local:?}");
+    }
+
+    #[test]
+    fn a_controller_teleport_updates_the_pose_physics_reads() {
+        let (_, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::ThreeD);
+        engine.running = true;
+        let mut actor = Actor::new(
+            "walker",
+            Visual::Cuboid {
+                color: "#fff".into(),
+                size: [1.0; 3],
+            },
+        );
+        actor.id = "walker".into();
+        actor.components.insert(
+            blockloom_core::components::ActorComponent::CharacterController {
+                controller: Default::default(),
+            },
+        );
+        engine.project.actors = vec![actor];
+        let mut app = App::new();
+        app.add_message::<AppExit>();
+        app.init_resource::<crate::ui::UiManager>();
+        app.insert_resource(Dimension(Mode::ThreeD));
+        app.insert_resource(PendingEffects(vec![Effect::GoTo {
+            actor: "walker".into(),
+            position: [42.0, 35.0, 32.0],
+        }]));
+        let entity = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                GlobalTransform::IDENTITY,
+                Visibility::Hidden,
+            ))
+            .id();
+        engine.entities.insert("walker".into(), entity);
+        app.insert_non_send(engine);
+        app.add_systems(Update, apply_common);
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<GlobalTransform>(entity)
+                .unwrap()
+                .translation(),
+            Vec3::new(42.0, 35.0, 32.0)
+        );
     }
 
     #[test]

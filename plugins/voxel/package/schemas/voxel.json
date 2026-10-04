@@ -4,34 +4,305 @@
       "type_id": "world",
       "display_name": "Voxel world",
       "fields": [
-        {"name": "preset", "type": "choice", "options": ["island", "caves", "flat", "empty"], "default": "island", "description": "The terrain the world starts as."},
-        {"name": "surface", "type": "choice", "options": ["cubes", "smooth"], "default": "cubes", "description": "Cubes keep square edges; smooth interpolates a density field. Sphere brushes sculpt smooth worlds; shaped cells stay crisp."},
-        {"name": "seed", "type": "int", "min": -2147483648, "max": 2147483647, "default": 1337, "description": "The same seed and size always make the same world."},
-        {"name": "size", "type": "vec3", "default": [64, 32, 64], "description": "Exact cell bounds along x, y and z. Stored in sparse 32-cell sections. At most 4 million cells."},
-        {"name": "voxel_size", "type": "number", "min": 0.05, "max": 64, "default": 1, "description": "How big one cell is in world units."},
-        {"name": "origin", "type": "vec3", "default": [0, 0, 0], "description": "Where the world's low corner stands."},
-        {"name": "solid", "type": "bool", "default": true, "description": "Whether the cells collide."},
-        {"name": "palette_colors", "type": "list", "item": {"type": "color"}, "max_len": 255, "default": [], "description": "Colors laid over the built-in materials by position (stone, dirt, grass, sand, wood, leaves, glow); more add materials. Blank keeps the built-in."},
-        {"name": "palette_emission", "type": "list", "item": {"type": "number", "min": 0, "max": 100}, "max_len": 255, "default": [], "description": "How strongly each material glows, in the same order. 0 does not glow."},
-        {"name": "edits", "type": "list", "item": {"type": "text", "max_len": 120}, "max_len": 4096, "default": [], "description": "Edits laid over the terrain in order: `set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`, `sphere X Y Z radius material`."},
-        {"name": "persistent", "type": "bool", "default": false, "description": "Autosave runtime terrain and restore it on the next run. Preview never uses player saves."},
-        {"name": "save_slot", "type": "text", "default": "world", "max_len": 64},
-        {"name": "streamed", "type": "bool", "default": false},
-        {"name": "stream_radius", "type": "int", "min": 0, "max": 8, "default": 2},
-        {"name": "vertical_radius", "type": "int", "min": 0, "max": 8, "default": 2},
-        {"name": "max_resident_bytes", "type": "int", "min": 32768, "max": 16777216, "default": 16777216},
-        {"name": "max_pages", "type": "int", "min": 1, "max": 512, "default": 64},
-        {"name": "pages_per_tick", "type": "int", "min": 1, "max": 16, "default": 2},
-        {"name": "stream_center", "type": "vec3", "default": [0, 0, 0], "description": "Initial stream centre in cell units; invokers follow actor positions."},
-        {"name":"visual_lod","type":"bool","default":false,"description":"Experimental camera-driven visual LOD. Collision stays at full detail; mixed-resolution joins can retain visible creases."},
-        {"name":"lod_distance","type":"number","min":0.001,"max":1000000000,"default":256},
-        {"name":"lod_split_pixels","type":"number","min":0.001,"max":1000000000,"default":160},
-        {"name":"lod_merge_pixels","type":"number","min":0.001,"max":1000000000,"default":120},
-        {"name": "gpu_meshing", "type": "bool", "default": false, "description": "Compute geometry into GPU buffers with CPU collision and fallback."},
-        {"name": "max_fragments", "type": "int", "min": 0, "max": 128, "default": 16},
-        {"name": "max_fragment_cells", "type": "int", "min": 1, "max": 4096, "default": 4096},
-        {"name": "anchor_y", "type": "int", "default": 0, "description": "Cells at or below this height support static structures."},
-        {"name": "palette_density", "type": "list", "item": {"type": "number", "min": 0.001, "max": 100000}, "max_len": 255, "default": [], "description": "Material density in kilograms per cubic metre, default 1000."}
+        {
+          "name": "preset",
+          "type": "choice",
+          "options": [
+            "island",
+            "caves",
+            "flat",
+            "empty",
+            "infinite"
+          ],
+          "default": "island",
+          "description": "The terrain the world starts as."
+        },
+        {
+          "name": "surface",
+          "type": "choice",
+          "options": [
+            "cubes",
+            "smooth"
+          ],
+          "default": "cubes",
+          "description": "Cubes keep square edges; smooth interpolates a density field. Sphere brushes sculpt smooth worlds; shaped cells stay crisp."
+        },
+        {
+          "name": "seed",
+          "type": "int",
+          "min": -2147483648,
+          "max": 2147483647,
+          "default": 1337,
+          "description": "The same seed and size always make the same world."
+        },
+        {
+          "name": "size",
+          "type": "vec3",
+          "default": [
+            64,
+            32,
+            64
+          ],
+          "description": "Exact cell bounds along x, y and z. Stored in sparse 32-cell sections. At most 4 million cells."
+        },
+        {
+          "name": "voxel_size",
+          "type": "number",
+          "min": 0.05,
+          "max": 64,
+          "default": 1,
+          "description": "How big one cell is in world units."
+        },
+        {
+          "name": "origin",
+          "type": "vec3",
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "description": "Where the world's low corner stands."
+        },
+        {
+          "name": "solid",
+          "type": "bool",
+          "default": true,
+          "description": "Whether the cells collide."
+        },
+        {
+          "name": "palette_colors",
+          "type": "list",
+          "item": {
+            "type": "color"
+          },
+          "max_len": 255,
+          "default": [],
+          "description": "Colors laid over the built-in materials by position (stone, dirt, grass, sand, wood, leaves, glow); more add materials. Blank keeps the built-in."
+        },
+        {
+          "name": "palette_emission",
+          "type": "list",
+          "item": {
+            "type": "number",
+            "min": 0,
+            "max": 100
+          },
+          "max_len": 255,
+          "default": [],
+          "description": "How strongly each material glows, in the same order. 0 does not glow."
+        },
+        {
+          "name": "edits",
+          "type": "list",
+          "item": {
+            "type": "text",
+            "max_len": 120
+          },
+          "max_len": 4096,
+          "default": [],
+          "description": "Edits laid over the terrain in order: `set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`, `sphere X Y Z radius material`."
+        },
+        {
+          "name": "persistent",
+          "type": "bool",
+          "default": false,
+          "description": "Autosave runtime terrain and restore it on the next run. Preview never uses player saves."
+        },
+        {
+          "name": "save_slot",
+          "type": "text",
+          "default": "world",
+          "max_len": 64
+        },
+        {
+          "name": "streamed",
+          "type": "bool",
+          "default": false
+        },
+        {
+          "name": "stream_radius",
+          "type": "int",
+          "min": 0,
+          "max": 8,
+          "default": 2
+        },
+        {
+          "name": "vertical_radius",
+          "type": "int",
+          "min": 0,
+          "max": 8,
+          "default": 2
+        },
+        {
+          "name": "max_resident_bytes",
+          "type": "int",
+          "min": 32768,
+          "max": 16777216,
+          "default": 16777216
+        },
+        {
+          "name": "max_pages",
+          "type": "int",
+          "min": 1,
+          "max": 512,
+          "default": 64
+        },
+        {
+          "name": "pages_per_tick",
+          "type": "int",
+          "min": 1,
+          "max": 16,
+          "default": 2
+        },
+        {
+          "name": "chunk_workers",
+          "type": "int",
+          "min": 1,
+          "max": 8,
+          "default": 4,
+          "description": "Chunk pages meshed per tick per worker; generation stays budgeted across ticks so it never blocks a frame."
+        },
+        {
+          "name": "render_distance",
+          "type": "int",
+          "min": 32,
+          "max": 2048,
+          "default": 256,
+          "description": "Near render distance in blocks; steps by 32, one chunk. The infinite preset streams this far."
+        },
+        {
+          "name": "distant_chunks",
+          "type": "int",
+          "min": 0,
+          "max": 256,
+          "default": 128,
+          "description": "Far LOD reach in chunks over the voxel LOD system; 128 chunks is 4096 blocks."
+        },
+        {
+          "name": "pregen_distant",
+          "type": "bool",
+          "default": false,
+          "description": "Warm distant LOD tiles ahead of the camera in budgeted slices."
+        },
+        {
+          "name": "stream_center",
+          "type": "vec3",
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "description": "Initial stream centre in cell units; invokers follow actor positions."
+        },
+        {
+          "name": "visual_lod",
+          "type": "bool",
+          "default": false,
+          "description": "Experimental camera-driven visual LOD. Collision stays at full detail; mixed-resolution joins can retain visible creases."
+        },
+        {
+          "name": "lod_distance",
+          "type": "number",
+          "min": 0.001,
+          "max": 1000000000,
+          "default": 256
+        },
+        {
+          "name": "lod_split_pixels",
+          "type": "number",
+          "min": 0.001,
+          "max": 1000000000,
+          "default": 160
+        },
+        {
+          "name": "lod_merge_pixels",
+          "type": "number",
+          "min": 0.001,
+          "max": 1000000000,
+          "default": 120
+        },
+        {
+          "name": "gpu_meshing",
+          "type": "bool",
+          "default": false,
+          "description": "Compute geometry into GPU buffers with CPU collision and fallback."
+        },
+        {
+          "name": "max_fragments",
+          "type": "int",
+          "min": 0,
+          "max": 128,
+          "default": 16
+        },
+        {
+          "name": "max_fragment_cells",
+          "type": "int",
+          "min": 1,
+          "max": 4096,
+          "default": 4096
+        },
+        {
+          "name": "anchor_y",
+          "type": "int",
+          "default": 0,
+          "description": "Cells at or below this height support static structures."
+        },
+        {
+          "name": "palette_density",
+          "type": "list",
+          "item": {
+            "type": "number",
+            "min": 0.001,
+            "max": 100000
+          },
+          "max_len": 255,
+          "default": [],
+          "description": "Material density in kilograms per cubic metre, default 1000."
+        },
+        {
+          "name": "blocks",
+          "type": "list",
+          "item": {
+            "type": "text",
+            "max_len": 2000
+          },
+          "max_len": 256,
+          "default": [],
+          "description": "Block registry: one JSON object per line ({name, id, color, emission, textures, model}). Files under assets/blocks/*.json import into this list."
+        },
+        {
+          "name": "noise",
+          "type": "list",
+          "item": {
+            "type": "text",
+            "max_len": 200
+          },
+          "max_len": 16,
+          "default": [],
+          "description": "Editable noise layers, one `noise <name> scale <f> octaves <n> amplitude <f> seed <i>` line each."
+        },
+        {
+          "name": "biomes",
+          "type": "list",
+          "item": {
+            "type": "text",
+            "max_len": 300
+          },
+          "max_len": 32,
+          "default": [],
+          "description": "Biomes, one `biome <name> temp <lo> <hi> hum <lo> <hi> surface <m> sub <m> hills <f> trees <n> rocks <n> ponds <n>` line each."
+        },
+        {
+          "name": "features",
+          "type": "list",
+          "item": {
+            "type": "text",
+            "max_len": 200
+          },
+          "max_len": 64,
+          "default": [],
+          "description": "Modular features, one `feature <tree|rock|pond> biome <name|any> density <n> size <n> material <m>` line each."
+        }
       ]
     }
   ],
@@ -40,25 +311,225 @@
       "name": "set_world",
       "summary": "Set the voxel world a game starts with.",
       "args": [
-        {"name": "preset", "type": "choice", "options": ["island", "caves", "flat", "empty"], "default": "island"},
-        {"name": "surface", "type": "choice", "options": ["cubes", "smooth"], "default": "cubes", "description": "Cubes keep square edges; smooth interpolates a density field. Sphere brushes sculpt smooth worlds; shaped cells stay crisp."},
-        {"name": "seed", "type": "int", "min": -2147483648, "max": 2147483647, "default": 1337},
-        {"name": "size", "type": "vec3", "default": [64, 32, 64]},
-        {"name": "voxel_size", "type": "number", "min": 0.05, "max": 64, "default": 1},
-        {"name": "persistent", "type": "bool", "default": false, "description": "Autosave runtime terrain and restore it on the next run. Preview never uses player saves."},
-        {"name": "save_slot", "type": "text", "default": "world", "max_len": 64},
-        {"name": "streamed", "type": "bool", "default": false},
-        {"name": "stream_radius", "type": "int", "min": 0, "max": 8, "default": 2},
-        {"name": "vertical_radius", "type": "int", "min": 0, "max": 8, "default": 2},
-        {"name": "max_resident_bytes", "type": "int", "min": 32768, "max": 16777216, "default": 16777216},
-        {"name": "max_pages", "type": "int", "min": 1, "max": 512, "default": 64},
-        {"name": "pages_per_tick", "type": "int", "min": 1, "max": 16, "default": 2},
-        {"name": "stream_center", "type": "vec3", "default": [0, 0, 0], "description": "Initial stream centre in cell units; invokers follow actor positions."},
-        {"name": "gpu_meshing", "type": "bool", "default": false, "description": "Compute geometry into GPU buffers with CPU collision and fallback."},
-        {"name": "max_fragments", "type": "int", "min": 0, "max": 128, "default": 16},
-        {"name": "max_fragment_cells", "type": "int", "min": 1, "max": 4096, "default": 4096},
-        {"name": "anchor_y", "type": "int", "default": 0, "description": "Cells at or below this height support static structures."},
-        {"name": "palette_density", "type": "list", "item": {"type": "number", "min": 0.001, "max": 100000}, "max_len": 255, "default": [], "description": "Material density in kilograms per cubic metre, default 1000."}
+        {
+          "name": "preset",
+          "type": "choice",
+          "options": [
+            "island",
+            "caves",
+            "flat",
+            "empty",
+            "infinite"
+          ],
+          "default": "island"
+        },
+        {
+          "name": "surface",
+          "type": "choice",
+          "options": [
+            "cubes",
+            "smooth"
+          ],
+          "default": "cubes",
+          "description": "Cubes keep square edges; smooth interpolates a density field. Sphere brushes sculpt smooth worlds; shaped cells stay crisp."
+        },
+        {
+          "name": "seed",
+          "type": "int",
+          "min": -2147483648,
+          "max": 2147483647,
+          "default": 1337
+        },
+        {
+          "name": "size",
+          "type": "vec3",
+          "default": [
+            64,
+            32,
+            64
+          ]
+        },
+        {
+          "name": "voxel_size",
+          "type": "number",
+          "min": 0.05,
+          "max": 64,
+          "default": 1
+        },
+        {
+          "name": "persistent",
+          "type": "bool",
+          "default": false,
+          "description": "Autosave runtime terrain and restore it on the next run. Preview never uses player saves."
+        },
+        {
+          "name": "save_slot",
+          "type": "text",
+          "default": "world",
+          "max_len": 64
+        },
+        {
+          "name": "streamed",
+          "type": "bool",
+          "default": false
+        },
+        {
+          "name": "stream_radius",
+          "type": "int",
+          "min": 0,
+          "max": 64,
+          "default": 2
+        },
+        {
+          "name": "vertical_radius",
+          "type": "int",
+          "min": 0,
+          "max": 8,
+          "default": 2
+        },
+        {
+          "name": "max_resident_bytes",
+          "type": "int",
+          "min": 32768,
+          "max": 16777216,
+          "default": 16777216
+        },
+        {
+          "name": "max_pages",
+          "type": "int",
+          "min": 1,
+          "max": 2048,
+          "default": 64
+        },
+        {
+          "name": "pages_per_tick",
+          "type": "int",
+          "min": 1,
+          "max": 64,
+          "default": 2
+        },
+        {
+          "name": "chunk_workers",
+          "type": "int",
+          "min": 1,
+          "max": 8,
+          "default": 4,
+          "description": "Chunk pages meshed per tick per worker; generation stays budgeted across ticks so it never blocks a frame."
+        },
+        {
+          "name": "render_distance",
+          "type": "int",
+          "min": 32,
+          "max": 2048,
+          "default": 256,
+          "description": "Near render distance in blocks; steps by 32, one chunk. The infinite preset streams this far."
+        },
+        {
+          "name": "distant_chunks",
+          "type": "int",
+          "min": 0,
+          "max": 256,
+          "default": 128,
+          "description": "Far LOD reach in chunks over the voxel LOD system; 128 chunks is 4096 blocks."
+        },
+        {
+          "name": "pregen_distant",
+          "type": "bool",
+          "default": false,
+          "description": "Warm distant LOD tiles ahead of the camera in budgeted slices."
+        },
+        {
+          "name": "stream_center",
+          "type": "vec3",
+          "default": [
+            0,
+            0,
+            0
+          ],
+          "description": "Initial stream centre in cell units; invokers follow actor positions."
+        },
+        {
+          "name": "gpu_meshing",
+          "type": "bool",
+          "default": false,
+          "description": "Compute geometry into GPU buffers with CPU collision and fallback."
+        },
+        {
+          "name": "max_fragments",
+          "type": "int",
+          "min": 0,
+          "max": 128,
+          "default": 16
+        },
+        {
+          "name": "max_fragment_cells",
+          "type": "int",
+          "min": 1,
+          "max": 4096,
+          "default": 4096
+        },
+        {
+          "name": "anchor_y",
+          "type": "int",
+          "default": 0,
+          "description": "Cells at or below this height support static structures."
+        },
+        {
+          "name": "palette_density",
+          "type": "list",
+          "item": {
+            "type": "number",
+            "min": 0.001,
+            "max": 100000
+          },
+          "max_len": 255,
+          "default": [],
+          "description": "Material density in kilograms per cubic metre, default 1000."
+        },
+        {
+          "name": "blocks",
+          "type": "list",
+          "item": {
+            "type": "text",
+            "max_len": 2000
+          },
+          "max_len": 256,
+          "default": [],
+          "description": "Block registry: one JSON object per line ({name, id, color, emission, textures, model}). Files under assets/blocks/*.json import into this list."
+        },
+        {
+          "name": "noise",
+          "type": "list",
+          "item": {
+            "type": "text",
+            "max_len": 200
+          },
+          "max_len": 16,
+          "default": [],
+          "description": "Editable noise layers, one `noise <name> scale <f> octaves <n> amplitude <f> seed <i>` line each."
+        },
+        {
+          "name": "biomes",
+          "type": "list",
+          "item": {
+            "type": "text",
+            "max_len": 300
+          },
+          "max_len": 32,
+          "default": [],
+          "description": "Biomes, one `biome <name> temp <lo> <hi> hum <lo> <hi> surface <m> sub <m> hills <f> trees <n> rocks <n> ponds <n>` line each."
+        },
+        {
+          "name": "features",
+          "type": "list",
+          "item": {
+            "type": "text",
+            "max_len": 200
+          },
+          "max_len": 64,
+          "default": [],
+          "description": "Modular features, one `feature <tree|rock|pond> biome <name|any> density <n> size <n> material <m>` line each."
+        }
       ],
       "action": {
         "do": "set_resource",
@@ -66,10 +537,162 @@
       }
     },
     {
+      "name": "add_block",
+      "summary": "Register one block from a JSON object (name, id, color, emission, textures, model).",
+      "args": [
+        {
+          "name": "value",
+          "type": "text",
+          "max_len": 2000,
+          "default": "{\"name\":\"mossy_stone\",\"id\":8}"
+        }
+      ],
+      "action": {
+        "do": "set_resource_field",
+        "resource": "world",
+        "field": "blocks",
+        "append": true
+      }
+    },
+    {
+      "name": "clear_blocks",
+      "summary": "Forget every registered block, back to the built-ins.",
+      "args": [
+        {
+          "name": "value",
+          "type": "list",
+          "item": {
+            "type": "text"
+          },
+          "max_len": 0,
+          "default": []
+        }
+      ],
+      "action": {
+        "do": "set_resource_field",
+        "resource": "world",
+        "field": "blocks"
+      }
+    },
+    {
+      "name": "add_noise",
+      "summary": "Add one editable noise layer (`noise <name> scale <f> octaves <n> amplitude <f> seed <i>`).",
+      "args": [
+        {
+          "name": "value",
+          "type": "text",
+          "max_len": 200,
+          "default": "noise continent scale 220 octaves 4 amplitude 22 seed 11"
+        }
+      ],
+      "action": {
+        "do": "set_resource_field",
+        "resource": "world",
+        "field": "noise",
+        "append": true
+      }
+    },
+    {
+      "name": "add_biome",
+      "summary": "Add one biome (`biome <name> temp <lo> <hi> hum <lo> <hi> surface <m> sub <m> hills <f> trees <n> rocks <n> ponds <n>`).",
+      "args": [
+        {
+          "name": "value",
+          "type": "text",
+          "max_len": 300,
+          "default": "biome meadow temp 0.25 0.75 hum 0.25 0.75 surface grass sub dirt hills 1 trees 170 rocks 320 ponds 500"
+        }
+      ],
+      "action": {
+        "do": "set_resource_field",
+        "resource": "world",
+        "field": "biomes",
+        "append": true
+      }
+    },
+    {
+      "name": "add_feature",
+      "summary": "Add one modular feature (`feature <tree|rock|pond> biome <name|any> density <n> size <n> material <m>`).",
+      "args": [
+        {
+          "name": "value",
+          "type": "text",
+          "max_len": 200,
+          "default": "feature tree biome any density 120 size 5 material wood"
+        }
+      ],
+      "action": {
+        "do": "set_resource_field",
+        "resource": "world",
+        "field": "features",
+        "append": true
+      }
+    },
+    {
+      "name": "set_render_distance",
+      "summary": "Set near render distance in blocks (steps by 32, one chunk; default 256).",
+      "args": [
+        {
+          "name": "value",
+          "type": "int",
+          "min": 32,
+          "max": 2048,
+          "default": 256,
+          "description": "Near render distance in blocks; steps by 32, one chunk."
+        }
+      ],
+      "action": {
+        "do": "set_resource_field",
+        "resource": "world",
+        "field": "render_distance"
+      }
+    },
+    {
+      "name": "set_distant_chunks",
+      "summary": "Set far LOD reach in chunks over the voxel LOD system (default 128).",
+      "args": [
+        {
+          "name": "value",
+          "type": "int",
+          "min": 0,
+          "max": 256,
+          "default": 128,
+          "description": "Far LOD reach in chunks; 128 chunks is 4096 blocks."
+        }
+      ],
+      "action": {
+        "do": "set_resource_field",
+        "resource": "world",
+        "field": "distant_chunks"
+      }
+    },
+    {
+      "name": "set_pregen_distant",
+      "summary": "Turn pre-generation of distant LOD tiles on or off.",
+      "args": [
+        {
+          "name": "value",
+          "type": "bool",
+          "default": false,
+          "description": "Warm distant LOD tiles ahead of the camera."
+        }
+      ],
+      "action": {
+        "do": "set_resource_field",
+        "resource": "world",
+        "field": "pregen_distant"
+      }
+    },
+    {
       "name": "add_voxel_edit",
       "summary": "Save one edit line (set, fill or sphere) into the world every game starts with.",
       "args": [
-        {"name": "value", "type": "text", "max_len": 120, "default": "set 0 0 0 stone"}
+        {
+          "name": "value",
+          "type": "text",
+          "max_len": 120,
+          "default": "set 0 0 0 stone"
+        }
       ],
       "action": {
         "do": "set_resource_field",
@@ -82,7 +705,15 @@
       "name": "clear_voxel_edits",
       "summary": "Forget every saved edit, back to the generated terrain.",
       "args": [
-        {"name": "value", "type": "list", "item": {"type": "text"}, "max_len": 0, "default": []}
+        {
+          "name": "value",
+          "type": "list",
+          "item": {
+            "type": "text"
+          },
+          "max_len": 0,
+          "default": []
+        }
       ],
       "action": {
         "do": "set_resource_field",
@@ -94,10 +725,36 @@
       "name": "paint_voxel",
       "summary": "Save one cell with a material into the world every game starts with.",
       "args": [
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0},
-        {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "material",
+          "type": "choice",
+          "options": [
+            "air",
+            "stone",
+            "dirt",
+            "grass",
+            "sand",
+            "wood",
+            "leaves",
+            "glow"
+          ],
+          "default": "stone"
+        }
       ],
       "action": {
         "do": "set_resource_field",
@@ -111,13 +768,51 @@
       "name": "paint_voxel_box",
       "summary": "Save a box of cells with a material into the world every game starts with.",
       "args": [
-        {"name": "x1", "type": "int", "default": 0},
-        {"name": "y1", "type": "int", "default": 0},
-        {"name": "z1", "type": "int", "default": 0},
-        {"name": "x2", "type": "int", "default": 0},
-        {"name": "y2", "type": "int", "default": 0},
-        {"name": "z2", "type": "int", "default": 0},
-        {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}
+        {
+          "name": "x1",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y1",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z1",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "x2",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y2",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z2",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "material",
+          "type": "choice",
+          "options": [
+            "air",
+            "stone",
+            "dirt",
+            "grass",
+            "sand",
+            "wood",
+            "leaves",
+            "glow"
+          ],
+          "default": "stone"
+        }
       ],
       "action": {
         "do": "set_resource_field",
@@ -131,11 +826,43 @@
       "name": "paint_voxel_sphere",
       "summary": "Save a ball of cells with a material into the world every game starts with.",
       "args": [
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0},
-        {"name": "radius", "type": "int", "min": 1, "max": 64, "default": 3},
-        {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "radius",
+          "type": "int",
+          "min": 1,
+          "max": 64,
+          "default": 3
+        },
+        {
+          "name": "material",
+          "type": "choice",
+          "options": [
+            "air",
+            "stone",
+            "dirt",
+            "grass",
+            "sand",
+            "wood",
+            "leaves",
+            "glow"
+          ],
+          "default": "stone"
+        }
       ],
       "action": {
         "do": "set_resource_field",
@@ -149,10 +876,40 @@
       "name": "paint_voxel_shape",
       "summary": "Save a shape (slab, stair, ramp...) for one cell into the world every game starts with.",
       "args": [
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0},
-        {"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post", "stair south", "stair west", "stair north", "stair east", "ramp south", "ramp west", "ramp north", "ramp east"], "default": "slab"}
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "shape",
+          "type": "choice",
+          "options": [
+            "cube",
+            "slab",
+            "top slab",
+            "post",
+            "stair south",
+            "stair west",
+            "stair north",
+            "stair east",
+            "ramp south",
+            "ramp west",
+            "ramp north",
+            "ramp east"
+          ],
+          "default": "slab"
+        }
       ],
       "action": {
         "do": "set_resource_field",
@@ -166,10 +923,26 @@
       "name": "set_voxel",
       "summary": "Put a material in one cell of the running world.",
       "args": [
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0},
-        {"name": "material", "type": "text", "default": "stone"}
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "material",
+          "type": "text",
+          "default": "stone"
+        }
       ],
       "action": {
         "do": "module",
@@ -180,13 +953,41 @@
       "name": "fill_voxels",
       "summary": "Fill a box of cells of the running world with a material.",
       "args": [
-        {"name": "x1", "type": "int", "default": 0},
-        {"name": "y1", "type": "int", "default": 0},
-        {"name": "z1", "type": "int", "default": 0},
-        {"name": "x2", "type": "int", "default": 0},
-        {"name": "y2", "type": "int", "default": 0},
-        {"name": "z2", "type": "int", "default": 0},
-        {"name": "material", "type": "text", "default": "stone"}
+        {
+          "name": "x1",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y1",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z1",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "x2",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y2",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z2",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "material",
+          "type": "text",
+          "default": "stone"
+        }
       ],
       "action": {
         "do": "module",
@@ -197,11 +998,33 @@
       "name": "voxel_sphere",
       "summary": "Fill a ball of cells with a material; air carves a hole.",
       "args": [
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0},
-        {"name": "radius", "type": "number", "min": 0, "max": 512, "default": 3},
-        {"name": "material", "type": "text", "default": "air"}
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "radius",
+          "type": "number",
+          "min": 0,
+          "max": 512,
+          "default": 3
+        },
+        {
+          "name": "material",
+          "type": "text",
+          "default": "air"
+        }
       ],
       "action": {
         "do": "module",
@@ -212,8 +1035,25 @@
       "name": "generate_terrain",
       "summary": "Replace the running world with freshly generated terrain.",
       "args": [
-        {"name": "preset", "type": "choice", "options": ["island", "caves", "flat", "empty"], "default": "island"},
-        {"name": "seed", "type": "int", "min": -2147483648, "max": 2147483647, "default": 1337}
+        {
+          "name": "preset",
+          "type": "choice",
+          "options": [
+            "island",
+            "caves",
+            "flat",
+            "empty",
+            "infinite"
+          ],
+          "default": "island"
+        },
+        {
+          "name": "seed",
+          "type": "int",
+          "min": -2147483648,
+          "max": 2147483647,
+          "default": 1337
+        }
       ],
       "action": {
         "do": "module",
@@ -224,9 +1064,21 @@
       "name": "voxel_at",
       "summary": "Answer the material id at a cell (0 is air).",
       "args": [
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0}
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        }
       ],
       "action": {
         "do": "module",
@@ -237,8 +1089,16 @@
       "name": "ground_height",
       "summary": "Answer the highest solid cell in a column, or -1.",
       "args": [
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0}
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        }
       ],
       "action": {
         "do": "module",
@@ -249,13 +1109,43 @@
       "name": "voxel_distance",
       "summary": "Answer how far along a ray the first solid cube is, or -1.",
       "args": [
-        {"name": "x", "type": "number", "default": 0},
-        {"name": "y", "type": "number", "default": 0},
-        {"name": "z", "type": "number", "default": 0},
-        {"name": "dx", "type": "number", "default": 0},
-        {"name": "dy", "type": "number", "default": -1},
-        {"name": "dz", "type": "number", "default": 0},
-        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8}
+        {
+          "name": "x",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dx",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dy",
+          "type": "number",
+          "default": -1
+        },
+        {
+          "name": "dz",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "reach",
+          "type": "number",
+          "min": 0,
+          "max": 100000,
+          "default": 8
+        }
       ],
       "action": {
         "do": "module",
@@ -266,13 +1156,43 @@
       "name": "break_voxel",
       "summary": "Remove the first solid cube along a ray.",
       "args": [
-        {"name": "x", "type": "number", "default": 0},
-        {"name": "y", "type": "number", "default": 0},
-        {"name": "z", "type": "number", "default": 0},
-        {"name": "dx", "type": "number", "default": 0},
-        {"name": "dy", "type": "number", "default": -1},
-        {"name": "dz", "type": "number", "default": 0},
-        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8}
+        {
+          "name": "x",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dx",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dy",
+          "type": "number",
+          "default": -1
+        },
+        {
+          "name": "dz",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "reach",
+          "type": "number",
+          "min": 0,
+          "max": 100000,
+          "default": 8
+        }
       ],
       "action": {
         "do": "module",
@@ -283,14 +1203,48 @@
       "name": "place_voxel",
       "summary": "Build a cube against the first solid cube a ray meets.",
       "args": [
-        {"name": "x", "type": "number", "default": 0},
-        {"name": "y", "type": "number", "default": 0},
-        {"name": "z", "type": "number", "default": 0},
-        {"name": "dx", "type": "number", "default": 0},
-        {"name": "dy", "type": "number", "default": -1},
-        {"name": "dz", "type": "number", "default": 0},
-        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8},
-        {"name": "material", "type": "text", "default": "stone"}
+        {
+          "name": "x",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dx",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dy",
+          "type": "number",
+          "default": -1
+        },
+        {
+          "name": "dz",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "reach",
+          "type": "number",
+          "min": 0,
+          "max": 100000,
+          "default": 8
+        },
+        {
+          "name": "material",
+          "type": "text",
+          "default": "stone"
+        }
       ],
       "action": {
         "do": "module",
@@ -301,10 +1255,40 @@
       "name": "shape_voxel",
       "summary": "Make a solid cell of the running world a slab, top slab, post, stair, ramp or whole cube.",
       "args": [
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0},
-        {"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post", "stair south", "stair west", "stair north", "stair east", "ramp south", "ramp west", "ramp north", "ramp east"], "default": "slab"}
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "shape",
+          "type": "choice",
+          "options": [
+            "cube",
+            "slab",
+            "top slab",
+            "post",
+            "stair south",
+            "stair west",
+            "stair north",
+            "stair east",
+            "ramp south",
+            "ramp west",
+            "ramp north",
+            "ramp east"
+          ],
+          "default": "slab"
+        }
       ],
       "action": {
         "do": "module",
@@ -323,12 +1307,33 @@
       "name": "voxel_lod_sample",
       "summary": "Inspect a derived LOD sample in level lattice coordinates.",
       "args": [
-        {"name": "level", "type": "int", "min": 0, "max": 4, "default": 1},
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0}
+        {
+          "name": "level",
+          "type": "int",
+          "min": 0,
+          "max": 4,
+          "default": 1
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        }
       ],
-      "action": {"do": "module", "op": "lod_sample"}
+      "action": {
+        "do": "module",
+        "op": "lod_sample"
+      }
     },
     {
       "name": "voxel_lod_select",
@@ -413,18 +1418,44 @@
       "name": "voxel_lod_mesh",
       "summary": "Build a coarse mesh preview incrementally. Coordinates address 8-sample tiles at the chosen level; repeat until ready.",
       "args": [
-        {"name": "level", "type": "int", "min": 1, "max": 4, "default": 1},
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0}
+        {
+          "name": "level",
+          "type": "int",
+          "min": 1,
+          "max": 4,
+          "default": 1
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        }
       ],
-      "action": {"do": "module", "op": "lod_mesh"}
+      "action": {
+        "do": "module",
+        "op": "lod_mesh"
+      }
     },
     {
       "name": "save_voxels",
       "summary": "Save voxel edits",
       "args": [
-        {"name": "slot", "type": "text", "default": "world", "max_len": 64}
+        {
+          "name": "slot",
+          "type": "text",
+          "default": "world",
+          "max_len": 64
+        }
       ],
       "action": {
         "do": "module",
@@ -435,7 +1466,12 @@
       "name": "load_voxels",
       "summary": "Load voxel edits",
       "args": [
-        {"name": "slot", "type": "text", "default": "world", "max_len": 64}
+        {
+          "name": "slot",
+          "type": "text",
+          "default": "world",
+          "max_len": 64
+        }
       ],
       "action": {
         "do": "module",
@@ -446,7 +1482,12 @@
       "name": "clear_save_voxels",
       "summary": "Delete voxel save",
       "args": [
-        {"name": "slot", "type": "text", "default": "world", "max_len": 64}
+        {
+          "name": "slot",
+          "type": "text",
+          "default": "world",
+          "max_len": 64
+        }
       ],
       "action": {
         "do": "module",
@@ -457,9 +1498,21 @@
       "name": "stream_voxels",
       "summary": "Move the voxel streaming centre in world units.",
       "args": [
-        {"name": "x", "type": "number", "default": 0},
-        {"name": "y", "type": "number", "default": 0},
-        {"name": "z", "type": "number", "default": 0}
+        {
+          "name": "x",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "default": 0
+        }
       ],
       "action": {
         "do": "module",
@@ -470,12 +1523,36 @@
       "name": "fracture_voxels",
       "summary": "Detach unsupported connected islands in a bounded cell region. Budgeted islands remain static.",
       "args": [
-        {"name": "x1", "type": "int", "default": 0},
-        {"name": "y1", "type": "int", "default": 0},
-        {"name": "z1", "type": "int", "default": 0},
-        {"name": "x2", "type": "int", "default": 31},
-        {"name": "y2", "type": "int", "default": 15},
-        {"name": "z2", "type": "int", "default": 31}
+        {
+          "name": "x1",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y1",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z1",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "x2",
+          "type": "int",
+          "default": 31
+        },
+        {
+          "name": "y2",
+          "type": "int",
+          "default": 15
+        },
+        {
+          "name": "z2",
+          "type": "int",
+          "default": 31
+        }
       ],
       "action": {
         "do": "module",
@@ -486,11 +1563,32 @@
       "name": "edit_voxel_fragment",
       "summary": "Edit a moving fragment in its local cell coordinates.",
       "args": [
-        {"name": "id", "type": "int", "min": 1, "default": 1},
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0},
-        {"name": "material", "type": "text", "default": "air"}
+        {
+          "name": "id",
+          "type": "int",
+          "min": 1,
+          "default": 1
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "material",
+          "type": "text",
+          "default": "air"
+        }
       ],
       "action": {
         "do": "module",
@@ -501,11 +1599,32 @@
       "name": "shape_voxel_fragment",
       "summary": "Reshape a moving fragment in local cell coordinates.",
       "args": [
-        {"name": "id", "type": "int", "min": 1, "default": 1},
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0},
-        {"name": "shape", "type": "text", "default": "slab"}
+        {
+          "name": "id",
+          "type": "int",
+          "min": 1,
+          "default": 1
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "shape",
+          "type": "text",
+          "default": "slab"
+        }
       ],
       "action": {
         "do": "module",
@@ -516,12 +1635,39 @@
       "name": "sculpt_voxel_fragment",
       "summary": "Sculpt or carve a moving fragment in local cell coordinates.",
       "args": [
-        {"name": "id", "type": "int", "min": 1, "default": 1},
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0},
-        {"name": "radius", "type": "number", "min": 0, "max": 512, "default": 2},
-        {"name": "material", "type": "text", "default": "air"}
+        {
+          "name": "id",
+          "type": "int",
+          "min": 1,
+          "default": 1
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "radius",
+          "type": "number",
+          "min": 0,
+          "max": 512,
+          "default": 2
+        },
+        {
+          "name": "material",
+          "type": "text",
+          "default": "air"
+        }
       ],
       "action": {
         "do": "module",
@@ -532,14 +1678,47 @@
       "name": "cast_voxel_fragment",
       "summary": "Cast a world-space ray against a moving fragment.",
       "args": [
-        {"name": "id", "type": "int", "min": 1, "default": 1},
-        {"name": "x", "type": "number", "default": 0},
-        {"name": "y", "type": "number", "default": 0},
-        {"name": "z", "type": "number", "default": 0},
-        {"name": "dx", "type": "number", "default": 0},
-        {"name": "dy", "type": "number", "default": -1},
-        {"name": "dz", "type": "number", "default": 0},
-        {"name": "reach", "type": "number", "default": 32}
+        {
+          "name": "id",
+          "type": "int",
+          "min": 1,
+          "default": 1
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dx",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dy",
+          "type": "number",
+          "default": -1
+        },
+        {
+          "name": "dz",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "reach",
+          "type": "number",
+          "default": 32
+        }
       ],
       "action": {
         "do": "module",
@@ -556,12 +1735,107 @@
       }
     },
     {
+      "name": "voxel_blocks",
+      "summary": "List the block registry: ids, names, textures and models.",
+      "args": [],
+      "action": {
+        "do": "module",
+        "op": "blocks"
+      }
+    },
+    {
       "name": "voxel_stream_status",
       "summary": "Report resident pages and pending page meshes. Solid counts cover resident pages.",
       "args": [],
       "action": {
         "do": "module",
         "op": "count"
+      }
+    },
+    {
+      "name": "set_render",
+      "summary": "Change near render distance in blocks while running (steps by 32).",
+      "args": [
+        {
+          "name": "distance",
+          "type": "number",
+          "min": 32,
+          "max": 2048,
+          "default": 256
+        }
+      ],
+      "action": {
+        "do": "module",
+        "op": "render"
+      }
+    },
+    {
+      "name": "set_distant",
+      "summary": "Change far LOD reach in chunks while running, with optional pre-gen.",
+      "args": [
+        {
+          "name": "chunks",
+          "type": "number",
+          "min": 0,
+          "max": 256,
+          "default": 128
+        },
+        {
+          "name": "pregen",
+          "type": "number",
+          "min": 0,
+          "max": 1,
+          "default": 0
+        }
+      ],
+      "action": {
+        "do": "module",
+        "op": "distant"
+      }
+    },
+    {
+      "name": "collision_ready",
+      "summary": "Whether streamed collision is installed across a movement region.",
+      "args": [
+        {
+          "name": "actor",
+          "type": "actor",
+          "default": "myself"
+        },
+        {
+          "name": "x0",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "y0",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "z0",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "x1",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "y1",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "z1",
+          "type": "number",
+          "default": 0
+        }
+      ],
+      "action": {
+        "do": "module",
+        "op": "collision_ready"
       }
     }
   ],
@@ -582,7 +1856,21 @@
         "material": "$option.material"
       },
       "options": [
-        {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}
+        {
+          "name": "material",
+          "type": "choice",
+          "options": [
+            "air",
+            "stone",
+            "dirt",
+            "grass",
+            "sand",
+            "wood",
+            "leaves",
+            "glow"
+          ],
+          "default": "stone"
+        }
       ]
     },
     {
@@ -618,8 +1906,28 @@
         "material": "$option.material"
       },
       "options": [
-        {"name": "radius", "type": "int", "min": 1, "max": 16, "default": 3},
-        {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}
+        {
+          "name": "radius",
+          "type": "int",
+          "min": 1,
+          "max": 16,
+          "default": 3
+        },
+        {
+          "name": "material",
+          "type": "choice",
+          "options": [
+            "air",
+            "stone",
+            "dirt",
+            "grass",
+            "sand",
+            "wood",
+            "leaves",
+            "glow"
+          ],
+          "default": "stone"
+        }
       ]
     },
     {
@@ -638,7 +1946,25 @@
         "shape": "$option.shape"
       },
       "options": [
-        {"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post", "stair south", "stair west", "stair north", "stair east", "ramp south", "ramp west", "ramp north", "ramp east"], "default": "slab"}
+        {
+          "name": "shape",
+          "type": "choice",
+          "options": [
+            "cube",
+            "slab",
+            "top slab",
+            "post",
+            "stair south",
+            "stair west",
+            "stair north",
+            "stair east",
+            "ramp south",
+            "ramp west",
+            "ramp north",
+            "ramp east"
+          ],
+          "default": "slab"
+        }
       ]
     }
   ],
@@ -649,10 +1975,36 @@
       "category": "Voxels",
       "label": "set voxel x {x} y {y} z {z} to {material}",
       "slots": [
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0},
-        {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "material",
+          "type": "choice",
+          "options": [
+            "air",
+            "stone",
+            "dirt",
+            "grass",
+            "sand",
+            "wood",
+            "leaves",
+            "glow"
+          ],
+          "default": "stone"
+        }
       ],
       "command": "set_voxel",
       "help": "Changes one cell of the running world; the chunk it is in is redrawn."
@@ -663,10 +2015,40 @@
       "category": "Voxels",
       "label": "shape voxel x {x} y {y} z {z} as {shape}",
       "slots": [
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0},
-        {"name": "shape", "type": "choice", "options": ["cube", "slab", "top slab", "post", "stair south", "stair west", "stair north", "stair east", "ramp south", "ramp west", "ramp north", "ramp east"], "default": "slab"}
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "shape",
+          "type": "choice",
+          "options": [
+            "cube",
+            "slab",
+            "top slab",
+            "post",
+            "stair south",
+            "stair west",
+            "stair north",
+            "stair east",
+            "ramp south",
+            "ramp west",
+            "ramp north",
+            "ramp east"
+          ],
+          "default": "slab"
+        }
       ],
       "command": "shape_voxel",
       "help": "Makes a solid cell a slab, top slab, post, stair or ramp (rising towards the side named) or a whole cube; air stays air."
@@ -677,13 +2059,51 @@
       "category": "Voxels",
       "label": "fill voxels from x {x1} y {y1} z {z1} to x {x2} y {y2} z {z2} with {material}",
       "slots": [
-        {"name": "x1", "type": "int", "default": 0},
-        {"name": "y1", "type": "int", "default": 0},
-        {"name": "z1", "type": "int", "default": 0},
-        {"name": "x2", "type": "int", "default": 0},
-        {"name": "y2", "type": "int", "default": 0},
-        {"name": "z2", "type": "int", "default": 0},
-        {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}
+        {
+          "name": "x1",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y1",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z1",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "x2",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y2",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z2",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "material",
+          "type": "choice",
+          "options": [
+            "air",
+            "stone",
+            "dirt",
+            "grass",
+            "sand",
+            "wood",
+            "leaves",
+            "glow"
+          ],
+          "default": "stone"
+        }
       ],
       "command": "fill_voxels"
     },
@@ -693,11 +2113,43 @@
       "category": "Voxels",
       "label": "voxel sphere at x {x} y {y} z {z} radius {radius} of {material}",
       "slots": [
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0},
-        {"name": "radius", "type": "number", "min": 0, "max": 512, "default": 3},
-        {"name": "material", "type": "choice", "options": ["air", "stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "air"}
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "radius",
+          "type": "number",
+          "min": 0,
+          "max": 512,
+          "default": 3
+        },
+        {
+          "name": "material",
+          "type": "choice",
+          "options": [
+            "air",
+            "stone",
+            "dirt",
+            "grass",
+            "sand",
+            "wood",
+            "leaves",
+            "glow"
+          ],
+          "default": "air"
+        }
       ],
       "command": "voxel_sphere",
       "help": "Air carves a hole, any other material builds a ball."
@@ -708,8 +2160,25 @@
       "category": "Voxels",
       "label": "generate {preset} terrain with seed {seed}",
       "slots": [
-        {"name": "preset", "type": "choice", "options": ["island", "caves", "flat", "empty"], "default": "island"},
-        {"name": "seed", "type": "int", "min": -2147483648, "max": 2147483647, "default": 1337}
+        {
+          "name": "preset",
+          "type": "choice",
+          "options": [
+            "island",
+            "caves",
+            "flat",
+            "empty",
+            "infinite"
+          ],
+          "default": "island"
+        },
+        {
+          "name": "seed",
+          "type": "int",
+          "min": -2147483648,
+          "max": 2147483647,
+          "default": 1337
+        }
       ],
       "command": "generate_terrain"
     },
@@ -719,9 +2188,21 @@
       "category": "Voxels",
       "label": "voxel at x {x} y {y} z {z}",
       "slots": [
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0}
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        }
       ],
       "returns": {
         "type": "int"
@@ -735,8 +2216,16 @@
       "category": "Voxels",
       "label": "ground height at x {x} z {z}",
       "slots": [
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0}
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        }
       ],
       "returns": {
         "type": "int"
@@ -750,13 +2239,43 @@
       "category": "Voxels",
       "label": "break voxel from x {x} y {y} z {z} toward x {dx} y {dy} z {dz} within {reach}",
       "slots": [
-        {"name": "x", "type": "number", "default": 0},
-        {"name": "y", "type": "number", "default": 0},
-        {"name": "z", "type": "number", "default": 0},
-        {"name": "dx", "type": "number", "default": 0},
-        {"name": "dy", "type": "number", "default": -1},
-        {"name": "dz", "type": "number", "default": 0},
-        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8}
+        {
+          "name": "x",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dx",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dy",
+          "type": "number",
+          "default": -1
+        },
+        {
+          "name": "dz",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "reach",
+          "type": "number",
+          "min": 0,
+          "max": 100000,
+          "default": 8
+        }
       ],
       "command": "break_voxel",
       "help": "Removes the first solid cube the ray meets; the chunk is redrawn."
@@ -767,14 +2286,57 @@
       "category": "Voxels",
       "label": "place {material} from x {x} y {y} z {z} toward x {dx} y {dy} z {dz} within {reach}",
       "slots": [
-        {"name": "x", "type": "number", "default": 0},
-        {"name": "y", "type": "number", "default": 0},
-        {"name": "z", "type": "number", "default": 0},
-        {"name": "dx", "type": "number", "default": 0},
-        {"name": "dy", "type": "number", "default": -1},
-        {"name": "dz", "type": "number", "default": 0},
-        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8},
-        {"name": "material", "type": "choice", "options": ["stone", "dirt", "grass", "sand", "wood", "leaves", "glow"], "default": "stone"}
+        {
+          "name": "x",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dx",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dy",
+          "type": "number",
+          "default": -1
+        },
+        {
+          "name": "dz",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "reach",
+          "type": "number",
+          "min": 0,
+          "max": 100000,
+          "default": 8
+        },
+        {
+          "name": "material",
+          "type": "choice",
+          "options": [
+            "stone",
+            "dirt",
+            "grass",
+            "sand",
+            "wood",
+            "leaves",
+            "glow"
+          ],
+          "default": "stone"
+        }
       ],
       "command": "place_voxel",
       "help": "Builds in the empty cell in front of the first solid cube the ray meets."
@@ -785,13 +2347,43 @@
       "category": "Voxels",
       "label": "distance to voxel from x {x} y {y} z {z} toward x {dx} y {dy} z {dz} within {reach}",
       "slots": [
-        {"name": "x", "type": "number", "default": 0},
-        {"name": "y", "type": "number", "default": 0},
-        {"name": "z", "type": "number", "default": 0},
-        {"name": "dx", "type": "number", "default": 0},
-        {"name": "dy", "type": "number", "default": -1},
-        {"name": "dz", "type": "number", "default": 0},
-        {"name": "reach", "type": "number", "min": 0, "max": 100000, "default": 8}
+        {
+          "name": "x",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dx",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dy",
+          "type": "number",
+          "default": -1
+        },
+        {
+          "name": "dz",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "reach",
+          "type": "number",
+          "min": 0,
+          "max": 100000,
+          "default": 8
+        }
       ],
       "returns": {
         "type": "number"
@@ -806,7 +2398,11 @@
       "label": "Save voxel edits {slot}",
       "command": "save_voxels",
       "slots": [
-        {"name": "slot", "type": "text", "default": "world"}
+        {
+          "name": "slot",
+          "type": "text",
+          "default": "world"
+        }
       ]
     },
     {
@@ -816,7 +2412,11 @@
       "label": "Load voxel edits {slot}",
       "command": "load_voxels",
       "slots": [
-        {"name": "slot", "type": "text", "default": "world"}
+        {
+          "name": "slot",
+          "type": "text",
+          "default": "world"
+        }
       ]
     },
     {
@@ -826,7 +2426,11 @@
       "label": "Delete voxel save {slot}",
       "command": "clear_save_voxels",
       "slots": [
-        {"name": "slot", "type": "text", "default": "world"}
+        {
+          "name": "slot",
+          "type": "text",
+          "default": "world"
+        }
       ]
     },
     {
@@ -836,12 +2440,36 @@
       "label": "fracture voxels from {x1} {y1} {z1} to {x2} {y2} {z2}",
       "command": "fracture_voxels",
       "slots": [
-        {"name": "x1", "type": "int", "default": 0},
-        {"name": "y1", "type": "int", "default": 0},
-        {"name": "z1", "type": "int", "default": 0},
-        {"name": "x2", "type": "int", "default": 31},
-        {"name": "y2", "type": "int", "default": 15},
-        {"name": "z2", "type": "int", "default": 31}
+        {
+          "name": "x1",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y1",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z1",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "x2",
+          "type": "int",
+          "default": 31
+        },
+        {
+          "name": "y2",
+          "type": "int",
+          "default": 15
+        },
+        {
+          "name": "z2",
+          "type": "int",
+          "default": 31
+        }
       ]
     },
     {
@@ -851,11 +2479,32 @@
       "label": "set fragment {id} cell {x} {y} {z} to {material}",
       "command": "edit_voxel_fragment",
       "slots": [
-        {"name": "id", "type": "int", "min": 1, "default": 1},
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0},
-        {"name": "material", "type": "text", "default": "air"}
+        {
+          "name": "id",
+          "type": "int",
+          "min": 1,
+          "default": 1
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "material",
+          "type": "text",
+          "default": "air"
+        }
       ]
     },
     {
@@ -865,11 +2514,32 @@
       "label": "shape fragment {id} cell {x} {y} {z} to {shape}",
       "command": "shape_voxel_fragment",
       "slots": [
-        {"name": "id", "type": "int", "min": 1, "default": 1},
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0},
-        {"name": "shape", "type": "text", "default": "slab"}
+        {
+          "name": "id",
+          "type": "int",
+          "min": 1,
+          "default": 1
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "shape",
+          "type": "text",
+          "default": "slab"
+        }
       ]
     },
     {
@@ -879,12 +2549,39 @@
       "label": "sculpt fragment {id} at {x} {y} {z} radius {radius} with {material}",
       "command": "sculpt_voxel_fragment",
       "slots": [
-        {"name": "id", "type": "int", "min": 1, "default": 1},
-        {"name": "x", "type": "int", "default": 0},
-        {"name": "y", "type": "int", "default": 0},
-        {"name": "z", "type": "int", "default": 0},
-        {"name": "radius", "type": "number", "min": 0, "max": 512, "default": 2},
-        {"name": "material", "type": "text", "default": "air"}
+        {
+          "name": "id",
+          "type": "int",
+          "min": 1,
+          "default": 1
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "radius",
+          "type": "number",
+          "min": 0,
+          "max": 512,
+          "default": 2
+        },
+        {
+          "name": "material",
+          "type": "text",
+          "default": "air"
+        }
       ]
     },
     {
@@ -894,16 +2591,51 @@
       "label": "fragment {id} ray {x} {y} {z} direction {dx} {dy} {dz} reach {reach}",
       "command": "cast_voxel_fragment",
       "slots": [
-        {"name": "id", "type": "int", "min": 1, "default": 1},
-        {"name": "x", "type": "number", "default": 0},
-        {"name": "y", "type": "number", "default": 0},
-        {"name": "z", "type": "number", "default": 0},
-        {"name": "dx", "type": "number", "default": 0},
-        {"name": "dy", "type": "number", "default": -1},
-        {"name": "dz", "type": "number", "default": 0},
-        {"name": "reach", "type": "number", "default": 32}
+        {
+          "name": "id",
+          "type": "int",
+          "min": 1,
+          "default": 1
+        },
+        {
+          "name": "x",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dx",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "dy",
+          "type": "number",
+          "default": -1
+        },
+        {
+          "name": "dz",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "reach",
+          "type": "number",
+          "default": 32
+        }
       ],
-      "returns": {"type":"number"}
+      "returns": {
+        "type": "number"
+      }
     },
     {
       "type_id": "stream_voxels",
@@ -912,10 +2644,111 @@
       "label": "stream voxels around {x} {y} {z}",
       "command": "stream_voxels",
       "slots": [
-        {"name": "x", "type": "number", "default": 0},
-        {"name": "y", "type": "number", "default": 0},
-        {"name": "z", "type": "number", "default": 0}
+        {
+          "name": "x",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "number",
+          "default": 0
+        }
       ]
+    },
+    {
+      "type_id": "set_render",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "set render distance {distance}",
+      "slots": [
+        {
+          "name": "distance",
+          "type": "number",
+          "min": 32,
+          "max": 2048,
+          "default": 256
+        }
+      ],
+      "command": "set_render",
+      "help": "Streams nearer or farther chunks while the game runs; steps by 32 blocks, one chunk."
+    },
+    {
+      "type_id": "set_distant",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "set distant chunks {chunks} pregen {pregen}",
+      "slots": [
+        {
+          "name": "chunks",
+          "type": "number",
+          "min": 0,
+          "max": 256,
+          "default": 128
+        },
+        {
+          "name": "pregen",
+          "type": "number",
+          "min": 0,
+          "max": 1,
+          "default": 0
+        }
+      ],
+      "command": "set_distant",
+      "help": "Reaches farther over the voxel LOD system, warming tiles first when pregen is on."
+    },
+    {
+      "type_id": "collision_ready",
+      "kind": "reporter",
+      "category": "Voxels",
+      "label": "collision ready for {actor} from {x0} {y0} {z0} to {x1} {y1} {z1}",
+      "slots": [
+        {
+          "name": "actor",
+          "type": "actor",
+          "default": "myself"
+        },
+        {
+          "name": "x0",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "y0",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "z0",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "x1",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "y1",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "name": "z1",
+          "type": "number",
+          "default": 0
+        }
+      ],
+      "returns": {
+        "type": "bool"
+      },
+      "command": "collision_ready",
+      "help": "Holds voxel invoker controllers until their swept region has collision."
     }
   ],
   "kernels": [

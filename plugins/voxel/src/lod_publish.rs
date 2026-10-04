@@ -120,6 +120,11 @@ impl Publisher {
     }
 
     pub fn advance(&mut self, world: &mut World, keys: Vec<Key>) -> Result<Vec<Value>, String> {
+        // An empty camera cut cannot replace the near terrain while a new
+        // view is still loading its LOD geometry.
+        if keys.is_empty() {
+            return Ok(self.fallback(world));
+        }
         let identity = (world.lod_generation, world.grid.revision());
         let mut changes = world.grid.take_lod_changes();
         if changes.is_none() && self.observed_revision != Some(identity.1) {
@@ -322,6 +327,8 @@ impl Publisher {
                     transition_ms: 150,
                     collider: false,
                     collider_kind: ColliderKind::Trimesh,
+                    uvs: group.uvs,
+                    texture: group.texture,
                     gpu,
                     body: None,
                 };
@@ -399,6 +406,47 @@ mod tests {
         }
         panic!("visual cut did not finish");
     }
+    #[test]
+    fn empty_camera_cut_keeps_near_terrain_until_a_replacement_is_ready() {
+        let mut world = world();
+        world
+            .published
+            .insert([0; 3], BTreeSet::from(["near".into()]));
+        let mut publisher = Publisher::default();
+        assert!(
+            publisher
+                .advance(&mut world, Vec::new())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!publisher.active);
+        let keys = [Key {
+            level: 3,
+            tile: [0; 3],
+        }];
+        let effects = finish(&mut publisher, &mut world, &keys);
+        assert!(effects.iter().any(|e| e["effect"] == "mesh"));
+        assert!(
+            effects
+                .iter()
+                .any(|e| e["name"] == "near" && e["visible"] == false)
+        );
+        let effects = publisher.advance(&mut world, Vec::new()).unwrap();
+        assert!(
+            effects
+                .iter()
+                .any(|e| e["name"] == "near" && e["visible"] == true)
+        );
+        assert!(!publisher.active);
+        assert!(
+            publisher
+                .advance(&mut world, keys.to_vec())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!publisher.active);
+    }
+
     #[test]
     fn cube_lod_cuts_submit_persistent_records_and_bounded_crossfades() {
         let mut world = world();

@@ -101,7 +101,8 @@ pub struct PluginMeshes {
     /// What each mesh draws with, so a set of copies can share it.
     assets: HashMap<(String, String), (Handle<Mesh>, Handle<StandardMaterial>)>,
     instances: HashMap<(String, String), Vec<Entity>>,
-    materials: HashMap<[u32; 4], Handle<StandardMaterial>>,
+    materials: HashMap<([u32; 4], Option<String>), Handle<StandardMaterial>>,
+    textures: HashMap<String, Handle<Image>>,
     quads: HashMap<
         (String, String),
         (
@@ -123,7 +124,7 @@ impl PluginMeshes {
 }
 
 fn bevy_mesh(data: &MeshData) -> Mesh {
-    Mesh::new(
+    let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
     )
@@ -139,7 +140,12 @@ fn bevy_mesh(data: &MeshData) -> Mesh {
         Mesh::ATTRIBUTE_COLOR,
         data.colors.as_chunks::<4>().0.to_vec(),
     )
-    .with_inserted_indices(Indices::U32(data.indices.clone()))
+    .with_inserted_indices(Indices::U32(data.indices.clone()));
+    if !data.uvs.is_empty() {
+        mesh = mesh
+            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, data.uvs.as_chunks::<2>().0.to_vec());
+    }
+    mesh
 }
 
 fn raster_mesh(data: &MeshData) -> Mesh {
@@ -153,20 +159,29 @@ fn raster_mesh(data: &MeshData) -> Mesh {
     let mut positions = vec![[0.0; 3]; count];
     let mut normals = vec![[0.0; 3]; count];
     let mut colors = vec![[0.0; 4]; count];
+    let textured = !data.uvs.is_empty();
+    let mut uvs = vec![[0.0; 2]; count];
     // Keep the CPU fallback visible until the compute buffer has completed.
     for (out, &index) in data.indices.iter().enumerate() {
         let i = index as usize;
         positions[out].copy_from_slice(&data.positions[i * 3..i * 3 + 3]);
         normals[out].copy_from_slice(&data.normals[i * 3..i * 3 + 3]);
         colors[out].copy_from_slice(&data.colors[i * 4..i * 4 + 4]);
+        if textured {
+            uvs[out].copy_from_slice(&data.uvs[i * 2..i * 2 + 2]);
+        }
     }
-    Mesh::new(
+    let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    if textured {
+        mesh = mesh.with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    }
+    mesh
 }
 
 fn collider(data: &MeshData) -> Option<rp::Collider> {
@@ -207,6 +222,7 @@ pub fn sync(
     mut state: ResMut<PluginMeshes>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    images: Option<Res<AssetServer>>,
     link: Option<Res<ComputeLink>>,
     mut quad_materials: Option<ResMut<Assets<crate::plugin_quads::QuadMaterial>>>,
     mut buffers: Option<ResMut<Assets<bevy::render::storage::ShaderBuffer>>>,
@@ -259,18 +275,34 @@ pub fn sync(
                     }
                 }
                 let emission = mesh.emission.unwrap_or([0.0; 3]);
-                let key = [
-                    mesh.roughness.to_bits(),
-                    emission[0].to_bits(),
-                    emission[1].to_bits(),
-                    emission[2].to_bits(),
-                ];
+                let key = (
+                    [
+                        mesh.roughness.to_bits(),
+                        emission[0].to_bits(),
+                        emission[1].to_bits(),
+                        emission[2].to_bits(),
+                    ],
+                    mesh.texture.clone(),
+                );
+                // A textured surface loads its project asset once and shares
+                // the handle; a missing file keeps the vertex colors alone.
+                let texture_handle = mesh.texture.as_ref().and_then(|path| {
+                    state.textures.get(path).cloned().or_else(|| {
+                        images
+                            .as_ref()
+                            .map(|server| server.load::<Image>(path.clone()))
+                            .inspect(|handle| {
+                                state.textures.insert(path.clone(), handle.clone());
+                            })
+                    })
+                });
                 let material = state
                     .materials
                     .entry(key)
                     .or_insert_with(|| {
                         materials.add(StandardMaterial {
                             base_color: Color::WHITE,
+                            base_color_texture: texture_handle.clone(),
                             perceptual_roughness: mesh.roughness.clamp(0.05, 1.0),
                             emissive: LinearRgba::rgb(emission[0], emission[1], emission[2]),
                             ..default()
@@ -288,8 +320,11 @@ pub fn sync(
                     .as_ref()
                     .and_then(|g| g.quads.as_ref())
                     .filter(|_| {
-                        link.as_ref()
-                            .is_none_or(|link| link.available() != Some(false))
+                        mesh.texture.is_none()
+                            && mesh.uvs.is_empty()
+                            && link
+                                .as_ref()
+                                .is_none_or(|link| link.available() != Some(false))
                     });
                 let compact = compact.zip(quad_materials.as_mut()).zip(buffers.as_mut());
                 let quad = compact.map(|((q, materials), buffers)| {
@@ -526,6 +561,8 @@ mod tests {
             collider,
             collider_kind: ColliderKind::Trimesh,
             gpu: None,
+            uvs: Vec::new(),
+            texture: None,
             body: None,
         }
     }

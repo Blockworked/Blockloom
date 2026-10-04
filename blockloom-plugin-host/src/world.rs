@@ -568,6 +568,19 @@ impl WorldPlugins {
         out
     }
 
+    /// Restart scene-owned state and jobs with the new scene's records.
+    pub fn restart_scene(&mut self, records: &dyn Fn(&str) -> Value) -> Vec<Outcome> {
+        let ids: Vec<_> = self.modules.keys().cloned().collect();
+        for id in ids {
+            self.cancel_jobs(&id);
+        }
+        let mut out = self.run_jobs(0.0);
+        out.extend(self.stop());
+        self.forget_reads();
+        out.extend(self.start(records));
+        out
+    }
+
     /// Brings the hosted modules in line with a loadout that changed during a
     /// run. A plugin that is new is opened and started; one that is gone is
     /// stopped; a portable one whose code changed is replaced - `world.save`

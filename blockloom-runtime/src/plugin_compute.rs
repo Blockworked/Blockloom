@@ -409,6 +409,8 @@ mod tests {
                 transition_ms: 0,
                 collider: false,
                 collider_kind: ColliderKind::Trimesh,
+                uvs: Vec::new(),
+                texture: None,
                 gpu: Some(GpuVertices {
                     buffer: "out".into(),
                     vertices: 3,

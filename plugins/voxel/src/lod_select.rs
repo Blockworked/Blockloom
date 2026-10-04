@@ -7,9 +7,9 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, VecDeque};
 
-pub const MAX_ROOTS: usize = 512;
-pub const MAX_LEAVES: usize = 512;
-pub const MAX_VISITS: usize = 4096;
+pub const MAX_ROOTS: usize = 4096;
+pub const MAX_LEAVES: usize = 4096;
+pub const MAX_VISITS: usize = 32768;
 
 #[derive(Clone, Deserialize)]
 pub struct View {
@@ -253,18 +253,31 @@ mod tests {
         );
     }
     #[test]
+    fn distant_128_chunks_fits_the_root_budget() {
+        // 128 chunks is 4096 blocks: the far LOD reach a distant game asks
+        // for must select rather than refuse the view.
+        let mut camera = view(4096.0);
+        camera.position = [4096.0, 64.0, 4096.0];
+        camera.render_distance = 4096.0;
+        let result = Selector::default()
+            .select([8192, 128, 8192], [0.0; 3], 1.0, camera)
+            .unwrap();
+        assert!(!result.leaves.is_empty());
+        assert!(result.leaves.len() <= MAX_LEAVES && result.visited <= MAX_VISITS);
+    }
+    #[test]
     fn budgets_keep_a_nonoverlapping_cover_and_exact_bounds() {
         let mut camera = view(0.0);
-        camera.position = [64.0; 3];
+        camera.position = [128.0; 3];
         camera.split_pixels = 0.02;
         camera.merge_pixels = 0.01;
         let result = Selector::default()
-            .select([127; 3], [0.0; 3], 1.0, camera)
+            .select([255; 3], [0.0; 3], 1.0, camera)
             .unwrap();
         assert!(result.budget_limited);
         assert!(result.leaves.len() <= MAX_LEAVES && result.visited <= MAX_VISITS);
         for (i, a) in result.leaves.iter().enumerate() {
-            assert!((0..3).all(|axis| a.base[axis] + a.extent[axis] <= 127));
+            assert!((0..3).all(|axis| a.base[axis] + a.extent[axis] <= 255));
             for b in &result.leaves[i + 1..] {
                 assert!(
                     (0..3).any(|axis| a.base[axis] + a.extent[axis] <= b.base[axis]
@@ -273,14 +286,13 @@ mod tests {
             }
         }
         // Frustum rejection is conservative; every cell on the forward centre ray is covered.
-        for z in 64..127 {
+        for z in 128..255 {
             assert_eq!(
                 result
                     .leaves
                     .iter()
-                    .filter(|v| (0..3)
-                        .all(|a| v.base[a] <= [64, 64, z][a]
-                            && [64, 64, z][a] < v.base[a] + v.extent[a]))
+                    .filter(|v| (0..3).all(|a| v.base[a] <= [128, 128, z][a]
+                        && [128, 128, z][a] < v.base[a] + v.extent[a]))
                     .count(),
                 1
             );
@@ -292,7 +304,7 @@ mod tests {
         camera.split_pixels = 0.02;
         camera.merge_pixels = 0.01;
         let result = Selector::default()
-            .select([127; 3], [0.0; 3], 1.0, camera)
+            .select([255; 3], [0.0; 3], 1.0, camera)
             .unwrap();
         assert!(result.budget_limited);
         assert_eq!(
@@ -301,7 +313,7 @@ mod tests {
                 .iter()
                 .map(|v| v.extent.iter().map(|&n| i64::from(n)).product::<i64>())
                 .sum::<i64>(),
-            127_i64.pow(3)
+            255_i64.pow(3)
         );
         assert!(result.leaves.len() <= MAX_LEAVES);
     }

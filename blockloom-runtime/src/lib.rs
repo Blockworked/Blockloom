@@ -367,8 +367,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         PostUpdate,
         plugins::stage(Stage::RenderExtraction)
             .before(bevy::transform::TransformSystems::Propagate),
-    )
-    .add_systems(Last, plugins::stage(Stage::Presentation));
+    );
     app.init_resource::<performance::LoopPace>()
         .init_resource::<performance::UpdateSplit>()
         .add_systems(First, performance::mark_main_start)
@@ -379,6 +378,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         .add_systems(
             Last,
             (
+                plugins::stage(Stage::Presentation),
                 performance::publish_sim_split,
                 performance::mark_main_end,
                 performance::publish_update_split,

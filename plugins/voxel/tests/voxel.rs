@@ -138,11 +138,12 @@ fn the_package_schema_is_valid_and_its_blocks_resolve() {
     contributions.check_definition().unwrap();
     assert_eq!(contributions.resources.len(), 1);
     assert_eq!(contributions.tools.len(), 4);
-    assert_eq!(blocks().len(), 19);
+    assert_eq!(blocks().len(), 22);
     // Every statement and reporter has the op it names.
     let ops: BTreeSet<_> = blocks().into_iter().map(|b| b.op).collect();
     for op in [
-        "set", "fill", "sphere", "generate", "get", "height", "cast", "break", "place",
+        "set", "fill", "sphere", "generate", "get", "height", "cast", "break", "place", "render",
+        "distant",
     ] {
         assert!(ops.contains(op), "{op}");
     }
@@ -556,7 +557,7 @@ fn the_sealed_package_runs_in_the_portable_executor() {
     package::seal(&root).unwrap();
     let package = Package::load(&root).unwrap();
     assert_eq!(package.manifest.id, ID);
-    assert_eq!(package.contributions.blocks.len(), 19);
+    assert_eq!(package.contributions.blocks.len(), 22);
 
     let entry = package.manifest.runtime.portable.clone().unwrap();
     let wasm_module = portable(&root.join(&entry.module), &entry);

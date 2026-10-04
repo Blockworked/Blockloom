@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, VecDeque};
 pub const TILE: i32 = 8;
 pub const MAX_TILES: usize = 4;
 pub const BASE_VISITS_PER_POLL: usize = 65536;
+pub const PROCEDURAL_BASE_VISITS_PER_POLL: usize = 1024;
 pub const MAX_OUTPUT_WORDS: usize = 262144;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -182,6 +183,13 @@ impl Tile {
         let scale = 1 << self.key.level;
         let size = grid.size().map(|s| (s + scale - 1) / scale);
         let cost = (scale * scale * scale) as usize;
+        // Unloaded procedural cells cost noise and feature work, not a byte read.
+        let budget = if grid.procedural_infinite() {
+            // A coarsest sample still needs one complete reduction to advance.
+            PROCEDURAL_BASE_VISITS_PER_POLL.max(cost)
+        } else {
+            BASE_VISITS_PER_POLL
+        };
         while self.samples.len() < self.total() {
             let i = self.samples.len();
             let at = [
@@ -190,7 +198,7 @@ impl Tile {
                 self.lo[2] + (i / (n[0] * n[1])) as i32,
             ];
             let in_bounds = (0..3).all(|a| (0..size[a]).contains(&at[a]));
-            if in_bounds && self.visits + cost > BASE_VISITS_PER_POLL {
+            if in_bounds && self.visits + cost > budget {
                 break;
             }
             self.samples.push(grid.lod_sample(self.key.level, at)?);

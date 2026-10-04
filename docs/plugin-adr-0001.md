@@ -809,3 +809,166 @@ shipping performance qualification remain outstanding. LOD is explicitly
 next, per the requested order. Generation graph authoring, floating-origin
 integration, GPU compaction, stress/damage fracture, debris lifetime and bake-back
 remain separate follow-up work.
+
+### Voxel infinite worlds, block registry, textures and render distances
+
+Version 0.3.0 adds the `infinite` preset: streamed procedural terrain with
+no authored edge, driven by editable noise layers, distinct biomes and a
+modular feature system. `noise` lines shape the land (`noise <name> scale
+<f> octaves <n> amplitude <f> seed <i>`), `biomes` lines carve
+temperature/humidity rectangles with their own surface and hill multiplier,
+and `features` lines spawn ponds, trees and rocks (`feature <tree|rock|pond>
+biome <name|any> density <n> size <n> material <m>`). Every cell samples only
+a hash of its own coordinates plus the config, so paging order never changes
+the world, and the same seed always builds the same land. Infinite needs
+`streamed: true`; the old presets are unchanged.
+
+`render_distance` (default 256 blocks) steps by 32, one chunk, and drives
+the streamed page radius on infinite worlds. `distant_chunks` (default 128,
+so 4096 blocks) drives the voxel LOD reach, and `pregen_distant` warms
+coarse LOD samples around the stream centre in budgeted slices before the
+camera turns to them. Chunk work stays budgeted across ticks
+(`pages_per_tick`, nearest pages first, 16-cell mesh tiles). Portable infinite
+worlds process at most one page per call to fit the host fuel budget;
+`chunk_workers` does not launch concurrent workers yet. Feature placement is
+computed once per column, with a bounded derived cache for unloaded terrain.
+The portable module holds no threads. Page work still takes noticeable time
+per call; finer scheduling is needed for steady frame times.
+
+Blocks are a registry now: the `blocks` list holds one JSON object per line
+(`{name, id, color, emission, textures, model}`), and files under
+`assets/blocks/*.json` import into it. `textures` names per-face project
+images (`top`, `bottom`, `side`, or `all`); the cube mesher keys groups by
+material and texture path, so faces with different textures never merge,
+and every textured quad carries planar uvs. Custom models are `cube`, a
+named shape, or inline mesh triangles in a unit cell with optional per-vertex
+uvs. `MeshData` carries optional uvs plus a texture path, and the runtime
+loads the image once per path and shares the material; a missing file keeps
+the vertex colors alone. Registry names resolve everywhere a material does
+(edits, brushes, spheres), and the palette always covers every registered id
+so a texture-only block still meshes. Smooth terrain, coarse LOD tiles, GPU
+meshing and fracture debris stay vertex-colored. `voxel_blocks` lists the
+registry, and the stream count reports preset, distances, block total and
+biome names.
+
+### Voxel 0.3.4: biome ranges, bulk page fills and distant selection budgets
+
+Two play-blocking defects surfaced in Voxelvale and are fixed. First, the
+shipped example biome lines used `1.01` as an exclusive upper bound while the
+parser only allows `0..1`, so `world.start` refused the whole world (and the
+scene-view preview spammed its error every tick): no ground at all. Biome
+rects are now `0..1` everywhere, with plains last as the catch-all, and the
+defaults actually vary (rocky, desert and forest rects sit where the
+temperature/humidity noise lands instead of outside it).
+
+Second, page generation sampled every cell canonically (over a thousand
+noise evaluations per cell through pond/tree neighborhoods), which made a
+start take minutes in debug. Page loads now fill a section in bulk: columns
+evaluate once per page, only the top layers run the feature gates, and a
+`bulk_pages_match_canonical_samples_cell_for_cell` test holds the bulk fill
+against per-cell sampling over three sections. The registry name map rides
+into the grid too, so custom biome surfaces no longer fall back to stone.
+`tree_at`/`pond_center` stay as the canonical single-column queries.
+
+The LOD selection budgets grew to cover the 128-chunk distant reach
+(`MAX_ROOTS`/`MAX_LEAVES` 512 to 4096, `MAX_VISITS` to 32768, with a test
+that a 4096-block view selects instead of refusing); tile-job pacing and the
+cut word budget still bound per-frame work, so distant cuts warm up over
+time under `pregen_distant`. Smooth terrain, coarse LOD tiles, GPU meshing
+and fracture debris remain vertex-colored.
+
+### Voxel 0.3.5: portable generation and checkpoint recovery
+
+Infinite worlds process at most one page per portable call. Chunk workers
+do not multiply the call budget. Tree, pond and rock placement is computed
+once per column rather than once per voxel; unloaded terrain reuses a bounded
+4096-column cache. Persistent startup reattaches the noise and registry
+configuration after reading a checkpoint. Large-world startup and streaming
+are exercised against the portable host's actual fuel limit.
+
+### Voxel 0.3.6: menu-to-game terrain lifecycle
+
+The runtime restarts scene-owned plugin state with the new scene's actor
+records when switching scenes. World startup includes the active `mode`
+(`TwoD` or `ThreeD`). Voxel retains settings and save commands in 2D menus,
+but skips terrain publication and streaming hooks until a 3D scene starts.
+Infinite LOD polls are limited to 4096 base-cell visits: procedural sampling
+includes noise and feature work, so the general 65536-visit limit could
+exhaust the portable fuel budget on later streaming frames.
+
+Portable infinite cube meshes advance one 16-cell tile per call and retain
+partial section publication until all eight tiles are ready. Initial invoker
+positions are included in scene records; infinite invokers prioritize their
+ground section when the authored spawn is below the surface. Character
+controller teleports update the global pose that physics reads.
+
+Validation includes a 2D-menu to 3D-scene runtime regression, 64 portable
+streaming calls under the host fuel budget, and a full GPU readback of
+Voxelvale through its Create button. The rendered view contains terrain and
+trees, and its controller settles on the surface. Voxelvale also needs its
+scene-entry spawn script to query ground height, as its initial-start script
+already does.
+
+
+### Voxel 0.3.7: bounded terrain streaming and sampling caches
+
+Cube meshing samples each tile and its halo once, then reuses the material
+array for all six face directions. Greedy masks reuse their allocations.
+Invoker page selection is cached until its section centers or page budgets
+change. Procedural pages share bounded column samples across vertical pages;
+resident air pages answer without regenerating their cells.
+
+Portable infinite cube worlds advance one nonempty 8-cell mesh tile per call,
+skipping air and section padding immediately. Partial sections keep their
+published meshes until replacement completes. Infinite LOD polls allow 1024
+base-cell visits, or one complete coarse sample when its cost is larger.
+These budgets spread background work across frames without changing samples.
+The runtime orders presentation hooks before the main-schedule timing marker
+so terrain streaming is attributed to the CPU work that performed it.
+
+Validation covers exact cached-versus-reference mesh geometry, shared column
+samples, portable fuel limits, and completion of partial edge sections. A
+matched 320x180 offscreen Voxelvale Create-button run on the RTX 5080 Laptop
+GPU reduced median update time from 62.11 ms to 23.33 ms over game frames
+20-39; main CPU time fell from 55.52 ms to 15.33 ms. Terrain, trees and ground
+collision were verified by GPU readback and controller position. This measures
+early streaming in the serial test renderer, not full editor viewport FPS.
+
+
+### Voxel 0.3.8: empty camera cuts retain near terrain
+
+An empty visual LOD selection restores the near terrain instead of installing
+an active cut with no meshes. During a 2D-menu to 3D-game camera switch, the
+transient camera can face outside the world and select no tiles. Installing
+that empty cut hid all near meshes while the real camera's replacement was
+still sampling. The publisher now falls back until a nonempty cut is ready.
+A regression covers the initial empty selection, a completed replacement,
+and an empty selection followed by another pending replacement.
+
+Validation also replays Voxelvale with copies of its saved settings and voxel
+checkpoints, beginning in its 2D menu, for 400 game frames at 1280x720 on the
+RTX 5080 Laptop GPU. Before the fix, its active cut had zero tiles while 234
+tiles were pending and every near mesh was hidden. After the fix, near meshes
+remain visible while that cut loads; GPU readback shows terrain and trees,
+and the player stays on the ground. The original save files are untouched.
+
+### Voxel 0.3.9: collision readiness during streaming
+
+Voxel invokers with 3D character controllers now wait for collision throughout
+the capsule's swept bounds, including support beneath the feet. The query
+prioritizes missing collision pages and keeps them in the stream selection within
+the resident-page budget. A completed page waits two presentation frames before
+it is considered installed in Rapier. Dirty and evicted pages become unavailable
+again. LOD render visibility does not affect this collision readiness.
+
+A blocked move holds position and clears accumulated falling speed. When the
+terrain module fails to answer, the controller stays held. Other actors and
+worlds without this streaming guard retain normal controller behavior. Space
+outside the finite voxel world remains empty; this guard does not create floors
+beneath deliberate holes or replace collision-disabled movement.
+
+Tests cover a sweep across a chunk boundary, collider installation delay, edits,
+eviction, invalid bounds, oversized sweeps, and portable readiness across four
+boundary pages. Voxelvale was also run through the real menu/Create path with
+copied saves and full GPU rendering, checking the player's height every frame
+through 400 frames rather than only its final position.

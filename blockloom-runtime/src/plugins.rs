@@ -305,6 +305,7 @@ fn records_for(engine: &Engine, plugin: &str, preview: bool) -> Value {
                         "type_id": r.type_id,
                         "schema_version": r.schema_version,
                         "payload": r.payload,
+                        "position": actor.placement().position,
                     })
                 })
         })
@@ -322,7 +323,7 @@ fn records_for(engine: &Engine, plugin: &str, preview: bool) -> Value {
             })
         })
         .collect();
-    json!({"records": records, "resources": resources, "preview": preview})
+    json!({"records": records, "resources": resources, "preview": preview, "mode":engine.project.active_scene().world.mode})
 }
 
 /// What a built game's player hosts, from the plugins its pack records and
@@ -430,14 +431,57 @@ pub fn begin(engine: &mut Engine) {
     let _ = engine;
 }
 
+/// Rebuild plugin-owned geometry and actor records when the scene changes.
+pub fn scene_changed(engine: &mut Engine) {
+    #[cfg(feature = "plugins")]
+    if let Some(world) = engine.plugins.world.clone() {
+        let recovering = engine
+            .plugins
+            .loadout
+            .plugins
+            .iter()
+            .any(|p| !world.borrow().plugins().any(|id| id == p.id));
+        if recovering {
+            begin(engine);
+            return;
+        }
+        let outcomes = world
+            .borrow_mut()
+            .restart_scene(&|plugin| records_for(engine, plugin, false));
+        engine.plugins.meshes.push(MeshOp::Clear);
+        engine.plugins.gpu.clear();
+        engine.plugins.gpu_clear = true;
+        apply(engine, applied(outcomes));
+    }
+    #[cfg(not(feature = "plugins"))]
+    let _ = engine;
+}
+
 /// Starts the opened modules and hosts them for the run.
 #[cfg(feature = "plugins")]
 fn install(engine: &mut Engine, mut world: WorldPlugins) {
     let started = world.start(&|plugin| records_for(engine, plugin, false));
     let world = Rc::new(RefCell::new(world));
     let reader = Rc::clone(&world);
+    let guards_collision = engine.plugins.loadout.plugins.iter().any(|plugin| {
+        plugin.id == "com.blockworked.voxel"
+            && plugin
+                .blocks
+                .iter()
+                .any(|block| block.type_id == "collision_ready")
+    });
     sense::set_plugin_reader(Some(Box::new(move |plugin, block, args| {
-        read(&reader, plugin, block, args)
+        match read(&reader, plugin, block, args) {
+            // A failed terrain module must keep its invokers held in place.
+            Err(_)
+                if guards_collision
+                    && plugin == "com.blockworked.voxel"
+                    && block == "collision_ready" =>
+            {
+                Ok(Evaluated::Bool(false))
+            }
+            answer => answer,
+        }
     })));
     engine.plugins.world = Some(world);
     engine.plugins.ticks = 0;
@@ -1123,6 +1167,77 @@ mod tests {
         assert!(!engine.plugins.active());
         app.update();
         assert!(app.world().resource::<PluginMeshes>().is_empty());
+    }
+
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn a_menu_scene_switch_republishes_voxel_terrain() {
+        use crate::plugin_meshes::{PluginMesh, PluginMeshes, sync};
+        use bevy_rapier3d::prelude as rp;
+        use blockloom_core::{project::Scene, scene::Mode};
+        use blockloom_plugin_api::record::PluginRecord;
+        use blockloom_plugin_host::{module::CodeModule, native::NativeModule, world::Preloaded};
+
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(rx, Mode::TwoD);
+        engine.project.scenes[0].name = "Menu".into();
+        engine.project.scenes.push(Scene::new("Game", Mode::ThreeD));
+        engine.project.plugin_resources.push(PluginRecord::new(
+            "com.blockworked.voxel",
+            "world",
+            1,
+            json!({"preset":"flat", "size":[32,16,32]}),
+        ));
+        let module = unsafe {
+            NativeModule::from_entry(
+                blockloom_voxel::blockloom_plugin_entry_v1,
+                Default::default(),
+                blockloom_plugin_host::native::default_services("0.0.1".into()),
+            )
+        }
+        .unwrap();
+        let world = WorldPlugins::with_modules(vec![Preloaded {
+            id: "com.blockworked.voxel".into(),
+            module: CodeModule::Native(module),
+            hooks: vec![],
+            blocks: vec![],
+        }])
+        .unwrap();
+        install(&mut engine, world);
+        assert!(engine.plugins.meshes.is_empty());
+        let mut app = App::new();
+        app.insert_non_send(engine)
+            .init_resource::<PluginMeshes>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .add_systems(
+                Update,
+                (
+                    |mut engine: NonSendMut<Engine>,
+                     actors: Query<&Transform, With<crate::engine::ActorId>>| {
+                        if engine.project.active_scene().name == "Menu" {
+                            crate::world::perform_scene_switch(
+                                &mut engine,
+                                &actors,
+                                "Game",
+                                "none",
+                            );
+                        }
+                    },
+                    sync,
+                )
+                    .chain(),
+            );
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query_filtered::<Entity, (With<PluginMesh>, With<rp::Collider>)>()
+                .iter(app.world())
+                .count(),
+            4
+        );
+        let mut engine = app.world_mut().non_send_mut::<Engine>();
+        end(&mut engine);
     }
 
     /// The scene view hosts a preview plugin while nothing plays, keeps it
