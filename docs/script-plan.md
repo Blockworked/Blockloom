@@ -39,7 +39,7 @@ Goal: make Rust scripts a first-class alternative to blocks for game logic. A sc
 
 - [x] Log panic location and message from `guard`, keeping the catch-and-log contract so a script still cannot take the window down. Native guards capture the actual panic site through a hook, with `Location::caller` as a fallback; web's abort hook already reports the panic site. Tests cover exported callbacks, non-string payloads, nested guards, concurrent threads and continuing after a panic.
 - [x] Invalidate script caches when the prelude changes, and fingerprint source contents so same-length edits cannot reuse stale builds.
-- Keep a per-script failure state instead of silent skip: surface "not built / ABI mismatch / load error" in `ScriptDialog` and the Inspector card, reusing the existing run-log line.
+- [x] Keep per-script build and load status in editor state. Show missing builds, compiler errors, ABI mismatches and loader errors in `ScriptDialog` and the Inspector card, alongside the run log. Saving clears the previous result; a successful check or load replaces failures.
 - Add `pose()`-style batch reads (position + rotation + scale in one call) and document the per-call FFI cost; avoid new string allocations on hot reads.
 - Add missing readback parity the blocks already have: velocity/angular velocity/mass reads, multi-axis `position_of`, grounded flag without requiring a controller move.
 

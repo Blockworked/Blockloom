@@ -2626,6 +2626,9 @@ fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
     if target.is_none()
         && let Err(error) = script::toolchain_version()
     {
+        for (_, path) in &scripts {
+            s.record_script_status(path, "build_failed", Some(error.clone()));
+        }
         s.push_log(LogLine {
             kind: "error".to_string(),
             actor: "Scripts".to_string(),
@@ -2643,8 +2646,19 @@ fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
         .filter(|triple| android::is_android(triple))
         .and_then(android::ndk_linker_for);
     for (actor, path) in scripts {
-        if let Err(error) = script::compile_for_with_linker(&dir, &path, target, linker.as_deref())
-        {
+        let result = script::compile_for_with_linker(&dir, &path, target, linker.as_deref());
+        if target.is_none() {
+            s.record_script_status(
+                &path,
+                if result.is_ok() {
+                    "built"
+                } else {
+                    "build_failed"
+                },
+                result.as_ref().err().cloned(),
+            );
+        }
+        if let Err(error) = result {
             failed += 1;
             s.push_log(LogLine {
                 kind: "error".to_string(),
@@ -3940,7 +3954,17 @@ pub(crate) fn check_script(
         .ok_or("This actor has no script")?
         .to_string();
     sync_ide(&dir);
-    let line = match script::compile(&dir, &path) {
+    let result = script::compile(&dir, &path);
+    s.record_script_status(
+        &path,
+        if result.is_ok() {
+            "built"
+        } else {
+            "build_failed"
+        },
+        result.as_ref().err().cloned(),
+    );
+    let line = match result {
         Ok(_) => LogLine {
             kind: "say".to_string(),
             actor: name,
@@ -3983,7 +4007,7 @@ pub(crate) fn write_script(
     actor_id: String,
     source: String,
 ) -> Result<(), String> {
-    let s = lock(state)?;
+    let mut s = lock(state)?;
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
@@ -4002,6 +4026,9 @@ pub(crate) fn write_script(
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
     std::fs::write(&file, source).map_err(|e| format!("{}: {e}", file.display()))?;
+    if let Some(open) = &mut s.open {
+        open.script_statuses.remove(&path);
+    }
     sync_ide(&dir);
     emit(app, &s);
     Ok(())

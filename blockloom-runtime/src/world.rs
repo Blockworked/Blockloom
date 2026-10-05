@@ -1027,9 +1027,7 @@ fn project_sound(engine: &Engine) -> blockloom_core::sound::SoundMixer {
 }
 
 /// Opens every actor's compiled script. The editor builds them before Play,
-/// so a script with no library yet is simply one that hasn't been played -
-/// which happens on every edit and is nothing to report. Anything else here
-/// is a library that won't load, which the actor is told about.
+/// and report missing libraries and loader errors to the editor.
 fn open_scripts(engine: &mut Engine, project: &blockloom_core::project::Project) {
     let Some(dir) = engine.project_dir.clone() else {
         return;
@@ -1039,15 +1037,29 @@ fn open_scripts(engine: &mut Engine, project: &blockloom_core::project::Project)
             continue;
         };
         if !crate::script::LoadedScript::is_built(&dir, path) {
+            bridge::send(&RuntimeMessage::ScriptLoaded {
+                actor: actor.id.clone(),
+                path: path.to_string(),
+                error: Some(
+                    "No compiled library found. Check the script or press Play to build it."
+                        .to_string(),
+                ),
+            });
             continue;
         }
         match crate::script::LoadedScript::load(&dir, path) {
             Ok(script) => {
                 engine.scripts.insert(actor.id.clone(), script);
+                bridge::send(&RuntimeMessage::ScriptLoaded {
+                    actor: actor.id.clone(),
+                    path: path.to_string(),
+                    error: None,
+                });
             }
-            Err(message) => bridge::send(&RuntimeMessage::Error {
+            Err(message) => bridge::send(&RuntimeMessage::ScriptLoaded {
                 actor: actor.id.clone(),
-                message,
+                path: path.to_string(),
+                error: Some(message),
             }),
         }
     }
@@ -3852,8 +3864,7 @@ fn claim_camera(commands: &mut Commands, engine: &mut Engine, actor: &str) {
     }
 }
 
-/// Opens one actor's compiled script, if it has one and the editor has built
-/// it. Silent otherwise, the same bargain `open_scripts` makes.
+/// Opens one actor's script and reports its load result to the editor.
 fn open_script_for(engine: &mut Engine, actor: &Actor) {
     let Some(dir) = engine.project_dir.clone() else {
         return;
@@ -3862,15 +3873,29 @@ fn open_script_for(engine: &mut Engine, actor: &Actor) {
         return;
     };
     if !crate::script::LoadedScript::is_built(&dir, path) {
+        bridge::send(&RuntimeMessage::ScriptLoaded {
+            actor: actor.id.clone(),
+            path: path.to_string(),
+            error: Some(
+                "No compiled library found. Check the script or press Play to build it."
+                    .to_string(),
+            ),
+        });
         return;
     }
     match crate::script::LoadedScript::load(&dir, path) {
         Ok(script) => {
             engine.scripts.insert(actor.id.clone(), script);
+            bridge::send(&RuntimeMessage::ScriptLoaded {
+                actor: actor.id.clone(),
+                path: path.to_string(),
+                error: None,
+            });
         }
-        Err(message) => bridge::send(&RuntimeMessage::Error {
+        Err(message) => bridge::send(&RuntimeMessage::ScriptLoaded {
             actor: actor.id.clone(),
-            message,
+            path: path.to_string(),
+            error: Some(message),
         }),
     }
 }

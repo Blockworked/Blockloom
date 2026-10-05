@@ -17,6 +17,7 @@ BwDialog {
     property var diagnostics: []
     property var toolchain: null
     property string ideNote: ""
+    readonly property var scriptStatus: (app.appState.script_statuses || {})[path] || null
     title: actor ? actor.name + " · " + path : path
     standardButtons: Dialog.NoButton
     width: Math.min(parent ? parent.width - 80 : 900, 900)
@@ -32,7 +33,7 @@ BwDialog {
     function refreshDiagnostics() { app.invoke("script_diagnostics", { actorId: actor.id }, list => diagnostics = list, () => diagnostics = []); }
     function save(then) {
         error = "";
-        app.invoke("write_script", { actorId: actor.id, source: editor.text }, () => { if (then) then(); }, e => error = String(e));
+        app.invoke("write_script", { actorId: actor.id, source: editor.text }, () => { if (then) then(); }, e => { busy = false; error = String(e); });
     }
     // Saving first, so rustc is told about what's on screen.
     function check() {
@@ -105,6 +106,19 @@ BwDialog {
 
     ColumnLayout {
         width: root.availableWidth; spacing: 8
+        ScrollView {
+            id: statusScroll
+            Layout.fillWidth: true; Layout.preferredHeight: Math.min(120, statusText.implicitHeight)
+            clip: true
+            Text {
+                id: statusText
+                width: statusScroll.availableWidth; wrapMode: Text.WordWrap; textFormat: Text.PlainText
+                color: scriptStatus && scriptStatus.error ? Theme.danger : Theme.textDim
+                text: !scriptStatus ? "Not built yet. Check the script or press Play." : scriptStatus.stage === "build_failed" ? "Build failed: " + scriptStatus.error
+                    : scriptStatus.stage === "load_failed" ? "Load failed: " + scriptStatus.error
+                    : scriptStatus.stage === "loaded" ? "Script loaded" : "Script compiled"
+            }
+        }
         Text { visible: root.error.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; text: root.error; color: Theme.danger }
         Text {
             visible: !!root.toolchain && !root.toolchain.available

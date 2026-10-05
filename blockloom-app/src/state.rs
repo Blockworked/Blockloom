@@ -43,6 +43,7 @@ pub(crate) struct OpenProject {
     /// and again after every package change.
     pub(crate) plugins: blockloom_plugin_host::active::ActivePlugins,
     pub(crate) modules: crate::commands::plugins::Modules,
+    pub(crate) script_statuses: std::collections::BTreeMap<String, ScriptStatus>,
 }
 
 impl OpenProject {
@@ -64,11 +65,33 @@ impl OpenProject {
             touched: AtomicU64::new(0),
             plugins,
             modules: Default::default(),
+            script_statuses: Default::default(),
         }
     }
 
     pub(crate) fn loaded_revision(&self) -> u64 {
         self.revision.load(Ordering::SeqCst)
+    }
+}
+
+/// The latest native build or load result for one script path.
+#[derive(Clone, Serialize)]
+pub(crate) struct ScriptStatus {
+    pub(crate) stage: String,
+    pub(crate) error: Option<String>,
+}
+
+impl AppState {
+    pub(crate) fn record_script_status(&mut self, path: &str, stage: &str, error: Option<String>) {
+        if let Some(open) = &mut self.open {
+            open.script_statuses.insert(
+                path.to_string(),
+                ScriptStatus {
+                    stage: stage.to_string(),
+                    error,
+                },
+            );
+        }
     }
 }
 
@@ -181,6 +204,7 @@ pub(crate) struct LogDto<'a> {
 
 #[derive(Serialize, Clone)]
 pub(crate) struct StateDto {
+    pub(crate) script_statuses: std::collections::BTreeMap<String, ScriptStatus>,
     /// Every project the Dashboard offers to open.
     pub(crate) library: Vec<ProjectEntryDto>,
     /// Where the New Project dialog points by default.
@@ -283,6 +307,11 @@ pub(crate) fn state_dto(s: &AppState) -> StateDto {
             .ok()
     });
     StateDto {
+        script_statuses: s
+            .open
+            .as_ref()
+            .map(|open| open.script_statuses.clone())
+            .unwrap_or_default(),
         library: s
             .library
             .iter()

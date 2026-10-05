@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 32;
+pub const PROTOCOL_VERSION: u32 = 33;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -253,6 +253,12 @@ pub struct LanSessionStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum RuntimeMessage {
+    /// Result of opening a compiled script, separate from gameplay errors.
+    ScriptLoaded {
+        actor: String,
+        path: String,
+        error: Option<String>,
+    },
     LanSession(LanSessionStatus),
     /// Sent once, as soon as the window is up.
     Ready {

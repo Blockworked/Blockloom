@@ -192,6 +192,38 @@ impl Backend {
                 .unwrap_or_else(|| id.to_string())
         };
         match message {
+            RuntimeMessage::ScriptLoaded { actor, path, error } => {
+                if s.project()
+                    .and_then(|project| project.actor(&actor))
+                    .is_none_or(|actor| actor.components.script() != Some(path.as_str()))
+                {
+                    return;
+                }
+                let name = name_of(&actor);
+                let build_failed = s
+                    .open
+                    .as_ref()
+                    .and_then(|open| open.script_statuses.get(&path))
+                    .is_some_and(|status| status.stage == "build_failed");
+                if !build_failed {
+                    s.record_script_status(
+                        &path,
+                        if error.is_some() {
+                            "load_failed"
+                        } else {
+                            "loaded"
+                        },
+                        error.clone(),
+                    );
+                }
+                if !build_failed && let Some(error) = error {
+                    s.push_log(LogLine {
+                        kind: "error".to_string(),
+                        actor: name,
+                        text: format!("{path} couldn't load:\n{error}"),
+                    });
+                }
+            }
             RuntimeMessage::LanSession(status) => {
                 s.lan_session = Some(status);
             }
@@ -430,5 +462,106 @@ impl Backend {
         drop(s);
         self.app.send(Event::RuntimeClosed);
         self.app.emit_state(&dto);
+    }
+}
+
+#[cfg(test)]
+mod script_status_tests {
+    use super::*;
+    use blockloom_core::{components::ActorComponent, project::Project};
+    use serde_json::json;
+
+    #[test]
+    fn load_results_publish_details_and_preserve_build_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        let backend = Backend::start(crate::AppHandle::new(|_| {}));
+        let mut project = Project::starter("Scripts", Mode::TwoD);
+        let actor = project.actors.first_mut().unwrap();
+        let id = actor.id.clone();
+        let path = "assets/scripts/test.rs";
+        actor
+            .components
+            .insert(ActorComponent::Script { path: path.into() });
+        let (incoming, _receiver) = channel();
+        {
+            let mut state = backend.state.lock().unwrap();
+            state.open = Some(crate::state::OpenProject::new(
+                project,
+                temp.path().into(),
+                0,
+                false,
+                false,
+            ));
+            state.runtime = Some(RuntimeHandle {
+                id: 77,
+                mode: Mode::TwoD,
+                link: Link::Embedded {
+                    incoming,
+                    world: None,
+                },
+            });
+        }
+        let send = |error: Option<&str>| {
+            backend.on_runtime_message(
+                77,
+                RuntimeMessage::ScriptLoaded {
+                    actor: id.clone(),
+                    path: path.into(),
+                    error: error.map(str::to_string),
+                },
+            )
+        };
+        send(Some("script ABI mismatch"));
+        let state = backend.dispatch("get_state", json!({})).unwrap();
+        assert_eq!(state["script_statuses"][path]["stage"], "load_failed");
+        assert_eq!(
+            state["script_statuses"][path]["error"],
+            "script ABI mismatch"
+        );
+        send(None);
+        let state = backend.dispatch("get_state", json!({})).unwrap();
+        assert_eq!(state["script_statuses"][path]["stage"], "loaded");
+        assert!(state["script_statuses"][path]["error"].is_null());
+        backend.state.lock().unwrap().record_script_status(
+            path,
+            "build_failed",
+            Some("compiler error".into()),
+        );
+        send(None);
+        let state = backend.dispatch("get_state", json!({})).unwrap();
+        assert_eq!(state["script_statuses"][path]["stage"], "build_failed");
+        assert_eq!(state["script_statuses"][path]["error"], "compiler error");
+        backend
+            .dispatch(
+                "write_script",
+                json!({"actorId": id, "source": "invalid rust"}),
+            )
+            .unwrap();
+        let state = backend.dispatch("get_state", json!({})).unwrap();
+        assert!(state["script_statuses"][path].is_null());
+        backend
+            .dispatch("check_script", json!({"actorId": id}))
+            .unwrap();
+        let state = backend.dispatch("get_state", json!({})).unwrap();
+        assert_eq!(state["script_statuses"][path]["stage"], "build_failed");
+        assert!(
+            !state["script_statuses"][path]["error"]
+                .as_str()
+                .unwrap()
+                .is_empty()
+        );
+        if blockloom_core::script::toolchain_version().is_ok() {
+            backend
+                .dispatch(
+                    "write_script",
+                    json!({"actorId": id, "source": "blockloom::export!();"}),
+                )
+                .unwrap();
+            backend
+                .dispatch("check_script", json!({"actorId": id}))
+                .unwrap();
+            let state = backend.dispatch("get_state", json!({})).unwrap();
+            assert_eq!(state["script_statuses"][path]["stage"], "built");
+        }
     }
 }

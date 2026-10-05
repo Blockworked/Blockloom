@@ -951,7 +951,16 @@ Rectangle {
         id: scriptCard
         ColumnLayout {
             readonly property var c: parent.c
+            readonly property var scriptStatus: (root.appState.script_statuses || {})[c.path] || null
             spacing: 6
+            Text {
+                visible: true
+                Layout.fillWidth: true; wrapMode: Text.WordWrap; textFormat: Text.PlainText
+                color: scriptStatus && scriptStatus.error ? Theme.danger : Theme.textDim
+                text: !scriptStatus ? "Not built yet. Check the script or press Play." : scriptStatus.stage === "build_failed" ? "Build failed: " + scriptStatus.error
+                    : scriptStatus.stage === "load_failed" ? "Load failed: " + scriptStatus.error
+                    : scriptStatus.stage === "loaded" ? "Script loaded" : "Script compiled"
+            }
             AssetField { app: root.app; accept: ["script"]; value: c.path; Layout.fillWidth: true; onCommitted: p => root.write("Script", { component: "Script", path: p }) }
             RowLayout {
                 BwButton { text: "Edit"; iconName: "file-code"; implicitHeight: 30; onClicked: scriptDialog.openFor(root.actor, c.path) }
