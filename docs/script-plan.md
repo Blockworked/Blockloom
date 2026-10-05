@@ -24,6 +24,17 @@ Goal: make Rust scripts a first-class alternative to blocks for game logic. A sc
 | Tooling | Roslyn shipped with the editor, IntelliSense, debugger, incremental compile on save | Requires the user's own `rustc`; no in-app completion/hover/signature, no formatter, no breakpoints/watches, diagnostics only on open/`Check`. Panics log `"panicked in {what}"` with no location (`prelude.rs:2868`). |
 | Iteration | Compile on save, domain reload, hot state | Compile on Play/`Check`. No attach mid-run, no hot reload. ABI bumps invalidate every build until `.blockloom/build` rebuilds. |
 
+## Background: Pumpkin-MC WASM plugins (research)
+
+Pumpkin-MC moved plugins from native libs to WASM components for sandboxing, cross-platform shipping, crash isolation, marketplace validation, and multi-language support (issue #662; Extism tried and dropped as too heavy, wasmtime preferred).
+
+- Unit is a `wasm32-wasip2` component, not a native lib. The interface is defined in WIT, not in a language API: `pumpkin-plugin-api` calls `wit_bindgen::generate!` with `world: "plugin"`, host exposes typed interfaces (`command`, `server`, `permission`, ...), guest exports `init-plugin`, `on_load`/`on_unload`, `handleCommand`/`handleEvent`, `get_metadata`.
+- Each language has a thin guest binding over the same WIT world (`pumpkin-api-go`, `-py`, `-cs`, `-kt`, `-c`, `-d`, `-zig`, `-ts`, listed at `docs.pumpkinmc.org/plugin-dev/introduction`), each with its own componentize toolchain: Rust `cdylib` + build tool, Go via `TinyGo` (`tinygo build -target=wasi`; standard Go does not emit the right component), C# via .NET 10 `wasi-wasm` RID + `Componentize.DotNet` SDK, Kotlin via Gradle `wasmWasi`, C via `wasi-sdk clang -mexec-model=reactor`, TS/Python via bundler + componentize script.
+- Host runs them in a WASM runtime with a permission + WASI-sandbox model: `PluginMetadata.permissions` gates `fs.read.data`/`fs.write.data`, network DNS, sys-info fields; storage is plain files via the language's normal `std::fs` under a per-plugin data folder from `Context.get_data_folder`. Lifecycle callbacks are re-entrant: docs warn not to hold a non-reentrant lock across a host call.
+- Native-vs-WASM stays an explicit tradeoff in their thread: sandboxing and language reach vs native-only needs (sockets, codecs, GPU libs, AVX/OpenCL, HW video) and bigger debug/perf costs. Plan kept both paths open.
+
+Blockloom already has half of this: portable plugin modules run WASM under `wasmi` with two imports (`blockloom-plugin-host/src/portable.rs:1`, `blockloom-plugin-api/src/wasm.rs`), and web scripts are already per-script `.wasm` modules (`mod.rs:145`). Desktop scripts (`rustc cdylib` + `libloading` + 3-function C ABI) are the outlier this phase would replace or parallel.
+
 ## Gaps
 
 1. No per-instance state or inspector params. Forces `static`s (shared across actors using the same file), custom-component hacks, or side files.
@@ -68,9 +79,20 @@ Goal: make Rust scripts a first-class alternative to blocks for game logic. A sc
 - In-app completion/hover from the existing `.blockloom/ide` project (or an LSP client), project-symbol completion, and one-click open in the user's editor with the current flow kept.
 - Script-aware run log: log levels, per-script timing rows in the profiler, and failure states that link back to the file/line.
 
+### Phase 5: multi-language scripts via WASM components (Pumpkin-style)
+
+Do scripts second, not first: prove the WIT world in the plugin host, measure per-tick overhead against the `cdylib` path, then decide whether desktop scripts migrate or run side by side (native for trusted local use, WASM for sandbox/marketplace, same split Pumpkin kept open).
+
+- Freeze a script WIT world equivalent to the current `READ_*/TEXT_*/ACT_*` + `start/tick/event` surface. Prefer typed resources/records (`resource actor`, `record hit`, `variant event`, per-domain interfaces) over the current numeric verbs-over-3-calls shape. Keep deferred-effect semantics (snapshot reads, later-applied writes, read-after-write reads old).
+- Host components in `wasmtime` (component model + WASI P2) alongside the current `libloading` path, with per-tick fuel/deadline like `portable.rs:40` already does for plugins. Gate WASI imports per script (no file/net/threads in the tick path by default); expose wall-clock, RNG, and async tasks only as host-provided deterministic services, following `blockloom-plugin-host/src/services.rs`.
+- Ship one guest binding per language via `wit-bindgen`, starting with Rust plus one GC language (Python or TS via componentize) before promising Go/Kotlin/C#. Each binding is a small repo to own, same cost Pumpkin pays with its `pumpkin-api-*` set. Document each language's componentize toolchain (TinyGo, .NET WASI workload, Kotlin/Wasm, wasi-sdk) the way Pumpkin's per-language quick-starts do.
+- Fix the Blockloom-specific costs Pumpkin does not have before committing GC languages to per-tick scripts: batch hot reads (`pose()`, event structs) to amortize canonical-lift overhead, keep the fixed-step determinism story (same tick, same answers), and define the per-language cross-build path (target `std`, linker, strip) next to the existing Rust one in `mod.rs:288`.
+- Gate: one non-Rust language driving `start/tick/event` in a test world with fuel limits, at measured overhead vs native. No GC-language promise for per-tick scripts until that number exists; component sizes (bundled interpreters) and per-call lift costs are the known risk from Pumpkin's own thread (#110).
+
 ## Open questions
 
-- Ship a toolchain or remove the dependency: bundle `rustc`, offer an optional interpreted scripting tier for edit-time iteration, or keep requiring the user's toolchain and improve the missing-toolchain guidance. Packaged installs cannot assume one (known gap).
+- Ship a toolchain or remove the dependency: bundle `rustc`, offer an optional interpreted scripting tier for edit-time iteration, or keep requiring the user's toolchain and improve the missing-toolchain guidance. Multi-language WASM multiplies this: one toolchain per guest language (TinyGo, .NET WASI, Kotlin/Wasm, wasi-sdk). Packaged installs cannot assume any of them (known gap).
 - Hot reload scope: recompile + reload a single script in the scene view without a full rebuild, and define what happens to per-actor storage across reloads.
 - Debugging story: headless test harness for scripts (VM-equivalence style, as in `tests/codegen.rs`) vs full debugger attach; pick one before promising breakpoints.
-- Web/Android parity: keep the three-call ABI as the portable surface; any new verb needs the wasm import path and the Android packaging path at the same time.
+- Web/Android parity: keep the three-call ABI as the portable surface until the WIT world replaces it; any new verb needs the wasm import path and the Android packaging path at the same time. A script WIT world must ship guest bindings and host support on all three targets at once.
+- `wasmi` vs `wasmtime`: portable plugin modules use `wasmi` today; script components need the component model + WASI P2, which points at `wasmtime`. Decide whether both runtimes coexist or the host converges on one.
