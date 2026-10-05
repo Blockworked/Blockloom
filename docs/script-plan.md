@@ -51,7 +51,7 @@ Blockloom already has half of this: portable plugin modules run WASM under `wasm
 - [x] Log panic location and message from `guard`, keeping the catch-and-log contract so a script still cannot take the window down. Native guards capture the actual panic site through a hook, with `Location::caller` as a fallback; web's abort hook already reports the panic site. Tests cover exported callbacks, non-string payloads, nested guards, concurrent threads and continuing after a panic.
 - [x] Invalidate script caches when the prelude changes, and fingerprint source contents so same-length edits cannot reuse stale builds.
 - [x] Keep per-script build and load status in editor state. Show missing builds, compiler errors, ABI mismatches and loader errors in `ScriptDialog` and the Inspector card, alongside the run log. Saving clears the previous result; a successful check or load replaces failures.
-- Add `pose()`-style batch reads (position + rotation + scale in one call) and document the per-call FFI cost; avoid new string allocations on hot reads.
+- [x] Add `pose()` and `pose_of()` batch reads (position + rotation + scale in one call). Fixed 28-byte records use the existing buffer callback on native and web; self reads avoid allocations and cloning the actor snapshot. Document call costs and snapshot timing in the [script read guide](script-api.md). Script ABI is now 41.
 - Add missing readback parity the blocks already have: velocity/angular velocity/mass reads, multi-axis `position_of`, grounded flag without requiring a controller move.
 
 ### Phase 1: state and scope (the Unity gap)

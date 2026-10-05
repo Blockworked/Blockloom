@@ -23,6 +23,26 @@ impl Axis {
     }
 }
 
+/// An actor's world transform from one snapshot read.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Pose {
+    /// World units: pixels in 2D, metres in 3D.
+    pub position: [f32; 3],
+    /// Euler degrees about X, Y and Z.
+    pub rotation: [f32; 3],
+    pub scale: f32,
+}
+
+impl Default for Pose {
+    fn default() -> Self {
+        Self {
+            position: [0.0; 3],
+            rotation: [0.0; 3],
+            scale: 1.0,
+        }
+    }
+}
+
 /// The water surface at one point, as [`Actor::water_at`] reads it.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct WaterSample {
@@ -190,6 +210,45 @@ impl Actor {
     }
 
     // ─── Reading the world ─────────────────────────────────────────────────
+
+    /// Position, rotation and scale in one host call, without allocating.
+    /// Reads the snapshot, so queued writes are visible on the next step.
+    pub fn pose(&self) -> Pose {
+        self.read_pose(Str::EMPTY).unwrap_or_default()
+    }
+
+    /// Another actor's pose by name or id; `None` if it does not exist.
+    /// An empty name refers to this actor.
+    pub fn pose_of(&self, actor: &str) -> Option<Pose> {
+        self.read_pose(Str::borrow(actor))
+    }
+
+    fn read_pose(&self, actor: Str) -> Option<Pose> {
+        let mut buffer = [0u8; POSE_BYTES];
+        let mut needed = 0;
+        let code = unsafe {
+            ((*self.api).read_text)(
+                self.ctx,
+                BYTES_POSE,
+                actor,
+                Str::EMPTY,
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                &mut needed,
+            )
+        };
+        if code != OK || needed != buffer.len() {
+            return None;
+        }
+        let values: [f32; 7] = std::array::from_fn(|i| {
+            f32::from_le_bytes(buffer[i * 4..i * 4 + 4].try_into().unwrap())
+        });
+        Some(Pose {
+            position: [values[0], values[1], values[2]],
+            rotation: [values[3], values[4], values[5]],
+            scale: values[6],
+        })
+    }
 
     pub fn position(&self, axis: Axis) -> f32 {
         self.number(READ_POSITION, Str::EMPTY, Str::EMPTY, axis.index())

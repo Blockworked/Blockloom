@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 40;
+pub const ABI_VERSION: u32 = 41;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -238,6 +238,11 @@ pub const READ_CONTROLLER: u32 = 55;
 /// `a` = field name (`actor`, `body`, `collider`, `error`), `b` = which
 /// obstacle, from 1. Words from this actor's last controller move.
 pub const TEXT_CONTROLLER: u32 = 23;
+
+/// `read_text` binary result: seven little-endian `f32`s (position XYZ,
+/// rotation XYZ in degrees, uniform scale). `a` empty = self, else name/id.
+pub const BYTES_POSE: u32 = 24;
+pub const POSE_BYTES: usize = 7 * 4;
 
 // ─── What a script can do ──────────────────────────────────────────────────
 // Every one of these becomes the same `vm::Effect` the blocks produce, so a
@@ -488,6 +493,7 @@ pub struct HostApi {
     /// `(ctx, what, a, b, arg, out) -> OK | MISSING`
     pub read_number: extern "C" fn(*mut c_void, u32, Str, Str, f64, *mut f64) -> u32,
     /// `(ctx, what, a, b, out, out_cap, out_len) -> OK | MISSING | TOO_LONG`.
+    /// Also carries fixed binary records such as [`BYTES_POSE`].
     /// `out_len` is always written with the length the answer needs, so a
     /// caller handed [`TOO_LONG`] knows how big a buffer to bring back.
     pub read_text: extern "C" fn(*mut c_void, u32, Str, Str, *mut u8, usize, *mut usize) -> u32,

@@ -515,9 +515,17 @@ fn plugin_answer(actor: &str, plugin: &str, asked: &str) -> Option<Evaluated> {
 fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64> {
     let bool_as = |value: bool| Some(if value { 1.0 } else { 0.0 });
     match what {
-        abi::READ_POSITION => Some(me(actor)?.position[axis_of(arg).index()] as f64),
-        abi::READ_ROTATION => Some(me(actor)?.rotation[axis_of(arg).index()] as f64),
-        abi::READ_SCALE => Some(me(actor)?.scale as f64),
+        abi::READ_POSITION => sense::read(|s| {
+            s.actors
+                .get(actor)
+                .map(|me| me.position[axis_of(arg).index()] as f64)
+        }),
+        abi::READ_ROTATION => sense::read(|s| {
+            s.actors
+                .get(actor)
+                .map(|me| me.rotation[axis_of(arg).index()] as f64)
+        }),
+        abi::READ_SCALE => sense::read(|s| s.actors.get(actor).map(|me| me.scale as f64)),
         abi::READ_VISIBLE => bool_as(me(actor)?.visible),
         abi::READ_TIMER => Some(sense::read(|sensors| sensors.time)),
         abi::READ_KEY_DOWN => {
@@ -841,6 +849,26 @@ fn parse_triple(text: &str) -> Option<[f32; 3]> {
     Some([x, y, z])
 }
 
+// Copy only the numeric pose while the snapshot is borrowed.
+fn pose_bytes_for(actor: &str, target: &str) -> Option<[u8; abi::POSE_BYTES]> {
+    let target = target.trim();
+    sense::read(|s| {
+        let me = if target.is_empty() {
+            s.actors.get(actor)
+        } else {
+            s.find(target)
+        }?;
+        let mut bytes = [0u8; abi::POSE_BYTES];
+        for (chunk, value) in bytes
+            .chunks_exact_mut(4)
+            .zip(me.position.into_iter().chain(me.rotation).chain([me.scale]))
+        {
+            chunk.copy_from_slice(&value.to_le_bytes());
+        }
+        Some(bytes)
+    })
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 extern "C" fn read_text(
     pointer: *mut c_void,
@@ -854,6 +882,17 @@ extern "C" fn read_text(
     let ctx = unsafe { ctx(pointer) };
     let a = unsafe { a.as_str() };
     let b = unsafe { b.as_str() };
+    if what == abi::BYTES_POSE {
+        let Some(answer) = pose_bytes_for(ctx.actor, a) else {
+            return abi::MISSING;
+        };
+        unsafe { *length = answer.len() };
+        if capacity < answer.len() {
+            return abi::TOO_LONG;
+        }
+        unsafe { std::ptr::copy_nonoverlapping(answer.as_ptr(), out, answer.len()) };
+        return abi::OK;
+    }
     let Some(answer) = text_for(ctx.actor, what, a, b) else {
         return abi::MISSING;
     };
@@ -1653,6 +1692,17 @@ mod browser {
             import(&memory, |memory, ctx, what, call| {
                 let a = text(memory, call.a_ptr, call.a_len);
                 let b = text(memory, call.b_ptr, call.b_len);
+                if what == abi::BYTES_POSE {
+                    let Some(answer) = pose_bytes_for(ctx.actor, &a) else {
+                        return abi::MISSING;
+                    };
+                    write(memory, call.out_len, &(answer.len() as u32).to_le_bytes());
+                    if answer.len() > call.out_cap as usize {
+                        return abi::TOO_LONG;
+                    }
+                    write(memory, call.out, &answer);
+                    return abi::OK;
+                }
                 let Some(answer) = text_for(ctx.actor, what, &a, &b) else {
                     return abi::MISSING;
                 };
@@ -2190,6 +2240,145 @@ blockloom::export!(start = start, tick = tick);
         // The panic is swallowed and the process is still here to assert it.
         script.tick("a1", &mut asked, 0.1);
         assert!(asked.effects.is_empty());
+    }
+
+    #[test]
+    fn pose_buffer_reports_capacity_and_leaves_failed_reads_untouched() {
+        publish_one("a1");
+        let mut asked = Asked::default();
+        let mut ctx = Ctx {
+            actor: "a1",
+            asked: &mut asked,
+        };
+        let pointer = (&raw mut ctx).cast::<c_void>();
+        let mut out = [0xa5; abi::POSE_BYTES];
+        let mut length = 99;
+        assert_eq!(
+            read_text(
+                pointer,
+                abi::BYTES_POSE,
+                Str::EMPTY,
+                Str::EMPTY,
+                out.as_mut_ptr(),
+                out.len() - 1,
+                &mut length
+            ),
+            abi::TOO_LONG
+        );
+        assert_eq!(length, abi::POSE_BYTES);
+        assert_eq!(out, [0xa5; abi::POSE_BYTES]);
+        assert_eq!(
+            read_text(
+                pointer,
+                abi::BYTES_POSE,
+                Str::borrow("absent"),
+                Str::EMPTY,
+                out.as_mut_ptr(),
+                out.len(),
+                &mut length
+            ),
+            abi::MISSING
+        );
+        assert_eq!(out, [0xa5; abi::POSE_BYTES]);
+        assert_eq!(
+            read_text(
+                pointer,
+                abi::BYTES_POSE,
+                Str::EMPTY,
+                Str::EMPTY,
+                out.as_mut_ptr(),
+                out.len(),
+                &mut length
+            ),
+            abi::OK
+        );
+        let values: Vec<f32> = out
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect();
+        assert_eq!(values, [3.0, 7.0, 0.0, 0.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn a_compiled_script_reads_batched_poses_without_observing_queued_writes() {
+        let project = TempProject::new("poses");
+        let Some(script) = project.build(
+            r#"
+use blockloom::*;
+extern "C" fn counted_read(ctx: *mut std::ffi::c_void, what: u32, _: Str, _: Str,
+    out: *mut u8, capacity: usize, length: *mut usize) -> u32 {
+    if what != BYTES_POSE || capacity != POSE_BYTES { return MISSING; }
+    unsafe {
+        *ctx.cast::<usize>() += 1;
+        std::ptr::write_bytes(out, 0, POSE_BYTES);
+        *length = POSE_BYTES;
+    }
+    OK
+}
+fn tick(me: &Actor, _dt: f32) {
+    let mut calls = 0usize;
+    let api = HostApi { abi: ABI_VERSION, read_text: counted_read,
+        read_number: unused_number, act: unused_act };
+    let counted = unsafe { Actor::from_raw((&raw mut calls).cast(), &api) };
+    assert_eq!(counted.pose().position, [0.0; 3]);
+    assert_eq!(calls, 1);
+    let pose = me.pose();
+    assert_eq!(pose.position, [3.0, 7.0, -2.0]);
+    assert_eq!(pose.rotation, [10.0, 20.0, 30.0]);
+    assert_eq!(pose.scale, 1.5);
+    assert_eq!(pose.position[0], me.x());
+    assert_eq!(pose.rotation[1], me.rotation(Axis::Y));
+    assert_eq!(pose.scale, me.scale());
+    assert_eq!(me.pose_of(" Player "), Some(pose));
+    assert_eq!(me.pose_of("player"), Some(pose));
+    assert_eq!(me.pose_of(""), Some(pose));
+    assert_eq!(me.pose_of("a1"), Some(pose));
+    assert_eq!(me.pose_of("missing"), None);
+    let friend = me.pose_of("Friend").unwrap();
+    assert_eq!(friend.position, [-4.0, 5.0, 6.0]);
+    assert_eq!(friend.rotation, [0.0, 0.0, -90.0]);
+    assert_eq!(friend.scale, 2.0);
+    me.go_to(100.0, 200.0, 300.0);
+    assert_eq!(me.pose(), pose);
+    me.say("pose reads passed");
+}
+extern "C" fn unused_number(_: *mut std::ffi::c_void, _: u32, _: Str, _: Str,
+    _: f64, _: *mut f64) -> u32 { MISSING }
+extern "C" fn unused_act(_: *mut std::ffi::c_void, _: u32, _: Str, _: Str, _: Str,
+    _: *const f64, _: usize) {}
+blockloom::export!(tick = tick);
+"#,
+        ) else {
+            return;
+        };
+        let mut sensors = Sensors::default();
+        sensors.actors.insert(
+            "a1".into(),
+            ActorSense {
+                name: "Player".into(),
+                position: [3.0, 7.0, -2.0],
+                rotation: [10.0, 20.0, 30.0],
+                scale: 1.5,
+                ..Default::default()
+            },
+        );
+        sensors.actors.insert(
+            "b1".into(),
+            ActorSense {
+                name: "Friend".into(),
+                position: [-4.0, 5.0, 6.0],
+                rotation: [0.0, 0.0, -90.0],
+                scale: 2.0,
+                ..Default::default()
+            },
+        );
+        sense::publish(sensors);
+        let mut asked = Asked::default();
+        script.tick("a1", &mut asked, 0.1);
+        assert_eq!(asked.effects.len(), 2);
+        assert!(
+            matches!(&asked.effects[1], Effect::Say { text, .. } if text == "pose reads passed")
+        );
     }
 
     #[test]
