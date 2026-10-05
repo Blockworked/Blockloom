@@ -107,8 +107,13 @@ bevy = { workspace = true, features = ["raw_vulkan_init"] }
 ash = "0.38"
 windows = { version = "0.62", default-features = false, features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
 
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
+blockloom-net = { path = "../blockloom-net", optional = true }
+
 [features]
-default = ["ray_tracing", "compressed_textures", "plugins"]
+default = ["ray_tracing", "compressed_textures", "plugins", "multiplayer"]
+# Native desktop LAN spectator hosting and replication.
+multiplayer = ["dep:blockloom-net"]
 # Solari's ray-traced lighting and reference path tracer. Experimental
 # upstream, so a build can leave it out; the raster rig is the fallback.
 # Always off on web: Solari has no WebGPU backend.

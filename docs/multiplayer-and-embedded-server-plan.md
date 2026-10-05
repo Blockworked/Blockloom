@@ -1,6 +1,6 @@
 # Multiplayer and embedded servers
 
-Status: proposed architecture and delivery plan. This document does not implement networking or claim that the existing runtime is a multiplayer server. Phase 0 (transport spike and extraction inventory) is recorded in [multiplayer-phase0.md](multiplayer-phase0.md); the `blockloom-net` crate is its only code.
+Status: proposed architecture and delivery plan. This document does not implement networking or claim that the existing runtime is a multiplayer server. Phase 0 (transport spike and extraction inventory) and incremental Phase 1 progress are recorded in [multiplayer-phase0.md](multiplayer-phase0.md). Runtime simulation registration, clocks, headless tests and fixed-step actor and run-context sensing are implemented. A native [LAN spectator slice](multiplayer-lan.md) now attaches to the running world and replicates settled actor state; Saved project opt-in and a guest limit now gate hosting controls and admission for each run; controllable players and full gameplay replication remain planned.
 
 Research date: 2026-10-02.
 

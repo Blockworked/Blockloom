@@ -194,6 +194,7 @@ ApplicationWindow {
     property var selectedRelease: ({})
     property var toolsTarget: ({})
     property var deleteTarget: ({})
+    property bool installMenuOpen: false
 
     function perform(command, args) {
         error = ""
@@ -208,6 +209,7 @@ ApplicationWindow {
         return text
     }
     function label(installation) {
+        if (!installation || !installation.id) return "this installation"
         return installation.kind === "dev"
             ? "Development: " + installation.name + " (" + installation.version + ")"
             : "Blockloom " + installation.version
@@ -301,8 +303,8 @@ ApplicationWindow {
                     if (command === "bind") logDialog.close()
                     window.notice = command === "open" ? "Editor launched."
                         : command === "bind" ? "Project editor selection saved." + (result.backup ? " Backup: " + result.backup.path : "")
-                        : command === "uninstall" ? "Installation deleted."
-                        : command === "add-tools" ? "Components added."
+                        : command === "uninstall" ? "Installation uninstalled."
+                        : command === "add-tools" ? "Modules added."
                         : "Installation saved."
                     window.refresh()
                 }
@@ -312,7 +314,7 @@ ApplicationWindow {
     Timer {
         interval: 5000
         repeat: true
-        running: !service.busy && !service.smokeTest() && !versionDialog.visible && !devDialog.visible && !installDialog.visible && !settingsDialog.visible && !toolsDialog.visible && !deleteDialog.visible
+        running: !service.busy && !service.smokeTest() && !versionDialog.visible && !devDialog.visible && !installDialog.visible && !settingsDialog.visible && !toolsDialog.visible && !deleteDialog.visible && !window.installMenuOpen
         onTriggered: service.run("installations", [])
     }
     Component.onCompleted: refresh()
@@ -494,22 +496,40 @@ ApplicationWindow {
                                         logDialog.open()
                                     }
                                 }
-                                RowLayout {
-                                    HubButton {
-                                        visible: modelData.status === "ready"
-                                        text: "Components"
-                                        enabled: !service.busy && !modelData.running
-                                        onClicked: { window.toolsTarget = modelData; toolsDialog.open() }
-                                    }
-                                    HubButton {
-                                        text: "Folder"
-                                        enabled: !!modelData.path
-                                        onClicked: { if (!service.showFolder(modelData.path)) window.error = "The installation folder could not be opened." }
-                                    }
-                                    HubButton {
-                                        text: "Delete"
-                                        enabled: !service.busy && !modelData.running
-                                        onClicked: { window.deleteTarget = modelData; deleteDialog.open() }
+                                HubButton {
+                                    text: "⋮"
+                                    font.pixelSize: 18
+                                    font.bold: true
+                                    implicitWidth: 44
+                                    Accessible.name: "Installation options for " + window.label(modelData)
+                                    Layout.alignment: Qt.AlignRight
+                                    enabled: !service.busy
+                                    onClicked: installMenu.open()
+                                    Menu {
+                                        id: installMenu
+                                        y: parent.height
+                                        onOpened: window.installMenuOpen = true
+                                        onClosed: window.installMenuOpen = false
+                                        MenuItem {
+                                            text: "Add modules..."
+                                            enabled: modelData.status === "ready" && !service.busy && !modelData.running
+                                            onTriggered: {
+                                                toolsDialog.target = modelData
+                                                window.toolsTarget = modelData
+                                                toolsDialog.open()
+                                            }
+                                        }
+                                        MenuItem {
+                                            text: "Open File Location"
+                                            enabled: !!modelData.path
+                                            onTriggered: { if (!service.showFolder(modelData.path)) window.error = "The installation folder could not be opened." }
+                                        }
+                                        MenuSeparator {}
+                                        MenuItem {
+                                            text: "Uninstall..."
+                                            enabled: !service.busy && !modelData.running
+                                            onTriggered: { window.deleteTarget = modelData; deleteDialog.open() }
+                                        }
                                     }
                                 }
                             }
@@ -722,10 +742,11 @@ ApplicationWindow {
         id: toolsDialog
         anchors.centerIn: parent
         width: Math.min(window.width - 60, 550)
-        title: "Add components"
+        title: "Add modules"
         modal: true
         standardButtons: Dialog.Ok | Dialog.Cancel
-        function has(tool) { return !!((toolsDialog.target.tools || {})[tool]) }
+        property var target: ({})
+        function has(tool) { return !!(((toolsDialog.target || {}).tools || {})[tool]) }
         onOpened: {
             addJava.checked = has("java"); addJava.enabled = !has("java")
             addSdk.checked = has("android-sdk"); addSdk.enabled = !has("android-sdk")
@@ -751,7 +772,7 @@ ApplicationWindow {
             anchors.fill: parent
             spacing: 10
             Label { text: window.label(toolsDialog.target); font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true }
-            Label { text: "Installed components are checked and cannot be changed. New components are downloaded with the versions this editor pins."; color: "#a7b0c4"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: "Installed modules are checked and cannot be changed. New modules (Java, Android SDK, Android NDK, Android Rust targets) are downloaded with the versions this editor pins."; color: "#a7b0c4"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             HubCheck { id: addJava; text: "Java" }
             HubCheck { id: addSdk; text: "Android SDK" }
             HubCheck { id: addNdk; text: "Android NDK" }
@@ -769,18 +790,34 @@ ApplicationWindow {
         id: deleteDialog
         anchors.centerIn: parent
         width: Math.min(window.width - 60, 550)
-        title: "Delete installation"
+        title: "Uninstall installation"
         modal: true
         standardButtons: Dialog.Ok | Dialog.Cancel
+        property var blockers: window.projects.filter(p => !p.error && p.installation === (window.deleteTarget || {}).id)
         onAccepted: perform("uninstall", [window.deleteTarget.id])
         Component.onCompleted: {
-            standardButton(Dialog.Ok).text = "Delete"
+            standardButton(Dialog.Ok).text = "Uninstall"
             standardButton(Dialog.Ok).enabled = Qt.binding(() => !!window.deleteTarget.id && !service.busy)
         }
         ColumnLayout {
             anchors.fill: parent
+            spacing: 10
             Label {
-                text: "Delete " + window.label(window.deleteTarget) + "? Projects using it must be assigned another editor first. This cannot be undone."
+                text: "Uninstall " + window.label(window.deleteTarget) + "? This cannot be undone."
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+            Label {
+                visible: deleteDialog.blockers.length > 0
+                text: "In use by: " + deleteDialog.blockers.map(p => p.name || p.path).join(", ") + ". Assign those projects another editor first."
+                color: "#ffaaaa"
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+            Label {
+                visible: deleteDialog.blockers.length === 0
+                text: "Projects using it must be assigned another editor first."
+                color: "#a7b0c4"
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
             }

@@ -479,6 +479,24 @@ pub(crate) fn set_project_name(
     Ok(())
 }
 
+pub(crate) fn set_multiplayer(
+    state: &SharedState,
+    app: &AppHandle,
+    settings: blockloom_core::multiplayer::MultiplayerSettings,
+) -> Result<(), String> {
+    settings.validate()?;
+    let mut s = lock(state)?;
+    let project = s.project().ok_or("Open a project first")?;
+    if project.multiplayer == settings {
+        return Ok(());
+    }
+    push_undo(&mut s);
+    s.project_mut().unwrap().multiplayer = settings;
+    auto_save(&s);
+    emit(app, &s);
+    Ok(())
+}
+
 pub(crate) fn set_project_icon(
     state: &SharedState,
     app: &AppHandle,
@@ -2246,6 +2264,31 @@ pub(crate) fn stop_project(state: &SharedState, app: &AppHandle) -> Result<(), S
     s.paused = false;
     emit(app, &s);
     Ok(())
+}
+
+pub(crate) fn lan_command(
+    state: &SharedState,
+    message: blockloom_protocol::EditorMessage,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    if !s.running {
+        return Err("Start the project before using LAN controls".into());
+    }
+    let runtime = s.runtime.as_mut().ok_or("No game runtime is connected")?;
+    if !runtime.send(&message) {
+        return Err("Lost the connection to the game runtime".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn session_status(
+    state: &SharedState,
+) -> Result<blockloom_protocol::LanSessionStatus, String> {
+    let s = lock(state)?;
+    Ok(s.runtime
+        .as_ref()
+        .and(s.lan_session.clone())
+        .unwrap_or_default())
 }
 
 pub(crate) fn pause_project(

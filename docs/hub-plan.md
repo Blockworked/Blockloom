@@ -106,9 +106,11 @@ state. Failed builds leave the previous development installation intact.
    Bundle Rust by default, and show Java, SDK, NDK and Android Rust target
    checkboxes with sizes, pinned versions and dependencies. Missing optional
    tools can be added later to the same editor slot (`add-tools`, the
-   installation's Components button) without replacing its editor binaries.
-   Installations can be deleted (refused while projects use them or their
-   editor runs) and their folder opened from the installations list.
+   installation's three-dot menu with Add modules) without replacing its
+   editor binaries.
+   Each installation has a three-dot menu with Add modules, Open File Location
+   and Uninstall. Uninstall is refused while projects use the installation or
+   its editor runs.
    Launch uses the slot's Rust and Java on PATH and its SDK/NDK paths through
    Hub-specific overrides, preserving the user's Android settings. Android license
    acceptance stays explicit. NDK and Android Rust targets are both needed for

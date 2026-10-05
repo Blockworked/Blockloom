@@ -2,7 +2,7 @@
 
 Status: Phase 0 of [the multiplayer plan](multiplayer-and-embedded-server-plan.md). Date: 2026-10-02.
 
-Phase 0's gate is "native transport builds; a realistic list of extraction blockers and compatibility decisions exists". This page records both halves. Nothing here changes how a game runs: the only code added is the `blockloom-net` crate, which nothing depends on yet.
+Phase 0's gate is "native transport builds; a realistic list of extraction blockers and compatibility decisions exists". This page records both halves. The original Phase 0 added only the isolated `blockloom-net` transport. Later runtime and LAN work is recorded in section 7 and the linked slice notes.
 
 What was **not** measured: anything that needs a GPU (this container has none), a Windows/macOS/Android host, or a built player. Those rows say so.
 
@@ -151,9 +151,19 @@ Facts about the clocks that matter for the plan's section 6:
 Status as of the first Phase 1 slices (the same branch as Phase 0):
 
 1. **Done, partly:** `add_world` is split into `simulation::add_simulation` and the presentation registration. The fixed step and physics are separated with unchanged order (each simulation system is a `SimStep`, presentation systems order against the steps they sat between). The `Update` chain and `rebuild_world`/`apply_lifetimes` are still interleaved with presentation and are the next extraction.
-2. **Done, by the physics work:** contacts are tracked per fixed step (`dim2/dim3::track_contacts`, `contacts.rs`) and delivered on the next tick (`world::deliver_contacts`). The tick-sampled part of `publish_sensors` is not moved yet.
+2. **Done, by the physics work:** contacts are tracked per fixed step (`dim2/dim3::track_contacts`, `contacts.rs`) and delivered on the next tick (`world::deliver_contacts`). Actor sensing now runs after authoritative poses are restored and before the fixed-step schedulers, including tile/room state when available. Frame publication retains those actor samples while running; stopped editor previews still sample their live transforms. The headless batching regression checks that position-dependent blocks see every logical tick. Run time, real wall time, pause state and scene names now refresh before each gameplay tick, after any pending scene switch. Frame publication retains the logical run time and advances the UI wall clock. Client input/UI and presentation telemetry still need separate contracts.
 3. **Done:** `volumes::VolumeEye` lets a world with no camera weigh volumes at an actor or a point. The server still needs to set it, and presentation blends per client later.
 4. **Done for the fixed step:** `simulation::tests` run a 2D and a 3D project headless over `MinimalPlugins`, check determinism, and check native logic against the VM. Needs the asset stores (CPU-only collections) until `rebuild_world` is split.
 5. **Done:** clocks (real `wall`, `elapsed_secs_f64`). Still open: Bevy's 250 ms virtual delta cap and the server's own accumulator.
 
 Verification: the 420 runtime unit tests, plus the ignored GPU suite on lavapipe (`BLOCKLOOM_TEST_OPAQUE_FD=1 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json cargo test -p blockloom-runtime --lib -- --ignored --test-threads=1`, about 30 minutes). Before the split 54 passed and 11 failed on this container's lavapipe (the failing set is in the PR description); the same suite after the split is recorded there too.
+
+Fixed-step sensing slice (2026-10-04): 516 runtime unit tests and 10 core sensing tests passed. The runtime suite used an ALSA null output because the host audio-device probe stalled; 69 GPU/manual tests remained ignored. New regressions cover position-dependent blocks under batched ticks, settled poses while paused, editable stopped previews, and actor-name cache invalidation without replacing input.
+
+Run-context sensing slice (2026-10-04): 519 runtime unit tests and 11 core sensing tests passed, with the same null-audio setup and 69 GPU/manual tests ignored. Regressions exercise timer-driven movement under individual and batched ticks, headless scene metadata, paused game time with advancing real time, frame retention of logical time, and preserving actors and client state when run context is refreshed.
+
+LAN spectator slice (2026-10-05): see [multiplayer-lan.md](multiplayer-lan.md) for the endpoint, replica protocol, editor/shell controls and native spectator clients. This is read-only actor replication, not completion of the player-ownership or full-gameplay replication gates.
+
+The LAN spectator slice now includes saved project opt-in and a run-scoped guest
+limit. Old projects remain private, and capability edits apply on the next Play.
+Player ownership and per-player input are still unimplemented.

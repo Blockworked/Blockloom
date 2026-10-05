@@ -258,12 +258,16 @@ pub fn target_installed(triple: &str) -> Result<(), String> {
 /// What a built library has to match to be reused: change any of it and the
 /// script is compiled again.
 fn stamp_for(toolchain: &str, target: Option<&str>, source: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    source.hash(&mut hash);
     format!(
-        "abi {}\n{}\ntarget {}\nsource {} bytes\n",
+        "abi {}\n{}\ntarget {}\nsource {} bytes {:016x}\n",
         abi::ABI_VERSION,
         toolchain,
         target.unwrap_or("host"),
-        source.len()
+        source.len(),
+        hash.finish()
     )
 }
 
@@ -317,6 +321,7 @@ pub fn compile_for_with_linker(
     let library = library_path_for(project_dir, relative, target);
     let stamp = stamp_path(project_dir, relative, target);
     let mut wanted = stamp_for(&toolchain, target, &source);
+    wanted.push_str(&stamp_for(&toolchain, target, PRELUDE_SOURCE));
     // A moved SDK row moves the linker: without it in the stamp a stale
     // library would survive the move.
     if let Some(linker) = linker {
@@ -498,6 +503,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn script_guards_report_panics_without_crossing_the_abi() {
+        let dir =
+            std::env::temp_dir().join(format!("blockloom-script-guard-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("blockloom.rs");
+        let tests = dir.join("guard_tests.rs");
+        std::fs::write(
+            &source,
+            format!("{PRELUDE_SOURCE}\ninclude!(\"guard_tests.rs\");\n"),
+        )
+        .unwrap();
+        std::fs::write(&tests, include_str!("guard_tests.rs")).unwrap();
+        let binary = dir.join(format!("guard-tests{}", std::env::consts::EXE_SUFFIX));
+        let output = rustc_command()
+            .arg("--edition")
+            .arg(EDITION)
+            .arg("--test")
+            .arg("-C")
+            .arg("opt-level=2")
+            .arg(&source)
+            .arg("-o")
+            .arg(&binary)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = Command::new(binary).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn a_script_path_cant_climb_out_of_the_project() {
         assert!(is_valid_path("assets/scripts/player.rs"));
         assert!(is_valid_path("assets/scripts/enemies/chaser.rs"));
@@ -526,6 +571,7 @@ mod tests {
         let base = stamp_for("rustc 1.90.0", None, "fn main() {}");
         assert_ne!(base, stamp_for("rustc 1.91.0", None, "fn main() {}"));
         assert_ne!(base, stamp_for("rustc 1.90.0", None, "fn main() {} "));
+        assert_ne!(base, stamp_for("rustc 1.90.0", None, "fn main(){ }"));
         assert_ne!(
             base,
             stamp_for(

@@ -1814,6 +1814,7 @@ fn project_with_headers(
         global_dicts: Vec::new(),
         plugin_resources: Vec::new(),
         physics: Default::default(),
+        multiplayer: Default::default(),
     }
 }
 

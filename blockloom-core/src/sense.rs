@@ -2,7 +2,7 @@
 //!
 //! blockstitch evaluates a value tree through plain functions with no
 //! context, so the sensing operators in [`crate::value`] read a snapshot the
-//! host publishes once per frame instead. [`with_actor`] supplies the other
+//! host refreshes at simulation and presentation boundaries instead. [`with_actor`] supplies the other
 //! half: which actor's script is being evaluated right now, so "x position"
 //! means the running actor's own.
 
@@ -587,8 +587,8 @@ impl ActorStack {
     }
 }
 
-/// Replaces this thread's snapshot - the host calls it once a frame, before
-/// stepping any script.
+/// Replaces this thread's snapshot. Fixed-step hosts can refresh individual
+/// slots before stepping scripts.
 pub fn publish(sensors: Sensors) {
     SENSORS.with(|slot| *slot.borrow_mut() = sensors);
 }
@@ -598,6 +598,27 @@ pub fn publish(sensors: Sensors) {
 /// next [`publish`] puts them back.
 pub fn take_actors() -> HashMap<String, ActorSense> {
     SENSORS.with(|slot| std::mem::take(&mut slot.borrow_mut().actors))
+}
+
+/// Replaces authoritative actors without changing client input or UI.
+pub fn publish_actors(actors: HashMap<String, ActorSense>) {
+    SENSORS.with(|slot| {
+        let mut sensors = slot.borrow_mut();
+        sensors.actors = actors;
+        sensors.names = Default::default();
+    });
+}
+
+/// Refreshes run context before gameplay reads it on this thread.
+pub fn publish_run(time: f64, wall_time: f64, paused: bool, scene: &str, scenes: &[String]) {
+    SENSORS.with(|snapshot| {
+        let mut s = snapshot.borrow_mut();
+        s.time = time;
+        s.wall_time = wall_time;
+        s.paused = paused;
+        scene.clone_into(&mut s.current_scene);
+        scenes.clone_into(&mut s.scene_names);
+    });
 }
 
 /// Samples the retained interface before either block scheduler runs.
@@ -916,6 +937,44 @@ mod tests {
         }
         assert_eq!(atmosphere.field("Wind_X"), Some(4.0));
         assert_eq!(atmosphere.field("humidity"), None);
+    }
+
+    #[test]
+    fn publishing_actors_preserves_input_and_invalidates_cached_names() {
+        let mut sensors = crowd(&[("a1", "Old")]);
+        sensors.keys.insert("space".into());
+        for _ in 0..4 {
+            assert!(sensors.find("Old").is_some());
+        }
+        publish(sensors);
+        publish_actors(crowd(&[("a1", "New")]).actors);
+        read(|s| {
+            assert!(s.keys.contains("space"));
+            assert!(s.find("Old").is_none());
+            assert_eq!(s.find("New").unwrap().name, "New");
+        });
+    }
+
+    #[test]
+    fn publishing_run_context_preserves_actor_and_client_state() {
+        let mut sensors = crowd(&[("a1", "Player")]);
+        sensors.keys.insert("space".into());
+        sensors.ui_focus = "pause".into();
+        publish(sensors);
+        publish_run(2.0, 4.0, true, "Room", &["Room".into(), "Next".into()]);
+        read(|s| {
+            assert_eq!((s.time, s.wall_time, s.paused), (2.0, 4.0, true));
+            assert_eq!(s.current_scene, "Room");
+            assert_eq!(s.scene_names, ["Room", "Next"]);
+            assert!(s.find("Player").is_some());
+            assert!(s.keys.contains("space"));
+            assert_eq!(s.ui_focus, "pause");
+        });
+        publish_run(3.0, 5.0, false, "Next", &["Next".into()]);
+        read(|s| {
+            assert_eq!(s.current_scene, "Next");
+            assert_eq!(s.scene_names, ["Next"]);
+        });
     }
 
     #[test]

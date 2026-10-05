@@ -2168,6 +2168,60 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[],
     },
     CommandSpec {
+        name: "set-multiplayer",
+        cmd: "set_multiplayer",
+        aliases: &["set_multiplayer"],
+        summary: "Set project LAN opt-in and guest limit for the next run.",
+        args: &[ArgSpec {
+            name: "settings",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "open-lan",
+        cmd: "open_lan",
+        aliases: &["open_lan"],
+        summary: "Open a running world to LAN spectators; session-status reports the result and invite.",
+        args: &[
+            ArgSpec {
+                name: "bind",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "max_guests",
+                ty: "number",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "close-lan",
+        cmd: "close_lan",
+        aliases: &["close_lan"],
+        summary: "Disconnect LAN guests and keep the host's current run.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "session-status",
+        cmd: "session_status",
+        aliases: &["session_status"],
+        summary: "The runtime's latest LAN status, invite, guests and error.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "kick-guest",
+        cmd: "kick_guest",
+        aliases: &["kick_guest"],
+        summary: "Disconnect one LAN spectator by its server-issued id.",
+        args: &[ArgSpec {
+            name: "id",
+            ty: "number",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "pause-project",
         cmd: "pause_project",
         aliases: &["pause_project"],

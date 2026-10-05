@@ -28,13 +28,16 @@ Item {
     function showSection(heading) {
         if (page === "project") return heading === "Project";
         if (page === "publishing") return heading === "App Info";
+        if (page === "multiplayer") return heading === "Multiplayer";
         if (page === "android") return heading === "Android";
         const lighting = ["Sun and ambient", "Shadows", "Ray tracing"];
         if (page === "lighting") return lighting.indexOf(heading) >= 0;
-        return ["Project", "App Info", "Android"].indexOf(heading) < 0
+        return ["Project", "App Info", "Android", "Multiplayer"].indexOf(heading) < 0
             && lighting.indexOf(heading) < 0;
     }
 
+    function multiplayerOf() { return Object.assign({ enabled: false, max_guests: 8 }, project ? project.multiplayer || {} : {}); }
+    function writeMultiplayer(next) { invoke("set_multiplayer", { settings: Object.assign(multiplayerOf(), next) }); }
     function sceneComponent(command, args) {
         const fields = {
             set_quality: ["Quality", "settings", "quality"], set_camera: ["Camera", "camera", "camera"],
@@ -214,6 +217,14 @@ Item {
                     BwButton { text: "3D"; iconName: "box"; primary: root.is3d; implicitHeight: 30; onClicked: if (!root.is3d) { modeDialog.target = "ThreeD"; modeDialog.open(); } }
                     Item { Layout.fillWidth: true } }
                 Note { text: (root.is3d ? "Meshes and 3D physics, measured in metres." : "Sprites and flat physics, measured in pixels.") + " Switching converts the open scene; a running game swaps live." }
+            }
+            Section {
+                heading: "Multiplayer"
+                InspectorRow { label: "LAN spectators"; labelWidth: 140; Layout.fillWidth: true
+                    SwitchField { value: root.multiplayerOf().enabled; onToggled: on => root.writeMultiplayer({ enabled: on }) } }
+                InspectorRow { label: "Guest limit"; labelWidth: 140; Layout.fillWidth: true
+                    SpinBox { from: 1; to: 16; value: root.multiplayerOf().max_guests; onValueModified: root.writeMultiplayer({ max_guests: value }) } }
+                Note { text: "Guests can watch primitive 2D and 3D actors. Player controls are not available yet. Changes apply when you next press Play." }
             }
             Section {
                 heading: "Project"

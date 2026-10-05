@@ -192,6 +192,9 @@ impl Backend {
                 .unwrap_or_else(|| id.to_string())
         };
         match message {
+            RuntimeMessage::LanSession(status) => {
+                s.lan_session = Some(status);
+            }
             RuntimeMessage::InterfaceLayout(layout) => {
                 if s.interface_design.as_ref().is_some_and(|d| {
                     d.revision == layout.revision && d.generation == layout.generation
@@ -201,6 +204,7 @@ impl Backend {
                 return;
             }
             RuntimeMessage::Ready { protocol } => {
+                s.lan_session = None;
                 if protocol != blockloom_protocol::PROTOCOL_VERSION {
                     s.push_log(LogLine {
                         kind: "error".to_string(),
@@ -248,6 +252,7 @@ impl Backend {
                 s.status = Some(status);
             }
             RuntimeMessage::Stopped => {
+                s.lan_session = None;
                 s.running = false;
                 s.paused = false;
                 s.pointer_locked = false;

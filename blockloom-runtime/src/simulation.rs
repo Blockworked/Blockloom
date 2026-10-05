@@ -51,6 +51,7 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
         .init_resource::<physics_install::PhysicsLayers>()
         .insert_non_send(engine);
     atmosphere::register(app);
+    crate::lan::register(app);
     app.init_resource::<crate::environment::Environment>();
     // Both dimensions' physics pipelines live side by side for live
     // cross-dimension scene switches; each only simulates its own bodies.
@@ -115,7 +116,12 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
             (dim2::sync_timestep, dim3::sync_timestep)
                 .chain()
                 .in_set(SimStep::Timestep),
-            (world::restore_poses, atmosphere::sample_atmosphere)
+            (
+                world::restore_poses,
+                world::publish_simulation_actors,
+                crate::tiles::publish_level.run_if(resource_exists::<crate::tiles::Level>),
+                atmosphere::sample_atmosphere,
+            )
                 .chain()
                 .in_set(SimStep::Sample),
             plugins::stage(Stage::Input).in_set(SimStep::PluginInput),
@@ -203,7 +209,7 @@ mod tests {
     use blockloom_core::blocks::{Instruction, InstructionKind, Strand};
     use blockloom_core::project::{Actor, Project};
     use blockloom_core::scene::Visual;
-    use blockloom_core::value::Value;
+    use blockloom_core::value::{Op, Value};
     use std::time::Duration;
 
     /// A project with one actor whose canvas moves it a step every tick.
@@ -237,6 +243,7 @@ mod tests {
     /// fixed step at 60 Hz. Schedules the blocks through native logic compiled into `native` when
     /// given a folder, and through the VM otherwise.
     fn headless_with(project: Project, mode: Mode, native: Option<&std::path::Path>) -> App {
+        blockloom_core::value::register_blockloom_operators();
         let (_sender, incoming) = std::sync::mpsc::channel();
         let mut engine = Engine::new(incoming, mode);
         engine.project = project;
@@ -271,6 +278,7 @@ mod tests {
             let entity = app.world_mut().spawn(world::actor_bundle(actor)).id();
             engine.entities.insert(actor.id.clone(), entity);
         }
+        engine.rebuild = false;
         world::begin_run(&mut engine, 0.0, 0.0);
         add_simulation(&mut app, mode, engine);
         app
@@ -309,6 +317,239 @@ mod tests {
     fn the_same_project_steps_to_the_same_place_every_run() {
         for mode in [Mode::TwoD, Mode::ThreeD] {
             assert_eq!(position_after(mode, 90), position_after(mode, 90));
+        }
+    }
+
+    #[derive(Resource, Default)]
+    struct Samples(Vec<f32>);
+
+    fn capture_actor_sample(_engine: NonSend<Engine>, mut samples: ResMut<Samples>) {
+        samples.0.push(blockloom_core::sense::read(|s| {
+            s.actors.values().next().unwrap().position[0]
+        }));
+    }
+
+    fn reporter_samples(frame: Duration, frames: usize) -> Vec<f32> {
+        let mut project = mover(Mode::TwoD, 0.0);
+        let body = Instruction::new(InstructionKind::Move {
+            steps: Value::op(
+                Op::from_name("Add"),
+                vec![
+                    Value::op(Op::from_name("MyPosition"), vec![Value::text("X")]),
+                    Value::number(1.0),
+                ],
+            ),
+        });
+        project.actors[0].graph.strands[0].instructions[1] =
+            Instruction::new(InstructionKind::Forever { body: vec![body] });
+        let mut app = headless_with(project, Mode::TwoD, None);
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(frame));
+        app.init_resource::<Samples>();
+        app.add_systems(
+            FixedUpdate,
+            capture_actor_sample
+                .after(SimStep::Sample)
+                .before(SimStep::Vm),
+        );
+        for _ in 0..=frames {
+            app.update();
+        }
+        app.world().resource::<Samples>().0.clone()
+    }
+
+    #[test]
+    fn actor_reporters_observe_each_tick_even_when_ticks_are_batched() {
+        let step = Duration::from_secs_f64(1.0 / 60.0);
+        let individual = reporter_samples(step, 6);
+        let batched = reporter_samples(step * 3, 2);
+        assert_eq!(individual, vec![0.0, 1.0, 3.0, 7.0, 15.0, 31.0]);
+        assert_eq!(batched, individual);
+    }
+
+    #[derive(Resource, Default)]
+    struct RunSamples(Vec<(f64, f64, bool, String, Vec<String>)>);
+
+    fn capture_run_sample(_engine: NonSend<Engine>, mut samples: ResMut<RunSamples>) {
+        samples.0.push(blockloom_core::sense::read(|s| {
+            (
+                s.time,
+                s.wall_time,
+                s.paused,
+                s.current_scene.clone(),
+                s.scene_names.clone(),
+            )
+        }));
+    }
+
+    fn run_samples(frame: Duration, frames: usize, paused: bool) -> RunSamples {
+        let mut project = mover(Mode::TwoD, 1.0);
+        project.actors[0].graph.strands[0].instructions[1] =
+            Instruction::new(InstructionKind::Forever {
+                body: vec![Instruction::new(InstructionKind::Move {
+                    steps: Value::op(Op::from_name("Timer"), vec![]),
+                })],
+            });
+        let mut app = headless_with(project, Mode::TwoD, None);
+        if paused {
+            world::set_paused(&mut app.world_mut().non_send_mut::<Engine>(), true, 0.0);
+        }
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(frame));
+        app.init_resource::<RunSamples>();
+        app.add_systems(
+            FixedUpdate,
+            capture_run_sample
+                .after(SimStep::Vm)
+                .before(SimStep::Scripts),
+        );
+        for _ in 0..=frames {
+            app.update();
+        }
+        let expected: f64 = app
+            .world()
+            .resource::<RunSamples>()
+            .0
+            .iter()
+            .map(|s| s.0)
+            .sum();
+        let mut poses = app
+            .world_mut()
+            .query_filtered::<&Transform, With<crate::engine::ActorId>>();
+        let moved = poses.single(app.world()).unwrap().translation.x as f64;
+        assert!(
+            (moved - expected).abs() < 1e-6,
+            "timer-driven movement: {moved} vs {expected}"
+        );
+        app.world_mut().remove_resource::<RunSamples>().unwrap()
+    }
+
+    #[test]
+    fn headless_run_context_advances_on_every_logical_tick() {
+        let step = Duration::from_secs_f64(1.0 / 60.0);
+        let individual = run_samples(step, 6, false).0;
+        let batched = run_samples(step * 3, 2, false).0;
+        assert_eq!(individual.len(), 6);
+        assert_eq!(batched.len(), 6);
+        let scene = Project::starter("headless", Mode::TwoD)
+            .active_scene()
+            .name
+            .clone();
+        for (index, (single, batch)) in individual.iter().zip(&batched).enumerate() {
+            let expected = step.as_secs_f64() * (index + 1) as f64;
+            assert!((single.0 - expected).abs() < 1e-8);
+            assert_eq!(single.0, batch.0);
+            assert_eq!(single.2, false);
+            assert_eq!(single.3, scene);
+            assert_eq!(single.4, vec![scene.clone()]);
+            assert_eq!(single.3, batch.3);
+            assert_eq!(single.4, batch.4);
+            assert!(batch.1 >= batch.0);
+        }
+    }
+
+    #[test]
+    fn headless_pause_freezes_game_reporters_but_keeps_real_time() {
+        let step = Duration::from_secs_f64(1.0 / 60.0);
+        let samples = run_samples(step * 3, 2, true).0;
+        assert_eq!(samples.len(), 6);
+        for sample in &samples {
+            assert_eq!(sample.0, 0.0);
+            assert!(sample.2);
+        }
+        assert!(samples[0].1 > 0.0);
+        assert!(samples[3].1 > samples[0].1);
+        assert_eq!(samples[0].1, samples[2].1);
+    }
+
+    #[cfg(all(
+        feature = "multiplayer",
+        not(target_arch = "wasm32"),
+        not(target_os = "android")
+    ))]
+    #[test]
+    fn lan_capability_and_limit_are_fixed_for_the_run() {
+        let mut app = headless_with(mover(Mode::TwoD, 2.0), Mode::TwoD, None);
+        let mut e = app.world_mut().non_send_mut::<Engine>();
+        assert!(!crate::lan::status(&e).enabled);
+        e.project.multiplayer.enabled = true;
+        e.project.multiplayer.max_guests = 2;
+        crate::lan::open(&mut e, "127.0.0.1:0", 1);
+        drop(e);
+        app.update();
+        assert!(!crate::lan::status(app.world().non_send::<Engine>()).open);
+        let mut e = app.world_mut().non_send_mut::<Engine>();
+        world::begin_run(&mut e, 0.0, 0.0);
+        assert!(crate::lan::status(&e).enabled);
+        assert_eq!(crate::lan::status(&e).max_guests, 2);
+        e.project.multiplayer.enabled = false;
+        e.project.multiplayer.max_guests = 16;
+        crate::lan::open(&mut e, "127.0.0.1:0", 3);
+        drop(e);
+        app.update();
+        assert!(!crate::lan::status(app.world().non_send::<Engine>()).open);
+        crate::lan::open(
+            &mut app.world_mut().non_send_mut::<Engine>(),
+            "127.0.0.1:0",
+            2,
+        );
+        app.update();
+        assert!(crate::lan::status(app.world().non_send::<Engine>()).open);
+        crate::lan::close(&mut app.world_mut().non_send_mut::<Engine>());
+        assert!(crate::lan::status(app.world().non_send::<Engine>()).enabled);
+    }
+
+    #[cfg(all(
+        feature = "multiplayer",
+        not(target_arch = "wasm32"),
+        not(target_os = "android")
+    ))]
+    #[test]
+    fn lan_attaches_replicates_and_closes_without_restarting_either_dimension() {
+        use blockloom_net::ClientOptions;
+        use blockloom_net::game::{Invite, LanClient};
+        for mode in [Mode::TwoD, Mode::ThreeD] {
+            let mut project = mover(mode, 2.0);
+            project.multiplayer.enabled = true;
+            let mut app = headless_with(project, mode, None);
+            for _ in 0..31 {
+                app.update();
+            }
+            let started = app.world().non_send::<Engine>().started_at;
+            let before = app.world().non_send::<Engine>().contact_ticks;
+            crate::lan::open(
+                &mut app.world_mut().non_send_mut::<Engine>(),
+                "127.0.0.1:0",
+                4,
+            );
+            app.update();
+            let status = crate::lan::status(app.world().non_send::<Engine>());
+            assert!(status.open);
+            let invite = Invite::decode(status.invite.as_ref().unwrap()).unwrap();
+            let mut guest =
+                LanClient::connect(invite.clone(), invite.build, ClientOptions::default()).unwrap();
+            let end = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                app.update();
+                guest.poll().unwrap();
+                if guest.state().is_some() {
+                    break;
+                }
+                assert!(std::time::Instant::now() < end);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let state = guest.state().unwrap();
+            assert_eq!(state.actors.len(), 1);
+            assert_eq!(state.dimension, u8::from(mode == Mode::ThreeD));
+            let pose = state.actors.values().next().unwrap().pose;
+            assert!(Vec3::from_slice(&pose[..3]).length() > 20.0);
+            assert!(app.world().non_send::<Engine>().contact_ticks > before);
+            assert_eq!(app.world().non_send::<Engine>().started_at, started);
+            let tick = app.world().non_send::<Engine>().contact_ticks;
+            crate::lan::close(&mut app.world_mut().non_send_mut::<Engine>());
+            assert!(!crate::lan::status(app.world().non_send::<Engine>()).open);
+            app.update();
+            assert!(app.world().non_send::<Engine>().running);
+            assert_eq!(app.world().non_send::<Engine>().started_at, started);
+            assert!(app.world().non_send::<Engine>().contact_ticks > tick);
         }
     }
 

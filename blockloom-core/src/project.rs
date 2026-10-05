@@ -706,6 +706,11 @@ pub struct ProjectFile {
         skip_serializing_if = "crate::physics::PhysicsSettings::is_default"
     )]
     pub physics: crate::physics::PhysicsSettings,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::multiplayer::MultiplayerSettings::is_default"
+    )]
+    pub multiplayer: crate::multiplayer::MultiplayerSettings,
 }
 
 /// A scene asset file: its settings as components plus its actors. Older
@@ -951,6 +956,7 @@ pub struct Project {
     /// Physics schema version, compatibility profile and stored materials. Absent
     /// (and written absent) for a project that has none of that.
     pub physics: crate::physics::PhysicsSettings,
+    pub multiplayer: crate::multiplayer::MultiplayerSettings,
 }
 
 // ─── Scene-backed project ────────────────────────────────────────────────
@@ -992,6 +998,9 @@ impl Serialize for Project {
         if !self.physics.is_default() {
             s.serialize_field("physics", &self.physics)?;
         }
+        if !self.multiplayer.is_default() {
+            s.serialize_field("multiplayer", &self.multiplayer)?;
+        }
         s.end()
     }
 }
@@ -1028,6 +1037,8 @@ impl<'de> Deserialize<'de> for Project {
             plugin_resources: Vec<PluginRecord>,
             #[serde(default)]
             physics: crate::physics::PhysicsSettings,
+            #[serde(default)]
+            multiplayer: crate::multiplayer::MultiplayerSettings,
         }
         let de = ProjectDe::deserialize(deserializer)?;
         de.physics
@@ -1070,6 +1081,7 @@ impl<'de> Deserialize<'de> for Project {
             global_dicts: de.global_dicts,
             plugin_resources: de.plugin_resources,
             physics: de.physics,
+            multiplayer: de.multiplayer,
         };
         project.ensure_scene_invariants();
         Ok(project)
@@ -1339,6 +1351,7 @@ impl Project {
             global_dicts: Vec::new(),
             plugin_resources: Vec::new(),
             physics: crate::physics::PhysicsSettings::default(),
+            multiplayer: Default::default(),
         }
     }
 
@@ -2481,6 +2494,7 @@ pub fn read_project_dir(dir: &Path) -> Result<Project, String> {
         global_dicts: file.global_dicts,
         plugin_resources: file.plugin_resources,
         physics: file.physics,
+        multiplayer: file.multiplayer,
     };
     project.normalize();
     project.resolve_lighting_assets(dir);
@@ -2511,6 +2525,7 @@ pub fn project_to_file(project: &Project) -> ProjectFile {
         global_dicts: project.global_dicts.clone(),
         plugin_resources: project.plugin_resources.clone(),
         physics: project.physics.clone(),
+        multiplayer: project.multiplayer.clone(),
     }
 }
 

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 30;
+pub const PROTOCOL_VERSION: u32 = 32;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -170,6 +170,16 @@ pub enum EditorMessage {
     Plugins {
         loadout: blockloom_plugin_api::loadout::Loadout,
     },
+    /// Attach a read-only LAN endpoint to the current run.
+    OpenLan {
+        bind: String,
+        max_guests: usize,
+    },
+    CloseLan,
+    LanStatus,
+    KickGuest {
+        id: u64,
+    },
     /// The green flag.
     Start,
     /// Stops every script and puts each actor back where the project says.
@@ -227,18 +237,39 @@ pub enum EditorMessage {
     Shutdown,
 }
 
+/// Live session state, separate from the saved project.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LanSessionStatus {
+    pub enabled: bool,
+    pub max_guests: usize,
+    pub open: bool,
+    pub address: Option<String>,
+    pub invite: Option<String>,
+    pub guests: Vec<u64>,
+    pub error: Option<String>,
+}
+
 /// Runtime -> editor.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum RuntimeMessage {
+    LanSession(LanSessionStatus),
     /// Sent once, as soon as the window is up.
-    Ready { protocol: u32 },
+    Ready {
+        protocol: u32,
+    },
     /// Computed UI geometry in physical viewport pixels, after layout.
     InterfaceLayout(InterfaceLayout),
     /// A `say` block, or anything else worth showing in the editor's log.
-    Say { actor: String, text: String },
+    Say {
+        actor: String,
+        text: String,
+    },
     /// A block failed to evaluate. The script carried on regardless.
-    Error { actor: String, message: String },
+    Error {
+        actor: String,
+        message: String,
+    },
     /// Where everything is, a few times a second - what the editor's actor
     /// inspector and variable watchers display while a project runs.
     Status(Status),
@@ -246,16 +277,24 @@ pub enum RuntimeMessage {
     Stopped,
     /// The preview sidecar is serving MJPEG on this loopback port. The
     /// editor's viewport reads `http://127.0.0.1:{port}/preview.mjpg`.
-    PreviewReady { port: u16 },
+    PreviewReady {
+        port: u16,
+    },
     /// The preview sidecar stopped (turned off or failed to bind).
     PreviewStopped,
     /// The game wants the pointer locked (or free). A windowless world asks
     /// the view to hold it instead.
-    PointerLock { locked: bool },
+    PointerLock {
+        locked: bool,
+    },
     /// The runtime is giving up (a fatal renderer or physics error).
-    Fatal { message: String },
+    Fatal {
+        message: String,
+    },
     /// An actor was clicked in the scene view.
-    Picked { actor: String },
+    Picked {
+        actor: String,
+    },
     /// A scene view drag ended: where the actor now stands. `offset` is set
     /// for a child placed in its parent's frame, whose `Place` position the
     /// world ignores. `volume` is set when a volume's handles resized it.
@@ -285,7 +324,10 @@ pub enum RuntimeMessage {
         segments: Vec<[i32; 4]>,
     },
     /// The Tiles tool's pick read a cell: which sheet tile it shows.
-    TilePicked { actor: String, tile: i32 },
+    TilePicked {
+        actor: String,
+        tile: i32,
+    },
     /// A stroke with a plugin's scene tool ended: the module's answer to each
     /// cast that hit (a click is a stroke of one) and the tool's option
     /// values. The editor owns the plugins, so it resolves the tool's command
@@ -299,7 +341,9 @@ pub enum RuntimeMessage {
     /// What the plugin modules the world hosts cost and report: per plugin its
     /// call timings, counters, gauges and markers (`Diagnostics::snapshot`).
     /// Sent about once a second while any are open and the figures changed.
-    PluginDiagnostics { snapshot: serde_json::Value },
+    PluginDiagnostics {
+        snapshot: serde_json::Value,
+    },
     /// A plugin block ran. The editor owns the plugins, so it looks the block
     /// up and runs its command; `args` follow the block's slot order.
     PluginCall {

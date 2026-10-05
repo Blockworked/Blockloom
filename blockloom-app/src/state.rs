@@ -91,6 +91,7 @@ pub(crate) struct AppState {
     pub(crate) paused: bool,
     /// The last status the runtime reported.
     pub(crate) status: Option<blockloom_protocol::Status>,
+    pub(crate) lan_session: Option<blockloom_protocol::LanSessionStatus>,
     pub(crate) interface_edit: Option<InterfaceEditTransaction>,
     pub(crate) interface_design: Option<blockloom_protocol::InterfaceDesign>,
     pub(crate) interface_layout: Option<blockloom_protocol::InterfaceLayout>,
@@ -200,6 +201,7 @@ pub(crate) struct StateDto {
     pub(crate) running: bool,
     pub(crate) paused: bool,
     pub(crate) status: Option<blockloom_protocol::Status>,
+    pub(crate) lan_session: Option<blockloom_protocol::LanSessionStatus>,
     pub(crate) log: Vec<LogLine>,
     pub(crate) log_total: u64,
     /// False when no runtime binary sits next to this one, which is the one
@@ -329,6 +331,7 @@ pub(crate) fn state_dto(s: &AppState) -> StateDto {
         runtime_embedded: s.embedded.is_some(),
         pointer_locked: s.pointer_locked && s.running && s.runtime.is_some(),
         ray_tracing: s.runtime.as_ref().and(s.ray_tracing.clone()),
+        lan_session: s.runtime.as_ref().and(s.lan_session.clone()),
         sync: sync_dto(s),
         picked_tile: s.picked_tile.clone(),
         plugins: crate::commands::plugins::summary(s),

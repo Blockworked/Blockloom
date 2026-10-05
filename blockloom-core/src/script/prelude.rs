@@ -1,8 +1,8 @@
 // ─── The API a script writes against ───────────────────────────────────────
 //
 // Everything above this line is the raw boundary; everything below is the
-// crate a script says `use blockloom::*;` to get. Nothing here keeps global
-// state: an entry point is handed its context and passes it along, so two
+// crate a script says `use blockloom::*;` to get. No gameplay state lives
+// here: an entry point is handed its context and passes it along, so two
 // actors running the same script never see each other's.
 
 /// Which axis a reading or a movement is about.
@@ -2865,9 +2865,74 @@ mod web {
 /// Runs `f`, turning a panic into a log line instead of letting it cross the
 /// C boundary - which would take the whole game window down with it.
 #[doc(hidden)]
+#[track_caller]
 pub fn guard(actor: &Actor, what: &str, f: impl FnOnce() + std::panic::UnwindSafe) {
-    if std::panic::catch_unwind(f).is_err() {
-        actor.log(&format!("the script panicked in {what}"));
+    let caller = std::panic::Location::caller();
+    #[cfg(not(target_arch = "wasm32"))]
+    panic_detail::enter();
+    let result = std::panic::catch_unwind(f);
+    #[cfg(not(target_arch = "wasm32"))]
+    let detail = panic_detail::leave();
+    #[cfg(target_arch = "wasm32")]
+    let detail: Option<String> = None;
+    if let Err(payload) = result {
+        let detail = detail.unwrap_or_else(|| {
+            let message = payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .unwrap_or("non-string panic payload");
+            format!("{caller}: {message}")
+        });
+        actor.log(&format!("the script panicked in {what} at {detail}"));
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod panic_detail {
+    use std::cell::RefCell;
+
+    std::thread_local! {
+        // Each nested guard owns a slot; other threads cannot overwrite it.
+        static CALLS: RefCell<Vec<Option<String>>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub fn enter() {
+        static HOOK: std::sync::Once = std::sync::Once::new();
+        HOOK.call_once(|| {
+            let previous = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                let captured = CALLS
+                    .try_with(|calls| {
+                        let Ok(mut calls) = calls.try_borrow_mut() else {
+                            return false;
+                        };
+                        let Some(slot) = calls.last_mut() else {
+                            return false;
+                        };
+                        let message = info
+                            .payload()
+                            .downcast_ref::<String>()
+                            .map(String::as_str)
+                            .or_else(|| info.payload().downcast_ref::<&str>().copied())
+                            .unwrap_or("non-string panic payload");
+                        *slot = Some(match info.location() {
+                            Some(location) => format!("{location}: {message}"),
+                            None => message.to_string(),
+                        });
+                        true
+                    })
+                    .unwrap_or(false);
+                if !captured {
+                    previous(info);
+                }
+            }));
+        });
+        CALLS.with(|calls| calls.borrow_mut().push(None));
+    }
+
+    pub fn leave() -> Option<String> {
+        CALLS.with(|calls| calls.borrow_mut().pop().flatten())
     }
 }
 

@@ -264,7 +264,7 @@ class Hub:
             write_json(directory / MANIFEST, manifest)
             hub_tools.store_installation(cache, directory, tools, checkpoint)
             hub_tools.collect_garbage(self.root, self.cache_installations())
-            print("Components added.", file=sys.stderr, flush=True)
+            print("Modules added.", file=sys.stderr, flush=True)
             return {**manifest, "added": added}
 
     def running_editors(self):

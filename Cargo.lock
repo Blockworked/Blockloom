@@ -2681,6 +2681,7 @@ dependencies = [
  "bevy_rapier2d",
  "bevy_rapier3d",
  "blockloom-core",
+ "blockloom-net",
  "blockloom-plugin-api",
  "blockloom-plugin-gpu",
  "blockloom-plugin-host",

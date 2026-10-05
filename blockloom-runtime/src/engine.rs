@@ -132,6 +132,7 @@ pub struct PendingEffects(pub Vec<blockloom_core::vm::Effect>);
 pub struct Dimension(pub Mode);
 
 pub struct Engine {
+    pub lan: crate::lan::Session,
     pub incoming: Receiver<EditorMessage>,
     /// A built game's own end of that channel. There is no editor to send it
     /// Load and Start, so it sends them to itself and holds the sender for as
@@ -345,6 +346,7 @@ impl Engine {
         let lists = Lists::default();
         let dicts = Dicts::default();
         Self {
+            lan: crate::lan::Session::default(),
             incoming,
             link: None,
             project: Project::starter("Untitled", mode),

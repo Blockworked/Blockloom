@@ -10,6 +10,7 @@
 
 mod client;
 mod error;
+pub mod game;
 mod identity;
 mod link;
 mod server;

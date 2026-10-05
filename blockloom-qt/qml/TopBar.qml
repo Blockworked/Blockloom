@@ -62,6 +62,7 @@ Rectangle {
             ToolTip.visible: fpsHover.hovered; ToolTip.text: "Show render timings"; ToolTip.delay: 500
             HoverHandler { id: fpsHover }
         }
+        BwButton { visible: root.appState.running && !!root.appState.lan_session && root.appState.lan_session.enabled; text: "LAN spectators"; onClicked: lanDialog.open() }
         IconButton { visible: root.appState.runtime_open; iconName: "monitor-x"; tip: "Close the game window"; onClicked: root.app.invoke("close_runtime") }
         IconButton {
             visible: root.appState.running
@@ -329,6 +330,40 @@ Rectangle {
                 iconName: "plug-zap"
                 text: (modelData.group ? modelData.group + ": " : "") + modelData.title + (modelData.shortcut ? "    " + modelData.shortcut : "")
                 onTriggered: root.app.invoke("plugin_call", { command: modelData.command, args: modelData.args })
+            }
+        }
+    }
+    BwDialog {
+        id: lanDialog
+        title: "LAN spectators"
+        width: 560
+        standardButtons: Dialog.Close
+        readonly property var session: root.appState.lan_session || ({})
+        ColumnLayout {
+            width: parent.width; spacing: 10
+            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Guests receive a read-only replica of the running world." }
+            RowLayout {
+                Label { text: "Interface and port" }
+                BwTextField { id: lanBind; Layout.fillWidth: true; placeholderText: "192.168.1.5:7777"; enabled: !lanDialog.session.open }
+            }
+            RowLayout {
+                Label { text: "Guest limit" }
+                SpinBox { id: lanLimit; from: 1; to: lanDialog.session.max_guests || 1; value: lanDialog.session.max_guests || 1; enabled: !lanDialog.session.open }
+                BwButton {
+                    text: lanDialog.session.open ? "Close LAN" : "Open to LAN"
+                    onClicked: root.report(lanDialog.session.open ? "close_lan" : "open_lan", { bind: lanBind.text, max_guests: lanLimit.value })
+                }
+            }
+            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; visible: !!lanDialog.session.error; text: lanDialog.session.error || "" }
+            Label { visible: !!lanDialog.session.open; text: "Invite (share privately)" }
+            TextArea { Layout.fillWidth: true; visible: !!lanDialog.session.open; readOnly: true; selectByMouse: true; wrapMode: TextEdit.WrapAnywhere; text: lanDialog.session.invite || "" }
+            Repeater {
+                model: lanDialog.session.guests || []
+                delegate: RowLayout {
+                    required property var modelData
+                    Label { text: "Guest " + modelData }
+                    BwButton { text: "Disconnect"; onClicked: root.report("kick_guest", { id: parent.modelData }) }
+                }
             }
         }
     }

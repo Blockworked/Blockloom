@@ -95,6 +95,11 @@ impl Backend {
             "set_project_name" => {
                 to_json(commands::set_project_name(state, app, arg(&args, "name")?)?)
             }
+            "set_multiplayer" => to_json(commands::set_multiplayer(
+                state,
+                app,
+                arg(&args, "settings")?,
+            )?),
             "set_project_icon" => {
                 to_json(commands::set_project_icon(state, app, arg(&args, "path")?)?)
             }
@@ -880,6 +885,33 @@ impl Backend {
             // ── Running ────────────────────────────────────────────────────
             "run_project" => to_json(commands::run_project(self, state, app)?),
             "stop_project" => to_json(commands::stop_project(state, app)?),
+            "open_lan" => {
+                let bind: String = arg(&args, "bind")?;
+                let max_guests: usize = arg(&args, "max_guests")?;
+                let address: std::net::SocketAddr =
+                    bind.parse().map_err(|_| "Use a numeric IP:port")?;
+                if address.ip().is_unspecified() || address.ip().is_multicast() {
+                    return Err("Select a specific LAN interface".into());
+                }
+                if !(1..=16).contains(&max_guests) {
+                    return Err("Guest limit must be 1 to 16".into());
+                }
+                to_json(commands::lan_command(
+                    state,
+                    blockloom_protocol::EditorMessage::OpenLan { bind, max_guests },
+                )?)
+            }
+            "close_lan" => to_json(commands::lan_command(
+                state,
+                blockloom_protocol::EditorMessage::CloseLan,
+            )?),
+            "session_status" => to_json(commands::session_status(state)?),
+            "kick_guest" => to_json(commands::lan_command(
+                state,
+                blockloom_protocol::EditorMessage::KickGuest {
+                    id: arg(&args, "id")?,
+                },
+            )?),
             "pause_project" => to_json(commands::pause_project(state, app, arg(&args, "paused")?)?),
             "step_project" => to_json(commands::step_project(state, app)?),
             "close_runtime" => to_json(commands::close_runtime(state, app)?),

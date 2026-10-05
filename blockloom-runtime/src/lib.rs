@@ -53,6 +53,7 @@ mod fx;
 mod gpu;
 mod hdr;
 mod indirect;
+mod lan;
 mod light_probes;
 mod lightning;
 mod lights;
@@ -159,6 +160,30 @@ pub fn run_process() {
     // reporter blocks, which have to be registered to evaluate.
     #[cfg(not(target_os = "android"))]
     {
+        #[cfg(all(
+            feature = "multiplayer",
+            not(target_arch = "wasm32"),
+            not(target_os = "android")
+        ))]
+        {
+            let args: Vec<_> = std::env::args().collect();
+            if let Some(index) = args.iter().position(|a| a == "--join") {
+                let result = (|| {
+                    let invite = args.get(index + 1).ok_or("--join needs a LAN invite")?;
+                    let trusted = args
+                        .iter()
+                        .position(|a| a == "--trusted-build")
+                        .and_then(|i| args.get(i + 1))
+                        .ok_or("--trusted-build needs the trusted content hash")?;
+                    lan::guest::run(invite, trusted)
+                })();
+                if let Err(error) = result {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+        }
         blockloom_core::init();
         let launch = Launch::from_args(std::env::args().skip(1));
         run_launch(launch);

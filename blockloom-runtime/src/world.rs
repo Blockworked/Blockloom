@@ -9,9 +9,9 @@
 //!
 //! Simulation runs on `FixedUpdate`, Bevy's constant-rate step that catches up
 //! whatever the display does, so blocks and physics advance in step with each
-//! other at the project's own rate. Input, sensing and rendering stay on the
-//! per-frame `Update`: events fire at most once there, so a slow machine that
-//! sinks several fixed steps into one frame doesn't triple a keypress.
+//! other at the project's own rate. Actor sensing runs before each logical step.
+//! Input and rendering stay on per-frame `Update`: events fire at most once
+//! there, so several fixed steps in one frame don't triple a keypress.
 
 use crate::engine::{
     ActorId, AnimationPlayer, CameraRig, CustomComponents, Dimension, Engine, Gliding,
@@ -305,7 +305,21 @@ pub fn pump_editor(
             }
         };
         match message {
+            EditorMessage::OpenLan { bind, max_guests } => {
+                crate::lan::open(&mut engine, &bind, max_guests)
+            }
+            EditorMessage::CloseLan => crate::lan::close(&mut engine),
+            EditorMessage::LanStatus => crate::lan::report(&engine, None),
+            EditorMessage::KickGuest { id } => crate::lan::kick(&mut engine, id),
             EditorMessage::Load { project, dir } => {
+                if crate::lan::status(&engine).open {
+                    crate::lan::report(
+                        &engine,
+                        Some("Close LAN before loading edited content into the runtime".into()),
+                    );
+                    continue;
+                }
+                crate::lan::close(&mut engine);
                 if let Some(design) = design.as_mut() {
                     design.clear();
                 }
@@ -357,6 +371,7 @@ pub fn pump_editor(
                 }
             }
             EditorMessage::Start => {
+                crate::lan::close(&mut engine);
                 if let Some(design) = design.as_mut() {
                     design.clear();
                 }
@@ -400,6 +415,7 @@ pub fn pump_editor(
                 }
             }
             EditorMessage::Stop => {
+                crate::lan::close(&mut engine);
                 if let Some(design) = design.as_mut() {
                     design.clear();
                 }
@@ -489,6 +505,7 @@ pub fn pump_editor(
                 engine.terrain_previews.push((actor, erosion));
             }
             EditorMessage::Shutdown => {
+                crate::lan::close(&mut engine);
                 exit.write(AppExit::Success);
                 return;
             }
@@ -519,6 +536,7 @@ pub fn begin_run(engine: &mut Engine, now: f64, real_now: f64) {
     engine.running = true;
     engine.started_at = now;
     engine.wall_started_at = real_now;
+    crate::lan::begin(engine);
     crate::plugins::begin(engine);
     engine.fire(Event::Started);
 }
@@ -1279,6 +1297,147 @@ fn attach_camera(commands: &mut Commands, actor: &Actor, entity: Entity) {
 
 // ─── Sensing ───────────────────────────────────────────────────────────────
 
+/// Samples authoritative actor state before the fixed-step schedulers.
+pub fn publish_simulation_actors(
+    engine: NonSend<Engine>,
+    dimension: Res<Dimension>,
+    actors: Query<(
+        &ActorId,
+        &Transform,
+        &Visibility,
+        Option<&CustomComponents>,
+        Option<&Gliding>,
+        Option<&TweeningScale>,
+        Option<&TweeningRotation>,
+        Option<&TweeningColor>,
+        Option<&AnimationPlayer>,
+        Option<&PhysicsPose>,
+    )>,
+    particles: Option<Res<crate::vfx::ParticleSenses>>,
+) {
+    if engine.running {
+        let actors = sample_actor_senses(&engine, dimension.0, &actors, particles.as_deref());
+        blockloom_core::sense::publish_actors(actors);
+    }
+}
+
+fn sample_actor_senses(
+    engine: &Engine,
+    mode: Mode,
+    actors: &Query<(
+        &ActorId,
+        &Transform,
+        &Visibility,
+        Option<&CustomComponents>,
+        Option<&Gliding>,
+        Option<&TweeningScale>,
+        Option<&TweeningRotation>,
+        Option<&TweeningColor>,
+        Option<&AnimationPlayer>,
+        Option<&PhysicsPose>,
+    )>,
+    particles: Option<&crate::vfx::ParticleSenses>,
+) -> HashMap<String, ActorSense> {
+    // Retained entries are refreshed in place: most of an actor's strings
+    // and sets are unchanged, so `clone_from` keeps their allocations.
+    let mut senses = blockloom_core::sense::take_actors();
+    let mut seen = 0usize;
+    for (id, transform, visibility, custom, glide, scale, rotation, color, player, pose) in actors {
+        let transform = if engine.running {
+            pose.map(|pose| &pose.0).unwrap_or(transform)
+        } else {
+            transform
+        };
+        seen += 1;
+        // The parent's world transform inverted onto this actor's own: the
+        // world position itself when it hangs off nothing, or its parent is
+        // gone. The inverse of `world_of`, which places an offset.
+        let parent = engine.parents.get(&id.0);
+        let local_position = parent
+            .and_then(|parent| engine.entities.get(parent))
+            .and_then(|&entity| actors.get(entity).ok())
+            .map(|(_, parent, _, _, _, _, _, _, _, pose)| {
+                let parent = if engine.running {
+                    pose.map(|pose| &pose.0).unwrap_or(parent)
+                } else {
+                    parent
+                };
+                local_of(parent, transform.translation)
+            })
+            .unwrap_or(transform.translation.to_array());
+        let (rx, ry, rz) = transform.rotation.to_euler(EulerRot::XYZ);
+        let (layer, mask, trigger) = engine.filter_of(&id.0);
+        let has_body = engine.has_component(&id.0, "Body");
+        let shape = collider_shape(engine, &id.0, mode, transform);
+        if !senses.contains_key(id.0.as_str()) {
+            senses.insert(id.0.clone(), ActorSense::default());
+        }
+        let Some(sense) = senses.get_mut(id.0.as_str()) else {
+            continue;
+        };
+        match engine.actor(&id.0) {
+            Some(actor) => sense.name.clone_from(&actor.name),
+            None => sense.name.clear(),
+        }
+        sense.position = transform.translation.to_array();
+        sense.local_position = local_position;
+        sense.rotation = [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()];
+        sense.scale = size_of(transform, engine.stretch_of(&id.0));
+        sense.visible = *visibility != Visibility::Hidden;
+        match parent {
+            Some(parent) => sense.parent.clone_from(parent),
+            None => sense.parent.clear(),
+        }
+        sense.is_clone = engine.clones.contains_key(&id.0);
+        sense.tweening =
+            glide.is_some() || scale.is_some() || rotation.is_some() || color.is_some();
+        match player {
+            Some(player) => {
+                sense.anim_clip.clone_from(&player.clip);
+                sense.anim_frame = player.frame;
+                sense.anim_playing = player.playing;
+            }
+            None => {
+                sense.anim_clip.clear();
+                sense.anim_frame = 0;
+                sense.anim_playing = false;
+            }
+        }
+        match engine.last_created.get(&id.0) {
+            Some(made) => sense.last_created.clone_from(made),
+            None => sense.last_created.clear(),
+        }
+        match engine.touching.get(&id.0) {
+            Some(touching) => sense.touching.clone_from(touching),
+            None => sense.touching.clear(),
+        }
+        match engine.attached.get(&id.0) {
+            Some(attached) => sense.attached.clone_from(attached),
+            None => sense.attached.clear(),
+        }
+        match custom {
+            Some(custom) => sense.components.clone_from(&custom.0),
+            None => sense.components.clear(),
+        }
+        sense.has_body = has_body;
+        sense.trigger = trigger;
+        sense.casts_shadows = crate::lights::casts_shadows(engine, &id.0);
+        sense.layer = layer;
+        sense.mask = mask;
+        sense.shape = shape;
+        sense.particles = particles
+            .and_then(|particles| particles.0.get(&id.0).copied())
+            .unwrap_or_default();
+    }
+    // Actors that left the world since the last sample.
+    if senses.len() != seen {
+        let live: HashSet<&str> = actors.iter().map(|(id, ..)| id.0.as_str()).collect();
+        senses.retain(|id, _| live.contains(id.as_str()));
+    }
+
+    senses
+}
+
 /// Publishes the snapshot reporter blocks read, and starts `when key pressed`
 /// strands for keys that went down this frame.
 ///
@@ -1309,6 +1468,7 @@ pub fn publish_sensors(
         Option<&TweeningRotation>,
         Option<&TweeningColor>,
         Option<&AnimationPlayer>,
+        Option<&PhysicsPose>,
     )>,
     sound: Res<crate::sound::SoundState>,
     (atmosphere, water, particles, scaling): (
@@ -1365,91 +1525,11 @@ pub fn publish_sensors(
         mouse_delta = [0.0; 2];
     }
 
-    // Last frame's entries are refreshed in place: most of an actor's strings
-    // and sets are unchanged, so `clone_from` keeps their allocations.
-    let mut senses = blockloom_core::sense::take_actors();
-    let mut seen = 0usize;
-    for (id, transform, visibility, custom, glide, scale, rotation, color, player) in &actors {
-        seen += 1;
-        // The parent's world transform inverted onto this actor's own: the
-        // world position itself when it hangs off nothing, or its parent is
-        // gone. The inverse of `world_of`, which places an offset.
-        let parent = engine.parents.get(&id.0);
-        let local_position = parent
-            .and_then(|parent| engine.entities.get(parent))
-            .and_then(|&entity| actors.get(entity).ok())
-            .map(|(_, parent, ..)| local_of(parent, transform.translation))
-            .unwrap_or(transform.translation.to_array());
-        let (rx, ry, rz) = transform.rotation.to_euler(EulerRot::XYZ);
-        let (layer, mask, trigger) = engine.filter_of(&id.0);
-        let has_body = engine.has_component(&id.0, "Body");
-        let shape = collider_shape(&engine, &id.0, dimension.0, transform);
-        if !senses.contains_key(id.0.as_str()) {
-            senses.insert(id.0.clone(), ActorSense::default());
-        }
-        let Some(sense) = senses.get_mut(id.0.as_str()) else {
-            continue;
-        };
-        match engine.actor(&id.0) {
-            Some(actor) => sense.name.clone_from(&actor.name),
-            None => sense.name.clear(),
-        }
-        sense.position = transform.translation.to_array();
-        sense.local_position = local_position;
-        sense.rotation = [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()];
-        sense.scale = size_of(transform, engine.stretch_of(&id.0));
-        sense.visible = *visibility != Visibility::Hidden;
-        match parent {
-            Some(parent) => sense.parent.clone_from(parent),
-            None => sense.parent.clear(),
-        }
-        sense.is_clone = engine.clones.contains_key(&id.0);
-        sense.tweening =
-            glide.is_some() || scale.is_some() || rotation.is_some() || color.is_some();
-        match player {
-            Some(player) => {
-                sense.anim_clip.clone_from(&player.clip);
-                sense.anim_frame = player.frame;
-                sense.anim_playing = player.playing;
-            }
-            None => {
-                sense.anim_clip.clear();
-                sense.anim_frame = 0;
-                sense.anim_playing = false;
-            }
-        }
-        match engine.last_created.get(&id.0) {
-            Some(made) => sense.last_created.clone_from(made),
-            None => sense.last_created.clear(),
-        }
-        match engine.touching.get(&id.0) {
-            Some(touching) => sense.touching.clone_from(touching),
-            None => sense.touching.clear(),
-        }
-        match engine.attached.get(&id.0) {
-            Some(attached) => sense.attached.clone_from(attached),
-            None => sense.attached.clear(),
-        }
-        match custom {
-            Some(custom) => sense.components.clone_from(&custom.0),
-            None => sense.components.clear(),
-        }
-        sense.has_body = has_body;
-        sense.trigger = trigger;
-        sense.casts_shadows = crate::lights::casts_shadows(&engine, &id.0);
-        sense.layer = layer;
-        sense.mask = mask;
-        sense.shape = shape;
-        sense.particles = particles
-            .as_ref()
-            .and_then(|particles| particles.0.get(&id.0).copied())
-            .unwrap_or_default();
-    }
-    // Actors that left the world since last frame.
-    if senses.len() != seen {
-        let live: HashSet<&str> = actors.iter().map(|(id, ..)| id.0.as_str()).collect();
-        senses.retain(|id, _| live.contains(id.as_str()));
-    }
+    let senses = if engine.running {
+        blockloom_core::sense::take_actors()
+    } else {
+        sample_actor_senses(&engine, dimension.0, &actors, particles.as_deref())
+    };
 
     // Wanted and focused reads as held: the component alone would still say
     // Locked after an unfocused request the backend silently dropped, and
@@ -1617,7 +1697,11 @@ pub fn publish_sensors(
     }
 
     blockloom_core::sense::publish(Sensors {
-        time: engine.run_time(now),
+        time: if engine.running {
+            blockloom_core::sense::read(|s| s.time)
+        } else {
+            engine.run_time(now)
+        },
         // Never frozen: what a strand the interface started reads, so a
         // clock on a pause menu keeps ticking.
         wall_time: engine.wall_time(real.elapsed_secs_f64()),
@@ -2270,6 +2354,19 @@ pub fn step_vm(
     let elapsed = time.elapsed_secs_f64();
     let now = engine.run_time(elapsed);
     let wall = engine.wall_time(real.elapsed_secs_f64());
+    let scenes: Vec<_> = engine
+        .project
+        .scenes
+        .iter()
+        .map(|s| s.name.clone())
+        .collect();
+    blockloom_core::sense::publish_run(
+        now,
+        wall,
+        engine.paused,
+        &engine.project.active_scene().name,
+        &scenes,
+    );
     let mut produced = Vec::new();
     let mut messages = Vec::new();
     let tick = engine.contact_ticks;
@@ -7556,8 +7653,50 @@ mod tests {
         app.insert_non_send(engine);
         app.world_mut().spawn((Window::default(), PrimaryWindow));
         app.init_resource::<Time<Real>>();
-        app.add_systems(Update, publish_sensors);
+        app.add_systems(Update, (publish_simulation_actors, publish_sensors).chain());
         app
+    }
+
+    #[test]
+    fn frame_sensing_retains_logical_time_and_advances_the_ui_clock() {
+        let mut app = sensing_app(1);
+        blockloom_core::sense::publish_run(2.0, 2.0, false, "Scene", &[]);
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(3));
+        app.world_mut()
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_secs(4));
+        app.update();
+        blockloom_core::sense::read(|s| {
+            assert_eq!(s.time, 2.0);
+            assert_eq!(s.wall_time, 4.0);
+        });
+        app.world_mut().non_send_mut::<Engine>().running = false;
+        app.update();
+        assert_eq!(blockloom_core::sense::read(|s| s.time), 3.0);
+    }
+
+    #[test]
+    fn actor_sensing_uses_settled_poses_even_while_paused() {
+        let mut app = sensing_app(1);
+        let entity = app.world().non_send::<Engine>().entities["A0"];
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(PhysicsPose(Transform::from_xyz(12.0, 0.0, 0.0)));
+        app.world_mut().non_send_mut::<Engine>().paused = true;
+        app.update();
+        assert_eq!(
+            blockloom_core::sense::read(|s| s.actors["A0"].position),
+            [12.0, 0.0, 0.0]
+        );
+        app.world_mut().non_send_mut::<Engine>().running = false;
+        app.update();
+        assert_eq!(
+            blockloom_core::sense::read(|s| s.actors["A0"].position),
+            [0.0, 0.0, 0.0],
+            "stopped previews use the editable transform"
+        );
     }
 
     #[test]
