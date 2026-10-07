@@ -66,6 +66,19 @@ pub struct ActorSense {
     pub mask: u8,
     /// What the actor collides (and raycasts) with, in world units.
     pub shape: ColliderShape,
+    /// Linear velocity in world units per second: pixels in 2D, metres in
+    /// 3D. Zero with no body. What `velocity` answers.
+    pub velocity: [f32; 3],
+    /// Angular velocity in radians per second about x/y/z. A 2D body turns
+    /// about z only. Zero with no body.
+    pub angular_velocity: [f32; 3],
+    /// The body's mass in kilograms, from its shapes (or its own when it
+    /// carries none). Zero with no body. What `mass of` answers.
+    pub mass: f32,
+    /// Whether a solid contact holds this actor up. Needs no controller
+    /// move, unlike the controller's own `grounded`. What `is grounded?`
+    /// answers.
+    pub grounded: bool,
     /// What its emitter's particles did this frame, and where last.
     pub particles: crate::vfx::ParticleSense,
 }
@@ -472,6 +485,10 @@ impl Default for ActorSense {
             layer: 1,
             mask: 0xFF,
             shape: ColliderShape::None,
+            velocity: [0.0; 3],
+            angular_velocity: [0.0; 3],
+            mass: 0.0,
+            grounded: false,
             particles: crate::vfx::ParticleSense::default(),
         }
     }

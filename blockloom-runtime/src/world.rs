@@ -532,6 +532,7 @@ pub fn end_run(engine: &mut Engine, manager: &mut crate::ui::UiManager) {
 
 /// Presses the green flag: the run's clock starts now.
 pub fn begin_run(engine: &mut Engine, now: f64, real_now: f64) {
+    crate::script::clear_script_data();
     engine.starting = false;
     engine.running = true;
     engine.started_at = now;
@@ -1324,6 +1325,10 @@ pub fn publish_simulation_actors(
         Option<&TweeningColor>,
         Option<&AnimationPlayer>,
         Option<&PhysicsPose>,
+        Option<&bevy_rapier2d::prelude::Velocity>,
+        Option<&bevy_rapier3d::prelude::Velocity>,
+        Option<&bevy_rapier2d::prelude::ReadMassProperties>,
+        Option<&bevy_rapier3d::prelude::ReadMassProperties>,
     )>,
     particles: Option<Res<crate::vfx::ParticleSenses>>,
 ) {
@@ -1347,6 +1352,10 @@ fn sample_actor_senses(
         Option<&TweeningColor>,
         Option<&AnimationPlayer>,
         Option<&PhysicsPose>,
+        Option<&bevy_rapier2d::prelude::Velocity>,
+        Option<&bevy_rapier3d::prelude::Velocity>,
+        Option<&bevy_rapier2d::prelude::ReadMassProperties>,
+        Option<&bevy_rapier3d::prelude::ReadMassProperties>,
     )>,
     particles: Option<&crate::vfx::ParticleSenses>,
 ) -> HashMap<String, ActorSense> {
@@ -1354,7 +1363,23 @@ fn sample_actor_senses(
     // and sets are unchanged, so `clone_from` keeps their allocations.
     let mut senses = blockloom_core::sense::take_actors();
     let mut seen = 0usize;
-    for (id, transform, visibility, custom, glide, scale, rotation, color, player, pose) in actors {
+    for (
+        id,
+        transform,
+        visibility,
+        custom,
+        glide,
+        scale,
+        rotation,
+        color,
+        player,
+        pose,
+        velocity_2d,
+        velocity_3d,
+        mass_2d,
+        mass_3d,
+    ) in actors
+    {
         let transform = if engine.running {
             pose.map(|pose| &pose.0).unwrap_or(transform)
         } else {
@@ -1368,7 +1393,7 @@ fn sample_actor_senses(
         let local_position = parent
             .and_then(|parent| engine.entities.get(parent))
             .and_then(|&entity| actors.get(entity).ok())
-            .map(|(_, parent, _, _, _, _, _, _, _, pose)| {
+            .map(|(_, parent, _, _, _, _, _, _, _, pose, ..)| {
                 let parent = if engine.running {
                     pose.map(|pose| &pose.0).unwrap_or(parent)
                 } else {
@@ -1437,6 +1462,24 @@ fn sample_actor_senses(
         sense.layer = layer;
         sense.mask = mask;
         sense.shape = shape;
+        // Rapier's own motion and mass, sampled with the rest of the fixed
+        // tick so blocks, compiled logic and scripts agree. A 2D body turns
+        // about z only; anything with no body reads zero.
+        let (linear, angular) = match (velocity_2d, velocity_3d) {
+            (Some(body), _) => (
+                [body.linear.x, body.linear.y, 0.0],
+                [0.0, 0.0, body.angular],
+            ),
+            (_, Some(body)) => (body.linear.to_array(), body.angular.to_array()),
+            _ => ([0.0; 3], [0.0; 3]),
+        };
+        sense.velocity = linear;
+        sense.angular_velocity = angular;
+        sense.mass = mass_2d
+            .map(|mass| mass.get().mass)
+            .or_else(|| mass_3d.map(|mass| mass.get().mass))
+            .unwrap_or(0.0);
+        sense.grounded = engine.contacts.grounded(&id.0);
         sense.particles = particles
             .and_then(|particles| particles.0.get(&id.0).copied())
             .unwrap_or_default();
@@ -1481,6 +1524,10 @@ pub fn publish_sensors(
         Option<&TweeningColor>,
         Option<&AnimationPlayer>,
         Option<&PhysicsPose>,
+        Option<&bevy_rapier2d::prelude::Velocity>,
+        Option<&bevy_rapier3d::prelude::Velocity>,
+        Option<&bevy_rapier2d::prelude::ReadMassProperties>,
+        Option<&bevy_rapier3d::prelude::ReadMassProperties>,
     )>,
     sound: Res<crate::sound::SoundState>,
     (atmosphere, water, particles, scaling): (

@@ -17,6 +17,7 @@
 //! machine that presses Play. [`compile`] says so plainly when it isn't.
 
 pub mod abi;
+pub mod data;
 pub mod ide;
 
 use std::path::{Path, PathBuf};

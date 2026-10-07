@@ -668,6 +668,91 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "Velocity",
+        op: "Velocity",
+        arity: 2,
+        default_args: || vec![text(""), text("X")],
+        // Linear velocity in world units a second (pixels in 2D, metres in
+        // 3D). Empty names the running actor itself; zero with no body.
+        eval: |args| {
+            let target = args[0].as_text();
+            let axis = axis_of(args.get(1));
+            if target.trim().is_empty() {
+                return with_me(|me| Evaluated::Number(me.velocity[axis.index()] as f64));
+            }
+            sense::read(|sensors| {
+                let actor = sensors
+                    .find(&target)
+                    .ok_or_else(|| format!("there's no actor named \"{target}\""))?;
+                Ok(Evaluated::Number(actor.velocity[axis.index()] as f64))
+            })
+        },
+    },
+    ExtOperator {
+        kind: "AngularVelocity",
+        op: "AngularVelocity",
+        arity: 2,
+        default_args: || vec![text(""), text("Z")],
+        // Spin in radians a second about an axis. A 2D body turns about z
+        // only. Empty names the running actor itself; zero with no body.
+        eval: |args| {
+            let target = args[0].as_text();
+            let axis = axis_of(args.get(1));
+            if target.trim().is_empty() {
+                return with_me(|me| Evaluated::Number(me.angular_velocity[axis.index()] as f64));
+            }
+            sense::read(|sensors| {
+                let actor = sensors
+                    .find(&target)
+                    .ok_or_else(|| format!("there's no actor named \"{target}\""))?;
+                Ok(Evaluated::Number(
+                    actor.angular_velocity[axis.index()] as f64,
+                ))
+            })
+        },
+    },
+    ExtOperator {
+        kind: "Mass",
+        op: "Mass",
+        arity: 1,
+        default_args: || vec![text("")],
+        // A body's mass in kilograms, from its shapes. Empty names the
+        // running actor itself; zero with no body.
+        eval: |args| {
+            let target = args[0].as_text();
+            if target.trim().is_empty() {
+                return with_me(|me| Evaluated::Number(me.mass as f64));
+            }
+            sense::read(|sensors| {
+                let actor = sensors
+                    .find(&target)
+                    .ok_or_else(|| format!("there's no actor named \"{target}\""))?;
+                Ok(Evaluated::Number(actor.mass as f64))
+            })
+        },
+    },
+    ExtOperator {
+        kind: "IsGrounded",
+        op: "IsGrounded",
+        arity: 1,
+        default_args: || vec![text("")],
+        // Whether a solid contact holds the actor up. Needs no controller
+        // move, unlike the controller's own `grounded`. Empty names this
+        // actor.
+        eval: |args| {
+            let target = args[0].as_text();
+            if target.trim().is_empty() {
+                return with_me(|me| Evaluated::Bool(me.grounded));
+            }
+            sense::read(|sensors| {
+                let actor = sensors
+                    .find(&target)
+                    .ok_or_else(|| format!("there's no actor named \"{target}\""))?;
+                Ok(Evaluated::Bool(actor.grounded))
+            })
+        },
+    },
+    ExtOperator {
         kind: "SoundPlaying",
         op: "SoundPlaying",
         arity: 1,
@@ -1441,6 +1526,78 @@ mod tests {
             vec![Value::text("Nobody"), Value::text("X")],
         );
         assert!(missing_local.eval().is_err());
+    }
+
+    #[test]
+    fn motion_reporters_read_velocity_mass_and_support() {
+        register_blockloom_operators();
+        let mut sensors = Sensors::default();
+        sensors.actors.insert(
+            "a1".to_string(),
+            ActorSense {
+                name: "Player".to_string(),
+                velocity: [30.0, -9.0, 0.0],
+                angular_velocity: [0.0, 0.0, 1.5],
+                mass: 2.5,
+                grounded: true,
+                ..Default::default()
+            },
+        );
+        sensors.actors.insert(
+            "b2".to_string(),
+            ActorSense {
+                name: "Crate".to_string(),
+                ..Default::default()
+            },
+        );
+        sense::publish(sensors);
+
+        // Empty names the running actor; a missing body reads zero, and a
+        // missing actor is an error rather than a silent zero.
+        let my_vx = Value::op(
+            Op::from_name("Velocity"),
+            vec![Value::text(""), Value::text("X")],
+        );
+        sense::with_actor("a1", || {
+            assert_eq!(my_vx.eval(), Ok(Evaluated::Number(30.0)));
+        });
+        let others_vy = Value::op(
+            Op::from_name("Velocity"),
+            vec![Value::text("Player"), Value::text("Y")],
+        );
+        assert_eq!(others_vy.eval(), Ok(Evaluated::Number(-9.0)));
+        let still = Value::op(
+            Op::from_name("Velocity"),
+            vec![Value::text("Crate"), Value::text("X")],
+        );
+        assert_eq!(still.eval(), Ok(Evaluated::Number(0.0)));
+        let missing = Value::op(
+            Op::from_name("Velocity"),
+            vec![Value::text("Nobody"), Value::text("X")],
+        );
+        assert!(missing.eval().is_err());
+
+        let spin = Value::op(
+            Op::from_name("AngularVelocity"),
+            vec![Value::text(""), Value::text("Z")],
+        );
+        sense::with_actor("a1", || {
+            assert_eq!(spin.eval(), Ok(Evaluated::Number(1.5)));
+        });
+
+        let my_mass = Value::op(Op::from_name("Mass"), vec![Value::text("")]);
+        sense::with_actor("a1", || {
+            assert_eq!(my_mass.eval(), Ok(Evaluated::Number(2.5)));
+        });
+        let crate_mass = Value::op(Op::from_name("Mass"), vec![Value::text("Crate")]);
+        assert_eq!(crate_mass.eval(), Ok(Evaluated::Number(0.0)));
+
+        let grounded = Value::op(Op::from_name("IsGrounded"), vec![Value::text("")]);
+        sense::with_actor("a1", || {
+            assert_eq!(grounded.eval(), Ok(Evaluated::Bool(true)));
+        });
+        let crate_grounded = Value::op(Op::from_name("IsGrounded"), vec![Value::text("Crate")]);
+        assert_eq!(crate_grounded.eval(), Ok(Evaluated::Bool(false)));
     }
 
     /// A wall whose near face is at x = 4, found by rays at y within 1 and by a

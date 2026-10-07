@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 41;
+pub const ABI_VERSION: u32 = 43;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -217,6 +217,9 @@ pub const TEXT_CURRENT_WEATHER: u32 = 19;
 /// The cutscene playing right now, by name, or empty for none. What
 /// `is cutscene playing?` reads.
 pub const TEXT_CUTSCENE_NAME: u32 = 20;
+/// `a` = key. This actor's stored text under it, or [`MISSING`] when the key
+/// is unset or holds a number.
+pub const TEXT_DATA: u32 = 25;
 
 /// Separates the parts a plugin call or event is spelled with in one string.
 pub const PLUGIN_SEP: char = '\u{1f}';
@@ -235,6 +238,23 @@ pub const TEXT_QUERY: u32 = 22;
 /// `a` = field name (`grounded`, `flags`, `moved y`, `normal x`, ...), `arg` =
 /// which obstacle, from 1. A number from this actor's last controller move.
 pub const READ_CONTROLLER: u32 = 55;
+/// `a` = actor name, empty for this actor; `arg` = axis. Linear velocity in
+/// world units a second (pixels in 2D, metres in 3D); zero with no body.
+pub const READ_VELOCITY: u32 = 56;
+/// `a` = actor name, empty for this actor; `arg` = axis. Spin in radians a
+/// second; a 2D body turns about z only. Zero with no body.
+pub const READ_ANGULAR_VELOCITY: u32 = 57;
+/// `a` = actor name, empty for this actor. The body's mass in kilograms;
+/// zero with no body.
+pub const READ_MASS: u32 = 58;
+/// `a` = actor name, empty for this actor. Whether a solid contact holds it
+/// up. Needs no controller move, unlike the controller's own `grounded`.
+pub const READ_GROUNDED: u32 = 59;
+/// `a` = key. This actor's stored number under it, or [`MISSING`] when the
+/// key is unset or holds text. A nonzero `arg` probes presence instead and
+/// answers 1.0 for either kind. Host-owned per-actor storage, so every actor
+/// running one file - clones included - keeps its own copy.
+pub const READ_DATA: u32 = 60;
 /// `a` = field name (`actor`, `body`, `collider`, `error`), `b` = which
 /// obstacle, from 1. Words from this actor's last controller move.
 pub const TEXT_CONTROLLER: u32 = 23;
@@ -482,6 +502,15 @@ pub const ACT_PHYSICS_QUERY: u32 = 102;
 /// (the value in `n0` for a set). Runs on the spot, as this actor; the result
 /// is read back with [`READ_CONTROLLER`] and [`TEXT_CONTROLLER`].
 pub const ACT_CONTROLLER: u32 = 103;
+/// `a` = key, `n0` = number. Stores it under this actor at once - a read
+/// straight after sees it, unlike a world write, which waits for the step's
+/// end. An empty key stores nothing.
+pub const ACT_SET_DATA: u32 = 104;
+/// `a` = key, `c` = text. Stores it the same way.
+pub const ACT_SET_DATA_TEXT: u32 = 105;
+/// `a` = key; empty forgets every key this actor holds. Immediate, like the
+/// other two.
+pub const ACT_CLEAR_DATA: u32 = 106;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

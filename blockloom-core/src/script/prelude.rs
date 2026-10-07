@@ -325,6 +325,152 @@ impl Actor {
             != 0.0
     }
 
+    /// Linear velocity in world units a second: pixels in 2D, metres in 3D.
+    /// Zero with no body. Reads the snapshot, like `position`.
+    pub fn velocity(&self, axis: Axis) -> f32 {
+        self.number(READ_VELOCITY, Str::EMPTY, Str::EMPTY, axis.index())
+            .unwrap_or(0.0) as f32
+    }
+
+    /// Another actor's velocity on an axis, by name or id. An empty name
+    /// refers to this actor. Zero for a missing actor or one with no body.
+    pub fn velocity_of(&self, actor: &str, axis: Axis) -> f32 {
+        self.number(
+            READ_VELOCITY,
+            Str::borrow(actor),
+            Str::EMPTY,
+            axis.index(),
+        )
+        .unwrap_or(0.0) as f32
+    }
+
+    /// Spin in radians a second about `axis`. A 2D body turns about z only.
+    /// Zero with no body.
+    pub fn angular_velocity(&self, axis: Axis) -> f32 {
+        self.number(READ_ANGULAR_VELOCITY, Str::EMPTY, Str::EMPTY, axis.index())
+            .unwrap_or(0.0) as f32
+    }
+
+    /// Another actor's spin about an axis, by name or id. An empty name
+    /// refers to this actor.
+    pub fn angular_velocity_of(&self, actor: &str, axis: Axis) -> f32 {
+        self.number(
+            READ_ANGULAR_VELOCITY,
+            Str::borrow(actor),
+            Str::EMPTY,
+            axis.index(),
+        )
+        .unwrap_or(0.0) as f32
+    }
+
+    /// This body's mass in kilograms, from its shapes. Zero with no body.
+    pub fn mass(&self) -> f32 {
+        self.number(READ_MASS, Str::EMPTY, Str::EMPTY, 0.0)
+            .unwrap_or(0.0) as f32
+    }
+
+    /// Another actor's mass, by name or id. An empty name refers to this
+    /// actor. Zero for a missing actor or one with no body.
+    pub fn mass_of(&self, actor: &str) -> f32 {
+        self.number(READ_MASS, Str::borrow(actor), Str::EMPTY, 0.0)
+            .unwrap_or(0.0) as f32
+    }
+
+    /// Whether a solid contact holds this actor up. Needs no controller
+    /// move, unlike `is_grounded`, which reports the last controller move.
+    pub fn grounded(&self) -> bool {
+        self.number(READ_GROUNDED, Str::EMPTY, Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+
+    /// Whether a solid contact holds another actor up, by name or id. An
+    /// empty name refers to this actor.
+    pub fn grounded_of(&self, actor: &str) -> bool {
+        self.number(READ_GROUNDED, Str::borrow(actor), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+
+    // ─── Per-actor storage ───────────────────────────────────────────────
+    // The host keeps one map per running actor id, so every actor running
+    // this file - each clone too - has its own keys: timers, cooldowns and
+    // multi-tick behaviour without `static`s. Writes land at once, so a
+    // read straight after a write sees it (unlike a world write, which
+    // waits for the step's end). A run starts empty, and nothing is saved.
+
+    /// The number stored under `key`, or 0.0 when it is unset or holds text.
+    pub fn data(&self, key: &str) -> f64 {
+        self.number(READ_DATA, Str::borrow(key), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+    }
+
+    /// The text stored under `key`, or empty when it is unset or holds a
+    /// number.
+    pub fn data_text(&self, key: &str) -> String {
+        self.text(TEXT_DATA, Str::borrow(key), Str::EMPTY)
+            .unwrap_or_default()
+    }
+
+    /// Whether `key` holds anything at all, of either kind.
+    pub fn has_data(&self, key: &str) -> bool {
+        self.number(READ_DATA, Str::borrow(key), Str::EMPTY, 1.0)
+            .unwrap_or(0.0)
+            != 0.0
+    }
+
+    /// Stores `value` under `key`, replacing whatever it held.
+    pub fn set_data(&self, key: &str, value: f64) {
+        self.act(
+            ACT_SET_DATA,
+            Str::borrow(key),
+            Str::EMPTY,
+            Str::EMPTY,
+            value,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Stores `value` under `key`, replacing whatever it held.
+    pub fn set_data_text(&self, key: &str, value: &str) {
+        self.act(
+            ACT_SET_DATA_TEXT,
+            Str::borrow(key),
+            Str::EMPTY,
+            Str::borrow(value),
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Forgets `key`. A missing key is fine.
+    pub fn clear_data(&self, key: &str) {
+        self.act(
+            ACT_CLEAR_DATA,
+            Str::borrow(key),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Forgets every key this actor holds, leaving the others alone.
+    pub fn clear_all_data(&self) {
+        self.act(
+            ACT_CLEAR_DATA,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
     /// Seconds since the green flag.
     pub fn timer(&self) -> f64 {
         self.number(READ_TIMER, Str::EMPTY, Str::EMPTY, 0.0)

@@ -17,6 +17,7 @@ use blockloom_core::scene::Axis;
 use blockloom_core::script::abi;
 #[cfg(not(target_arch = "wasm32"))]
 use blockloom_core::script::abi::{HostApi, Str};
+use blockloom_core::script::data::ScriptData;
 use blockloom_core::sense;
 use blockloom_core::sound::{SoundBus, clamp_pitch, user_to_gain};
 use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp, UiTheme};
@@ -352,6 +353,17 @@ thread_local! {
     /// The words of the event a script is being called with, for `TEXT_EVENT`.
     static EVENT_WORDS: std::cell::RefCell<Option<(String, String)>> =
         const { std::cell::RefCell::new(None) };
+    /// Every running actor's script storage, keyed by actor id. One file's
+    /// scripts share their library, so per-actor state lives here instead -
+    /// which is also what gives each clone its own copy. Cleared when a run
+    /// starts; nothing here is saved.
+    static SCRIPT_DATA: std::cell::RefCell<ScriptData> =
+        std::cell::RefCell::new(ScriptData::new());
+}
+
+/// Forgets every script's per-actor storage. A run starts empty.
+pub fn clear_script_data() {
+    SCRIPT_DATA.with(|data| data.borrow_mut().clear());
 }
 
 fn with_event_words(event: &ScriptEvent, f: impl FnOnce()) {
@@ -783,6 +795,60 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
             a,
             arg.max(0.0) as usize,
         )),
+        abi::READ_VELOCITY => {
+            let axis = axis_of(arg).index();
+            if a.trim().is_empty() {
+                Some(me(actor)?.velocity[axis] as f64)
+            } else {
+                sense::read(|sensors| {
+                    sensors
+                        .find(a.trim())
+                        .map(|other| other.velocity[axis] as f64)
+                })
+            }
+        }
+        abi::READ_ANGULAR_VELOCITY => {
+            let axis = axis_of(arg).index();
+            if a.trim().is_empty() {
+                Some(me(actor)?.angular_velocity[axis] as f64)
+            } else {
+                sense::read(|sensors| {
+                    sensors
+                        .find(a.trim())
+                        .map(|other| other.angular_velocity[axis] as f64)
+                })
+            }
+        }
+        abi::READ_MASS => {
+            if a.trim().is_empty() {
+                Some(me(actor)?.mass as f64)
+            } else {
+                sense::read(|sensors| sensors.find(a.trim()).map(|other| other.mass as f64))
+            }
+        }
+        abi::READ_GROUNDED => {
+            let grounded = if a.trim().is_empty() {
+                me(actor)?.grounded
+            } else {
+                sense::read(|sensors| sensors.find(a.trim()).map(|other| other.grounded))?
+            };
+            bool_as(grounded)
+        }
+        abi::READ_DATA => {
+            let key = a.trim();
+            if key.is_empty() {
+                return None;
+            }
+            SCRIPT_DATA.with(|data| {
+                let data = data.borrow();
+                // A nonzero arg probes presence: either kind answers 1.0.
+                if arg != 0.0 {
+                    data.has(actor, key).then_some(1.0)
+                } else {
+                    data.get_number(actor, key)
+                }
+            })
+        }
         _ => None,
     }
 }
@@ -988,6 +1054,9 @@ fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
         abi::TEXT_CUTSCENE_NAME => sense::read(|sensors| {
             Some(sensors.cutscene_name.clone()).filter(|name| !name.is_empty())
         }),
+        abi::TEXT_DATA => SCRIPT_DATA
+            .with(|data| data.borrow().get_text(actor, a.trim()).map(str::to_string))
+            .filter(|text| !text.is_empty()),
         abi::TEXT_SCENE_NAMES => {
             serde_json::to_string(&sense::read(|s| s.scene_names.clone())).ok()
         }
@@ -1605,6 +1674,27 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
             });
             return;
         }
+        // Per-actor storage lands at once rather than as an effect: it is
+        // the script's own state, so a read straight after sees it.
+        abi::ACT_SET_DATA => {
+            SCRIPT_DATA.with(|data| data.borrow_mut().set_number(&actor, a.trim(), n0));
+            return;
+        }
+        abi::ACT_SET_DATA_TEXT => {
+            SCRIPT_DATA.with(|data| data.borrow_mut().set_text(&actor, a.trim(), c));
+            return;
+        }
+        abi::ACT_CLEAR_DATA => {
+            SCRIPT_DATA.with(|data| {
+                let mut data = data.borrow_mut();
+                if a.trim().is_empty() {
+                    data.clear_actor(&actor);
+                } else {
+                    data.remove(&actor, a.trim());
+                }
+            });
+            return;
+        }
         // A verb this runtime doesn't know is a script built against a newer
         // ABI, which the load-time check should already have caught.
         _ => return,
@@ -2207,6 +2297,46 @@ blockloom::export!(start = start, tick = tick);
     }
 
     #[test]
+    fn a_compiled_script_keeps_per_actor_state_across_ticks() {
+        let project = TempProject::new("data");
+        let Some(script) = project.build(
+            r#"
+use blockloom::*;
+
+fn tick(me: &Actor, dt: f32) {
+    me.set_data("ticks", me.data("ticks") + 1.0);
+    if !me.has_data("mode") {
+        me.set_data_text("mode", "hot");
+    }
+    let _ = dt;
+}
+
+blockloom::export!(tick = tick);
+"#,
+        ) else {
+            return;
+        };
+
+        clear_script_data();
+        publish_one("a1");
+        let mut asked = Asked::default();
+        script.tick("a1", &mut asked, 0.5);
+        script.tick("a1", &mut asked, 0.5);
+
+        // Two ticks accumulated in the host map, with no effects queued.
+        assert!(asked.effects.is_empty());
+        assert_eq!(
+            number_for("a1", abi::READ_DATA, "ticks", "", 0.0),
+            Some(2.0)
+        );
+        assert_eq!(
+            text_for("a1", abi::TEXT_DATA, "mode", ""),
+            Some("hot".to_string())
+        );
+        clear_script_data();
+    }
+
+    #[test]
     fn a_broadcast_is_carried_out_separately_and_a_panic_stays_inside() {
         let project = TempProject::new("broadcast");
         let Some(script) = project.build(
@@ -2297,6 +2427,127 @@ blockloom::export!(start = start, tick = tick);
             .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
             .collect();
         assert_eq!(values, [3.0, 7.0, 0.0, 0.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn motion_reads_answer_self_and_others_from_the_snapshot() {
+        let mut sensors = Sensors::default();
+        sensors.actors.insert(
+            "a1".to_string(),
+            ActorSense {
+                name: "Player".to_string(),
+                velocity: [30.0, -9.0, 0.0],
+                angular_velocity: [0.0, 0.0, 1.5],
+                mass: 2.5,
+                grounded: true,
+                ..Default::default()
+            },
+        );
+        sensors.actors.insert(
+            "b2".to_string(),
+            ActorSense {
+                name: "Crate".to_string(),
+                ..Default::default()
+            },
+        );
+        sense::publish(sensors);
+
+        // Empty names the running actor; a missing actor is MISSING, which
+        // the prelude turns into zero or false.
+        assert_eq!(
+            number_for("a1", abi::READ_VELOCITY, "", "", 0.0),
+            Some(30.0)
+        );
+        assert_eq!(
+            number_for("a1", abi::READ_VELOCITY, "Player", "", 1.0),
+            Some(-9.0)
+        );
+        assert_eq!(
+            number_for("a1", abi::READ_VELOCITY, "Crate", "", 0.0),
+            Some(0.0)
+        );
+        assert_eq!(
+            number_for("a1", abi::READ_VELOCITY, "Nobody", "", 0.0),
+            None
+        );
+        assert_eq!(
+            number_for("a1", abi::READ_ANGULAR_VELOCITY, "", "", 2.0),
+            Some(1.5)
+        );
+        assert_eq!(
+            number_for("a1", abi::READ_ANGULAR_VELOCITY, "Crate", "", 2.0),
+            Some(0.0)
+        );
+        assert_eq!(number_for("a1", abi::READ_MASS, "", "", 0.0), Some(2.5));
+        assert_eq!(
+            number_for("a1", abi::READ_MASS, "Crate", "", 0.0),
+            Some(0.0)
+        );
+        assert_eq!(number_for("a1", abi::READ_MASS, "Nobody", "", 0.0), None);
+        assert_eq!(number_for("a1", abi::READ_GROUNDED, "", "", 0.0), Some(1.0));
+        assert_eq!(
+            number_for("a1", abi::READ_GROUNDED, "Crate", "", 0.0),
+            Some(0.0)
+        );
+        assert_eq!(
+            number_for("a1", abi::READ_GROUNDED, "Nobody", "", 0.0),
+            None
+        );
+    }
+
+    #[test]
+    fn script_data_is_per_actor_immediate_and_cleared_on_run_start() {
+        clear_script_data();
+        let mut asked = Asked::default();
+        let mut ctx = Ctx {
+            actor: "a1",
+            asked: &mut asked,
+        };
+
+        // Unset keys miss, including the presence probe.
+        assert_eq!(number_for("a1", abi::READ_DATA, "t", "", 0.0), None);
+        assert_eq!(number_for("a1", abi::READ_DATA, "t", "", 1.0), None);
+        assert_eq!(text_for("a1", abi::TEXT_DATA, "mode", ""), None);
+        assert_eq!(number_for("a1", abi::READ_DATA, "", "", 0.0), None);
+
+        // A write lands at once: the straight-back read sees it.
+        act_for(&mut ctx, abi::ACT_SET_DATA, "t", "", "", &[1.5]);
+        assert_eq!(number_for("a1", abi::READ_DATA, "t", "", 0.0), Some(1.5));
+        assert_eq!(number_for("a1", abi::READ_DATA, "t", "", 1.0), Some(1.0));
+        assert_eq!(number_for("a1", abi::READ_DATA, "t", "", -1.0), Some(1.0));
+
+        // Text and numbers keep to their kind, but presence sees both.
+        act_for(&mut ctx, abi::ACT_SET_DATA_TEXT, "mode", "", "hot", &[]);
+        assert_eq!(
+            text_for("a1", abi::TEXT_DATA, "mode", ""),
+            Some("hot".to_string())
+        );
+        assert_eq!(number_for("a1", abi::READ_DATA, "mode", "", 0.0), None);
+        assert_eq!(number_for("a1", abi::READ_DATA, "mode", "", 1.0), Some(1.0));
+
+        // Another actor - a clone, say - keeps its own copy.
+        assert_eq!(number_for("~1", abi::READ_DATA, "t", "", 0.0), None);
+        assert_eq!(text_for("~1", abi::TEXT_DATA, "mode", ""), None);
+
+        // Clearing one key leaves the others; clearing the actor, then the
+        // run, leaves nothing.
+        act_for(&mut ctx, abi::ACT_CLEAR_DATA, "t", "", "", &[]);
+        assert_eq!(number_for("a1", abi::READ_DATA, "t", "", 1.0), None);
+        assert_eq!(
+            text_for("a1", abi::TEXT_DATA, "mode", ""),
+            Some("hot".to_string())
+        );
+        act_for(&mut ctx, abi::ACT_CLEAR_DATA, "", "", "", &[]);
+        assert_eq!(text_for("a1", abi::TEXT_DATA, "mode", ""), None);
+
+        act_for(&mut ctx, abi::ACT_SET_DATA, "t", "", "", &[2.0]);
+        clear_script_data();
+        assert_eq!(number_for("a1", abi::READ_DATA, "t", "", 0.0), None);
+
+        // An empty key stores nothing, so it never reads back.
+        act_for(&mut ctx, abi::ACT_SET_DATA, "", "", "", &[3.0]);
+        assert_eq!(number_for("a1", abi::READ_DATA, "", "", 0.0), None);
+        clear_script_data();
     }
 
     #[test]

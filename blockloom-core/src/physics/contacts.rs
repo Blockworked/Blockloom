@@ -537,7 +537,33 @@ impl ContactTracker {
             .values()
             .map(|pair| (&pair.a, &pair.b, pair.kind))
     }
+
+    /// Whether a solid contact holds `actor` up: a pair whose face normal
+    /// points down away from it, so the other side is below. Needs no
+    /// controller move, unlike the controller's own `grounded`.
+    pub fn grounded(&self, actor: &str) -> bool {
+        self.active.values().any(|pair| {
+            if pair.kind != ContactKind::Collision {
+                return false;
+            }
+            let Some(payload) = pair.payload.as_ref() else {
+                return false;
+            };
+            let normal = if pair.a.actor == actor {
+                payload.normal
+            } else if pair.b.actor == actor {
+                [-payload.normal[0], -payload.normal[1], -payload.normal[2]]
+            } else {
+                return false;
+            };
+            normal[1] <= -SUPPORT_NORMAL_Y
+        })
+    }
 }
+
+/// How far down a contact face must point to hold an actor up: about 45
+/// degrees, the slope a default controller still climbs.
+const SUPPORT_NORMAL_Y: f32 = 0.7;
 
 #[cfg(test)]
 mod tests {
@@ -884,6 +910,49 @@ mod tests {
             .map(|e| e.edge)
             .collect();
         assert_eq!(exits, [false, false, true]);
+    }
+
+    #[test]
+    fn grounded_needs_a_solid_face_below() {
+        fn payload(normal: [f32; 3]) -> ContactPayload {
+            ContactPayload {
+                normal,
+                ..Default::default()
+            }
+        }
+        let mut t = ContactTracker::new();
+        // Ball over the floor: the face points down away from the ball.
+        t.started(
+            end("a", "ball"),
+            scenery("b", "floor"),
+            ContactKind::Collision,
+            Some(payload([0.0, -1.0, 0.0])),
+        );
+        t.end_tick(1, awake);
+        assert!(t.grounded("ball"));
+        assert!(!t.grounded("floor"), "the floor is above nothing");
+        // A wall at the same height is a touch but not support.
+        t.started(
+            end("a", "ball"),
+            scenery("c", "wall"),
+            ContactKind::Collision,
+            Some(payload([1.0, 0.0, 0.0])),
+        );
+        t.end_tick(2, awake);
+        assert!(t.grounded("ball"), "the floor still holds it");
+        t.stopped(&ColliderId::from("a"), &ColliderId::from("b"));
+        t.end_tick(3, awake);
+        assert!(!t.grounded("ball"), "a wall alone holds nothing up");
+        // A trigger overlap never counts, even from below.
+        t.started(
+            end("a", "ball"),
+            scenery("d", "zone"),
+            ContactKind::Trigger,
+            Some(payload([0.0, -1.0, 0.0])),
+        );
+        t.end_tick(4, awake);
+        assert!(!t.grounded("ball"));
+        assert!(!t.grounded("nobody"));
     }
 
     #[test]
