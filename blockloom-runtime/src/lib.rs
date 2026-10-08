@@ -17,6 +17,7 @@
 // A Bevy system declares every query and resource it touches as an argument, so
 // the usual argument-count limit doesn't apply here.
 #![allow(clippy::too_many_arguments)]
+#![allow(clippy::chunks_exact_to_as_chunks)]
 // Bevy system queries and params are long by nature.
 #![allow(clippy::type_complexity)]
 
@@ -89,6 +90,11 @@ mod quality;
 mod queries;
 mod ray_tracing;
 mod script;
+#[cfg(all(
+    feature = "components",
+    not(any(target_arch = "wasm32", target_os = "android"))
+))]
+pub(crate) mod script_component;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod script_wasm;
 mod shadows;

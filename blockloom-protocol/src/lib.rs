@@ -107,15 +107,14 @@ impl InterfaceDesign {
         {
             return Err("Interface viewport dimensions must be between 16 and 8192 pixels".into());
         }
-        if let Some(screen) = &self.screen {
-            if !self
+        if let Some(screen) = &self.screen
+            && !self
                 .document
                 .widgets
                 .iter()
                 .any(|widget| widget.element.id == *screen && widget.element.parent.is_empty())
-            {
-                return Err("Interface screen must name a top-level widget".into());
-            }
+        {
+            return Err("Interface screen must name a top-level widget".into());
         }
         Ok(())
     }

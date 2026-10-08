@@ -1100,8 +1100,10 @@ mod tests {
         use blockloom_core::physics::Interpolation;
         let mut p = project();
         let id = add(&mut p, "Ball", [0.0, 3.0, 0.0]);
-        let mut spec = RigidbodySpec::default();
-        spec.interpolation = Interpolation::Extrapolate;
+        let spec = RigidbodySpec {
+            interpolation: Interpolation::Extrapolate,
+            ..Default::default()
+        };
         let mut shape = ball();
         shape.contact_offset = Some(0.05);
         body(&mut p, &id, spec, vec![shape]);

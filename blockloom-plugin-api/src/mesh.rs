@@ -135,8 +135,8 @@ impl MeshData {
         }
         if let Some(gpu) = &self.gpu {
             crate::id::validate_type_id(&gpu.buffer)?;
-            if let Some(quads) = &gpu.quads {
-                if quads.records.len() * 6 != gpu.vertices as usize
+            if let Some(quads) = &gpu.quads
+                && (quads.records.len() * 6 != gpu.vertices as usize
                     || quads.palette.is_empty()
                     || quads.palette.len() > 256
                     || !quads.voxel.is_finite()
@@ -153,10 +153,9 @@ impl MeshData {
                             || ((r >> 8) & 255) + (m & 255) > 128
                             || ((r >> 16) & 255) + ((m >> 8) & 255) > 128
                             || ((m >> 16) & 255) as usize >= quads.palette.len()
-                    })
-                {
-                    return Err(format!("mesh {name}: invalid compact quads"));
-                }
+                    }))
+            {
+                return Err(format!("mesh {name}: invalid compact quads"));
             }
             if gpu.vertices as usize > MAX_VERTICES
                 || (gpu.vertices as usize) < self.indices.len()

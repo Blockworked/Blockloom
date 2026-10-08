@@ -337,7 +337,7 @@ pub mod d3 {
             up,
             offset: CharacterLength::Absolute(spec.skin_width),
             slide: true,
-            autostep: (spec.step_offset > 0.0).then(|| CharacterAutostep {
+            autostep: (spec.step_offset > 0.0).then_some(CharacterAutostep {
                 max_height: CharacterLength::Absolute(spec.step_offset),
                 min_width: CharacterLength::Absolute(spec.radius * 0.5),
                 include_dynamic_bodies: true,
@@ -577,7 +577,7 @@ pub mod d2 {
             up,
             offset: CharacterLength::Absolute(spec.skin_width),
             slide: true,
-            autostep: (spec.step_offset > 0.0).then(|| CharacterAutostep {
+            autostep: (spec.step_offset > 0.0).then_some(CharacterAutostep {
                 max_height: CharacterLength::Absolute(spec.step_offset),
                 min_width: CharacterLength::Absolute(spec.radius * 0.5),
                 include_dynamic_bodies: true,

@@ -249,7 +249,12 @@ fn append_mesh(
             None => (0..points.len() as u32).collect(),
         };
         let tris: Vec<[u32; 3]> = match mode {
-            4 => raw.chunks_exact(3).map(|t| [t[0], t[1], t[2]]).collect(),
+            4 => raw
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|t| [t[0], t[1], t[2]])
+                .collect(),
             5 => (0..raw.len().saturating_sub(2))
                 .map(|i| {
                     if i % 2 == 0 {
@@ -554,7 +559,7 @@ mod tests {
     fn a_glb_reads_its_binary_chunk() {
         let json = quad_gltf("", "").replace(r#", "uri": """#, "");
         let mut json = json.into_bytes();
-        while json.len() % 4 != 0 {
+        while !json.len().is_multiple_of(4) {
             json.push(b' ');
         }
         let bin = quad_bytes();

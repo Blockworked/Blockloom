@@ -1,4 +1,4 @@
-//! Frozen script WIT world (v1): the typed contract a non-Rust script
+//! Frozen script WIT world (package `blockloom:script@0.2.0`): the typed contract a non-Rust script
 //! compiles against, equivalent to the numeric [`super::abi`] surface.
 //!
 //! The numeric ABI stays the portable core-module shape (three host calls,
@@ -17,14 +17,15 @@
 
 use super::abi;
 
-/// The frozen world version. Bump with a new WIT text and a migration
-/// note; guests check it the way native scripts check [`abi::ABI_VERSION`].
-pub const WIT_VERSION: u32 = 1;
+/// The frozen world version. 2 (0.2.0) added the `entry` export a component
+/// guest implements and made the text parse (0.1.0 reused a name). Bump with
+/// a new WIT text and a migration note; guests check it the way native scripts check [`abi::ABI_VERSION`].
+pub const WIT_VERSION: u32 = 2;
 
 /// The frozen WIT world, as `wit-bindgen` consumes it. Package and version
 /// are part of the freeze: renaming either is a new world, not an edit.
 pub const WIT: &str = r#"
-package blockloom:script@0.1.0;
+package blockloom:script@0.2.0;
 
 /// Snapshot reads. Hot verbs have typed functions; the rest ride
 /// `read` under the kebab-case of their ABI name (see READS).
@@ -48,8 +49,8 @@ interface acts {
 /// Batched records and the event a hat block would start on.
 interface lifecycle {
     record vec3 { x: f32, y: f32, z: f32 }
-    record pose { position: vec3, rotation: vec3, scale: f32 }
-    pose: func(target: string) -> result<pose, read-error>;
+    record pose-data { position: vec3, rotation: vec3, scale: f32 }
+    pose: func(target: string) -> result<pose-data, read-error>;
     pose-bytes: func(target: string) -> result<list<u8>, read-error>;
     variant event {
         message(string), key(string), action(string), clicked, touched,
@@ -63,13 +64,6 @@ interface lifecycle {
     }
     enum contact-phase { enter, stay, exit }
     enum read-error { missing, too-long }
-    start: func();
-    tick: func(dt: f32);
-    frame: func(dt: f32);
-    ui: func(dt: f32);
-    stop: func();
-    destroy: func();
-    on-event: func(kind: u32, n0: f64, n1: f64, n2: f64, n3: f64);
 }
 
 /// Host-owned per-actor storage: immediate writes, per clone, cleared
@@ -134,6 +128,19 @@ interface event {
     use lifecycle.{event, contact-phase};
 }
 
+/// What a guest exports: the same six lifecycle calls and the event a
+/// hat block would start on. `on-event` carries the numeric kind
+/// (`abi::EVENT_*`) with four numbers, as the core-module entry does.
+interface entry {
+    start: func();
+    tick: func(dt: f32);
+    frame: func(dt: f32);
+    ui: func(dt: f32);
+    stop: func();
+    destroy: func();
+    on-event: func(kind: u32, n0: f64, n1: f64, n2: f64, n3: f64);
+}
+
 world script {
     import sensors;
     import texts;
@@ -145,6 +152,7 @@ world script {
     import physics;
     import plugins;
     import event;
+    export entry;
 }
 "#;
 
@@ -1472,7 +1480,7 @@ pub const GUEST_TOOLCHAINS: &[GuestToolchain] = &[
         language: "C",
         toolchain: "wasi-sdk clang -mexec-model=reactor",
         build: "clang --target=wasm32-wasi reactor.c -o script.wasm",
-        notes: "Manual memory management fits the fuel model; still needs bindings and the overhead number.",
+        notes: "Second guest language, shipped as blockloom-script-guest/c/blockloom.h (freestanding, no libc or WASI) with templates/minimal.c; the runtime builds it with clang --target=wasm32 and holds its effects against the Rust guest's. Manual memory management fits the fuel model.",
     },
 ];
 
@@ -1531,6 +1539,19 @@ mod tests {
         }
     }
 
+    /// The text is real WIT: wit-parser resolves it and finds the world, its
+    /// `entry` export and every `import`.
+    #[test]
+    fn the_world_parses_and_exports_entry() {
+        let mut resolve = wit_parser::Resolve::default();
+        let id = resolve
+            .push_source("world.wit", WIT)
+            .expect("the frozen world must parse");
+        let world = &resolve.worlds[resolve.select_world(&[id], Some("script")).unwrap()];
+        assert_eq!(world.exports.len(), 1);
+        assert_eq!(world.imports.len(), 10);
+    }
+
     #[test]
     fn every_abi_verb_names_its_wit_path() {
         check_table("READ", READS);
@@ -1559,7 +1580,7 @@ mod tests {
             );
         }
         assert!(WIT.contains("package blockloom:script@"));
-        assert!(WIT.contains(&format!("world script")));
+        assert!(WIT.contains(&"world script".to_string()));
         assert!(
             WIT.contains("read-after-write reads old")
                 || WIT.contains("read-after-write still reads old")
@@ -1615,6 +1636,27 @@ mod tests {
             verbs.push((format!("{prefix}_{name}"), value));
         }
         verbs
+    }
+
+    /// The C header carries every ABI verb under `BL_<NAME>` with the same
+    /// value, and the same ABI version.
+    #[test]
+    fn c_header_covers_every_abi_verb() {
+        let header = include_str!("../../../blockloom-script-guest/c/blockloom.h");
+        for prefix in ["READ", "TEXT", "ACT", "EVENT"] {
+            for (name, value) in abi_verbs(prefix) {
+                let line = format!("#define BL_{name} {value}u");
+                assert!(
+                    header.lines().any(|l| l == line),
+                    "{name} is missing or moved in the C header"
+                );
+            }
+        }
+        let version = format!("#define BL_ABI_VERSION {}u", abi::ABI_VERSION);
+        assert!(
+            header.lines().any(|l| l == version),
+            "C ABI version drifted"
+        );
     }
 
     /// The guest crate binds the whole frozen world: every ABI verb has a

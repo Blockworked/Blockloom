@@ -1,4 +1,4 @@
-package blockloom:script@0.1.0;
+package blockloom:script@0.2.0;
 
 /// Snapshot reads. Hot verbs have typed functions; the rest ride
 /// `read` under the kebab-case of their ABI name (see READS).
@@ -22,8 +22,8 @@ interface acts {
 /// Batched records and the event a hat block would start on.
 interface lifecycle {
     record vec3 { x: f32, y: f32, z: f32 }
-    record pose { position: vec3, rotation: vec3, scale: f32 }
-    pose: func(target: string) -> result<pose, read-error>;
+    record pose-data { position: vec3, rotation: vec3, scale: f32 }
+    pose: func(target: string) -> result<pose-data, read-error>;
     pose-bytes: func(target: string) -> result<list<u8>, read-error>;
     variant event {
         message(string), key(string), action(string), clicked, touched,
@@ -37,13 +37,6 @@ interface lifecycle {
     }
     enum contact-phase { enter, stay, exit }
     enum read-error { missing, too-long }
-    start: func();
-    tick: func(dt: f32);
-    frame: func(dt: f32);
-    ui: func(dt: f32);
-    stop: func();
-    destroy: func();
-    on-event: func(kind: u32, n0: f64, n1: f64, n2: f64, n3: f64);
 }
 
 /// Host-owned per-actor storage: immediate writes, per clone, cleared
@@ -108,6 +101,19 @@ interface event {
     use lifecycle.{event, contact-phase};
 }
 
+/// What a guest exports: the same six lifecycle calls and the event a
+/// hat block would start on. `on-event` carries the numeric kind
+/// (`abi::EVENT_*`) with four numbers, as the core-module entry does.
+interface entry {
+    start: func();
+    tick: func(dt: f32);
+    frame: func(dt: f32);
+    ui: func(dt: f32);
+    stop: func();
+    destroy: func();
+    on-event: func(kind: u32, n0: f64, n1: f64, n2: f64, n3: f64);
+}
+
 world script {
     import sensors;
     import texts;
@@ -119,4 +125,5 @@ world script {
     import physics;
     import plugins;
     import event;
+    export entry;
 }

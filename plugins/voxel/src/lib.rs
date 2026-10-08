@@ -5,6 +5,8 @@
 //! Explicit fracture detaches unsupported regions into editable moving bodies.
 //! Project edit lines seed each run; persistent worlds restore player saves.
 
+#![allow(clippy::too_many_arguments, clippy::chunks_exact_to_as_chunks)]
+
 mod fracture;
 mod gpu_mesh;
 mod grid;

@@ -743,13 +743,12 @@ mod tests {
                 for y in -1..=1 {
                     for x in -1..=1 {
                         let near = [bucket[0] + x, bucket[1] + y, bucket[2] + z];
-                        if let Some(points) = buckets.get(&near) {
-                            if let Some(&p) = points
+                        if let Some(points) = buckets.get(&near)
+                            && let Some(&p) = points
                                 .iter()
                                 .find(|p| (0..3).all(|a| (p[a] - point[a]).abs() <= 2))
-                            {
-                                return p;
-                            }
+                        {
+                            return p;
                         }
                     }
                 }

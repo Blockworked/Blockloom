@@ -435,13 +435,13 @@ impl WasmScript {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use blockloom_core::scene::Axis;
     use blockloom_core::sense::{ActorSense, Sensors};
 
     /// Publishes one actor the module can read, as the runtime would.
-    fn publish_one(actor: &str) {
+    pub(crate) fn publish_one(actor: &str) {
         let mut sensors = Sensors::default();
         sensors.actors.insert(
             actor.to_string(),
@@ -531,7 +531,7 @@ mod tests {
     }
 
     fn load_fixture() -> WasmScript {
-        let bytes = wat::parse_str(&fixture_wat()).expect("the fixture is valid");
+        let bytes = wat::parse_str(fixture_wat()).expect("the fixture is valid");
         WasmScript::load_bytes(&bytes, "assets/scripts/test.wasm").expect("loads")
     }
 
@@ -613,7 +613,7 @@ mod tests {
             Some(blockloom_core::script::WEB_TARGET),
         );
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, wat::parse_str(&fixture_wat()).unwrap()).unwrap();
+        std::fs::write(&path, wat::parse_str(fixture_wat()).unwrap()).unwrap();
         let script = WasmScript::load_file(&dir, relative).expect("loads the web build");
         publish_one("a1");
         let mut asked = Asked::default();
@@ -643,7 +643,7 @@ mod tests {
                 .contains("isn't a WebAssembly")
         );
         // No entry points, no script.
-        let bare = wat::parse_str(&format!(
+        let bare = wat::parse_str(format!(
             r#"(module (memory (export "memory") 1) (func (export "blockloom_script_abi") (result i32) i32.const {}))"#,
             abi::ABI_VERSION
         ))
@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn wasm_runaway_is_stopped_with_a_budget_error() {
-        let spinning = wat::parse_str(&format!(
+        let spinning = wat::parse_str(format!(
             r#"(module
   (import "blockloom" "read_number" (func $rn (param i32 i32 i32) (result i32)))
   (import "blockloom" "read_text" (func $rt (param i32 i32 i32) (result i32)))
@@ -702,6 +702,115 @@ mod tests {
         let mut asked = Asked::default();
         script.tick("a1", &mut asked, 1.0 / 60.0);
         assert!(asked.effects.is_empty());
+    }
+
+    /// What every `minimal` guest (Rust, C) must produce: hello and the
+    /// slot/language switches on `start`, a +1 step on `tick`, an answer to
+    /// an `event`, and a script that is still running afterwards.
+    fn assert_minimal_guest(script: &WasmScript) {
+        publish_one("a1");
+        let variables = blockloom_core::vm::Variables::default();
+        let lists = blockloom_core::vm::Lists::default();
+        crate::script::with_script_stores(&variables, &lists, || {
+            let mut asked = Asked::default();
+            script.start("a1", &mut asked);
+            assert!(
+                asked.effects.iter().any(|effect| matches!(
+                    effect,
+                    Effect::Say { actor, text }
+                    if actor == "a1" && text == "hello from wasm"
+                )),
+                "{:?}",
+                asked.effects
+            );
+            assert!(
+                asked.effects.iter().any(|effect| matches!(
+                    effect,
+                    Effect::SwitchSaveSlot { actor, slot }
+                    if actor == "a1" && slot == "Slot 2"
+                )),
+                "{:?}",
+                asked.effects
+            );
+            assert!(
+                asked.effects.iter().any(|effect| matches!(
+                    effect,
+                    Effect::SetLanguage { actor, language }
+                    if actor == "a1" && language == "fr"
+                )),
+                "{:?}",
+                asked.effects
+            );
+            let mut asked = Asked::default();
+            script.tick("a1", &mut asked, 1.0 / 60.0);
+            assert!(
+                asked.effects.iter().any(|effect| matches!(
+                    effect,
+                    Effect::ChangePosition { actor, axis: Axis::X, by }
+                    if actor == "a1" && (*by - 1.0).abs() < f32::EPSILON
+                )),
+                "{:?}",
+                asked.effects
+            );
+            let mut asked = Asked::default();
+            script.event(
+                "a1",
+                &mut asked,
+                &ScriptEvent::new(abi::EVENT_MESSAGE, "hi"),
+            );
+            assert!(
+                asked.effects.iter().any(|effect| matches!(
+                    effect,
+                    Effect::Say { text, .. } if text == "event heard"
+                )),
+                "{:?}",
+                asked.effects
+            );
+            assert!(!script.is_stopped());
+        });
+    }
+
+    /// The C guest as a sandboxed module: one `clang --target=wasm32` run over
+    /// the header binding, then the same assertions as the Rust guest. Skipped
+    /// without clang and wasm-ld.
+    #[test]
+    fn c_guest_script_runs_in_sandbox() {
+        let Some(bytes) = build_c_guest() else {
+            return;
+        };
+        let script = WasmScript::load_bytes(&bytes, "minimal.wasm").expect("loads");
+        assert_minimal_guest(&script);
+    }
+
+    /// Builds `templates/minimal.c`; `None` when this machine has no wasm clang.
+    fn build_c_guest() -> Option<Vec<u8>> {
+        let guest =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../blockloom-script-guest");
+        let dir = std::env::temp_dir().join(format!("blockloom-c-guest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let module = dir.join("minimal.wasm");
+        let output = std::process::Command::new("clang")
+            .args(["--target=wasm32", "-O2", "-nostdlib"])
+            .args(["-Wl,--no-entry", "-Wl,--export-memory"])
+            .arg("-I")
+            .arg(guest.join("c"))
+            .arg("-o")
+            .arg(&module)
+            .arg(guest.join("templates/minimal.c"))
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // No wasm backend or linker here: nothing to test, not a failure.
+            if stderr.contains("unable to execute") || stderr.contains("wasm-ld") {
+                return None;
+            }
+            panic!("the C guest builds: {stderr}");
+        }
+        let bytes = std::fs::read(&module).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        Some(bytes)
     }
 
     /// The guest crate's template as a sandboxed module: two `rustc` runs (the
@@ -766,66 +875,7 @@ mod tests {
         );
         let bytes = std::fs::read(&module).unwrap();
         let script = WasmScript::load_bytes(&bytes, "minimal.wasm").expect("loads");
-        publish_one("a1");
-        let variables = blockloom_core::vm::Variables::default();
-        let lists = blockloom_core::vm::Lists::default();
-        crate::script::with_script_stores(&variables, &lists, || {
-            let mut asked = Asked::default();
-            script.start("a1", &mut asked);
-            assert!(
-                asked.effects.iter().any(|effect| matches!(
-                    effect,
-                    Effect::Say { actor, text }
-                    if actor == "a1" && text == "hello from wasm"
-                )),
-                "{:?}",
-                asked.effects
-            );
-            assert!(
-                asked.effects.iter().any(|effect| matches!(
-                    effect,
-                    Effect::SwitchSaveSlot { actor, slot }
-                    if actor == "a1" && slot == "Slot 2"
-                )),
-                "{:?}",
-                asked.effects
-            );
-            assert!(
-                asked.effects.iter().any(|effect| matches!(
-                    effect,
-                    Effect::SetLanguage { actor, language }
-                    if actor == "a1" && language == "fr"
-                )),
-                "{:?}",
-                asked.effects
-            );
-            let mut asked = Asked::default();
-            script.tick("a1", &mut asked, 1.0 / 60.0);
-            assert!(
-                asked.effects.iter().any(|effect| matches!(
-                    effect,
-                    Effect::ChangePosition { actor, axis: Axis::X, by }
-                    if actor == "a1" && (*by - 1.0).abs() < f32::EPSILON
-                )),
-                "{:?}",
-                asked.effects
-            );
-            let mut asked = Asked::default();
-            script.event(
-                "a1",
-                &mut asked,
-                &ScriptEvent::new(abi::EVENT_MESSAGE, "hi"),
-            );
-            assert!(
-                asked.effects.iter().any(|effect| matches!(
-                    effect,
-                    Effect::Say { text, .. } if text == "event heard"
-                )),
-                "{:?}",
-                asked.effects
-            );
-            assert!(!script.is_stopped());
-        });
+        assert_minimal_guest(&script);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -850,6 +900,21 @@ mod tests {
         }
         let per_call = start.elapsed().as_nanos() as f64 / f64::from(calls);
         println!("script wasm: {per_call:.0} ns per tick (read + act)");
+        if let Some(bytes) = build_c_guest() {
+            let c_script = WasmScript::load_bytes(&bytes, "minimal.wasm").expect("loads");
+            let mut asked = Asked::default();
+            for _ in 0..100 {
+                c_script.tick("a1", &mut asked, 1.0 / 60.0);
+                asked.effects.clear();
+            }
+            let start = Instant::now();
+            for _ in 0..calls {
+                c_script.tick("a1", &mut asked, 1.0 / 60.0);
+                asked.effects.clear();
+            }
+            let per_call = start.elapsed().as_nanos() as f64 / f64::from(calls);
+            println!("script wasm (C guest): {per_call:.0} ns per tick (read + 2 sets + act)");
+        }
         if blockloom_core::script::toolchain_version().is_err() {
             println!("script native: no toolchain, skipping");
             return;

@@ -46,7 +46,7 @@ fn late_join_move_spawn_delete_scene_and_close_under_loss() {
         build,
         initial.clone(),
         ServerOptions {
-            impairment: impairment.clone(),
+            impairment,
             ..Default::default()
         },
     )

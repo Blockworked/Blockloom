@@ -634,6 +634,7 @@ pub fn effective_safe_area(authored: [f32; 4], device: [f32; 4]) -> [f32; 4] {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 

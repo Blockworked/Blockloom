@@ -578,7 +578,16 @@ fn apply_stop_save(engine: &mut Engine, actor: &str, name: &str, clear: bool) {
     if changed {
         #[cfg(target_arch = "wasm32")]
         {
-            crate::web::store_save_slot(&engine.project.id, &engine.save_slot, &engine.save_data)
+            if let Err(message) = crate::web::store_save_slot(
+                &engine.project.id,
+                &engine.save_slot,
+                &engine.save_data,
+            ) {
+                bridge::send(&RuntimeMessage::Error {
+                    actor: actor.to_string(),
+                    message: format!("couldn't save variable \"{name}\": {message}"),
+                });
+            }
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -648,6 +657,7 @@ fn apply_save_slot_switch(engine: &mut Engine, actor: &str, slot: &str) {
     engine.save_slot = slot.clone();
     #[cfg(target_arch = "wasm32")]
     {
+        let _ = actor;
         engine.save_path = std::path::PathBuf::new();
         let data = crate::web::load_save_slot(&engine.project.id, &slot);
         data.apply(&engine.project, &engine.variables);
