@@ -17,6 +17,7 @@
 // A Bevy system declares every query and resource it touches as an argument, so
 // the usual argument-count limit doesn't apply here.
 #![allow(clippy::too_many_arguments)]
+#![allow(clippy::chunks_exact_to_as_chunks)]
 // Bevy system queries and params are long by nature.
 #![allow(clippy::type_complexity)]
 

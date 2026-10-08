@@ -2242,15 +2242,14 @@ fn rename_or_replace(
         }
         // Legacy `name == "Script"`: one script means a path change for that
         // slot; several means an append, since the caller didn't say which.
-        if components.count("Script") == 1 {
-            if let Some(index) = components
+        if components.count("Script") == 1
+            && let Some(index) = components
                 .0
                 .iter()
                 .position(|slot| matches!(slot, ActorComponent::Script { .. }))
-            {
-                components.0[index] = component;
-                return Ok(());
-            }
+        {
+            components.0[index] = component;
+            return Ok(());
         }
         components.insert(component);
         return Ok(());

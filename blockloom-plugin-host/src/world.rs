@@ -44,6 +44,7 @@ use web_time::Instant;
 /// What a plugin may ask the world to do from an op's answer.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "effect", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum Effect {
     /// A line in the run log.
     Say { text: String },
@@ -771,10 +772,11 @@ impl WorldPlugins {
             if !view.is_null() {
                 input["view"] = view.clone();
             }
-            if stage == Stage::Presentation && !view.is_null() {
-                if let Some(feedback) = feedback.get(&hook.plugin) {
-                    input["lod_feedback"] = json!(feedback);
-                }
+            if stage == Stage::Presentation
+                && !view.is_null()
+                && let Some(feedback) = feedback.get(&hook.plugin)
+            {
+                input["lod_feedback"] = json!(feedback);
             }
             let op = format!("{}{}", ops::HOOK_PREFIX, hook.name);
             let (outcomes, missing) = self.call_op(&hook.plugin, &op, &input, false);

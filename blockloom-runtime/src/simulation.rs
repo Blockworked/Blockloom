@@ -437,7 +437,7 @@ mod tests {
             let expected = step.as_secs_f64() * (index + 1) as f64;
             assert!((single.0 - expected).abs() < 1e-8);
             assert_eq!(single.0, batch.0);
-            assert_eq!(single.2, false);
+            assert!(!single.2);
             assert_eq!(single.3, scene);
             assert_eq!(single.4, vec![scene.clone()]);
             assert_eq!(single.3, batch.3);
@@ -473,7 +473,6 @@ mod tests {
         e.project.multiplayer.enabled = true;
         e.project.multiplayer.max_guests = 2;
         crate::lan::open(&mut e, "127.0.0.1:0", 1);
-        drop(e);
         app.update();
         assert!(!crate::lan::status(app.world().non_send::<Engine>()).open);
         let mut e = app.world_mut().non_send_mut::<Engine>();
@@ -483,7 +482,6 @@ mod tests {
         e.project.multiplayer.enabled = false;
         e.project.multiplayer.max_guests = 16;
         crate::lan::open(&mut e, "127.0.0.1:0", 3);
-        drop(e);
         app.update();
         assert!(!crate::lan::status(app.world().non_send::<Engine>()).open);
         crate::lan::open(

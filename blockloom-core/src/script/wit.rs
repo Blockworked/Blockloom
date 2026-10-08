@@ -1559,7 +1559,7 @@ mod tests {
             );
         }
         assert!(WIT.contains("package blockloom:script@"));
-        assert!(WIT.contains(&format!("world script")));
+        assert!(WIT.contains(&"world script".to_string()));
         assert!(
             WIT.contains("read-after-write reads old")
                 || WIT.contains("read-after-write still reads old")

@@ -572,6 +572,7 @@ fn dimension(mode: Mode) -> &'static str {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use crate::project::Actor;

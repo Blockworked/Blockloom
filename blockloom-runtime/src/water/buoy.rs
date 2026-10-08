@@ -341,7 +341,7 @@ float_bodies!(
     |v: &bevy_rapier3d::prelude::Velocity| v.linear,
     |v: &bevy_rapier3d::prelude::Velocity| v.angular,
     |c: Vec3| c,
-    |c: &bevy_rapier3d::prelude::Collider| Vec3::from(c.raw.compute_local_aabb().half_extents()),
+    |c: &bevy_rapier3d::prelude::Collider| c.raw.compute_local_aabb().half_extents(),
     |impulse: &mut bevy_rapier3d::prelude::ExternalImpulse,
      velocity: &mut bevy_rapier3d::prelude::Velocity,
      result: &Float,
@@ -361,8 +361,7 @@ float_bodies!(
     |v: &bevy_rapier2d::prelude::Velocity| Vec3::Z * v.angular,
     |c: Vec2| c.extend(0.0),
     |c: &bevy_rapier2d::prelude::Collider| {
-        Vec2::from(c.raw.compute_local_aabb().half_extents()).extend(0.0)
-            * crate::dim2::PIXELS_PER_METER
+        c.raw.compute_local_aabb().half_extents().extend(0.0) * crate::dim2::PIXELS_PER_METER
     },
     |impulse: &mut bevy_rapier2d::prelude::ExternalImpulse,
      velocity: &mut bevy_rapier2d::prelude::Velocity,

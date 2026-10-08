@@ -129,7 +129,7 @@ fn voxelize(
         }
     }
     let extent = (0..3).map(|a| hi[a] - lo[a]).fold(0.0, f32::max);
-    if !(extent > 0.0) {
+    if extent.is_nan() || extent <= 0.0 {
         return fail("The mesh has no size");
     }
     let size = extent / f32::from(settings.resolution);
@@ -139,7 +139,7 @@ fn voxelize(
     let cell = |p: [f32; 3]| -> [usize; 3] {
         [0, 1, 2].map(|a| (((p[a] - lo[a]) / size).floor() as usize + 1).min(dims[a] - 2))
     };
-    for (n, tri) in mesh.indices.chunks_exact(3).enumerate() {
+    for (n, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
         if n % 4096 == 0 {
             control.check()?;
         }

@@ -207,7 +207,7 @@ pub fn visual(group: &crate::mesher::Group, voxel: f32) -> Option<GpuVertices> {
     if group.texture.is_some()
         || !group.uvs.is_empty()
         || group.indices.is_empty()
-        || group.indices.len() % 6 != 0
+        || !group.indices.len().is_multiple_of(6)
     {
         return None;
     }

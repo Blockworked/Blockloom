@@ -34,15 +34,15 @@ pub struct ActorScript {
 /// the fallback (and the opt-in sandbox via `BLOCKLOOM_SCRIPT_BACKEND=wasm`),
 /// so a project with only web-built scripts still plays on desktop and any
 /// language targeting the three host imports runs untrusted.
-#[cfg(not(target_arch = "wasm32"))]
 pub enum ScriptBackend {
     Native(crate::script::LoadedScript),
+    #[cfg(not(target_arch = "wasm32"))]
     Wasm(Box<crate::script_wasm::WasmScript>),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl ScriptBackend {
     /// Whether the sandbox is preferred over native speed for this run.
+    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
     fn prefers_wasm() -> bool {
         std::env::var("BLOCKLOOM_SCRIPT_BACKEND").is_ok_and(|value| value == "wasm")
     }
@@ -50,11 +50,11 @@ impl ScriptBackend {
     /// Whether Play can run `relative` without rebuilding: either artifact
     /// counts. On Android only the native library beside the runtime does.
     pub fn is_built(project_dir: &std::path::Path, relative: &str) -> bool {
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", target_arch = "wasm32"))]
         {
             crate::script::LoadedScript::is_built(project_dir, relative)
         }
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
         {
             crate::script::LoadedScript::is_built(project_dir, relative)
                 || blockloom_core::script::library_path_for(
@@ -71,12 +71,11 @@ impl ScriptBackend {
     /// artifact loads. When both fail the primary error is reported, so a
     /// broken native build doesn't surface as a confusing wasm complaint.
     pub fn load(project_dir: &std::path::Path, relative: &str) -> Result<ScriptBackend, String> {
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", target_arch = "wasm32"))]
         {
-            return crate::script::LoadedScript::load(project_dir, relative)
-                .map(ScriptBackend::Native);
+            crate::script::LoadedScript::load(project_dir, relative).map(ScriptBackend::Native)
         }
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
         {
             if Self::prefers_wasm() {
                 match crate::script_wasm::WasmScript::load_file(project_dir, relative) {
@@ -105,6 +104,7 @@ impl ScriptBackend {
     pub fn start(&self, actor: &str, asked: &mut crate::script::Asked) {
         match self {
             ScriptBackend::Native(script) => script.start(actor, asked),
+            #[cfg(not(target_arch = "wasm32"))]
             ScriptBackend::Wasm(script) => script.start(actor, asked),
         }
     }
@@ -112,6 +112,7 @@ impl ScriptBackend {
     pub fn tick(&self, actor: &str, asked: &mut crate::script::Asked, dt: f32) {
         match self {
             ScriptBackend::Native(script) => script.tick(actor, asked, dt),
+            #[cfg(not(target_arch = "wasm32"))]
             ScriptBackend::Wasm(script) => script.tick(actor, asked, dt),
         }
     }
@@ -119,6 +120,7 @@ impl ScriptBackend {
     pub fn frame(&self, actor: &str, asked: &mut crate::script::Asked, dt: f32) {
         match self {
             ScriptBackend::Native(script) => script.frame(actor, asked, dt),
+            #[cfg(not(target_arch = "wasm32"))]
             ScriptBackend::Wasm(script) => script.frame(actor, asked, dt),
         }
     }
@@ -126,6 +128,7 @@ impl ScriptBackend {
     pub fn ui(&self, actor: &str, asked: &mut crate::script::Asked, dt: f32) {
         match self {
             ScriptBackend::Native(script) => script.ui(actor, asked, dt),
+            #[cfg(not(target_arch = "wasm32"))]
             ScriptBackend::Wasm(script) => script.ui(actor, asked, dt),
         }
     }
@@ -133,6 +136,7 @@ impl ScriptBackend {
     pub fn stop(&self, actor: &str, asked: &mut crate::script::Asked) {
         match self {
             ScriptBackend::Native(script) => script.stop(actor, asked),
+            #[cfg(not(target_arch = "wasm32"))]
             ScriptBackend::Wasm(script) => script.stop(actor, asked),
         }
     }
@@ -140,6 +144,7 @@ impl ScriptBackend {
     pub fn destroy(&self, actor: &str, asked: &mut crate::script::Asked) {
         match self {
             ScriptBackend::Native(script) => script.destroy(actor, asked),
+            #[cfg(not(target_arch = "wasm32"))]
             ScriptBackend::Wasm(script) => script.destroy(actor, asked),
         }
     }
@@ -152,6 +157,7 @@ impl ScriptBackend {
     ) {
         match self {
             ScriptBackend::Native(script) => script.event(actor, asked, event),
+            #[cfg(not(target_arch = "wasm32"))]
             ScriptBackend::Wasm(script) => script.event(actor, asked, event),
         }
     }
@@ -496,6 +502,7 @@ impl Engine {
         let lists = Lists::default();
         let dicts = Dicts::default();
         Self {
+            #[allow(clippy::default_constructed_unit_structs)]
             lan: crate::lan::Session::default(),
             incoming,
             link: None,
@@ -783,7 +790,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     fn quiet_wasm() -> Vec<u8> {
         let abi = blockloom_core::script::abi::ABI_VERSION;
-        wat::parse_str(&format!(
+        wat::parse_str(format!(
             r#"(module
   (import "blockloom" "read_number" (func (param i32 i32 i32) (result i32)))
   (import "blockloom" "read_text" (func (param i32 i32 i32) (result i32)))

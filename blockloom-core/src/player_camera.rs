@@ -270,6 +270,7 @@ pub fn wrap_degrees(angle: f32) -> f32 {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 

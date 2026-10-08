@@ -1933,8 +1933,10 @@ fn by_vm(project: &Project) -> Vec<String> {
     use blockloom_core::physics::controller;
     blockloom_core::physics::query::reset();
     controller::reset();
-    let mut spec = controller::CharacterControllerSpec::default();
-    spec.center = [0.0, 2.0, 0.0];
+    let spec = controller::CharacterControllerSpec {
+        center: [0.0, 2.0, 0.0],
+        ..Default::default()
+    };
     controller::register(ACTOR, spec);
     blockloom_core::physics::query::with_service(&WallWorld, 0, || {
         controller::with_service(&FloorWorld, 0, || by_vm_ticks(project))

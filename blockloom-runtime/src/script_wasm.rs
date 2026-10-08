@@ -531,7 +531,7 @@ mod tests {
     }
 
     fn load_fixture() -> WasmScript {
-        let bytes = wat::parse_str(&fixture_wat()).expect("the fixture is valid");
+        let bytes = wat::parse_str(fixture_wat()).expect("the fixture is valid");
         WasmScript::load_bytes(&bytes, "assets/scripts/test.wasm").expect("loads")
     }
 
@@ -613,7 +613,7 @@ mod tests {
             Some(blockloom_core::script::WEB_TARGET),
         );
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, wat::parse_str(&fixture_wat()).unwrap()).unwrap();
+        std::fs::write(&path, wat::parse_str(fixture_wat()).unwrap()).unwrap();
         let script = WasmScript::load_file(&dir, relative).expect("loads the web build");
         publish_one("a1");
         let mut asked = Asked::default();
@@ -643,7 +643,7 @@ mod tests {
                 .contains("isn't a WebAssembly")
         );
         // No entry points, no script.
-        let bare = wat::parse_str(&format!(
+        let bare = wat::parse_str(format!(
             r#"(module (memory (export "memory") 1) (func (export "blockloom_script_abi") (result i32) i32.const {}))"#,
             abi::ABI_VERSION
         ))
@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn wasm_runaway_is_stopped_with_a_budget_error() {
-        let spinning = wat::parse_str(&format!(
+        let spinning = wat::parse_str(format!(
             r#"(module
   (import "blockloom" "read_number" (func $rn (param i32 i32 i32) (result i32)))
   (import "blockloom" "read_text" (func $rt (param i32 i32 i32) (result i32)))
