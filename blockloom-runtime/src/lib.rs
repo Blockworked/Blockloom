@@ -70,6 +70,7 @@ mod post2d;
 mod wind;
 // Plumbing the Phase 5 passes build on; nothing reads most of it yet.
 mod floaters;
+mod onion;
 mod overlay;
 #[allow(dead_code)]
 mod passes;
@@ -470,6 +471,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     screenfx::register(app);
     floaters::register(app);
     weather2d::register(app);
+    onion::register(app);
     app.add_systems(Update, world::sync_audio_scale.after(world::rebuild_world));
     // Both dimensions register always for live cross-dimension switches;
     // each side's chains run only while its Dimension is live.

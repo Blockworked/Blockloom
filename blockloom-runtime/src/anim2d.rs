@@ -143,7 +143,7 @@ fn playable(spec: &AnimationSpec, rig: Option<&Rig>, name: &str) -> Result<(), S
 
 /// What `play animation` means by `name`: a state first, then a clip. The
 /// clip, the state, a speed multiple and the root-motion switch.
-fn resolve(
+pub(crate) fn resolve(
     spec: &AnimationSpec,
     rig: Option<&Rig>,
     name: &str,
@@ -428,7 +428,7 @@ pub fn cell_rect(
 
 /// Puts `frame` on `sprite`. A sheet cell waits for its sheet to load rather
 /// than flashing the whole sheet.
-fn show_frame(
+pub(crate) fn show_frame(
     sprite: &mut Sprite,
     frame: ClipFrame<'_>,
     dir: Option<&Path>,

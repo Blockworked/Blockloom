@@ -2413,15 +2413,17 @@ The sprite atlas bakes at a per-target size (`build::DESKTOP_ATLAS`, `WEB_ATLAS`
 `ANDROID_ATLAS`), and each `TargetStatus` carries a `look2d_note` the Build
 dialog shows.
 
-The scene view's 2D aids ride `TileDebug` (`PROTOCOL_VERSION` 34): `pixel_grid`
+The scene view's 2D aids ride `TileDebug` (`PROTOCOL_VERSION` 35): `pixel_grid`
 (one-pixel cells once the view is 8 screen pixels a cell), `light_radius`
-(each `Light2d`'s range and spot cone), `camera_bounds` and `parallax_ruler`
+(each `Light2d`'s range and spot cone), `camera_bounds`, `parallax_ruler`
 (a cross per layer, cool when slow and warm when fast), drawn by `edit.rs`
-(`draw_level_aids`, `draw_actor_aids`). The 2D inspector has an All/Sprite/Anim/
+(`draw_level_aids`, `draw_actor_aids`), and `onion_skin` (`onion.rs`: blue and green
+ghost children with the frames either side of an animated sprite's frame, its
+first frame in the scene view, wrapping unless the clip plays once). The 2D inspector has an All/Sprite/Anim/
 Tiles/Light/Camera tab bar that filters the component cards, a live aspect
 thumbnail on the Look card, `FlipbookStrip.qml` under each animation clip (scrub,
 play, timings, markers) and a far-to-near layer stack on the Parallax card.
-The strip outlines the first enabled collider on each frame (eye button); onion skin is not done.
+The strip outlines the first enabled collider on each frame (eye button).
 
 ### 2D post
 
