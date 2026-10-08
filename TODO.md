@@ -1238,10 +1238,10 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         director coverage value, splash rings on ground hit, wind push from the
         global wind asset.
         (Rain, snow and wind-driven leaf motes, with splash rings.)
-  - [ ] Blocks and scripts: `burst particles _ at`, `trail _ on/off`, `flash
+  - [x] Blocks and scripts: `burst particles _ at`, `trail _ on/off`, `flash
         screen _`, `pop _`, reporters `particle count`, `is screen shaking?`.
-        (Done: flash, `screen cover`, `is screen shaking?`; burst and trail
-        blocks exist. Open: `pop _`.)
+        (Pop is `set sprite Pop`. The script ABI for the new dials, hat and
+        components is left to the script thread.)
 - [ ] Editor, preview and scaling for 2D:
   - [x] 2D inspector tabs: Sprite/Anim/Tiles/Light/Camera, live aspect preview
         thumbnail, flipbook strip viewer (scrub frames, see hitboxes), parallax
