@@ -1367,6 +1367,27 @@ A panic inside a script is caught by `export!` and
 logged rather than being allowed to cross the C boundary, which would abort
 the whole game window.
 
+### Script sandbox and guest languages
+
+Besides the native `cdylib`, a script can run as a core wasm module under
+wasmi (`blockloom-runtime/src/script_wasm.rs`, the shape web builds already
+ship): only the three `blockloom.read_number/read_text/act` imports (WASI and
+anything else is refused at load), a 64 MiB ceiling, fuel per call, and a trap
+or empty tank stops that script with an error effect, not the run. Play builds
+the wasm beside the native library when the machine has the target's std;
+`ScriptBackend` (`engine.rs`) loads native first and falls back to wasm
+(`BLOCKLOOM_SCRIPT_BACKEND=wasm` flips it); wasm32 and Android only have the
+one browser/native variant. The frozen `blockloom:script@0.1.0` WIT world is
+`blockloom-core/src/script/wit.rs`, and drift tests refuse an ABI verb with no
+mapping. Guests live in `blockloom-script-guest`: the Rust crate (`src/`,
+`templates/minimal.rs`) and a freestanding C binding (`c/blockloom.h`,
+`templates/minimal.c`, built with `clang --target=wasm32 -nostdlib`; its verb
+numbers are held to `abi.rs` by `c_header_covers_every_abi_verb`). Runtime tests
+build both templates and hold their effects to the WAT fixture's. Python and
+TypeScript guests need the component model (componentize-py/-js emit
+components), which wasmi does not run; that waits on the wasmi vs wasmtime
+decision in `docs/script-plan.md`.
+
 ### Game view
 
 `Backend::start_embedded` takes an `EmbeddedRuntime` host, and

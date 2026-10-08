@@ -1472,7 +1472,7 @@ pub const GUEST_TOOLCHAINS: &[GuestToolchain] = &[
         language: "C",
         toolchain: "wasi-sdk clang -mexec-model=reactor",
         build: "clang --target=wasm32-wasi reactor.c -o script.wasm",
-        notes: "Manual memory management fits the fuel model; still needs bindings and the overhead number.",
+        notes: "Second guest language, shipped as blockloom-script-guest/c/blockloom.h (freestanding, no libc or WASI) with templates/minimal.c; the runtime builds it with clang --target=wasm32 and holds its effects against the Rust guest's. Manual memory management fits the fuel model.",
     },
 ];
 
@@ -1615,6 +1615,27 @@ mod tests {
             verbs.push((format!("{prefix}_{name}"), value));
         }
         verbs
+    }
+
+    /// The C header carries every ABI verb under `BL_<NAME>` with the same
+    /// value, and the same ABI version.
+    #[test]
+    fn c_header_covers_every_abi_verb() {
+        let header = include_str!("../../../blockloom-script-guest/c/blockloom.h");
+        for prefix in ["READ", "TEXT", "ACT", "EVENT"] {
+            for (name, value) in abi_verbs(prefix) {
+                let line = format!("#define BL_{name} {value}u");
+                assert!(
+                    header.lines().any(|l| l == line),
+                    "{name} is missing or moved in the C header"
+                );
+            }
+        }
+        let version = format!("#define BL_ABI_VERSION {}u", abi::ABI_VERSION);
+        assert!(
+            header.lines().any(|l| l == version),
+            "C ABI version drifted"
+        );
     }
 
     /// The guest crate binds the whole frozen world: every ABI verb has a
