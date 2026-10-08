@@ -701,7 +701,11 @@ impl ComponentScript {
         }
         let run = |store: &mut Store<HostState>| {
             // A managed runtime (Mono, the JVM-style ones) finishes booting on its first call.
-            let boot = if self.first_call.replace(false) { 20 } else { 1 };
+            let boot = if self.first_call.replace(false) {
+                20
+            } else {
+                1
+            };
             store.set_fuel(u64::from(Self::budget_ms(hot)) * FUEL_PER_MS * boot)?;
             store.data_mut().actor = actor.to_string();
             store.data_mut().asked = asked as *mut Asked;
