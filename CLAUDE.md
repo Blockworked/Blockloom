@@ -845,8 +845,9 @@ mapping (a `wit-parser` test also resolves the text). Guests live in
 freestanding C binding (`c/blockloom.h`, `templates/minimal.c`, built with
 `clang --target=wasm32 -nostdlib`; its verb numbers are held to `abi.rs` by
 `c_header_covers_every_abi_verb`) and a Python component
-(`templates/minimal.py`, componentize-py), and a JavaScript component
-(`templates/minimal.mjs`, jco; TypeScript compiles to it first). Runtime tests build the Rust and C
+(`templates/minimal.py`, componentize-py), a JavaScript component
+(`templates/minimal.mjs`, jco; TypeScript compiles to it first) and a Go one
+(`templates/minimal.go`, TinyGo wasm-unknown + wasm-tools). Runtime tests build the Rust and C
 templates and hold their effects to the WAT fixture's.
 
 Component-model guests (Python, TypeScript, Go, ...) emit wasm components,
