@@ -1326,6 +1326,7 @@ fn main() {
     runner.fire("Particles", "a1", "Die", "");
     runner.fire("AnimationMarker", "a1", "Step", "");
     runner.fire("EnteredRoom", "a1", "Cave", "");
+    runner.fire("Motor", "a1", "land", "");
     // A storm arriving, beside the green flag: a case with a `when weather
     // becomes` strand gets one, and nothing else sees it.
     runner.fire("Weather", "", "Storm", "");
@@ -1982,6 +1983,10 @@ fn by_vm_ticks(project: &Project) -> Vec<String> {
     vm.fire(Event::EnteredRoom {
         actor: ACTOR.to_string(),
         room: "Cave".to_string(),
+    });
+    vm.fire(Event::Motor {
+        actor: ACTOR.to_string(),
+        event: blockloom_core::physics::motor::MotorEvent::Land,
     });
     // A storm arriving, beside the green flag: a case with a `when weather
     // becomes` strand gets one, like above.
@@ -3947,6 +3952,32 @@ fn when_enter_room_starts_only_for_its_room() {
                 },
                 vec![K::Say {
                     text: Value::text("any room"),
+                }],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn when_motor_starts_only_for_its_event() {
+    use blockloom_core::physics::motor::MotorEvent;
+    assert_same_headed(
+        "motor",
+        vec![
+            (
+                K::WhenMotor {
+                    event: MotorEvent::Land,
+                },
+                vec![K::Say {
+                    text: Value::text("thud"),
+                }],
+            ),
+            (
+                K::WhenMotor {
+                    event: MotorEvent::Jump,
+                },
+                vec![K::Say {
+                    text: Value::text("never"),
                 }],
             ),
         ],

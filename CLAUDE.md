@@ -1791,6 +1791,24 @@ world on the real clock via `set_paused` while interface strands keep going,
 read `Sensors.camera2d`. Not done: a `set camera target` block, a `when camera
 reaches bounds` hat and split-screen.
 
+### 2D movement helpers
+
+`blockloom-core/src/movers.rs`: the `Conveyor` component (`ConveyorSpec`,
+`speed` along the actor's +X turned by its rotation) and `Hazard`
+(`HazardSpec`: `knockback`, `lift`, `invulnerability`, `message`). Phase 4's
+motor already does variable jump, coyote time, jump buffer, air control and
+platform carry; these add the rest. `carry_of` in `blockloom-runtime/src/
+motor.rs` adds the belt under a motor to its carry each fixed tick, and
+`strike_hazards` (end of `drive_motors`) throws each motor in a hazard's
+`touching` set away (`HazardSpec::throw`, through the motor's `push`) once
+per `Invulnerable` window, on the fixed-tick clock so replays match, then
+broadcasts `message`. The hazard needs a collider (a trigger works) so
+touches are reported. `MotorState::wall` is the vertical wall pressed last
+tick: the `on wall` and `wall normal x/y` motor readings. `InstructionKind::
+WhenMotor` is the `when I jump/land/leave the ground/hit my head/change
+stance` hat (`Trigger::Motor`, `Event::Motor`, codegen kind `Motor`, no script
+ABI yet); `drive_motors` fires each event the motor reports.
+
 ### 2D animation and sprites
 
 `blockloom-core/src/animation.rs` is the one animation player, both

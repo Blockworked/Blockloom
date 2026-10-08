@@ -400,6 +400,21 @@ pub const BLOCKS: &[BlockSpec] = &[
         bodies: NO_BODIES,
     },
     BlockSpec {
+        r#type: "WhenMotor",
+        category: "Events",
+        purpose: "Runs in this actor each time its character motor does the chosen thing: jump, land, leave ground, head hit or stance change. Raised on the fixed tick the motor reports it.",
+        header: true,
+        three_d: false,
+        slots: NO_SLOTS,
+        dropdowns: &[Dropdown {
+            field: "event",
+            options: &["Jump", "Land", "LeftGround", "HeadHit", "StanceChanged"],
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
         r#type: "WhenEnterRoom",
         category: "Events",
         purpose: "Runs in this actor each time it walks into a room (an actor with a Room component), named by the room actor's name. Empty matches any room. Checked every fixed tick against the smallest room holding the actor's position; an actor that starts inside a room hasn't entered it.",

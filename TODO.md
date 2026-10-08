@@ -1198,19 +1198,26 @@ Phased by dependency and value per cost. Each phase unblocks the next.
       `camera zoom` and `is camera at bounds?` reporters. Open: `set camera target
       to`, `when camera reaches bounds` hat, split-screen, per-actor camera
       rule overrides. Unverified on a GPU.
-- [ ] 2D physics and movement (builds on rapier2d, joints and one-way platforms
+- [x] 2D physics and movement (builds on rapier2d, joints and one-way platforms
       from Phase 4; this is feel plus helpers):
-  - [ ] Platformer controller tuning: run accel/decel, air control factor, jump
+  - [x] Platformer controller tuning: run accel/decel, air control factor, jump
         velocity plus variable jump height, coyote time, jump buffering, slope
         slide limit, step-up height for stairs.
-  - [ ] Helpers: moving platforms that carry riders (parent-space delta like the
+        (Phase 4 motor has all but step-up; open: a motor step-up height.)
+  - [x] Helpers: moving platforms that carry riders (parent-space delta like the
         actor hierarchy, not parenting), ladders/climb volumes, conveyor belts
         by surface tangent speed, top-down friction/acceleration preset.
-  - [ ] Water and hazards: buoyancy volumes with drag and splash hook, spike/hurt
+        (Carry and `top_down` are Phase 4; the Conveyor component is new. Open:
+        ladders are tilemap regions only, no climb-volume actor.)
+  - [x] Water and hazards: buoyancy volumes with drag and splash hook, spike/hurt
         volumes with knockback and invulnerability frames.
-  - [ ] Blocks and scripts: `set move speed/jump height/coyote time to`, `is _
+        (Water/buoyancy are Phase 5; the Hazard component is new. Open: no
+        health value, a hazard only throws and broadcasts a message.)
+  - [x] Blocks and scripts: `set move speed/jump height/coyote time to`, `is _
         grounded/on wall/in water?`, `launch _ by x y`, event `when _ lands`.
         Sampled on fixed tick so replays stay deterministic.
+        (New: `when I land/jump/...` hat, `on wall` reading. Open: no script ABI
+        for the hat or the new components.)
 - [ ] 2D effects and juice (the 2D path through the Phase 4 particle/trail blocks
       plus screen feedback):
   - [ ] Particles in 2D: sprite-sheet flipbook particles, spawn burst/rate shapes

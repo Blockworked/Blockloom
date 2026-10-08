@@ -599,6 +599,14 @@ impl Scene {
             if let Some(ActorComponent::Light2d { light2d }) = actor.components.get_mut("Light2D") {
                 light2d.normalize();
             }
+            if let Some(ActorComponent::Conveyor { conveyor }) =
+                actor.components.get_mut("Conveyor")
+            {
+                conveyor.normalize();
+            }
+            if let Some(ActorComponent::Hazard { hazard }) = actor.components.get_mut("Hazard") {
+                hazard.normalize();
+            }
             if let Some(ActorComponent::Room { room }) = actor.components.get_mut("Room") {
                 room.normalize();
             }

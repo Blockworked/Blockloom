@@ -387,7 +387,7 @@ impl ScriptEvent {
                 Some(actor.clone()),
                 ScriptEvent::new(abi::EVENT_COLLISION, name_of(with)).detail(with.clone()),
             ),
-            Event::Collision { .. } => return None,
+            Event::Collision { .. } | Event::Motor { .. } => return None,
             Event::Particles { actor, event } => {
                 let particles = me(actor).map(|me| (me.particles, me.position));
                 let (count, at) = particles.map_or((0, [0.0; 3]), |(particles, position)| {

@@ -56,6 +56,7 @@ pub mod library;
 pub mod light2d;
 pub mod lightning;
 pub mod material;
+pub mod movers;
 pub mod nav;
 pub mod normalmap;
 pub mod pack;

@@ -246,6 +246,7 @@ impl LoadedLogic {
                 self.fire_raw("AnimationMarker", &actor, &marker, "")
             }
             Event::EnteredRoom { actor, room } => self.fire_raw("EnteredRoom", &actor, &room, ""),
+            Event::Motor { actor, event } => self.fire_raw("Motor", &actor, event.name(), ""),
             Event::Weather { weather } => self.fire_raw("Weather", "", &weather, ""),
             Event::CutsceneSignal { signal } => self.fire_raw("CutsceneSignal", "", &signal, ""),
             Event::CutsceneEnded { cutscene } => self.fire_raw("CutsceneEnded", "", &cutscene, ""),

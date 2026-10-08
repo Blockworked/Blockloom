@@ -45,6 +45,8 @@ pub enum Trigger {
     EnteredRoom {
         room: String,
     },
+    /// The actor's character motor did this.
+    Motor(crate::physics::motor::MotorEvent),
     /// The newly loaded scene finished warming up and its actors started.
     SceneStarted,
     /// The weather blend landed on the named preset. Empty matches any.
@@ -641,6 +643,7 @@ pub fn compile(graph: &ActorGraph) -> Program {
             InstructionKind::WhenEnterRoom { room } => Some(Trigger::EnteredRoom {
                 room: room.trim().to_string(),
             }),
+            InstructionKind::WhenMotor { event } => Some(Trigger::Motor(*event)),
             InstructionKind::WhenSceneStarts => Some(Trigger::SceneStarted),
             InstructionKind::WhenWeather { weather } => Some(Trigger::Weather {
                 weather: weather.trim().to_string(),
@@ -1679,6 +1682,7 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenParticles { .. }
         | K::WhenAnimationMarker { .. }
         | K::WhenEnterRoom { .. }
+        | K::WhenMotor { .. }
         | K::WhenQualityDrops
         | K::WhenSceneStarts
         | K::WhenWeather { .. }

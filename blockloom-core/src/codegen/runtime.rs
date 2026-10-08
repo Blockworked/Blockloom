@@ -977,7 +977,9 @@ impl Runner {
                     entry.detail.is_empty() || entry.detail.eq_ignore_ascii_case(detail)
                 }
                 ("CutsceneEnded", "CutsceneEnded") => true,
-                ("Particles", "Particles") => entry.actor == &*template && entry.detail == detail,
+                ("Particles", "Particles") | ("Motor", "Motor") => {
+                    entry.actor == &*template && entry.detail == detail
+                }
                 // A plugin's event reaches every actor, or only the one it names.
                 ("Plugin", "Plugin") => {
                     (actor.is_empty() || entry.actor == &*template)
@@ -993,7 +995,7 @@ impl Runner {
             // starts every copy's.
             let running = match kind {
                 "Clicked" | "Collision" | "AnimationEnded" | "AnimationMarker" | "Particles"
-                | "EnteredRoom" => {
+                | "Motor" | "EnteredRoom" => {
                     vec![Rc::from(actor)]
                 }
                 "Plugin" if !actor.is_empty() => vec![Rc::from(actor)],

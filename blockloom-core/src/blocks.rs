@@ -236,6 +236,12 @@ pub enum InstructionKind {
     WhenEnterRoom {
         room: String,
     },
+    /// Runs in an actor each time its character motor jumps, lands, leaves
+    /// the ground, bumps its head or changes stance.
+    WhenMotor {
+        #[serde(default)]
+        event: crate::physics::motor::MotorEvent,
+    },
     /// Runs in the newly loaded scene's actors after a `switch scene to`
     /// finishes loading it, and once at the start of the first scene.
     WhenSceneStarts,
@@ -1778,6 +1784,7 @@ impl BlockKind for InstructionKind {
             | K::WhenParticles { .. }
             | K::WhenAnimationMarker { .. }
             | K::WhenEnterRoom { .. }
+            | K::WhenMotor { .. }
             | K::WhenSceneStarts
             | K::WhenWeather { .. }
             | K::WhenSceneEnds
@@ -1840,6 +1847,7 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenParticles { .. }
                 | InstructionKind::WhenAnimationMarker { .. }
                 | InstructionKind::WhenEnterRoom { .. }
+                | InstructionKind::WhenMotor { .. }
                 | InstructionKind::WhenSceneStarts
                 | InstructionKind::WhenWeather { .. }
                 | InstructionKind::WhenSceneEnds

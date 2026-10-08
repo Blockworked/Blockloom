@@ -78,6 +78,8 @@ Rectangle {
     function emitterOf(c) { return Object.assign({ rate: 24, lifetime: 0.8, speed: 120, spread: 60, gravity_scale: 0.5, size_start: 6, size_end: 1, color_start: "#FFFFFF", color_end: "#FFAB19", max: 128, wind: 1 }, c.emitter || {}); }
     function lightOf(c) { return Object.assign({ kind: "Point", color: "#FFFFFF", intensity: 800, range: 20, radius: 0, inner_angle: 30, outer_angle: 45, shadows: false,
         unit: "Lumens", width: 1, height: 1, cookie: "", cookie_tiling: 1, ies: "", contact_shadows: false, soft_shadows: false, shadow_depth_bias: null, shadow_normal_bias: null, ray_traced: true, volumetric: true }, c.light || {}); }
+    function conveyorOf(c) { return Object.assign({ speed: 96, enabled: true }, c.conveyor || {}); }
+    function hazardOf(c) { return Object.assign({ enabled: true, knockback: 288, lift: 0.5, invulnerability: 1, message: "hurt" }, c.hazard || {}); }
     function light2dOf(c) {
         const l = Object.assign({ kind: "Point", color: "#FFE2A8", intensity: 1, range: 240, falloff: 2, inner_angle: 25, outer_angle: 40, shadows: false, softness: 12, flicker: {} }, c.light2d || {});
         l.flicker = Object.assign({ amount: 0, speed: 8, seed: 1 }, l.flicker);
@@ -261,6 +263,8 @@ Rectangle {
     function writeEmitter(c, next) { write("Emitter", { component: "Emitter", emitter: merged(emitterOf(c), next) }); }
     function writeLight(c, next) { write("Light", { component: "Light", light: merged(lightOf(c), next) }); }
     function writeLight2d(c, next) { write("Light2d", { component: "Light2d", light2d: merged(light2dOf(c), next) }); }
+    function writeConveyor(c, next) { write("Conveyor", { component: "Conveyor", conveyor: merged(conveyorOf(c), next) }); }
+    function writeHazard(c, next) { write("Hazard", { component: "Hazard", hazard: merged(hazardOf(c), next) }); }
     function writeBeam(c, next) { writeLight(c, { beam: merged(beamOf(lightOf(c)), next) }); }
     function writeMotes(c, next) { writeBeam(c, { motes: merged(beamOf(lightOf(c)).motes, next) }); }
     function writeTrail(c, next) { write("Trail", { component: "Trail", trail: merged(trailOf(c), next) }); }
@@ -366,11 +370,11 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Rigidbody","Collider","Constraint","CharacterController","CharacterMotor","PlayerCamera","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Light2d","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
+        return ["Look","Render","Body","Rigidbody","Collider","Constraint","CharacterController","CharacterMotor","PlayerCamera","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Light2d","Conveyor","Hazard","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
             .filter(n => n !== "Sprite" || !is3d)
             .filter(n => n !== "Fracture" || is3d)
-            .filter(n => n !== "Light2d" || !is3d)
-            .filter(n => n === "Custom" || n === "Collider" || n === "Constraint" || n === "Script" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : (n === "Light2d" ? "2D light" : n) }))
+            .filter(n => (n !== "Light2d" && n !== "Conveyor" && n !== "Hazard") || !is3d)
+            .filter(n => n === "Custom" || n === "Collider" || n === "Constraint" || n === "Script" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : (n === "Light2d" ? "2D light" : n === "Conveyor" ? "Conveyor belt" : n === "Hazard" ? "Hurt volume" : n) }))
             .concat(pluginTypes.filter(t => t.kind === "component" && held.indexOf(t.name) < 0).map(t => ({ value: "plugin:" + t.name, label: t.displayName + " (" + t.pluginName + ")" })));
     }
     function blank(name) {
@@ -388,6 +392,8 @@ Rectangle {
         case "Trail": return { component: "Trail", trail: trailOf({}) };
         case "Light": return { component: "Light", light: lightOf({}) };
         case "Light2d": return { component: "Light2d", light2d: light2dOf({}) };
+        case "Conveyor": return { component: "Conveyor", conveyor: conveyorOf({}) };
+        case "Hazard": return { component: "Hazard", hazard: hazardOf({}) };
         case "Animation": return { component: "Animation", animation: { clips: [], states: [] } };
         case "Sprite": return { component: "Sprite", sprite: spriteOf({}) };
         case "Volume": return { component: "Volume", volume: volumeOf({}) };
@@ -495,7 +501,7 @@ Rectangle {
                                 Layout.fillWidth: true
                                 readonly property var c: card.c
                                 sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Rigidbody: rigidbodyCard, Collider: colliderCard, Constraint: constraintCard, CharacterController: controllerCard, CharacterMotor: motorCard, PlayerCamera: playerCameraCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                    Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Light2d: light2dCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard, Plugin: pluginCard })[card.c.component] || null
+                                                    Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Light2d: light2dCard, Conveyor: conveyorCard, Hazard: hazardCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard, Plugin: pluginCard })[card.c.component] || null
                             }
                         }
                     }
@@ -1265,6 +1271,43 @@ Rectangle {
             InspectorRow { label: "Flicker"; Layout.fillWidth: true
                 NumberField { value: l2.l.flicker.amount; fallback: 0; onCommitted: n => root.writeLight2d(l2.c, { flicker: Object.assign({}, l2.l.flicker, { amount: Math.min(Math.max(n, 0), 1) }) }) }
                 NumberField { value: l2.l.flicker.speed; fallback: 8; onCommitted: n => root.writeLight2d(l2.c, { flicker: Object.assign({}, l2.l.flicker, { speed: Math.max(0, n) }) }) } }
+        }
+    }
+    Component {
+        id: conveyorCard
+        ColumnLayout {
+            id: cv
+            readonly property var c: parent.c
+            readonly property var b: root.conveyorOf(c)
+            spacing: 6
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Carries characters standing on it along its facing (turn the actor to aim it). Speed is pixels a second." }
+            InspectorRow { label: "On"; Layout.fillWidth: true
+                SwitchField { value: cv.b.enabled; onToggled: on => root.writeConveyor(cv.c, { enabled: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Speed"; Layout.fillWidth: true
+                NumberField { value: cv.b.speed; fallback: 96; onCommitted: n => root.writeConveyor(cv.c, { speed: n }) } }
+        }
+    }
+    Component {
+        id: hazardCard
+        ColumnLayout {
+            id: hz
+            readonly property var c: parent.c
+            readonly property var h: root.hazardOf(c)
+            spacing: 6
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Throws a touching character away, then leaves it safe for the invulnerability time. Needs a collider (a trigger works)." }
+            InspectorRow { label: "On"; Layout.fillWidth: true
+                SwitchField { value: hz.h.enabled; onToggled: on => root.writeHazard(hz.c, { enabled: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Knockback"; Layout.fillWidth: true
+                NumberField { value: hz.h.knockback; fallback: 288; onCommitted: n => root.writeHazard(hz.c, { knockback: Math.max(0, n) }) } }
+            InspectorRow { label: "Lift"; Layout.fillWidth: true
+                NumberField { value: hz.h.lift; fallback: 0.5; onCommitted: n => root.writeHazard(hz.c, { lift: Math.min(Math.max(n, 0), 1) }) } }
+            InspectorRow { label: "Safe for (s)"; Layout.fillWidth: true
+                NumberField { value: hz.h.invulnerability; fallback: 1; onCommitted: n => root.writeHazard(hz.c, { invulnerability: Math.max(0, n) }) } }
+            InspectorRow { label: "Message"; Layout.fillWidth: true
+                BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Broadcast when it hurts"; text: hz.h.message
+                    onEditingFinished: if (text !== hz.h.message) root.writeHazard(hz.c, { message: text }) } }
         }
     }
     Component {
