@@ -1388,7 +1388,10 @@ freestanding C binding (`c/blockloom.h`, `templates/minimal.c`, built with
 `c_header_covers_every_abi_verb`) and a Python component
 (`templates/minimal.py`, componentize-py), a JavaScript component
 (`templates/minimal.mjs`, jco; TypeScript compiles to it first) and a Go one
-(`templates/minimal.go`, TinyGo wasm-unknown + wasm-tools). Runtime tests build the Rust and C
+(`templates/minimal.go`, TinyGo wasm-unknown + wasm-tools), a C# one (`csharp/`, Mono on wasi-wasm,
+`templates/minimal.cs`) and a Kotlin one (`kotlin/`, Kotlin/Wasm WASI with a hand-written
+canonical-ABI binding, `templates/minimal.kt`; the host engine enables WasmGC and exceptions for
+it). Each has a `build.sh`. Runtime tests build the Rust and C
 templates and hold their effects to the WAT fixture's.
 
 Component-model guests (Python, TypeScript, Go, ...) emit wasm components,

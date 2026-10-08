@@ -510,6 +510,10 @@ fn shared_engine() -> Result<Engine, String> {
         .get_or_init(|| {
             let mut config = Config::new();
             config.consume_fuel(true);
+            // Kotlin/Wasm emits WasmGC and the new exception handling.
+            config.wasm_function_references(true);
+            config.wasm_gc(true);
+            config.wasm_exceptions(true);
             Engine::new(&config).map_err(|e| e.to_string())
         })
         .clone()
@@ -586,6 +590,7 @@ fn export<P: ComponentNamedList + Lower, R: ComponentNamedList + Lift>(
 pub struct ComponentScript {
     relative: String,
     store: RefCell<Store<HostState>>,
+    first_call: std::cell::Cell<bool>,
     start: TypedFunc<(), ()>,
     tick: TypedFunc<(f32,), ()>,
     frame: TypedFunc<(f32,), ()>,
@@ -661,6 +666,7 @@ impl ComponentScript {
             stop: func!("stop"),
             destroy: func!("destroy"),
             event: func!("on-event"),
+            first_call: std::cell::Cell::new(true),
             store: RefCell::new(store),
         })
     }
@@ -694,7 +700,9 @@ impl ComponentScript {
             return;
         }
         let run = |store: &mut Store<HostState>| {
-            store.set_fuel(u64::from(Self::budget_ms(hot)) * FUEL_PER_MS)?;
+            // A managed runtime (Mono, the JVM-style ones) finishes booting on its first call.
+            let boot = if self.first_call.replace(false) { 20 } else { 1 };
+            store.set_fuel(u64::from(Self::budget_ms(hot)) * FUEL_PER_MS * boot)?;
             store.data_mut().actor = actor.to_string();
             store.data_mut().asked = asked as *mut Asked;
             let result = f(store);
