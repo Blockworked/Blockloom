@@ -1749,6 +1749,14 @@ by a fingerprint of the light and its occluders. The shader and
 `set ambient color to` (`SetLook2d`) land in `engine.look2d` for the run.
 Not done: per-sorting-layer lighting and normal-map lit sprites.
 
+### 2D weather
+
+`blockloom-core/src/weather2d.rs` is rain and snow motes as a stateless
+function of the clock (`mote(kind, i, time, wind_x)`), so a replay matches.
+`blockloom-runtime/src/weather2d.rs` draws a pool of UI nodes (z 5) from the
+weather blend's `precipitation` and `snow`, slanted by the global wind. Rain
+ends in a splash ring. Not done: leaf presets.
+
 ### 2D post
 
 `blockloom-core/src/post2d.rs` (`World.post2d`) holds pixelation, per-channel

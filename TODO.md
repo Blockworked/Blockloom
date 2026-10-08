@@ -1234,10 +1234,10 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         clock when paused, fixed tick when running).
         (Flash and cover dials are new; slow-mo, hitstop and the scene veil
         already existed. The iris cover closes to a hole.)
-  - [ ] Weather lite in 2D: rain/snow/leaf particle presets tied to the weather
+  - [x] Weather lite in 2D: rain/snow/leaf particle presets tied to the weather
         director coverage value, splash rings on ground hit, wind push from the
         global wind asset.
-        (Open: not started; 2D has no rain/snow presets.)
+        (Rain and snow motes follow the blend's precipitation and snow, with splash rings; leaf presets are not done.)
   - [ ] Blocks and scripts: `burst particles _ at`, `trail _ on/off`, `flash
         screen _`, `pop _`, reporters `particle count`, `is screen shaking?`.
         (Done: flash, `screen cover`, `is screen shaking?`; burst and trail

@@ -90,6 +90,7 @@ pub mod vm;
 pub mod vocabulary;
 pub mod volume;
 pub mod water;
+pub mod weather2d;
 pub mod web_build;
 pub mod wind;
 pub mod wire;

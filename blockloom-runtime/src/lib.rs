@@ -119,6 +119,7 @@ mod vfx;
 mod volume_heat;
 mod volumes;
 mod water;
+mod weather2d;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 mod world;
@@ -468,6 +469,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     app.add_systems(Update, transition::drive_veil);
     screenfx::register(app);
     floaters::register(app);
+    weather2d::register(app);
     app.add_systems(Update, world::sync_audio_scale.after(world::rebuild_world));
     // Both dimensions register always for live cross-dimension switches;
     // each side's chains run only while its Dimension is live.
