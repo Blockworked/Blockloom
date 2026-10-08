@@ -1203,7 +1203,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [x] Platformer controller tuning: run accel/decel, air control factor, jump
         velocity plus variable jump height, coyote time, jump buffering, slope
         slide limit, step-up height for stairs.
-        (Phase 4 motor has all but step-up; open: a motor step-up height.)
+        (The character controller's step offset covers stairs.)
   - [x] Helpers: moving platforms that carry riders (parent-space delta like the
         actor hierarchy, not parenting), ladders/climb volumes, conveyor belts
         by surface tangent speed, top-down friction/acceleration preset.
@@ -1225,15 +1225,15 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         size over life curves, soft-edge fade near tile collision.
         (Phase 5 VFX already gives 2D CPU particles with shapes, curves and
         flipbooks; left open: soft-edge fade near tile collision.)
-  - [ ] Trails and feedback: ribbon trails behind fast actors, ghost afterimages
+  - [x] Trails and feedback: ribbon trails behind fast actors, ghost afterimages
         with lifetime (reuse the existing ghost path), floating damage text,
         squash-and-stretch scale pops on land/hit.
-        (Trail and ghost exist from Phase 5; open: damage text and pop.)
+        (Trail and ghost exist from Phase 5; `set sprite Pop` and `FloatNumber` are new.)
   - [x] Screen transitions: fade/wipe/circle wipes between rooms, flash frames,
         slow-mo timeScale curve plus hitstop (same clock rule as cinematics: wall
         clock when paused, fixed tick when running).
         (Flash and cover dials are new; slow-mo, hitstop and the scene veil
-        already existed. Open: an iris that opens a hole.)
+        already existed. The iris cover closes to a hole.)
   - [ ] Weather lite in 2D: rain/snow/leaf particle presets tied to the weather
         director coverage value, splash rings on ground hit, wind push from the
         global wind asset.

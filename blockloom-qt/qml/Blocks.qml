@@ -299,7 +299,7 @@ QtObject {
             SetRigSlot: row([lb("set rig slot"), slot("RigSlot", "slot"), lb("to attachment"), slot("RigAttachment", "attachment")]),
             SetSlotTint: row([lb("tint rig slot"), slot("RigSlot", "slot"), lb("with"), slot("SlotColor", "color")]),
             SetIkTarget: row([lb("point IK"), slot("IkConstraint", "constraint"), lb("at x"), slot("IkX", "x"), lb("y"), slot("IkY", "y")]),
-            SetSpriteDial: row([lb("set sprite"), dd("dial", () => opts(["FlipX","FlipY","Order","YSort","Palette","OutlineWidth"])), lb("to"), slot("SpriteValue", "value")]),
+            SetSpriteDial: row([lb("set sprite"), dd("dial", () => opts(["FlipX","FlipY","Order","YSort","Palette","OutlineWidth","Pop","FloatNumber"])), lb("to"), slot("SpriteValue", "value")]),
             // Sound
             PlaySound: row([lb("play sound"), slot("SoundAsset", "sound"), lb("volume"), slot("SoundVolume", "volume"), lb("pitch"), slot("SoundPitch", "pitch"), flag("loop", soundLoopOptions), lb("on"), dd("bus", soundBusOptions)]),
             PlaySoundAt: row([lb("play sound"), slot("SoundAsset", "sound"), lb("volume"), slot("SoundVolume", "volume"), lb("pitch"), slot("SoundPitch", "pitch"), flag("loop", soundLoopOptions), lb("on"), dd("bus", soundBusOptions), lb("at"), slot("SoundTarget", "target")]),

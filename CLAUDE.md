@@ -1820,8 +1820,10 @@ nodes over the interface (z 52 cover, 54 flash), separate from the scene
 switch veil in `transition.rs` (which it borrows `normalize_kind` and the iris
 size from). `screen cover` and `is screen shaking?` read `Camera2dSense`.
 Slow-mo, hitstop, fade-to-black and shake blocks already exist from the
-cinematic work. Not done: squash-and-stretch `pop`, floating damage text,
-an iris that opens a hole (the circle only grows a disc), a script ABI.
+cinematic work. The `Iris` cover kind is a ring that closes to a hole. The
+sprite dials `Pop` (area-preserving squash-and-stretch, render-only, applied
+in PostUpdate and cleared in First) and `FloatNumber` (a UI label that rises
+and fades, `floaters.rs`) finish the feedback set. Not done: a script ABI.
 
 ### 2D animation and sprites
 

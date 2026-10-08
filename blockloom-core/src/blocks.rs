@@ -23,6 +23,10 @@ pub enum SpriteDial {
     YSort,
     Palette,
     OutlineWidth,
+    /// A squash-and-stretch pop of this strength (0.3 is lively).
+    Pop,
+    /// Floats this number up from the sprite and fades it out.
+    FloatNumber,
 }
 
 impl SpriteDial {
@@ -40,6 +44,8 @@ impl SpriteDial {
             "ysort" => Some(SpriteDial::YSort),
             "palette" => Some(SpriteDial::Palette),
             "outlinewidth" | "outline" => Some(SpriteDial::OutlineWidth),
+            "pop" | "squash" => Some(SpriteDial::Pop),
+            "floatnumber" | "float" => Some(SpriteDial::FloatNumber),
             _ => None,
         }
     }

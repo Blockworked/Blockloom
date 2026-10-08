@@ -12,10 +12,35 @@ use blockloom_core::sense::{self};
 const FLASH_Z: i32 = 54;
 const COVER_Z: i32 = 52;
 
+/// How a cover hides the screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CoverKind {
+    #[default]
+    Fade,
+    Wipe,
+    /// A disc grows from the centre.
+    Circle,
+    /// The picture shrinks to a hole in the centre and closes.
+    Iris,
+}
+
+impl CoverKind {
+    fn parse(name: &str) -> Self {
+        if name.trim().eq_ignore_ascii_case("iris") {
+            return Self::Iris;
+        }
+        match normalize_kind(name) {
+            VeilKind::Wipe => Self::Wipe,
+            VeilKind::Circle => Self::Circle,
+            _ => Self::Fade,
+        }
+    }
+}
+
 /// What the flash and the cover are doing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScreenFx {
-    pub kind: VeilKind,
+    pub kind: CoverKind,
     pub color: [f32; 3],
     /// Seconds from clear to opaque.
     pub time: f32,
@@ -29,7 +54,7 @@ pub struct ScreenFx {
 impl Default for ScreenFx {
     fn default() -> Self {
         Self {
-            kind: VeilKind::Fade,
+            kind: CoverKind::Fade,
             color: [0.0; 3],
             time: 0.5,
             cover: 0.0,
@@ -66,10 +91,7 @@ impl ScreenFx {
                 }
             }
             Look2dDial::CoverKind => {
-                self.kind = match normalize_kind(value) {
-                    VeilKind::None => VeilKind::Fade,
-                    kind => kind,
-                };
+                self.kind = CoverKind::parse(value);
             }
             Look2dDial::CoverColor => {
                 if let Some(c) = parse_srgb(value) {
@@ -115,7 +137,7 @@ struct FlashNode;
 
 /// The cover's node, with the kind it was built for.
 #[derive(Component)]
-struct CoverNode(VeilKind);
+struct CoverNode(CoverKind);
 
 #[derive(Component)]
 struct CoverDisc;
@@ -194,11 +216,14 @@ fn drive_screenfx(
     let color = rgb(fx.color);
     if let Some((_, _, mut node, mut bg)) = covers.iter_mut().next() {
         match fx.kind {
-            VeilKind::Wipe => {
+            CoverKind::Wipe => {
                 node.width = Val::Percent(cover * 100.0);
                 bg.0 = color;
             }
-            VeilKind::Circle => {
+            CoverKind::Iris => {
+                node.border = UiRect::all(iris_border(cover));
+            }
+            CoverKind::Circle => {
                 bg.0 = color.with_alpha(0.0);
                 let diameter = Val::VMin(cover * CIRCLE_COVER_VMIN);
                 for (mut disc, mut disc_bg) in &mut discs {
@@ -214,7 +239,7 @@ fn drive_screenfx(
     let mut root = full(Node::default());
     let kind = fx.kind;
     match kind {
-        VeilKind::Wipe => {
+        CoverKind::Wipe => {
             root.width = Val::Percent(cover * 100.0);
             commands.spawn((
                 Name::new("screen-cover"),
@@ -224,7 +249,29 @@ fn drive_screenfx(
                 GlobalZIndex(COVER_Z),
             ));
         }
-        VeilKind::Circle => {
+        CoverKind::Iris => {
+            // A huge ring node: its thick border is the cover, its hole the picture.
+            let size = Val::VMin(CIRCLE_COVER_VMIN);
+            commands.spawn((
+                Name::new("screen-cover"),
+                CoverNode(kind),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(50.0),
+                    top: Val::Percent(50.0),
+                    width: size,
+                    height: size,
+                    border: UiRect::all(iris_border(cover)),
+                    border_radius: BorderRadius::all(Val::Percent(50.0)),
+                    ..default()
+                },
+                UiTransform::from_translation(Val2::percent(-50.0, -50.0)),
+                BackgroundColor(color.with_alpha(0.0)),
+                BorderColor::all(color),
+                GlobalZIndex(COVER_Z),
+            ));
+        }
+        CoverKind::Circle => {
             root.display = Display::Flex;
             root.justify_content = JustifyContent::Center;
             root.align_items = AlignItems::Center;
@@ -260,6 +307,11 @@ fn drive_screenfx(
             ));
         }
     }
+}
+
+/// The ring's thickness for a cover: 0 leaves the whole picture, 1 closes it.
+fn iris_border(cover: f32) -> Val {
+    Val::VMin(cover.clamp(0.0, 1.0) * CIRCLE_COVER_VMIN / 2.0)
 }
 
 /// Lets `screen cover` read what the screen shows.
@@ -310,9 +362,11 @@ mod tests {
         assert_eq!(fx.cover, 1.0, "clamped, and instant with no time");
         fx.set(Look2dDial::Cover, "nope");
         fx.set(Look2dDial::CoverKind, "iris wipe");
-        assert_eq!(fx.kind, VeilKind::Fade, "unknown kinds stay a fade");
+        assert_eq!(fx.kind, CoverKind::Fade, "unknown kinds stay a fade");
         fx.set(Look2dDial::CoverKind, "Circle");
-        assert_eq!(fx.kind, VeilKind::Circle);
+        assert_eq!(fx.kind, CoverKind::Circle);
+        fx.set(Look2dDial::CoverKind, "Iris");
+        assert_eq!(fx.kind, CoverKind::Iris);
         fx.set(Look2dDial::CoverColor, "red");
         assert_eq!(fx.color, [0.0; 3], "a bad color is ignored");
     }

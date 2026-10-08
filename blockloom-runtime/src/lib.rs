@@ -69,6 +69,7 @@ mod player_camera;
 mod post2d;
 mod wind;
 // Plumbing the Phase 5 passes build on; nothing reads most of it yet.
+mod floaters;
 mod overlay;
 #[allow(dead_code)]
 mod passes;
@@ -466,6 +467,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // mode, so they run once outside the gated dimension blocks.
     app.add_systems(Update, transition::drive_veil);
     screenfx::register(app);
+    floaters::register(app);
     app.add_systems(Update, world::sync_audio_scale.after(world::rebuild_world));
     // Both dimensions register always for live cross-dimension switches;
     // each side's chains run only while its Dimension is live.
@@ -714,6 +716,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             First,
             (
                 sprites::clear_sort_depth.run_if(is_2d),
+                sprites::clear_pop.run_if(is_2d),
                 tiles::clear_parallax,
                 tiles::clear_parallax_3d.run_if(is_3d),
             ),
@@ -728,7 +731,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         )
         .add_systems(
             PostUpdate,
-            sprites::apply_sort_depth
+            (sprites::apply_sort_depth, sprites::apply_pop)
                 .before(bevy::transform::TransformSystems::Propagate)
                 .run_if(is_2d),
         )

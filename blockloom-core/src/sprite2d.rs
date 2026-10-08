@@ -186,6 +186,45 @@ pub fn order_depth(order: i32) -> f32 {
     order.clamp(-ORDER_LIMIT, ORDER_LIMIT) as f32 * ORDER_STEP
 }
 
+/// Seconds a pop takes to settle.
+pub const POP_SECONDS: f32 = 0.4;
+
+/// Seconds a floating number lives.
+pub const FLOAT_SECONDS: f32 = 0.9;
+/// Pixels a floating number rises over its life.
+pub const FLOAT_RISE: f32 = 56.0;
+
+/// How far up a floating number has risen and how opaque it is at `age`.
+pub fn float_state(age: f32) -> (f32, f32) {
+    let t = (age / FLOAT_SECONDS).clamp(0.0, 1.0);
+    let ease = 1.0 - (1.0 - t) * (1.0 - t);
+    (FLOAT_RISE * ease, (1.0 - t * t).clamp(0.0, 1.0))
+}
+
+/// A number as a floater shows it: whole when it is whole.
+pub fn float_label(value: f32) -> String {
+    if !value.is_finite() {
+        return String::new();
+    }
+    if value.fract().abs() < 1e-4 {
+        format!("{}", value.round() as i64)
+    } else {
+        format!("{value:.1}")
+    }
+}
+
+/// The scale a pop of `strength` has `age` seconds in: a damped wobble that
+/// stretches up while it squashes in (and back), keeping the area.
+pub fn pop_scale(strength: f32, age: f32) -> [f32; 2] {
+    if !strength.is_finite() || !age.is_finite() || !(0.0..POP_SECONDS).contains(&age) {
+        return [1.0, 1.0];
+    }
+    let fade = 1.0 - age / POP_SECONDS;
+    let swing = strength.clamp(-0.8, 2.0) * fade * fade * (age * 18.0).cos();
+    let tall = (1.0 + swing).max(0.2);
+    [1.0 / tall, tall]
+}
+
 /// Y-sort depth for sprites sharing one layer and order, by rank rather than
 /// raw height, so any spread of heights spans the whole band. Lower on
 /// screen is nearer; equal heights tie.
@@ -228,6 +267,28 @@ pub fn stack_slice_offset(stack: &SpriteStack, index: u32, rotation: f32) -> [f3
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn floaters_rise_fade_and_print_cleanly() {
+        assert_eq!(float_state(0.0), (0.0, 1.0));
+        let (rise, alpha) = float_state(FLOAT_SECONDS);
+        assert_eq!((rise, alpha), (FLOAT_RISE, 0.0));
+        assert_eq!(float_label(25.0), "25");
+        assert_eq!(float_label(-3.0), "-3");
+        assert_eq!(float_label(1.26), "1.3");
+        assert_eq!(float_label(f32::NAN), "");
+    }
+
+    #[test]
+    fn a_pop_stretches_then_settles_keeping_area() {
+        let start = pop_scale(0.3, 0.0);
+        assert!((start[0] * start[1] - 1.0).abs() < 1e-5);
+        assert!(start[1] > 1.0 && start[0] < 1.0);
+        assert_eq!(pop_scale(0.3, POP_SECONDS), [1.0, 1.0]);
+        assert_eq!(pop_scale(f32::NAN, 0.1), [1.0, 1.0]);
+        let later = pop_scale(0.3, 0.3);
+        assert!((later[1] - 1.0).abs() < (start[1] - 1.0).abs());
+    }
+
     use super::*;
 
     #[test]

@@ -249,6 +249,8 @@ const SPRITE_DIALS: &[Dropdown] = &[Dropdown {
         "YSort",
         "Palette",
         "OutlineWidth",
+        "Pop",
+        "FloatNumber",
     ],
 }];
 const NO_STRINGS: &[&str] = &[];
@@ -819,7 +821,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "SetSpriteDial",
         category: "Looks",
-        purpose: "Changes one 2D sprite dial for the rest of the run: FlipX, FlipY and YSort take 1 for on, Order is -40 to 40 inside the Render layer, Palette is the palette row, OutlineWidth is pixels.",
+        purpose: "Changes one 2D sprite dial for the rest of the run: FlipX, FlipY and YSort take 1 for on, Order is -40 to 40 inside the Render layer, Palette is the palette row, OutlineWidth is pixels, Pop is a squash-and-stretch strength (0.3 is lively; it settles in under half a second), FloatNumber floats that number up from the sprite (red below zero, green above) and fades it.",
         header: false,
         three_d: false,
         slots: &[Slot {

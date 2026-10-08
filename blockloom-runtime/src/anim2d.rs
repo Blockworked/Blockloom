@@ -201,6 +201,7 @@ pub fn apply_animation_effects(
     mut players: Query<&mut AnimationPlayer>,
     mut rigs: Query<&mut RigInstance>,
     mut dials: Query<&mut SpriteDials>,
+    transforms: Query<&Transform>,
 ) {
     if !engine.running || engine.paused {
         return;
@@ -328,6 +329,27 @@ pub fn apply_animation_effects(
                 };
                 instance.targets.retain(|(which, _)| *which != index);
                 instance.targets.push((index, [*x, *y]));
+            }
+            Effect::SetSpriteDial {
+                dial: blockloom_core::blocks::SpriteDial::Pop,
+                value,
+                ..
+            } => {
+                commands.entity(entity).insert(crate::sprites::Pop {
+                    strength: *value,
+                    age: 0.0,
+                });
+            }
+            Effect::SetSpriteDial {
+                dial: blockloom_core::blocks::SpriteDial::FloatNumber,
+                value,
+                ..
+            } => {
+                if let (Some(def), Ok(transform)) = (engine.actor(actor), transforms.get(entity)) {
+                    let anchor =
+                        crate::world::actor_top(def, transform, blockloom_core::scene::Mode::TwoD);
+                    crate::floaters::spawn(&mut commands, *value, anchor);
+                }
             }
             Effect::SetSpriteDial { dial, value, .. } => {
                 if let Some(dials) = fresh_dials.get_mut(&entity) {
