@@ -349,6 +349,43 @@ Item {
                 Note { text: "Finishes the picture with pixel-art and retro looks. Pixel size groups screen pixels into blocks; a palette snaps colors to the list (hex, space separated), else color levels does it per channel. Split shows the look on the left part of the frame only, to compare it with the plain picture. The interface is not affected." }
             }
             Section {
+                id: cam2d
+                heading: "2D camera"; available: !!root.world && !root.is3d
+                readonly property var c: root.world && root.world.camera2d ? root.world.camera2d : ({ lock_x: false, lock_y: false, bounds: null, soft_edge: 0, zoom_height: 0, zoom: null, pixel_snap: false, rotation: 0, shake: { max_offset: 24, max_angle: 3, frequency: 25, decay: 1.5 } })
+                function write(next) { root.invoke("set_camera_2d", { camera: Object.assign(JSON.parse(JSON.stringify(root.world.camera2d || {})), next) }); }
+                function writeBound(side, axis, v) {
+                    const b = c.bounds ? JSON.parse(JSON.stringify(c.bounds)) : { min: [-1000, -1000], max: [1000, 1000] };
+                    b[side][axis] = v;
+                    write({ bounds: b });
+                }
+                InspectorRow { label: "Lock x, y"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: cam2d.c.lock_x; onToggled: on => cam2d.write({ lock_x: on }) }
+                    SwitchField { value: cam2d.c.lock_y; onToggled: on => cam2d.write({ lock_y: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { label: "Bounded"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: !!cam2d.c.bounds; onToggled: on => cam2d.write({ bounds: on ? { min: [-1000, -1000], max: [1000, 1000] } : null }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: !!cam2d.c.bounds; label: "Left, bottom"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cam2d.c.bounds ? cam2d.c.bounds.min[0] : 0; fallback: -1000; onCommitted: n => cam2d.writeBound("min", 0, n) }
+                    NumberField { value: cam2d.c.bounds ? cam2d.c.bounds.min[1] : 0; fallback: -1000; onCommitted: n => cam2d.writeBound("min", 1, n) } }
+                InspectorRow { visible: !!cam2d.c.bounds; label: "Right, top"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cam2d.c.bounds ? cam2d.c.bounds.max[0] : 0; fallback: 1000; onCommitted: n => cam2d.writeBound("max", 0, n) }
+                    NumberField { value: cam2d.c.bounds ? cam2d.c.bounds.max[1] : 0; fallback: 1000; onCommitted: n => cam2d.writeBound("max", 1, n) } }
+                InspectorRow { visible: !!cam2d.c.bounds; label: "Soft edge"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cam2d.c.soft_edge; fallback: 0; onCommitted: n => cam2d.write({ soft_edge: Math.max(0, n) }) } }
+                InspectorRow { label: "View height"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cam2d.c.zoom_height; fallback: 0; onCommitted: n => cam2d.write({ zoom_height: Math.max(0, n) }) } }
+                InspectorRow { label: "Pixel snap"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: cam2d.c.pixel_snap; onToggled: on => cam2d.write({ pixel_snap: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { label: "Roll °"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cam2d.c.rotation; fallback: 0; onCommitted: n => cam2d.write({ rotation: n }) } }
+                InspectorRow { label: "Shake px, °"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cam2d.c.shake.max_offset; fallback: 24; onCommitted: n => cam2d.write({ shake: Object.assign({}, cam2d.c.shake, { max_offset: Math.max(0, n) }) }) }
+                    NumberField { value: cam2d.c.shake.max_angle; fallback: 3; onCommitted: n => cam2d.write({ shake: Object.assign({}, cam2d.c.shake, { max_angle: Math.max(0, n) }) }) } }
+                InspectorRow { label: "Shake rate, decay"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: cam2d.c.shake.frequency; fallback: 25; onCommitted: n => cam2d.write({ shake: Object.assign({}, cam2d.c.shake, { frequency: Math.max(0.1, n) }) }) }
+                    NumberField { value: cam2d.c.shake.decay; fallback: 1.5; onCommitted: n => cam2d.write({ shake: Object.assign({}, cam2d.c.shake, { decay: Math.max(0, n) }) }) } }
+                Note { text: "Finishing rules over the camera's follow. Bounds keep the whole view inside the rectangle (world units); the soft edge eases the stop. View height sets how tall the view is and overrides zoom. Pixel snap keeps zoom and position on whole pixels. Blocks can shake the camera, freeze the world for a hit (hitstop) and change any of these during play." }
+            }
+            Section {
                 heading: "Physics"; available: !!root.world
                 InspectorRow { label: "Gravity"; labelWidth: 110; Layout.fillWidth: true
                     Repeater { model: root.is3d ? 3 : 2; delegate: NumberField { required property int index; value: root.world.gravity[index]; onCommitted: n => root.invoke("set_gravity", { gravity: root.withIndex(root.world.gravity, index, n) }) } } }

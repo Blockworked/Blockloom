@@ -5502,6 +5502,14 @@ fn look2d_dials_compiled_logic() {
                 dial: Look2dDial::Scanlines,
                 value: number(0.5),
             },
+            K::SetLook2d {
+                dial: Look2dDial::Shake,
+                value: number(0.4),
+            },
+            K::SetLook2d {
+                dial: Look2dDial::BoundsLeft,
+                value: number(-100.0),
+            },
         ],
         &[],
     );

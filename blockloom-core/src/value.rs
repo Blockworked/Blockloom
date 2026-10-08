@@ -1001,6 +1001,23 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "CameraZoom",
+        op: "CameraZoom",
+        arity: 0,
+        default_args: Vec::new,
+        // The 2D camera's zoom in pixels per world unit as of the last frame
+        // (0 before a game has drawn one).
+        eval: |_| Ok(Evaluated::Number(sense::read(|s| s.camera2d.zoom) as f64)),
+    },
+    ExtOperator {
+        kind: "CameraAtBounds",
+        op: "CameraAtBounds",
+        arity: 0,
+        default_args: Vec::new,
+        // Whether the 2D camera's bounds are holding the view back.
+        eval: |_| Ok(Evaluated::Bool(sense::read(|s| s.camera2d.at_bounds))),
+    },
+    ExtOperator {
         kind: "IsNight",
         op: "IsNight",
         arity: 0,

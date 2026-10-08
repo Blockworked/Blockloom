@@ -29,6 +29,7 @@ mod atmosphere;
 mod batching;
 mod beams;
 mod bridge;
+mod camera2d;
 mod capture;
 mod cinematic;
 mod cloud_layers;
@@ -347,6 +348,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // unconditionally; an unused plugin costs nothing at runtime.
     materials::register(app);
     light2d::register(app);
+    camera2d::register(app);
     post2d::register(app);
     sprites::register(app);
     app.init_resource::<anim2d::RigCache>()

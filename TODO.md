@@ -1191,21 +1191,13 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         (existing block, now also works in 2D), reporters `light level at x y`,
         `is night?` done. Open: pixelation, palette levels, dither, outline and CRT dials on the same
         block are done. Open: the script ABI side (`set_look_2d`, `light_level`), left to the script work.
-- [ ] 2D camera (pixel-correct, deterministic):
-  - [ ] Follow: target actor, deadzone rect, lookahead by velocity, smoothing time,
-        axis locks. One camera per project like 3D, attached through the existing
-        Camera component.
-  - [ ] Bounds and zoom: confine rect plus soft edge push-in, zoom by height in
-        world units with pixel-snap toggle for pixel art, rotation for top-down
-        tilt effects.
-  - [ ] Shake and kicks: trauma 0-1 with Perlin offset/rotation noise and decay,
-        impulse `shake camera by _`, hitstop freeze frames that pause world strands
-        but not UI strands (same rule as `pause game`).
-  - [ ] Parallax and split: camera drives parallax layers above, pixel-perfect
-        toggle that snaps to whole pixels at integer zoom, split-screen for two
-        players as two viewports over one world (later; single camera first).
-  - [ ] Blocks and scripts: `set camera target to`, `set camera bounds/zoom/shake
-        to`, reporters `camera x/y/zoom`, event `when camera reaches bounds`.
+- [x] 2D camera (pixel-correct, deterministic): follow with dead zone, lookahead
+      and smoothing already came with PlayerCamera; added axis locks, bounds with
+      a soft edge, zoom by view height, pixel snap, roll, trauma shake and
+      hitstop, all as `set [dial] to` dials and project settings, plus
+      `camera zoom` and `is camera at bounds?` reporters. Open: `set camera target
+      to`, `when camera reaches bounds` hat, split-screen, per-actor camera
+      rule overrides. Unverified on a GPU.
 - [ ] 2D physics and movement (builds on rapier2d, joints and one-way platforms
       from Phase 4; this is feel plus helpers):
   - [ ] Platformer controller tuning: run accel/decel, air control factor, jump

@@ -53,6 +53,10 @@ pub struct Look2d {
     pub ambient_color: Option<String>,
     /// 2D post dials set this run, one per dial in the order first set.
     pub post: Vec<(blockloom_core::blocks::Look2dDial, String)>,
+    /// Camera trauma added since the camera system last looked.
+    pub shake: f32,
+    /// Seconds of hitstop asked for since the camera system last looked.
+    pub hitstop: f32,
 }
 
 /// `set [look] to` blocks, applied on the fixed tick.
@@ -81,6 +85,16 @@ impl Look2d {
             D::AmbientColor => {
                 let color = value.trim();
                 self.ambient_color = (!color.is_empty()).then(|| color.to_string());
+            }
+            D::Shake => {
+                if let Some(n) = number {
+                    self.shake = (self.shake + n).clamp(0.0, 1.0);
+                }
+            }
+            D::Hitstop => {
+                if let Some(n) = number {
+                    self.hitstop = self.hitstop.max(n.clamp(0.0, 5.0));
+                }
             }
             _ => match self.post.iter_mut().find(|(d, _)| *d == dial) {
                 Some(entry) => entry.1 = value.to_string(),

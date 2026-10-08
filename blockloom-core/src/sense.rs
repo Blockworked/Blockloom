@@ -116,6 +116,17 @@ pub struct CameraSense {
     pub forward: [f32; 3],
 }
 
+/// The 2D camera's live finishing state.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Camera2dSense {
+    /// Pixels per world unit.
+    pub zoom: f32,
+    /// Degrees of roll, shake included.
+    pub rotation: f32,
+    /// The bounds are holding the view back.
+    pub at_bounds: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct TouchSense {
     pub id: u64,
@@ -195,6 +206,8 @@ pub struct Sensors {
     pub water: crate::water::WaterSense,
     /// The 2D lit look: what `light level at` and `is night?` read.
     pub light2d: crate::light2d::Light2dSense,
+    /// The 2D camera: what `camera zoom` and `is camera at bounds?` read.
+    pub camera2d: Camera2dSense,
     /// Live tilemaps and room bounds, which `tile at` and `room containing`
     /// read.
     pub level: crate::tilemap::LevelSense,
@@ -662,6 +675,11 @@ pub fn publish_ui(ui: HashMap<String, UiSense>, focus: String) {
         s.ui = ui;
         s.ui_focus = focus;
     });
+}
+
+/// Publishes the 2D camera for `camera zoom` and `is camera at bounds?`.
+pub fn publish_camera2d(camera2d: Camera2dSense) {
+    SENSORS.with(|slot| slot.borrow_mut().camera2d = camera2d);
 }
 
 /// Publishes the frame's 2D lights for `light level at` and `is night?`.

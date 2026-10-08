@@ -43,6 +43,7 @@ pub mod assets;
 pub mod blocks;
 pub mod build;
 pub mod build_control;
+pub mod camera2d;
 pub mod codegen;
 pub mod components;
 pub mod decals;

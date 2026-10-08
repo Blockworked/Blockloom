@@ -66,6 +66,25 @@ pub enum Look2dDial {
     Curvature,
     /// 0-1 CRT darkened corners.
     Vignette,
+    /// Camera zoom in pixels per world unit.
+    Zoom,
+    /// Camera view height in world units.
+    ZoomHeight,
+    /// Camera roll in degrees.
+    Rotation,
+    /// Adds trauma (0-1) to the camera shake.
+    Shake,
+    /// Freezes the world for this many seconds; the interface keeps going.
+    Hitstop,
+    BoundsLeft,
+    BoundsRight,
+    BoundsBottom,
+    BoundsTop,
+    /// 1 keeps the camera's x where it is.
+    LockX,
+    LockY,
+    /// 1 snaps the camera to whole pixels.
+    PixelSnap,
 }
 
 impl Look2dDial {
@@ -86,6 +105,18 @@ impl Look2dDial {
             "scanlines" => Some(Look2dDial::Scanlines),
             "curvature" => Some(Look2dDial::Curvature),
             "vignette" => Some(Look2dDial::Vignette),
+            "zoom" => Some(Look2dDial::Zoom),
+            "zoomheight" | "viewheight" => Some(Look2dDial::ZoomHeight),
+            "rotation" | "roll" => Some(Look2dDial::Rotation),
+            "shake" => Some(Look2dDial::Shake),
+            "hitstop" => Some(Look2dDial::Hitstop),
+            "boundsleft" => Some(Look2dDial::BoundsLeft),
+            "boundsright" => Some(Look2dDial::BoundsRight),
+            "boundsbottom" => Some(Look2dDial::BoundsBottom),
+            "boundstop" => Some(Look2dDial::BoundsTop),
+            "lockx" => Some(Look2dDial::LockX),
+            "locky" => Some(Look2dDial::LockY),
+            "pixelsnap" => Some(Look2dDial::PixelSnap),
             _ => None,
         }
     }

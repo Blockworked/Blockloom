@@ -1481,6 +1481,9 @@ pub struct World {
     /// 2D post: pixelation, palette, outline and CRT looks.
     #[serde(default)]
     pub post2d: crate::post2d::Post2d,
+    /// 2D camera finishing: locks, bounds, zoom, pixel snap, shake.
+    #[serde(default)]
+    pub camera2d: crate::camera2d::Camera2dSettings,
     /// The wind everything that moves with the air reads, and the clouds'
     /// drift on it.
     #[serde(default)]
@@ -1539,6 +1542,7 @@ impl Default for World {
             lightning: crate::lightning::Lightning::default(),
             lighting2d: crate::light2d::Lighting2d::default(),
             post2d: crate::post2d::Post2d::default(),
+            camera2d: crate::camera2d::Camera2dSettings::default(),
             wind: crate::wind::Wind::default(),
             director: crate::director::Director::default(),
             surface: crate::material::SurfaceWeather::default(),

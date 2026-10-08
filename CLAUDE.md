@@ -1775,6 +1775,22 @@ Sprite card, which draws the preview as a PNG data URL with a draggable light
 dot). Nothing uses the baked file at run time yet: 2D lighting is a screen
 multiply layer, so a sprite's normal map does not change how lights fall on it.
 
+### 2D camera
+
+`blockloom-core/src/camera2d.rs` (`World.camera2d`) is the finishing over the
+PlayerCamera's follow: axis locks, bounds with an exponential soft edge (a
+view larger than the bounds centres), zoom by view height or pixels per unit,
+pixel snap (whole-pixel zoom and position), roll, and trauma shake (trauma
+squared, seeded noise, decay per second). `blockloom-runtime/src/camera2d.rs`
+applies it after `drive_camera`; the shake offset is taken off again before
+the next follow (`remove_shake`) so smoothing never chases the tremor. All of
+it is `SetLook2d` dials laid over the project's values for the run
+(`Zoom`, `ZoomHeight`, `Rotation`, `Shake` adds trauma, `Hitstop` freezes the
+world on the real clock via `set_paused` while interface strands keep going,
+`Bounds*`, `LockX/Y`, `PixelSnap`). `camera zoom` and `is camera at bounds?`
+read `Sensors.camera2d`. Not done: a `set camera target` block, a `when camera
+reaches bounds` hat and split-screen.
+
 ### 2D animation and sprites
 
 `blockloom-core/src/animation.rs` is the one animation player, both

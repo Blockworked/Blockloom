@@ -1989,6 +1989,7 @@ impl Project {
             world.lightning.normalize();
             world.lighting2d.normalize();
             world.post2d.normalize();
+            world.camera2d.normalize();
             world.wind.normalize();
             world.director.normalize();
             for cutscene in &mut world.cutscenes {

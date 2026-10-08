@@ -1416,6 +1416,24 @@ pub(crate) fn set_post_2d(
     Ok(())
 }
 
+pub(crate) fn set_camera_2d(
+    state: &SharedState,
+    app: &AppHandle,
+    camera: blockloom_core::camera2d::Camera2dSettings,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let mut camera = camera;
+    camera.normalize();
+    if let Some(project) = s.project_mut() {
+        project.world.camera2d = camera;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
 pub(crate) fn set_cloud_layers(
     state: &SharedState,
     app: &AppHandle,

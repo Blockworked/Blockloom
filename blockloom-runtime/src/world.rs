@@ -2115,6 +2115,8 @@ pub fn publish_sensors(
         level: Default::default(),
         // `light2d::sync_lighting` fills it straight after.
         light2d: Default::default(),
+        // `camera2d::apply_camera` fills it straight after.
+        camera2d: Default::default(),
         current_scene: engine.project.active_scene().name.clone(),
         scene_names: engine
             .project

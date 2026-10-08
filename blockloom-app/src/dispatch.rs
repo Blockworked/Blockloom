@@ -355,6 +355,10 @@ impl Backend {
                 let post: blockloom_core::post2d::Post2d = arg(&args, "post")?;
                 to_json(commands::set_post_2d(state, app, post)?)
             }
+            "set_camera_2d" => {
+                let camera: blockloom_core::camera2d::Camera2dSettings = arg(&args, "camera")?;
+                to_json(commands::set_camera_2d(state, app, camera)?)
+            }
             "set_cloud_layers" => {
                 let layers: Vec<blockloom_core::cloud_layers::CloudLayer> = arg(&args, "layers")?;
                 to_json(commands::set_cloud_layers(state, app, layers)?)

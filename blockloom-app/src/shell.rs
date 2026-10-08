@@ -1076,6 +1076,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "set-camera-2d",
+        cmd: "set_camera_2d",
+        aliases: &["set_camera_2d"],
+        summary: "Set the 2D camera rules: axis locks, world bounds with a soft edge, zoom or view height, pixel snap, roll and shake.",
+        args: &[ArgSpec {
+            name: "camera",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "set-cloud-layers",
         cmd: "set_cloud_layers",
         aliases: &["set_cloud_layers"],

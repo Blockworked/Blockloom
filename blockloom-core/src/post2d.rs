@@ -152,7 +152,7 @@ impl Post2d {
             D::Scanlines => self.crt.scanlines = v,
             D::Curvature => self.crt.curvature = v,
             D::Vignette => self.crt.vignette = v,
-            D::AmbientLight | D::AmbientColor => {}
+            _ => {}
         }
         self.normalize();
     }
