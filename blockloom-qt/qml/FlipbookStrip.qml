@@ -9,6 +9,9 @@ ColumnLayout {
     property var clip: ({})
     property int current: 0
     property bool playing: false
+    // The collider as fractions of a frame ({w, h, x, y, round}), or null.
+    property var hitbox: null
+    property bool showHitbox: true
     readonly property var sheet: clip && clip.sheet ? clip.sheet : null
     readonly property int frameCount: sheet ? Math.max(1, sheet.count) : (clip && clip.frames ? clip.frames.length : 0)
     readonly property real fps: clip && clip.fps > 0 ? clip.fps : 8
@@ -40,6 +43,15 @@ ColumnLayout {
         readonly property int sheetCell: root.sheet ? root.sheet.first + index : 0
         readonly property real cw: root.sheet && probe.implicitWidth > 0 ? probe.implicitWidth / Math.max(1, root.sheet.columns) : 0
         readonly property real ch: root.sheet && probe.implicitHeight > 0 ? probe.implicitHeight / Math.max(1, root.sheet.rows) : 0
+        Rectangle {
+            visible: root.showHitbox && !!root.hitbox
+            z: 1; color: "transparent"; border.width: 1; border.color: "#ff5a5a"
+            radius: root.hitbox && root.hitbox.round ? Math.min(width, height) / 2 : 0
+            width: root.hitbox ? parent.side * root.hitbox.w : 0
+            height: root.hitbox ? parent.side * root.hitbox.h : 0
+            x: root.hitbox ? (parent.side - width) / 2 + parent.side * root.hitbox.x : 0
+            y: root.hitbox ? (parent.side - height) / 2 + parent.side * root.hitbox.y : 0
+        }
         Image {
             anchors.fill: parent; fillMode: Image.PreserveAspectFit; smooth: false; asynchronous: true
             source: root.sheet ? probe.source : (root.clip.frames && root.clip.frames[cell.index] ? root.app.assetUrl(root.clip.frames[cell.index]) : "")
@@ -61,6 +73,8 @@ ColumnLayout {
                 spacing: 4
                 IconButton { iconName: root.playing ? "pause" : "play"; tip: root.playing ? "Stop scrubbing" : "Play the clip here"
                     implicitWidth: 26; implicitHeight: 26; onClicked: root.playing = !root.playing }
+                IconButton { visible: !!root.hitbox; iconName: "eye"; opacity: root.showHitbox ? 1 : 0.4; tip: "Show the collider on each frame"
+                    implicitWidth: 26; implicitHeight: 26; onClicked: root.showHitbox = !root.showHitbox }
                 Text { color: Theme.text; font.pixelSize: 12; text: "Frame " + (root.current + 1) + " of " + root.frameCount }
             }
             Text { color: Theme.textDim; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap

@@ -2421,7 +2421,7 @@ The scene view's 2D aids ride `TileDebug` (`PROTOCOL_VERSION` 34): `pixel_grid`
 Tiles/Light/Camera tab bar that filters the component cards, a live aspect
 thumbnail on the Look card, `FlipbookStrip.qml` under each animation clip (scrub,
 play, timings, markers) and a far-to-near layer stack on the Parallax card.
-Onion skin and hitboxes on the strip are not done.
+The strip outlines the first enabled collider on each frame (eye button); onion skin is not done.
 
 ### 2D post
 

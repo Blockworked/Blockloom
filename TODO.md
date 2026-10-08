@@ -1247,7 +1247,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         thumbnail, flipbook strip viewer (scrub frames, see hitboxes), parallax
         layer stack view.
         (All written in QML with no Qt build here, so unrun. The strip shows
-        frames, timings and markers; hitboxes are not drawn on it.)
+        frames, timings and markers; the first enabled collider is outlined on each frame.)
   - [ ] Viewport (pixel grid, light radius, camera bounds, parallax marks done; onion skin open): pixel grid plus onion-skin ghosts for animation, tile collision
         overlay, light radius gizmos, camera bounds plus deadzone rect, parallax
         depth ruler.

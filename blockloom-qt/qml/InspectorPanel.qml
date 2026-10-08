@@ -42,6 +42,26 @@ Rectangle {
     border.color: Theme.borderSoft
     clip: true
 
+    // The first enabled 2D collider as fractions of the look's box, for the flipbook strip.
+    function hitboxOf() {
+        const comps = actor ? actor.components : [];
+        const look = comps.find(x => x.component === "Look");
+        const size = look && look.visual && look.visual.size ? look.visual.size : null;
+        if (!size || !(size[0] > 0) || !(size[1] > 0)) return null;
+        for (const c of comps) {
+            const col = c.component === "Collider" ? c.collider : null;
+            if (!col || col.enabled === false) continue;
+            const g = col.geometry && col.geometry.Shape ? col.geometry.Shape.shape : (col.geometry && col.geometry.shape ? col.geometry.shape : null);
+            let w = size[0], h = size[1];
+            if (g && g.kind === "Rect") { w = g.size[0]; h = g.size[1]; }
+            else if (g && g.kind === "Circle") { w = h = g.radius * 2; }
+            else if (g && g.kind === "Capsule2d") { w = g.size[0]; h = g.size[1]; }
+            else if (g) continue;
+            const ctr = col.center || [0, 0, 0];
+            return { w: w / size[0], h: h / size[1], x: ctr[0] / size[0], y: -ctr[1] / size[1], round: !!g && g.kind !== "Rect" };
+        }
+        return null;
+    }
     function componentName(c) {
         if (c.component === "Plugin") return c.record.plugin + "/" + c.record.type_id;
         return c.component === "Custom" ? c.name : c.component;
@@ -2099,7 +2119,7 @@ Rectangle {
                         Text { text: "count"; color: Theme.textDim; font.pixelSize: 11 }
                         NumberField { Layout.preferredWidth: 44; value: modelData.sheet ? modelData.sheet.count : 1; fallback: 1; onCommitted: n => root.writeClip(an, index, { sheet: Object.assign({}, modelData.sheet, { count: Math.max(1, Math.round(n)) }) }) }
                     }
-                    FlipbookStrip { Layout.fillWidth: true; app: root.app; clip: modelData }
+                    FlipbookStrip { Layout.fillWidth: true; app: root.app; clip: modelData; hitbox: root.hitboxOf() }
                     BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Seconds per frame, e.g. 0.1, 0.3 (blank uses fps)"
                         text: (modelData.durations || []).join(", ")
                         onEditingFinished: root.writeClip(an, index, { durations: root.parseNumbers(text) }) }
