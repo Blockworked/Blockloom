@@ -472,8 +472,10 @@ fn save_and_language_reporters_answer_sensibly_with_no_run() {
 fn localized_text_reads_the_run_language_then_falls_back() {
     use blockloom_core::locale::Localization;
     blockloom_core::init();
-    let mut table = Localization::default();
-    table.default_language = "fr".to_string();
+    let mut table = Localization {
+        default_language: "fr".to_string(),
+        ..Default::default()
+    };
     table.set("menu.play", "en", "Play");
     table.set("menu.play", "fr", "Jouer");
     blockloom_core::sense::set_locale_table(Some(table));

@@ -1012,6 +1012,7 @@ pub fn read_number(actor: &str, handle: &str, field: &str) -> f64 {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use crate::components::ActorComponent;

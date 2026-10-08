@@ -508,6 +508,7 @@ struct Ctx<'a> {
 
 /// The wasm host's way in: the same acts a native script reaches through its
 /// function pointers, without exposing the context type behind them.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn act_for_asked(
     actor: &str,
     asked: &mut Asked,

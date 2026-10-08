@@ -1106,6 +1106,7 @@ pub fn drive(actor: &str, yaw: f32, carry: [f32; 3]) -> Result<Driven, String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 

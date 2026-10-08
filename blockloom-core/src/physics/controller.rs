@@ -818,8 +818,10 @@ fn file(actor: &str, result: MoveResult, moved: Option<[f32; 3]>, fall_speed: f3
         let hits = result.hits.clone();
         if let Some(tracked) = registry.controllers.get_mut(actor) {
             if let Some(moved) = moved {
-                for (i, step) in moved.iter().enumerate() {
-                    tracked.pending[i] += step + result.recovered[i];
+                for ((pending, moved), recovered) in
+                    tracked.pending.iter_mut().zip(moved).zip(result.recovered)
+                {
+                    *pending += moved + recovered;
                 }
                 tracked.grounded = Some(result.grounded);
             }
@@ -964,6 +966,7 @@ pub fn read_text(actor: &str, field: &str, n: usize) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 

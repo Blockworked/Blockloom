@@ -129,7 +129,7 @@ fn voxelize(
         }
     }
     let extent = (0..3).map(|a| hi[a] - lo[a]).fold(0.0, f32::max);
-    if extent.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
+    if extent.is_nan() || extent <= 0.0 {
         return fail("The mesh has no size");
     }
     let size = extent / f32::from(settings.resolution);

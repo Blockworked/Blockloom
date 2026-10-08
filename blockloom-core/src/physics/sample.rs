@@ -127,7 +127,7 @@ fn physics_playground(name: &str, mode: Mode) -> Result<Project, String> {
     )?;
     let mut rope = ConstraintSpec::of(ConstraintKind::Distance, mode);
     rope.name = "rope".into();
-    rope.anchor = [0.0; 3];
+    rope.anchor = [0.0, 0.0, 0.0];
     rope.max_distance = 2.5 * k;
     constraint(scene, &weight, rope)?;
 

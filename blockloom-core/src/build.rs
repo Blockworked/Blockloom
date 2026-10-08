@@ -1336,6 +1336,7 @@ fn script_paths(project: &Project) -> Vec<&str> {
         .iter()
         .flat_map(|scene| scene.actors.iter())
         .flat_map(|actor| actor.components.scripts())
+        .filter(|path| !path.to_ascii_lowercase().ends_with(".wasm"))
         .collect();
     paths.sort_unstable();
     paths.dedup();

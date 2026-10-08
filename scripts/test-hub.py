@@ -174,7 +174,7 @@ class HubTests(unittest.TestCase):
         self.assertEqual(result["tools"]["java"], {"version": "25.0.1"})
         slot = self.service.slot("release-0.1.0")
         self.assertTrue((slot / "tools/java/bin" / ("java.exe" if os.name == "nt" else "java")).is_file())
-        self.assertTrue((slot / "blockloom").exists())
+        self.assertTrue((slot / ("blockloom.exe" if os.name == "nt" else "blockloom")).exists())
         # A second call is a no-op and downloads nothing.
         with patch.object(hub.hub_download, "install_android_tools",
                            side_effect=AssertionError("already installed")):

@@ -78,6 +78,7 @@ fn data_root() -> PathBuf {
 }
 
 /// This game's save file. Same shape as `save::path`, rooted on device.
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
 pub fn save_path(project_id: &str) -> PathBuf {
     save_slot_path(project_id, blockloom_core::save::DEFAULT_SLOT)
 }

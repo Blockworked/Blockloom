@@ -46,6 +46,7 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 pub struct LodBridge(pub std::sync::Mutex<LodState>);
 #[derive(Default)]
 pub struct LodState {
+    #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
     pub clip: Option<Mat4>,
     pub sets: std::collections::BTreeMap<(String, String), blockloom_plugin_api::lod::TileSet>,
     pub feedback: std::collections::BTreeMap<String, Vec<blockloom_plugin_api::lod::Feedback>>,
@@ -137,8 +138,10 @@ pub struct PluginHost {
     #[cfg(feature = "plugins")]
     pub gpu_clear: bool,
     /// Status reports since the plugin diagnostics last went to the editor.
+    #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
     reports: u32,
     /// The diagnostics the editor last heard, so an unchanged set is not resent.
+    #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
     reported: String,
     /// What the open modules cost and report; kept across a preview and a run.
     #[cfg(feature = "plugins")]

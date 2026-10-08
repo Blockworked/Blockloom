@@ -263,8 +263,10 @@ mod tests {
     #[test]
     fn design_resizes_and_restores_the_process_window() {
         let mut app = App::new();
-        let mut session = DesignSession::default();
-        session.request = Some(fixture(1));
+        let session = DesignSession {
+            request: Some(fixture(1)),
+            ..Default::default()
+        };
         app.insert_resource(session);
         let original = Window::default();
         let resolution = original.resolution.clone();

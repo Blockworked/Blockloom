@@ -278,13 +278,6 @@ pub(crate) fn console_error(message: &str) {
     web_sys::console::error_1(&JsValue::from_str(message));
 }
 
-/// Reads this game's saves from localStorage: what `save::read` is on
-/// native. Missing or corrupt entries read as empty rather than failing the
-/// run - a renamed project simply starts fresh.
-pub(crate) fn load_save(project_id: &str) -> SaveData {
-    load_save_slot(project_id, blockloom_core::save::DEFAULT_SLOT)
-}
-
 /// Reads one named save slot from localStorage. The default slot is the
 /// legacy key above, so an old browser save loads unchanged.
 pub(crate) fn load_save_slot(project_id: &str, slot: &str) -> SaveData {
@@ -295,13 +288,6 @@ pub(crate) fn load_save_slot(project_id: &str, slot: &str) -> SaveData {
         Some(text) => serde_json::from_str(&text).unwrap_or_default(),
         None => SaveData::default(),
     }
-}
-
-/// Writes this game's saves to localStorage: what `save::write` is on
-/// native. Private browsing can refuse the write, which surfaces as a block
-/// error rather than a lost run.
-pub(crate) fn store_save(project_id: &str, data: &SaveData) -> Result<(), String> {
-    store_save_slot(project_id, blockloom_core::save::DEFAULT_SLOT, data)
 }
 
 /// Writes one named save slot to localStorage.
