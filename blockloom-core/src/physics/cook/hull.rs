@@ -93,7 +93,7 @@ pub fn quickhull(
         hi = hi.max(*p);
     }
     let extent = (hi - lo).max_element();
-    if !(extent > 0.0) {
+    if extent.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
         return fail("The mesh is a single point");
     }
     let eps = extent * 1e-7;
@@ -163,11 +163,11 @@ pub fn quickhull(
         );
     }
     let simplex = [i0, i1, i2, i3];
-    for i in 0..pts.len() {
+    for (i, &point) in pts.iter().enumerate() {
         if simplex.contains(&i) {
             continue;
         }
-        if let Some(f) = faces.iter_mut().find(|f| f.dist(pts[i]) > eps) {
+        if let Some(f) = faces.iter_mut().find(|f| f.dist(point) > eps) {
             f.outside.push(i);
         }
     }
@@ -193,7 +193,7 @@ pub fn quickhull(
         }
         let Some((start, p, _)) = pick else { break };
         steps += 1;
-        if steps % 16 == 0 {
+        if steps.is_multiple_of(16) {
             control.check()?;
         }
 

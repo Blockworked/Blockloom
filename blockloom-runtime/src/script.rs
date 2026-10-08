@@ -1252,7 +1252,9 @@ pub(crate) fn pose_bytes_for(actor: &str, target: &str) -> Option<[u8; abi::POSE
         }?;
         let mut bytes = [0u8; abi::POSE_BYTES];
         for (chunk, value) in bytes
-            .chunks_exact_mut(4)
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
             .zip(me.position.into_iter().chain(me.rotation).chain([me.scale]))
         {
             chunk.copy_from_slice(&value.to_le_bytes());
@@ -3370,8 +3372,10 @@ blockloom::export!(start = start, tick = tick);
             abi::OK
         );
         let values: Vec<f32> = out
-            .chunks_exact(4)
-            .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|chunk| f32::from_le_bytes(*chunk))
             .collect();
         assert_eq!(values, [3.0, 7.0, 0.0, 0.0, 0.0, 0.0, 1.0]);
     }

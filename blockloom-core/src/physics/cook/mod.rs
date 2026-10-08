@@ -288,7 +288,7 @@ impl RawMesh {
             input_triangles: self.indices.len() / 3,
             ..Default::default()
         };
-        if self.indices.len() % 3 != 0 {
+        if !self.indices.len().is_multiple_of(3) {
             return fail("The index list is not a whole number of triangles");
         }
         if self.positions.is_empty() || self.indices.is_empty() {
@@ -354,7 +354,7 @@ impl RawMesh {
         }
 
         let mut indices = Vec::with_capacity(self.indices.len());
-        for tri in self.indices.chunks_exact(3) {
+        for tri in self.indices.as_chunks::<3>().0 {
             let (a, b, c) = (
                 remap[tri[0] as usize],
                 remap[tri[1] as usize],
@@ -559,7 +559,7 @@ impl Cooked {
             1 => {
                 let vertices = r.points()?;
                 let n = r.u32()? as usize;
-                if n % 3 != 0 || n > MAX_TRIANGLES * 3 {
+                if !n.is_multiple_of(3) || n > MAX_TRIANGLES * 3 {
                     return Err("Corrupt cooked triangle list".into());
                 }
                 let mut indices = Vec::with_capacity(n);

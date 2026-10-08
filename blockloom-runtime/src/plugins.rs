@@ -83,6 +83,7 @@ impl LodBridge {
 /// A change to the meshes plugins have drawn, waiting for
 /// `plugin_meshes::sync` to carry it out.
 #[cfg_attr(not(feature = "plugins"), allow(dead_code))]
+#[allow(clippy::large_enum_variant)]
 pub enum MeshOp {
     LodTiles {
         plugin: String,
@@ -167,6 +168,7 @@ impl PluginHost {
 
 /// What the world needs from a plugin's outcome, minus the host crate's types.
 #[cfg(feature = "plugins")]
+#[allow(clippy::large_enum_variant)]
 enum Applied {
     Log(String),
     Error(String),

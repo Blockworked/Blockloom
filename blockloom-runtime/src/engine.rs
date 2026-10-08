@@ -496,7 +496,7 @@ impl Engine {
         let lists = Lists::default();
         let dicts = Dicts::default();
         Self {
-            lan: crate::lan::Session::default(),
+            lan: Default::default(),
             incoming,
             link: None,
             project: Project::starter("Untitled", mode),
@@ -783,7 +783,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     fn quiet_wasm() -> Vec<u8> {
         let abi = blockloom_core::script::abi::ABI_VERSION;
-        wat::parse_str(&format!(
+        wat::parse_str(format!(
             r#"(module
   (import "blockloom" "read_number" (func (param i32 i32 i32) (result i32)))
   (import "blockloom" "read_text" (func (param i32 i32 i32) (result i32)))

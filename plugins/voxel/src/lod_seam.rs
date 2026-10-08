@@ -505,7 +505,7 @@ pub fn clip_groups(
         .into_iter()
         .filter_map(|(m, g)| {
             let mut out = Group::default();
-            for tri in g.indices.chunks_exact(3) {
+            for tri in g.indices.as_chunks::<3>().0 {
                 let mut p = tri
                     .iter()
                     .map(|&i| {
@@ -569,7 +569,7 @@ pub fn stitch(
         // Remove ordinary boundary faces; only the solid difference is exposed.
         for group in groups.values_mut() {
             let mut out = Group::default();
-            for tri in group.indices.chunks_exact(3) {
+            for tri in group.indices.as_chunks::<3>().0 {
                 let vertices = tri
                     .iter()
                     .map(|&i| {
@@ -717,7 +717,7 @@ mod tests {
             .unwrap();
             let (base, _) = bounds(key, grid.size());
             for (material, mut group) in groups {
-                for p in group.positions.chunks_exact_mut(3) {
+                for p in group.positions.as_chunks_mut::<3>().0 {
                     for a in 0..3 {
                         p[a] += base[a] as f32
                     }
@@ -743,13 +743,12 @@ mod tests {
                 for y in -1..=1 {
                     for x in -1..=1 {
                         let near = [bucket[0] + x, bucket[1] + y, bucket[2] + z];
-                        if let Some(points) = buckets.get(&near) {
-                            if let Some(&p) = points
+                        if let Some(points) = buckets.get(&near)
+                            && let Some(&p) = points
                                 .iter()
                                 .find(|p| (0..3).all(|a| (p[a] - point[a]).abs() <= 2))
-                            {
-                                return p;
-                            }
+                        {
+                            return p;
                         }
                     }
                 }
@@ -758,7 +757,7 @@ mod tests {
             point
         };
         for group in groups.values() {
-            for tri in group.indices.chunks_exact(3) {
+            for tri in group.indices.as_chunks::<3>().0 {
                 let p = tri
                     .iter()
                     .map(|&i| {

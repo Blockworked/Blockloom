@@ -34,6 +34,8 @@
 //! - [`wire`] converts documents to and from the flat JSON shape the
 //!   blockstitch frontend speaks.
 
+#![cfg_attr(test, allow(clippy::field_reassign_with_default))]
+
 pub mod ai;
 pub mod android;
 pub mod animation;

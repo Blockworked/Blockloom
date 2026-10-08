@@ -1078,7 +1078,7 @@ mod tests {
             let effects = finish(&mut Publisher::default(), &mut world, &[key]);
             let mesh = effects.iter().find(|e| e["effect"] == "mesh").unwrap();
             let positions = mesh["positions"].as_array().unwrap();
-            assert!(positions.chunks_exact(3).any(|p| {
+            assert!(positions.as_chunks::<3>().0.iter().any(|p| {
                 let x = p[0].as_f64().unwrap();
                 x > 4.0 && x < 5.0
             }));

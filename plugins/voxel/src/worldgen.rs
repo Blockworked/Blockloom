@@ -334,7 +334,7 @@ pub fn height_bound_infinite(wg: &Worldgen, seed: i64, x: i32, z: i32) -> i32 {
 pub fn sample_infinite(wg: &Worldgen, seed: i64, cell: [i32; 3], id_of: &dyn Fn(&str) -> u8) -> u8 {
     let seed = seed32(seed);
     let [x, y, z] = cell;
-    if y < 0 || y > 128 {
+    if !(0..=128).contains(&y) {
         return 0;
     }
     let biome = wg.biome_at(seed, x, z);
@@ -559,7 +559,7 @@ pub fn column(
 }
 /// Render distance in blocks must be a multiple of the 32-cell chunk.
 pub fn stream_radius_for(render_distance_blocks: i32) -> Result<i32, String> {
-    if render_distance_blocks < 32 || render_distance_blocks > 2048 {
+    if !(32..=2048).contains(&render_distance_blocks) {
         return Err("render distance is 32 to 2048 blocks".into());
     }
     if render_distance_blocks % 32 != 0 {

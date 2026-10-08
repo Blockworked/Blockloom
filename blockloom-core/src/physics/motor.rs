@@ -556,14 +556,15 @@ impl MotorState {
         let mut horizontal = approach(horizontal, target, rate * dt);
 
         // Slide down what is too steep to stand on.
-        if spec.slide_on_steep && !top_down {
-            if let Some(normal) = self.steep {
-                let flat = sub(normal, scale(up, dot(normal, up)));
-                let flat_length = length(flat);
-                if flat_length > 1e-6 {
-                    let downhill = scale(flat, spec.slide_speed / flat_length);
-                    horizontal = approach(horizontal, downhill, spec.ground_acceleration * dt);
-                }
+        if spec.slide_on_steep
+            && !top_down
+            && let Some(normal) = self.steep
+        {
+            let flat = sub(normal, scale(up, dot(normal, up)));
+            let flat_length = length(flat);
+            if flat_length > 1e-6 {
+                let downhill = scale(flat, spec.slide_speed / flat_length);
+                horizontal = approach(horizontal, downhill, spec.ground_acceleration * dt);
             }
         }
 

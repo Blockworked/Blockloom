@@ -14,6 +14,7 @@
 //! `player::Launch` is the whole of the difference.
 //!
 
+#![cfg_attr(test, allow(clippy::field_reassign_with_default))]
 // A Bevy system declares every query and resource it touches as an argument, so
 // the usual argument-count limit doesn't apply here.
 #![allow(clippy::too_many_arguments)]

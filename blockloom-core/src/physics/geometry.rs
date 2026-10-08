@@ -71,7 +71,9 @@ impl MeshShape {
                 let mirrored = scale[0] * scale[1] * scale[2] < 0.0;
                 let indices = if mirrored {
                     indices
-                        .chunks_exact(3)
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
                         .flat_map(|t| [t[0], t[2], t[1]])
                         .collect()
                 } else {

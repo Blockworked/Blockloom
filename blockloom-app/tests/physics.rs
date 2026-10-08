@@ -225,11 +225,7 @@ fn a_sample_project_opens_runnable_in_both_dimensions() {
             .unwrap();
         let plan = backend.dispatch("physics_plan", json!({})).unwrap();
         assert_eq!(plan["runnable"], true, "{mode}: {plan}");
-        assert!(
-            plan["constraints"]
-                .as_array()
-                .map_or(true, |c| c.len() >= 3)
-        );
+        assert!(plan["constraints"].as_array().is_none_or(|c| c.len() >= 3));
         let ownership = backend.dispatch("physics_ownership", json!({})).unwrap();
         assert!(ownership["legacyBodies"].as_array().unwrap().is_empty());
     }

@@ -18,6 +18,8 @@
 //! skips rather than fails - the same bargain `blockloom-runtime`'s script
 //! tests make.
 
+#![allow(clippy::field_reassign_with_default)]
+
 use blockloom_core::animation::TweenEasing;
 use blockloom_core::blocks::{
     BlockDef, BlockPiece, BlockShape, DictDef, DictEntry, DictItem, EmitterDial, InputValueType,

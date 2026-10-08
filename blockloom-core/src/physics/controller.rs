@@ -790,9 +790,7 @@ pub fn move_call(actor: &str, mode: MoveMode, vector: [f32; 3]) -> MoveResult {
         ];
     }
     // A floor holds the fall; a ceiling kills a rise.
-    if result.grounded {
-        fall = 0.0;
-    } else if result.flags.above && fall < 0.0 {
+    if result.grounded || (result.flags.above && fall < 0.0) {
         fall = 0.0;
     }
     file(actor, result, Some(outcome.effective), fall)
@@ -820,8 +818,8 @@ fn file(actor: &str, result: MoveResult, moved: Option<[f32; 3]>, fall_speed: f3
         let hits = result.hits.clone();
         if let Some(tracked) = registry.controllers.get_mut(actor) {
             if let Some(moved) = moved {
-                for i in 0..3 {
-                    tracked.pending[i] += moved[i] + result.recovered[i];
+                for (i, step) in moved.iter().enumerate() {
+                    tracked.pending[i] += step + result.recovered[i];
                 }
                 tracked.grounded = Some(result.grounded);
             }
