@@ -834,6 +834,19 @@ impl Backend {
                 arg(&args, "path")?,
                 arg(&args, "role")?,
             )?),
+            "bake_normal_map" => to_json(commands::bake_normal_map(
+                state,
+                arg(&args, "path")?,
+                arg(&args, "strength")?,
+            )?),
+            "preview_normal_map" => to_json(commands::preview_normal_map(
+                state,
+                arg(&args, "path")?,
+                arg(&args, "x")?,
+                arg(&args, "y")?,
+                arg(&args, "height")?,
+                arg(&args, "size")?,
+            )?),
             "set_exposure_bias" => to_json(commands::set_exposure_bias(
                 state,
                 arg(&args, "path")?,

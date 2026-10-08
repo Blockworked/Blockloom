@@ -56,6 +56,7 @@ pub mod light2d;
 pub mod lightning;
 pub mod material;
 pub mod nav;
+pub mod normalmap;
 pub mod pack;
 pub mod physics;
 pub mod physics_query;

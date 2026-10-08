@@ -1765,6 +1765,16 @@ copies: change them together. `set [look] to` (`SetLook2d`) also takes
 `Vignette` dials, laid over the project's values for the run
 (`engine.look2d.post`).
 
+### Normal-map authoring
+
+`blockloom-core/src/normalmap.rs` bakes an image's brightness into a
+tangent-space normal map (Sobel slope, strength 0-32, +Y up the image) beside
+its source as `<name>_n.png`, and shades a normal map under a light direction
+for a preview (`bake_normal_map`, `preview_normal_map` in the shell and the
+Sprite card, which draws the preview as a PNG data URL with a draggable light
+dot). Nothing uses the baked file at run time yet: 2D lighting is a screen
+multiply layer, so a sprite's normal map does not change how lights fall on it.
+
 ### 2D animation and sprites
 
 `blockloom-core/src/animation.rs` is the one animation player, both

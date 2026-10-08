@@ -2124,6 +2124,57 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        name: "bake-normal-map",
+        cmd: "bake_normal_map",
+        aliases: &["bake_normal_map"],
+        summary: "Bake an image's brightness into a normal map beside it (art.png -> art_n.png) and return the path. Strength 0-32.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+            ArgSpec {
+                name: "strength",
+                ty: "number",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "preview-normal-map",
+        cmd: "preview_normal_map",
+        aliases: &["preview_normal_map"],
+        summary: "A normal map lit by a light dot over it (x, y 0-1 from the top left, height over the sprite), as a PNG data URL no larger than size pixels.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+            ArgSpec {
+                name: "x",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "y",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "height",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "size",
+                ty: "number",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
         name: "set-exposure-bias",
         cmd: "set_exposure_bias",
         aliases: &["set_exposure_bias"],

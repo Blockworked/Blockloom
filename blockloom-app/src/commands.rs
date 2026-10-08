@@ -3869,6 +3869,40 @@ pub(crate) fn set_import_role(
     )
 }
 
+/// Bakes a sprite's brightness into a normal map beside it (`art_n.png`)
+/// and returns the new path.
+pub(crate) fn bake_normal_map(
+    state: &SharedState,
+    path: String,
+    strength: f32,
+) -> Result<String, String> {
+    let s = lock(state)?;
+    let dir = project_dir(&s)?;
+    let out = blockloom_core::normalmap::bake_file(&dir, &path, strength)?;
+    let _ = pipeline::note_imported(&dir, &out, "baked normal map");
+    Ok(out)
+}
+
+/// A normal map lit from a point over it (`x`, `y` in 0-1 from the top left,
+/// `height` over the sprite), as a PNG data URL.
+pub(crate) fn preview_normal_map(
+    state: &SharedState,
+    path: String,
+    x: f32,
+    y: f32,
+    height: f32,
+    size: u32,
+) -> Result<String, String> {
+    let s = lock(state)?;
+    let dir = project_dir(&s)?;
+    blockloom_core::normalmap::preview_url(
+        &dir,
+        &path,
+        blockloom_core::normalmap::light_toward(x, y, height),
+        size,
+    )
+}
+
 /// Scales an HDR file by some stops wherever it is decoded; the world picks
 /// it up on the reload this sends.
 pub(crate) fn set_exposure_bias(

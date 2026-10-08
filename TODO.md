@@ -1180,8 +1180,12 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         vignette, mask), a split to compare per frame. One fullscreen pass after
         the tonemapper, before the UI. Open: per-effect debug toggles beyond
         setting a dial to 0; GPU path unverified (shader passes naga only).
-  - [ ] Normal-map authoring: height-to-normal bake on import, strength dial,
-        preview thumbnail with a movable light dot.
+  - [x] Normal-map authoring: height-to-normal bake (`bake-normal-map`, Sobel
+        slope with a strength dial, writes `art_n.png` beside the source), a
+        lit preview with a movable light dot (`preview-normal-map`, drawn in
+        the Sprite card). Open: sprites are not lit through their normal maps
+        yet (the lighting layer is a screen multiply with no normal buffer),
+        and nothing records which normal map belongs to a sprite.
   - [ ] Blocks and scripts: `set ambient light to` / `set ambient color to`
         (`SetLook2d`, VM and compiled logic, logic ABI 39), `set my light to`
         (existing block, now also works in 2D), reporters `light level at x y`,

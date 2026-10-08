@@ -1122,6 +1122,37 @@ Rectangle {
             spacing: 6
             InspectorRow { label: "Metallic"; Layout.fillWidth: true; NumberField { value: mat.m.metallic; onCommitted: n => root.writeMaterial(mat.c, { metallic: n }) } }
             InspectorRow { label: "Rough"; Layout.fillWidth: true; NumberField { value: mat.m.roughness; fallback: 0.6; onCommitted: n => root.writeMaterial(mat.c, { roughness: n }) } }
+            readonly property string source: {
+                const look = root.actor ? root.actor.components.find(x => x.component === "Look") : null;
+                return look && look.visual && look.visual.path ? look.visual.path : "";
+            }
+            property real bumpStrength: 4
+            property string bumpPath: ""
+            property string bumpPreview: ""
+            property real lightX: 0.2
+            property real lightY: 0.2
+            function refreshBump() {
+                if (!sp.bumpPath) { sp.bumpPreview = ""; return; }
+                root.app.invoke("preview_normal_map", { path: sp.bumpPath, x: sp.lightX, y: sp.lightY, height: 0.6, size: 160 },
+                    url => { sp.bumpPreview = url; }, e => { sp.bumpPreview = ""; });
+            }
+            InspectorRow { visible: sp.source !== ""; label: "Bump"; Layout.fillWidth: true
+                NumberField { value: sp.bumpStrength; fallback: 4; onCommitted: n => { sp.bumpStrength = Math.min(Math.max(n, 0), 32); } }
+                BwButton { text: "Bake normal map"
+                    onClicked: root.app.invoke("bake_normal_map", { path: sp.source, strength: sp.bumpStrength },
+                        out => { sp.bumpPath = out; sp.refreshBump(); }, e => root.app.invoke("push_log", { kind: "error", text: String(e) })) } }
+            Item {
+                visible: sp.bumpPreview !== ""
+                Layout.fillWidth: true; Layout.preferredHeight: 160
+                Image { id: bumpImage; anchors.centerIn: parent; height: 160; fillMode: Image.PreserveAspectFit; source: sp.bumpPreview; smooth: false }
+                Rectangle { width: 8; height: 8; radius: 4; color: "#FFD060"; border.color: "#000000"
+                    x: bumpImage.x + sp.lightX * bumpImage.width - 4; y: bumpImage.y + sp.lightY * bumpImage.height - 4 }
+                MouseArea { anchors.fill: bumpImage
+                    onPositionChanged: m => { if (pressed) { sp.lightX = Math.min(Math.max(m.x / width, 0), 1); sp.lightY = Math.min(Math.max(m.y / height, 0), 1); sp.refreshBump(); } }
+                    onPressed: m => { sp.lightX = Math.min(Math.max(m.x / width, 0), 1); sp.lightY = Math.min(Math.max(m.y / height, 0), 1); sp.refreshBump(); } }
+            }
+            Text { visible: sp.source !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Bakes the picture's brightness into a normal map beside it (name_n.png). Drag over the preview to move the light." }
             InspectorRow { label: "Glow"; Layout.fillWidth: true
                 HdrColorField { color: mat.m.emissive; intensity: mat.m.emissive_energy; onPicked: (col, n) => root.writeMaterial(mat.c, { emissive: col, emissive_energy: n }) } }
             InspectorRow { label: "Texture"; Layout.fillWidth: true
