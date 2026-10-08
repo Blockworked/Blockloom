@@ -2418,7 +2418,10 @@ The scene view's 2D aids ride `TileDebug` (`PROTOCOL_VERSION` 34): `pixel_grid`
 (each `Light2d`'s range and spot cone), `camera_bounds` and `parallax_ruler`
 (a cross per layer, cool when slow and warm when fast), drawn by `edit.rs`
 (`draw_level_aids`, `draw_actor_aids`). The 2D inspector has an All/Sprite/Anim/
-Tiles/Light/Camera tab bar that filters the component cards.
+Tiles/Light/Camera tab bar that filters the component cards, a live aspect
+thumbnail on the Look card, `FlipbookStrip.qml` under each animation clip (scrub,
+play, timings, markers) and a far-to-near layer stack on the Parallax card.
+Onion skin and hitboxes on the strip are not done.
 
 ### 2D post
 

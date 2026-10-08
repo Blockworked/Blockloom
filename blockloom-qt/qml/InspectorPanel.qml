@@ -114,6 +114,17 @@ Rectangle {
     // A 2D pool is in pixels; the backend fills in whatever a spec leaves out.
     function waterOf(c) { return c.water || {}; }
     function parallaxOf(c) { return Object.assign({ scroll: [0.5, 0.5], wrap: [false, false], dim: 0 }, c.parallax || {}); }
+    // Every parallax layer in the project, farthest (slowest) first.
+    function parallaxStack() {
+        const list = [];
+        if (!appState.project) return list;
+        for (const a of appState.project.actors) {
+            const c = a.components.find(x => x.component === "Parallax");
+            if (c) list.push({ id: a.id, name: a.name, scroll: parallaxOf(c).scroll });
+        }
+        list.sort((x, y) => (x.scroll[0] + x.scroll[1]) - (y.scroll[0] + y.scroll[1]));
+        return list;
+    }
     function roomOf(c) { return Object.assign(is3d ? { size: [20, 10], depth: 20 } : { size: [1280, 720], depth: 720 }, { camera: true, blend: 0.4, stream: false }, c.room || {}); }
     function buoyancyOf(c) { return Object.assign({ density: 0.5, drag: 1, angular_drag: 1, points: 4, splash: true }, c.buoyancy || {}); }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
@@ -633,6 +644,27 @@ Rectangle {
                 fillMode: Image.PreserveAspectFit; horizontalAlignment: Image.AlignLeft
                 source: look.v.shape === "Image" ? root.app.assetUrl(look.v.path) : ""
                 cache: false; asynchronous: true
+            }
+            // The look's box at its real aspect, redrawn as Size changes.
+            RowLayout {
+                visible: !root.is3d && !!look.v.size && look.v.size[0] > 0 && look.v.size[1] > 0 && look.v.shape !== "Model" && look.v.shape !== "Tilemap"
+                Layout.fillWidth: true; Layout.leftMargin: 84; spacing: 8
+                Item {
+                    implicitWidth: 64; implicitHeight: 64
+                    Rectangle {
+                        readonly property real ratio: look.v.size ? look.v.size[0] / Math.max(0.001, look.v.size[1]) : 1
+                        anchors.centerIn: parent
+                        width: ratio >= 1 ? 60 : 60 * ratio; height: ratio >= 1 ? 60 / ratio : 60
+                        color: "transparent"; border.color: Theme.accent; border.width: 1
+                        Image {
+                            anchors.fill: parent; anchors.margins: 1; fillMode: Image.Stretch; smooth: false
+                            visible: look.v.shape === "Image" && status === Image.Ready
+                            source: look.v.shape === "Image" ? root.app.assetUrl(look.v.path) : ""
+                        }
+                    }
+                }
+                Text { color: Theme.textDim; font.pixelSize: 11
+                    text: look.v.size ? look.v.size[0] + " x " + look.v.size[1] + "  (" + (look.v.size[0] / Math.max(0.001, look.v.size[1])).toFixed(2) + ":1)" : "" }
             }
             InspectorRow { visible: look.v.shape === "Model"; label: "Model"; Layout.fillWidth: true
                 AssetField { app: root.app; accept: ["model"]; value: look.v.path || ""; placeholderText: "Drag a model here"; onCommitted: p => root.writeVisual(look.c, { path: p }) } }
@@ -1829,6 +1861,23 @@ Rectangle {
                 SwitchField { value: px.p.wrap[1]; onToggled: on => root.writeParallax(px.c, { wrap: [px.p.wrap[0], on] }) } Item { Layout.fillWidth: true } }
             InspectorRow { label: "Distance dim"; Layout.fillWidth: true
                 NumberField { value: px.p.dim; fallback: 0; onCommitted: n => root.writeParallax(px.c, { dim: Math.min(1, Math.max(0, n)) }) } }
+            Text { text: "Layer stack, far to near"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            Repeater {
+                model: root.parallaxStack()
+                delegate: Rectangle {
+                    required property var modelData
+                    readonly property bool mine: !!root.actor && modelData.id === root.actor.id
+                    Layout.fillWidth: true; implicitHeight: 22; radius: 3
+                    color: mine ? Theme.accent : "transparent"; border.color: Theme.borderSoft
+                    Rectangle {
+                        height: parent.height - 6; y: 3; x: 3; radius: 2; opacity: 0.5
+                        width: Math.max(2, (parent.width - 6) * Math.min(1, Math.max(modelData.scroll[0], modelData.scroll[1]) / 2))
+                        color: Theme.textDim
+                    }
+                    Text { anchors.verticalCenter: parent.verticalCenter; x: 8; color: Theme.text; font.pixelSize: 11; elide: Text.ElideRight; width: parent.width - 16
+                        text: modelData.name + "  " + modelData.scroll[0].toFixed(2) + ", " + modelData.scroll[1].toFixed(2) }
+                }
+            }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "0 rides the camera like a sky, 1 moves with the actors, up to 2 sweeps past as foreground. Where it stands is where it shows with the camera " + (root.is3d ? "where it starts; it scrolls against the camera's x and y." : "at the origin.") + (root.is3d ? " Its depth puts it behind or in front of actors" : " The Render layer puts it behind or in front of actors") + "; a wrapped layer repeats, so make it at least a screen wide." }
         }
@@ -2050,6 +2099,7 @@ Rectangle {
                         Text { text: "count"; color: Theme.textDim; font.pixelSize: 11 }
                         NumberField { Layout.preferredWidth: 44; value: modelData.sheet ? modelData.sheet.count : 1; fallback: 1; onCommitted: n => root.writeClip(an, index, { sheet: Object.assign({}, modelData.sheet, { count: Math.max(1, Math.round(n)) }) }) }
                     }
+                    FlipbookStrip { Layout.fillWidth: true; app: root.app; clip: modelData }
                     BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Seconds per frame, e.g. 0.1, 0.3 (blank uses fps)"
                         text: (modelData.durations || []).join(", ")
                         onEditingFinished: root.writeClip(an, index, { durations: root.parseNumbers(text) }) }
