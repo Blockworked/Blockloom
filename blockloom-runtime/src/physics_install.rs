@@ -253,7 +253,9 @@ fn mesh_collider(
         MeshShape::Triangles { vertices, indices } => {
             let triangles = indices
                 .0
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|t| [t[0], t[1], t[2]])
                 .collect();
             rp::Collider::trimesh_with_flags(

@@ -1795,6 +1795,9 @@ pub fn draw(
             Mode::TwoD => draw_grid_2d(&mut lines, &editor, size, px_scale, ink),
         }
     }
+    if mode == Mode::TwoD {
+        draw_level_aids(&mut lines, &engine, &editor, size, px_scale);
+    }
     // The game's camera, unless an actor holds it or the view is standing
     // right where it is.
     let game_camera = &engine.project.world.camera;
@@ -1832,6 +1835,9 @@ pub fn draw(
                 size,
                 color,
             );
+        }
+        if mode == Mode::TwoD {
+            draw_actor_aids(&mut lines, &engine, &editor, &id.0, &pose.0);
         }
         if selected {
             let mut shown = pose.0;
@@ -2127,6 +2133,86 @@ fn draw_grid_2d(lines: &mut Gizmos, editor: &SceneEditor, size: Vec2, px_scale: 
         Vec3::new(0.0, center.y + reach, -900.0),
         AXIS_COLORS[1].with_alpha(0.9),
     );
+}
+
+/// The 2D view's pixel grid and the camera's bounds rectangle.
+fn draw_level_aids(
+    lines: &mut Gizmos,
+    engine: &Engine,
+    editor: &SceneEditor,
+    size: Vec2,
+    px_scale: f32,
+) {
+    let flags = editor.view.tiles;
+    let flat = &editor.flat;
+    let screen_per_unit = flat.zoom * px_scale;
+    // A one-pixel grid under 8 screen pixels a cell is only noise.
+    if flags.pixel_grid && screen_per_unit >= 8.0 {
+        let half = size / screen_per_unit / 2.0;
+        let cells = UVec2::new(half.x.ceil() as u32 * 2 + 2, half.y.ceil() as u32 * 2 + 2);
+        let center = flat.center.round();
+        lines.grid(
+            Isometry3d::from_translation(center.extend(-899.0)),
+            cells,
+            Vec2::ONE,
+            Color::srgba(1.0, 1.0, 1.0, 0.14),
+        );
+    }
+    if flags.camera_bounds
+        && let Some(bounds) = &engine.project.world.camera2d.bounds
+    {
+        let min = Vec2::from(bounds.min);
+        let max = Vec2::from(bounds.max);
+        lines.rect_2d(
+            Isometry2d::from_translation((min + max) / 2.0),
+            max - min,
+            Color::srgba(1.0, 0.75, 0.2, 0.9),
+        );
+    }
+}
+
+/// One actor's light reach and parallax marker.
+fn draw_actor_aids(
+    lines: &mut Gizmos,
+    engine: &Engine,
+    editor: &SceneEditor,
+    id: &str,
+    pose: &Transform,
+) {
+    let flags = editor.view.tiles;
+    let Some(actor) = engine.actor(id) else {
+        return;
+    };
+    let at = pose.translation.truncate();
+    if flags.light_radius
+        && let Some(light) = actor.components.light2d()
+    {
+        let color = Color::srgba(1.0, 0.9, 0.4, 0.7);
+        lines.circle_2d(
+            Isometry2d::from_translation(at),
+            light.range.max(0.0),
+            color,
+        );
+        if light.kind == blockloom_core::light2d::Light2dKind::Spot {
+            let facing = pose.rotation.to_euler(EulerRot::ZYX).0;
+            for side in [-0.5, 0.5] {
+                let angle = facing + light.outer_angle.to_radians() * side;
+                lines.line_2d(
+                    at,
+                    at + Vec2::from_angle(angle) * light.range.max(0.0),
+                    color,
+                );
+            }
+        }
+    }
+    if flags.parallax_ruler
+        && let Some(layer) = actor.components.parallax()
+    {
+        // Slow layers read cool, layers faster than the world warm.
+        let t = (layer.scroll[0].max(layer.scroll[1]) / 2.0).clamp(0.0, 1.0);
+        let color = Color::srgba(0.3 + 0.7 * t, 0.5, 1.0 - 0.8 * t, 0.9);
+        lines.cross_2d(Isometry2d::from_translation(at), 12.0, color);
+    }
 }
 
 /// Where the game's own camera stands, and which way it looks.

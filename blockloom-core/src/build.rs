@@ -181,6 +181,33 @@ pub struct TargetStatus {
     pub hdr: bool,
     /// Why, for the dialog.
     pub hdr_note: String,
+    /// What a 2D game keeps on this target: lights, shadows, sprite sheet.
+    pub look2d_note: String,
+}
+
+/// The sprite sheet size a target bakes.
+pub fn atlas_size(target: &Target) -> u32 {
+    if target.is_web() {
+        WEB_ATLAS
+    } else if target.is_android() {
+        ANDROID_ATLAS
+    } else {
+        DESKTOP_ATLAS
+    }
+}
+
+/// What a 2D game keeps on a target, for the dialog. Lights and shadows are
+/// a screen-space layer built on the CPU, so every target keeps them.
+fn look2d_note(target: &Target) -> String {
+    let size = atlas_size(target);
+    let cost = if target.is_web() {
+        " Shadow maps rebuild in the browser's single thread, so keep shadow casters few."
+    } else if target.is_android() {
+        " Keep lights to a handful on phones."
+    } else {
+        ""
+    };
+    format!("2D lights and shadows are kept. Sprites bake into a sheet up to {size} px.{cost}")
 }
 
 /// Every platform, in the order the dialog lists them: this machine first,
@@ -236,6 +263,7 @@ fn android_status(
         fast_note,
         hdr: target.hdr_default().0,
         hdr_note: target.hdr_default().1.to_string(),
+        look2d_note: look2d_note(target),
     }
 }
 
@@ -322,6 +350,7 @@ fn status(
         fast_note,
         hdr: target.hdr_default().0,
         hdr_note: target.hdr_default().1.to_string(),
+        look2d_note: look2d_note(target),
     }
 }
 
@@ -637,7 +666,7 @@ pub fn build(
     copy_plugin_data(&options.plugins, project_dir, &game)?;
     copy_extras(&options.extras, &game)?;
     crate::build_control::step("Baking sprite atlas")?;
-    let atlas = bake_sprite_atlas(project, project_dir, &game)?;
+    let atlas = bake_sprite_atlas(project, project_dir, &game, DESKTOP_ATLAS)?;
     crate::build_control::step("Baking sky")?;
     let sky = bake_sky(project, project_dir, &game)?;
     copy_probes(project, project_dir, &game)?;
@@ -781,7 +810,7 @@ fn build_web(
     crate::build_control::step("Copying game assets")?;
     let assets = copy_assets(project_dir, &game)?;
     crate::build_control::step("Baking sprite atlas")?;
-    let atlas = bake_sprite_atlas(project, project_dir, &game)?;
+    let atlas = bake_sprite_atlas(project, project_dir, &game, WEB_ATLAS)?;
     crate::build_control::step("Baking sky")?;
     let sky = bake_sky(project, project_dir, &game)?;
     copy_probes(project, project_dir, &game)?;
@@ -933,7 +962,7 @@ fn build_android_with_config(
     crate::build_control::step("Copying game assets")?;
     let assets = copy_assets(project_dir, &game)?;
     crate::build_control::step("Baking sprite atlas")?;
-    let atlas = bake_sprite_atlas(project, project_dir, &game)?;
+    let atlas = bake_sprite_atlas(project, project_dir, &game, ANDROID_ATLAS)?;
     crate::build_control::step("Baking sky")?;
     let sky = bake_sky(project, project_dir, &game)?;
     copy_probes(project, project_dir, &game)?;
@@ -1577,12 +1606,23 @@ fn copy_assets(project_dir: &Path, game: &Path) -> Result<usize, String> {
     })
 }
 
+/// Largest sprite sheet a target bakes: the texture size every GPU it
+/// runs on is sure to take, and a memory budget on phones.
+pub const DESKTOP_ATLAS: u32 = 4096;
+pub const WEB_ATLAS: u32 = 2048;
+pub const ANDROID_ATLAS: u32 = 2048;
+
 /// Bakes the project's Image looks into one sheet the player draws them out
 /// of. The files still ship, since a block or a material can name them too.
 /// Sprites too big to share a sheet stay out, and if the rest overflow one
 /// sheet the biggest are dropped until they fit; one sprite alone gains
 /// nothing, so it bakes no atlas at all.
-fn bake_sprite_atlas(project: &Project, project_dir: &Path, game: &Path) -> Result<usize, String> {
+fn bake_sprite_atlas(
+    project: &Project,
+    project_dir: &Path,
+    game: &Path,
+    sheet: u32,
+) -> Result<usize, String> {
     use crate::pipeline;
     let mut sprites: Vec<(String, u64)> = Vec::new();
     for scene in &project.scenes {
@@ -1613,7 +1653,7 @@ fn bake_sprite_atlas(project: &Project, project_dir: &Path, game: &Path) -> Resu
     sprites.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
     while sprites.len() >= 2 {
         let paths: Vec<String> = sprites.iter().map(|(path, _)| path.clone()).collect();
-        match pipeline::bake_atlas(project_dir, &paths, 2048, 2) {
+        match pipeline::bake_atlas(project_dir, &paths, sheet, 2) {
             Ok(atlas) => {
                 pipeline::write_atlas(
                     &atlas,
@@ -2605,6 +2645,7 @@ mod tests {
             assert!(!status.note.contains("players/"), "{status:?}");
             assert!(!status.hdr, "{status:?}");
             assert!(!status.hdr_note.is_empty());
+            assert!(status.look2d_note.contains("2D lights"));
         }
         let _ = std::fs::remove_dir_all(&root);
     }

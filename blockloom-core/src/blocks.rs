@@ -23,6 +23,10 @@ pub enum SpriteDial {
     YSort,
     Palette,
     OutlineWidth,
+    /// A squash-and-stretch pop of this strength (0.3 is lively).
+    Pop,
+    /// Floats this number up from the sprite and fades it out.
+    FloatNumber,
 }
 
 impl SpriteDial {
@@ -40,6 +44,101 @@ impl SpriteDial {
             "ysort" => Some(SpriteDial::YSort),
             "palette" => Some(SpriteDial::Palette),
             "outlinewidth" | "outline" => Some(SpriteDial::OutlineWidth),
+            "pop" | "squash" => Some(SpriteDial::Pop),
+            "floatnumber" | "float" => Some(SpriteDial::FloatNumber),
+            _ => None,
+        }
+    }
+}
+
+/// The 2D look `set [look] to` can change for the run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Look2dDial {
+    /// The ambient multiplier over the project's colour.
+    AmbientLight,
+    /// A colour that replaces the ambient colour; empty puts it back.
+    AmbientColor,
+    /// Pixels per block of the picture (0 or 1 is off).
+    Pixelation,
+    /// Colour levels per channel (0 is off).
+    Levels,
+    /// 0-1 ordered dither across the quantize step.
+    Dither,
+    /// 0-1 edge outline strength.
+    Outline,
+    /// 0-1 CRT scanline depth.
+    Scanlines,
+    /// 0-1 CRT screen bow.
+    Curvature,
+    /// 0-1 CRT darkened corners.
+    Vignette,
+    /// Camera zoom in pixels per world unit.
+    Zoom,
+    /// Camera view height in world units.
+    ZoomHeight,
+    /// Camera roll in degrees.
+    Rotation,
+    /// Adds trauma (0-1) to the camera shake.
+    Shake,
+    /// Freezes the world for this many seconds; the interface keeps going.
+    Hitstop,
+    BoundsLeft,
+    BoundsRight,
+    BoundsBottom,
+    BoundsTop,
+    /// 1 keeps the camera's x where it is.
+    LockX,
+    LockY,
+    /// 1 snaps the camera to whole pixels.
+    PixelSnap,
+    /// Flashes the screen for this many seconds, fading out.
+    Flash,
+    FlashColor,
+    /// Covers the screen up to this fraction (0 clear, 1 opaque).
+    Cover,
+    /// `fade`, `wipe` or `circle`.
+    CoverKind,
+    CoverColor,
+    /// Seconds a cover takes from clear to opaque.
+    CoverTime,
+}
+
+impl Look2dDial {
+    /// A dial by the name a script or compiled logic sends.
+    pub fn parse(name: &str) -> Option<Look2dDial> {
+        match name
+            .trim()
+            .to_lowercase()
+            .replace(['_', '-', ' '], "")
+            .as_str()
+        {
+            "ambientlight" | "ambient" => Some(Look2dDial::AmbientLight),
+            "ambientcolor" | "ambientcolour" => Some(Look2dDial::AmbientColor),
+            "pixelation" | "pixelate" => Some(Look2dDial::Pixelation),
+            "levels" => Some(Look2dDial::Levels),
+            "dither" => Some(Look2dDial::Dither),
+            "outline" => Some(Look2dDial::Outline),
+            "scanlines" => Some(Look2dDial::Scanlines),
+            "curvature" => Some(Look2dDial::Curvature),
+            "vignette" => Some(Look2dDial::Vignette),
+            "zoom" => Some(Look2dDial::Zoom),
+            "zoomheight" | "viewheight" => Some(Look2dDial::ZoomHeight),
+            "rotation" | "roll" => Some(Look2dDial::Rotation),
+            "shake" => Some(Look2dDial::Shake),
+            "hitstop" => Some(Look2dDial::Hitstop),
+            "boundsleft" => Some(Look2dDial::BoundsLeft),
+            "boundsright" => Some(Look2dDial::BoundsRight),
+            "boundsbottom" => Some(Look2dDial::BoundsBottom),
+            "boundstop" => Some(Look2dDial::BoundsTop),
+            "lockx" => Some(Look2dDial::LockX),
+            "locky" => Some(Look2dDial::LockY),
+            "pixelsnap" => Some(Look2dDial::PixelSnap),
+            "flash" => Some(Look2dDial::Flash),
+            "flashcolor" | "flashcolour" => Some(Look2dDial::FlashColor),
+            "cover" => Some(Look2dDial::Cover),
+            "coverkind" => Some(Look2dDial::CoverKind),
+            "covercolor" | "covercolour" => Some(Look2dDial::CoverColor),
+            "covertime" => Some(Look2dDial::CoverTime),
             _ => None,
         }
     }
@@ -158,6 +257,12 @@ pub enum InstructionKind {
     /// Room component), named by the room's name. Empty matches any room.
     WhenEnterRoom {
         room: String,
+    },
+    /// Runs in an actor each time its character motor jumps, lands, leaves
+    /// the ground, bumps its head or changes stance.
+    WhenMotor {
+        #[serde(default)]
+        event: crate::physics::motor::MotorEvent,
     },
     /// Runs in the newly loaded scene's actors after a `switch scene to`
     /// finishes loading it, and once at the start of the first scene.
@@ -326,6 +431,11 @@ pub enum InstructionKind {
     /// brighter. Outranks auto-exposure and the project's own value.
     SetRenderSetting {
         setting: crate::quality::Setting,
+        value: Value,
+    },
+    /// Changes one dial of the 2D lit look for the rest of the run.
+    SetLook2d {
+        dial: Look2dDial,
         value: Value,
     },
     SetExposure {
@@ -1231,6 +1341,7 @@ impl BlockKind for InstructionKind {
             | K::SetRotation { degrees: v, .. }
             | K::SetScale { factor: v }
             | K::SetRenderSetting { value: v, .. }
+            | K::SetLook2d { value: v, .. }
             | K::SetExposure { ev: v }
             | K::SetLightIntensity { intensity: v }
             | K::SetEmissiveStrength { strength: v }
@@ -1695,6 +1806,7 @@ impl BlockKind for InstructionKind {
             | K::WhenParticles { .. }
             | K::WhenAnimationMarker { .. }
             | K::WhenEnterRoom { .. }
+            | K::WhenMotor { .. }
             | K::WhenSceneStarts
             | K::WhenWeather { .. }
             | K::WhenSceneEnds
@@ -1757,6 +1869,7 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenParticles { .. }
                 | InstructionKind::WhenAnimationMarker { .. }
                 | InstructionKind::WhenEnterRoom { .. }
+                | InstructionKind::WhenMotor { .. }
                 | InstructionKind::WhenSceneStarts
                 | InstructionKind::WhenWeather { .. }
                 | InstructionKind::WhenSceneEnds

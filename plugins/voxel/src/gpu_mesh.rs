@@ -213,7 +213,7 @@ pub fn visual(group: &crate::mesher::Group, voxel: f32) -> Option<GpuVertices> {
     }
     let mut records = Vec::new();
     let mut palette = Vec::<[f32; 4]>::new();
-    for pair in group.indices.chunks_exact(6) {
+    for pair in group.indices.as_chunks::<6>().0 {
         let index = pair[0] as usize;
         let normal = &group.normals[index * 3..index * 3 + 3];
         let axis = (0..3).find(|&a| normal[a].abs() == 1.0)?;

@@ -398,6 +398,7 @@ enum TupleGroups<'a> {
     Textured(&'a mut BTreeMap<(Option<u8>, Option<String>), Group>),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn mesh_shapes_inner(
     grid: &Grid,
     palette: &Palette,
@@ -453,6 +454,7 @@ fn mesh_shapes_inner(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn mesh_shapes_textured(
     grid: &Grid,
     palette: &Palette,

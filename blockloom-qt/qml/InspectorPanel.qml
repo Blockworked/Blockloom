@@ -22,12 +22,46 @@ Rectangle {
     onProjectPathChanged: { app.inspectScene = false; app.inspectedScene = ""; app.inspectedLighting = ""; }
     readonly property string mode: appState.project ? appState.project.world.mode : "TwoD"
     readonly property bool is3d: mode === "ThreeD"
+    // The 2D inspector's tab: which components the cards below show.
+    property string tab2d: "All"
+    readonly property var tabs2d: ({
+        Sprite: ["Place", "Parent", "Look", "Render", "Sprite", "Material"],
+        Anim: ["Animation", "Emitter", "Trail"],
+        Tiles: ["Look", "Parallax", "Room", "Conveyor", "Hazard"],
+        Light: ["Light2d", "Volume"],
+        Camera: ["Camera", "PlayerCamera"]
+    })
+    function tabShows(component) {
+        if (is3d || tab2d === "All") return true;
+        const list = tabs2d[tab2d];
+        return !!list && list.indexOf(component) >= 0;
+    }
     // Where the actor is right now, while a run is going.
     readonly property var live: actor && app.status ? (app.status.actors.find(a => a.id === actor.id) || null) : null
     color: Theme.panel
     border.color: Theme.borderSoft
     clip: true
 
+    // The first enabled 2D collider as fractions of the look's box, for the flipbook strip.
+    function hitboxOf() {
+        const comps = actor ? actor.components : [];
+        const look = comps.find(x => x.component === "Look");
+        const size = look && look.visual && look.visual.size ? look.visual.size : null;
+        if (!size || !(size[0] > 0) || !(size[1] > 0)) return null;
+        for (const c of comps) {
+            const col = c.component === "Collider" ? c.collider : null;
+            if (!col || col.enabled === false) continue;
+            const g = col.geometry && col.geometry.Shape ? col.geometry.Shape.shape : (col.geometry && col.geometry.shape ? col.geometry.shape : null);
+            let w = size[0], h = size[1];
+            if (g && g.kind === "Rect") { w = g.size[0]; h = g.size[1]; }
+            else if (g && g.kind === "Circle") { w = h = g.radius * 2; }
+            else if (g && g.kind === "Capsule2d") { w = g.size[0]; h = g.size[1]; }
+            else if (g) continue;
+            const ctr = col.center || [0, 0, 0];
+            return { w: w / size[0], h: h / size[1], x: ctr[0] / size[0], y: -ctr[1] / size[1], round: !!g && g.kind !== "Rect" };
+        }
+        return null;
+    }
     function componentName(c) {
         if (c.component === "Plugin") return c.record.plugin + "/" + c.record.type_id;
         return c.component === "Custom" ? c.name : c.component;
@@ -78,6 +112,13 @@ Rectangle {
     function emitterOf(c) { return Object.assign({ rate: 24, lifetime: 0.8, speed: 120, spread: 60, gravity_scale: 0.5, size_start: 6, size_end: 1, color_start: "#FFFFFF", color_end: "#FFAB19", max: 128, wind: 1 }, c.emitter || {}); }
     function lightOf(c) { return Object.assign({ kind: "Point", color: "#FFFFFF", intensity: 800, range: 20, radius: 0, inner_angle: 30, outer_angle: 45, shadows: false,
         unit: "Lumens", width: 1, height: 1, cookie: "", cookie_tiling: 1, ies: "", contact_shadows: false, soft_shadows: false, shadow_depth_bias: null, shadow_normal_bias: null, ray_traced: true, volumetric: true }, c.light || {}); }
+    function conveyorOf(c) { return Object.assign({ speed: 96, enabled: true }, c.conveyor || {}); }
+    function hazardOf(c) { return Object.assign({ enabled: true, knockback: 288, lift: 0.5, invulnerability: 1, message: "hurt" }, c.hazard || {}); }
+    function light2dOf(c) {
+        const l = Object.assign({ kind: "Point", color: "#FFE2A8", intensity: 1, range: 240, falloff: 2, inner_angle: 25, outer_angle: 40, shadows: false, softness: 12, flicker: {} }, c.light2d || {});
+        l.flicker = Object.assign({ amount: 0, speed: 8, seed: 1 }, l.flicker);
+        return l;
+    }
     function beamOf(l) {
         const b = Object.assign({ density: 0, anisotropy: null, falloff: 1, near_fade: 0.5, far_fade: 2, mode: "Auto", shaft_intensity: 1, shaft_noise: 0.4, shaft_scroll: 0.3, motes: {} }, l.beam || {});
         b.motes = Object.assign({ enabled: false, count: 160, size: 0.012, alpha: 0.6, twinkle: 0.5, drift: 0.05 }, b.motes);
@@ -93,12 +134,23 @@ Rectangle {
     // A 2D pool is in pixels; the backend fills in whatever a spec leaves out.
     function waterOf(c) { return c.water || {}; }
     function parallaxOf(c) { return Object.assign({ scroll: [0.5, 0.5], wrap: [false, false], dim: 0 }, c.parallax || {}); }
+    // Every parallax layer in the project, farthest (slowest) first.
+    function parallaxStack() {
+        const list = [];
+        if (!appState.project) return list;
+        for (const a of appState.project.actors) {
+            const c = a.components.find(x => x.component === "Parallax");
+            if (c) list.push({ id: a.id, name: a.name, scroll: parallaxOf(c).scroll });
+        }
+        list.sort((x, y) => (x.scroll[0] + x.scroll[1]) - (y.scroll[0] + y.scroll[1]));
+        return list;
+    }
     function roomOf(c) { return Object.assign(is3d ? { size: [20, 10], depth: 20 } : { size: [1280, 720], depth: 720 }, { camera: true, blend: 0.4, stream: false }, c.room || {}); }
     function buoyancyOf(c) { return Object.assign({ density: 0.5, drag: 1, angular_drag: 1, points: 4, splash: true }, c.buoyancy || {}); }
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
     function animationOf(c) { return Object.assign({ clips: [], states: [], initial: "", crossfade: 0, rig: "", skin: "", slot_tints: [] }, c.animation || {}); }
-    function spriteOf(c) { return Object.assign({ flip_x: false, flip_y: false, order: 0, y_sort: false, slice: null, stack: null, palette: "", palette_index: 0, outline_width: 0, outline_color: "#000000" }, c.sprite || {}); }
+    function spriteOf(c) { return Object.assign({ flip_x: false, flip_y: false, order: 0, y_sort: false, slice: null, stack: null, palette: "", palette_index: 0, glow: 0, casts_shadow: false, outline_width: 0, outline_color: "#000000" }, c.sprite || {}); }
     // Transitions read and write as one line each: "run if speed > 2 blend 0.2",
     // "idle on end", "land on marker land", "jump on trigger jump".
     readonly property var compareSigns: ({ Less: "<", LessOrEqual: "<=", Equal: "=", NotEqual: "!=", Greater: ">", GreaterOrEqual: ">=" })
@@ -255,6 +307,9 @@ Rectangle {
     function writeShader(c, next) { writeMaterial(c, { shader: merged(materialOf(c).shader || { mode: "Solid", speed: 1, strength: 0.5, color: "#FFFFFF" }, next) }); }
     function writeEmitter(c, next) { write("Emitter", { component: "Emitter", emitter: merged(emitterOf(c), next) }); }
     function writeLight(c, next) { write("Light", { component: "Light", light: merged(lightOf(c), next) }); }
+    function writeLight2d(c, next) { write("Light2d", { component: "Light2d", light2d: merged(light2dOf(c), next) }); }
+    function writeConveyor(c, next) { write("Conveyor", { component: "Conveyor", conveyor: merged(conveyorOf(c), next) }); }
+    function writeHazard(c, next) { write("Hazard", { component: "Hazard", hazard: merged(hazardOf(c), next) }); }
     function writeBeam(c, next) { writeLight(c, { beam: merged(beamOf(lightOf(c)), next) }); }
     function writeMotes(c, next) { writeBeam(c, { motes: merged(beamOf(lightOf(c)).motes, next) }); }
     function writeTrail(c, next) { write("Trail", { component: "Trail", trail: merged(trailOf(c), next) }); }
@@ -360,10 +415,11 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Rigidbody","Collider","Constraint","CharacterController","CharacterMotor","PlayerCamera","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
+        return ["Look","Render","Body","Rigidbody","Collider","Constraint","CharacterController","CharacterMotor","PlayerCamera","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Light2d","Conveyor","Hazard","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
             .filter(n => n !== "Sprite" || !is3d)
             .filter(n => n !== "Fracture" || is3d)
-            .filter(n => n === "Custom" || n === "Collider" || n === "Constraint" || n === "Script" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }))
+            .filter(n => (n !== "Light2d" && n !== "Conveyor" && n !== "Hazard") || !is3d)
+            .filter(n => n === "Custom" || n === "Collider" || n === "Constraint" || n === "Script" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : (n === "Light2d" ? "2D light" : n === "Conveyor" ? "Conveyor belt" : n === "Hazard" ? "Hurt volume" : n) }))
             .concat(pluginTypes.filter(t => t.kind === "component" && held.indexOf(t.name) < 0).map(t => ({ value: "plugin:" + t.name, label: t.displayName + " (" + t.pluginName + ")" })));
     }
     function blank(name) {
@@ -380,6 +436,9 @@ Rectangle {
         case "Emitter": return { component: "Emitter", emitter: emitterOf({}) };
         case "Trail": return { component: "Trail", trail: trailOf({}) };
         case "Light": return { component: "Light", light: lightOf({}) };
+        case "Light2d": return { component: "Light2d", light2d: light2dOf({}) };
+        case "Conveyor": return { component: "Conveyor", conveyor: conveyorOf({}) };
+        case "Hazard": return { component: "Hazard", hazard: hazardOf({}) };
         case "Animation": return { component: "Animation", animation: { clips: [], states: [] } };
         case "Sprite": return { component: "Sprite", sprite: spriteOf({}) };
         case "Volume": return { component: "Volume", volume: volumeOf({}) };
@@ -471,6 +530,21 @@ Rectangle {
                         app: root.app; actorId: root.actor ? root.actor.id : ""; is3d: root.is3d
                         isPlayer: !!root.actor && root.actor.components.some(c => c.component === "CharacterController")
                     }
+                    Flow {
+                        visible: !root.is3d; Layout.fillWidth: true; spacing: 4
+                        Repeater {
+                            model: ["All", "Sprite", "Anim", "Tiles", "Light", "Camera"]
+                            delegate: Rectangle {
+                                required property string modelData
+                                readonly property bool on: root.tab2d === modelData
+                                implicitWidth: tabLabel.implicitWidth + 16; implicitHeight: 24; radius: 4
+                                color: on ? Theme.accent : "transparent"
+                                border.color: Theme.borderSoft
+                                Text { id: tabLabel; anchors.centerIn: parent; text: parent.modelData; font.pixelSize: 12; color: parent.on ? Theme.text : Theme.textDim }
+                                MouseArea { anchors.fill: parent; onClicked: root.tab2d = parent.modelData }
+                            }
+                        }
+                    }
                     // A count rather than the array: a new snapshot with the same
                     // components updates the cards in place instead of rebuilding them.
                     Repeater {
@@ -481,13 +555,14 @@ Rectangle {
                             readonly property var c: root.actor && root.actor.components[index] ? root.actor.components[index] : ({ component: "" })
                             Layout.fillWidth: true; spacing: 6
                             heading: root.componentTitle(card.c)
+                            visible: root.tabShows(card.c.component)
                             removable: card.c.component !== "Place"
                             onRemoveRequested: root.removeComponent(card.c)
                             Loader {
                                 Layout.fillWidth: true
                                 readonly property var c: card.c
                                 sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Rigidbody: rigidbodyCard, Collider: colliderCard, Constraint: constraintCard, CharacterController: controllerCard, CharacterMotor: motorCard, PlayerCamera: playerCameraCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                    Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard, Plugin: pluginCard })[card.c.component] || null
+                                                    Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Light2d: light2dCard, Conveyor: conveyorCard, Hazard: hazardCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard, Plugin: pluginCard })[card.c.component] || null
                             }
                         }
                     }
@@ -589,6 +664,27 @@ Rectangle {
                 fillMode: Image.PreserveAspectFit; horizontalAlignment: Image.AlignLeft
                 source: look.v.shape === "Image" ? root.app.assetUrl(look.v.path) : ""
                 cache: false; asynchronous: true
+            }
+            // The look's box at its real aspect, redrawn as Size changes.
+            RowLayout {
+                visible: !root.is3d && !!look.v.size && look.v.size[0] > 0 && look.v.size[1] > 0 && look.v.shape !== "Model" && look.v.shape !== "Tilemap"
+                Layout.fillWidth: true; Layout.leftMargin: 84; spacing: 8
+                Item {
+                    implicitWidth: 64; implicitHeight: 64
+                    Rectangle {
+                        readonly property real ratio: look.v.size ? look.v.size[0] / Math.max(0.001, look.v.size[1]) : 1
+                        anchors.centerIn: parent
+                        width: ratio >= 1 ? 60 : 60 * ratio; height: ratio >= 1 ? 60 / ratio : 60
+                        color: "transparent"; border.color: Theme.accent; border.width: 1
+                        Image {
+                            anchors.fill: parent; anchors.margins: 1; fillMode: Image.Stretch; smooth: false
+                            visible: look.v.shape === "Image" && status === Image.Ready
+                            source: look.v.shape === "Image" ? root.app.assetUrl(look.v.path) : ""
+                        }
+                    }
+                }
+                Text { color: Theme.textDim; font.pixelSize: 11
+                    text: look.v.size ? look.v.size[0] + " x " + look.v.size[1] + "  (" + (look.v.size[0] / Math.max(0.001, look.v.size[1])).toFixed(2) + ":1)" : "" }
             }
             InspectorRow { visible: look.v.shape === "Model"; label: "Model"; Layout.fillWidth: true
                 AssetField { app: root.app; accept: ["model"]; value: look.v.path || ""; placeholderText: "Drag a model here"; onCommitted: p => root.writeVisual(look.c, { path: p }) } }
@@ -1114,6 +1210,37 @@ Rectangle {
             spacing: 6
             InspectorRow { label: "Metallic"; Layout.fillWidth: true; NumberField { value: mat.m.metallic; onCommitted: n => root.writeMaterial(mat.c, { metallic: n }) } }
             InspectorRow { label: "Rough"; Layout.fillWidth: true; NumberField { value: mat.m.roughness; fallback: 0.6; onCommitted: n => root.writeMaterial(mat.c, { roughness: n }) } }
+            readonly property string source: {
+                const look = root.actor ? root.actor.components.find(x => x.component === "Look") : null;
+                return look && look.visual && look.visual.path ? look.visual.path : "";
+            }
+            property real bumpStrength: 4
+            property string bumpPath: ""
+            property string bumpPreview: ""
+            property real lightX: 0.2
+            property real lightY: 0.2
+            function refreshBump() {
+                if (!sp.bumpPath) { sp.bumpPreview = ""; return; }
+                root.app.invoke("preview_normal_map", { path: sp.bumpPath, x: sp.lightX, y: sp.lightY, height: 0.6, size: 160 },
+                    url => { sp.bumpPreview = url; }, e => { sp.bumpPreview = ""; });
+            }
+            InspectorRow { visible: sp.source !== ""; label: "Bump"; Layout.fillWidth: true
+                NumberField { value: sp.bumpStrength; fallback: 4; onCommitted: n => { sp.bumpStrength = Math.min(Math.max(n, 0), 32); } }
+                BwButton { text: "Bake normal map"
+                    onClicked: root.app.invoke("bake_normal_map", { path: sp.source, strength: sp.bumpStrength },
+                        out => { sp.bumpPath = out; sp.refreshBump(); }, e => root.app.invoke("push_log", { kind: "error", text: String(e) })) } }
+            Item {
+                visible: sp.bumpPreview !== ""
+                Layout.fillWidth: true; Layout.preferredHeight: 160
+                Image { id: bumpImage; anchors.centerIn: parent; height: 160; fillMode: Image.PreserveAspectFit; source: sp.bumpPreview; smooth: false }
+                Rectangle { width: 8; height: 8; radius: 4; color: "#FFD060"; border.color: "#000000"
+                    x: bumpImage.x + sp.lightX * bumpImage.width - 4; y: bumpImage.y + sp.lightY * bumpImage.height - 4 }
+                MouseArea { anchors.fill: bumpImage
+                    onPositionChanged: m => { if (pressed) { sp.lightX = Math.min(Math.max(m.x / width, 0), 1); sp.lightY = Math.min(Math.max(m.y / height, 0), 1); sp.refreshBump(); } }
+                    onPressed: m => { sp.lightX = Math.min(Math.max(m.x / width, 0), 1); sp.lightY = Math.min(Math.max(m.y / height, 0), 1); sp.refreshBump(); } }
+            }
+            Text { visible: sp.source !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Bakes the picture's brightness into a normal map beside it (name_n.png). Drag over the preview to move the light." }
             InspectorRow { label: "Glow"; Layout.fillWidth: true
                 HdrColorField { color: mat.m.emissive; intensity: mat.m.emissive_energy; onPicked: (col, n) => root.writeMaterial(mat.c, { emissive: col, emissive_energy: n }) } }
             InspectorRow { label: "Texture"; Layout.fillWidth: true
@@ -1196,6 +1323,73 @@ Rectangle {
                 onEdited: next => root.writeEmitter(em.c, next) }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "Plays in the scene view while this actor is selected, looping every Duration. In a run it sprays while attached; detaching stops the spray and what is already flying fades out on its own." }
+        }
+    }
+    Component {
+        id: light2dCard
+        ColumnLayout {
+            id: l2
+            readonly property var c: parent.c
+            readonly property var l: root.light2dOf(c)
+            spacing: 6
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Lights the 2D world once Lighting is on in Project Settings. Range and softness are in pixels." }
+            InspectorRow { label: "Kind"; Layout.fillWidth: true
+                ChoiceField { options: [{ value: "Point", label: "Point" }, { value: "Spot", label: "Spot" }]; value: l2.l.kind; onChosen: k => root.writeLight2d(l2.c, { kind: k }) } }
+            InspectorRow { label: "Color"; Layout.fillWidth: true; ColorField { value: l2.l.color; onPicked: col => root.writeLight2d(l2.c, { color: col }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Intensity"; Layout.fillWidth: true
+                NumberField { value: l2.l.intensity; fallback: 1; onCommitted: n => root.writeLight2d(l2.c, { intensity: Math.max(0, n) }) } }
+            InspectorRow { label: "Range"; Layout.fillWidth: true
+                NumberField { value: l2.l.range; fallback: 240; onCommitted: n => root.writeLight2d(l2.c, { range: Math.max(1, n) }) } }
+            InspectorRow { label: "Falloff"; Layout.fillWidth: true
+                NumberField { value: l2.l.falloff; fallback: 2; onCommitted: n => root.writeLight2d(l2.c, { falloff: Math.min(Math.max(n, 0.1), 8) }) } }
+            InspectorRow { visible: l2.l.kind === "Spot"; label: "Cone °"; Layout.fillWidth: true
+                NumberField { value: l2.l.inner_angle; fallback: 25; onCommitted: n => root.writeLight2d(l2.c, { inner_angle: n }) }
+                NumberField { value: l2.l.outer_angle; fallback: 40; onCommitted: n => root.writeLight2d(l2.c, { outer_angle: n }) } }
+            InspectorRow { label: "Shadows"; Layout.fillWidth: true
+                SwitchField { value: l2.l.shadows; onToggled: on => root.writeLight2d(l2.c, { shadows: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { visible: l2.l.shadows; label: "Softness"; Layout.fillWidth: true
+                NumberField { value: l2.l.softness; fallback: 12; onCommitted: n => root.writeLight2d(l2.c, { softness: Math.max(0, n) }) } }
+            InspectorRow { label: "Flicker"; Layout.fillWidth: true
+                NumberField { value: l2.l.flicker.amount; fallback: 0; onCommitted: n => root.writeLight2d(l2.c, { flicker: Object.assign({}, l2.l.flicker, { amount: Math.min(Math.max(n, 0), 1) }) }) }
+                NumberField { value: l2.l.flicker.speed; fallback: 8; onCommitted: n => root.writeLight2d(l2.c, { flicker: Object.assign({}, l2.l.flicker, { speed: Math.max(0, n) }) }) } }
+        }
+    }
+    Component {
+        id: conveyorCard
+        ColumnLayout {
+            id: cv
+            readonly property var c: parent.c
+            readonly property var b: root.conveyorOf(c)
+            spacing: 6
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Carries characters standing on it along its facing (turn the actor to aim it). Speed is pixels a second." }
+            InspectorRow { label: "On"; Layout.fillWidth: true
+                SwitchField { value: cv.b.enabled; onToggled: on => root.writeConveyor(cv.c, { enabled: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Speed"; Layout.fillWidth: true
+                NumberField { value: cv.b.speed; fallback: 96; onCommitted: n => root.writeConveyor(cv.c, { speed: n }) } }
+        }
+    }
+    Component {
+        id: hazardCard
+        ColumnLayout {
+            id: hz
+            readonly property var c: parent.c
+            readonly property var h: root.hazardOf(c)
+            spacing: 6
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Throws a touching character away, then leaves it safe for the invulnerability time. Needs a collider (a trigger works)." }
+            InspectorRow { label: "On"; Layout.fillWidth: true
+                SwitchField { value: hz.h.enabled; onToggled: on => root.writeHazard(hz.c, { enabled: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Knockback"; Layout.fillWidth: true
+                NumberField { value: hz.h.knockback; fallback: 288; onCommitted: n => root.writeHazard(hz.c, { knockback: Math.max(0, n) }) } }
+            InspectorRow { label: "Lift"; Layout.fillWidth: true
+                NumberField { value: hz.h.lift; fallback: 0.5; onCommitted: n => root.writeHazard(hz.c, { lift: Math.min(Math.max(n, 0), 1) }) } }
+            InspectorRow { label: "Safe for (s)"; Layout.fillWidth: true
+                NumberField { value: hz.h.invulnerability; fallback: 1; onCommitted: n => root.writeHazard(hz.c, { invulnerability: Math.max(0, n) }) } }
+            InspectorRow { label: "Message"; Layout.fillWidth: true
+                BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Broadcast when it hurts"; text: hz.h.message
+                    onEditingFinished: if (text !== hz.h.message) root.writeHazard(hz.c, { message: text }) } }
         }
     }
     Component {
@@ -1687,6 +1881,23 @@ Rectangle {
                 SwitchField { value: px.p.wrap[1]; onToggled: on => root.writeParallax(px.c, { wrap: [px.p.wrap[0], on] }) } Item { Layout.fillWidth: true } }
             InspectorRow { label: "Distance dim"; Layout.fillWidth: true
                 NumberField { value: px.p.dim; fallback: 0; onCommitted: n => root.writeParallax(px.c, { dim: Math.min(1, Math.max(0, n)) }) } }
+            Text { text: "Layer stack, far to near"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            Repeater {
+                model: root.parallaxStack()
+                delegate: Rectangle {
+                    required property var modelData
+                    readonly property bool mine: !!root.actor && modelData.id === root.actor.id
+                    Layout.fillWidth: true; implicitHeight: 22; radius: 3
+                    color: mine ? Theme.accent : "transparent"; border.color: Theme.borderSoft
+                    Rectangle {
+                        height: parent.height - 6; y: 3; x: 3; radius: 2; opacity: 0.5
+                        width: Math.max(2, (parent.width - 6) * Math.min(1, Math.max(modelData.scroll[0], modelData.scroll[1]) / 2))
+                        color: Theme.textDim
+                    }
+                    Text { anchors.verticalCenter: parent.verticalCenter; x: 8; color: Theme.text; font.pixelSize: 11; elide: Text.ElideRight; width: parent.width - 16
+                        text: modelData.name + "  " + modelData.scroll[0].toFixed(2) + ", " + modelData.scroll[1].toFixed(2) }
+                }
+            }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "0 rides the camera like a sky, 1 moves with the actors, up to 2 sweeps past as foreground. Where it stands is where it shows with the camera " + (root.is3d ? "where it starts; it scrolls against the camera's x and y." : "at the origin.") + (root.is3d ? " Its depth puts it behind or in front of actors" : " The Render layer puts it behind or in front of actors") + "; a wrapped layer repeats, so make it at least a screen wide." }
         }
@@ -1908,6 +2119,7 @@ Rectangle {
                         Text { text: "count"; color: Theme.textDim; font.pixelSize: 11 }
                         NumberField { Layout.preferredWidth: 44; value: modelData.sheet ? modelData.sheet.count : 1; fallback: 1; onCommitted: n => root.writeClip(an, index, { sheet: Object.assign({}, modelData.sheet, { count: Math.max(1, Math.round(n)) }) }) }
                     }
+                    FlipbookStrip { Layout.fillWidth: true; app: root.app; clip: modelData; hitbox: root.hitboxOf() }
                     BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Seconds per frame, e.g. 0.1, 0.3 (blank uses fps)"
                         text: (modelData.durations || []).join(", ")
                         onEditingFinished: root.writeClip(an, index, { durations: root.parseNumbers(text) }) }
@@ -1996,6 +2208,10 @@ Rectangle {
                 NumberField { value: sp.s.order; fallback: 0; onCommitted: n => root.writeSprite(sp.c, { order: Math.max(-40, Math.min(40, Math.round(n))) }) } }
             InspectorRow { label: "Y-sort"; Layout.fillWidth: true
                 SwitchField { value: sp.s.y_sort; onToggled: on => root.writeSprite(sp.c, { y_sort: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Glow"; Layout.fillWidth: true
+                NumberField { value: sp.s.glow; fallback: 0; onCommitted: n => root.writeSprite(sp.c, { glow: Math.min(Math.max(n, 0), 64) }) } }
+            InspectorRow { label: "Casts shadow"; Layout.fillWidth: true
+                SwitchField { value: sp.s.casts_shadow; onToggled: on => root.writeSprite(sp.c, { casts_shadow: on }) } Item { Layout.fillWidth: true } }
             InspectorRow { label: "9-slice"; Layout.fillWidth: true
                 SwitchField { value: !!sp.s.slice; onToggled: on => root.writeSprite(sp.c, { slice: on ? { border: [8, 8, 8, 8], center: "Stretch", sides: "Stretch", max_corner_scale: 1 } : null }) } Item { Layout.fillWidth: true } }
             RowLayout {

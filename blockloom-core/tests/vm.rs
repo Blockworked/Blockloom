@@ -1,6 +1,8 @@
 //! End-to-end VM behavior: canvases in, effects out. These are the scheduling
 //! rules `blockloom-runtime` relies on, checked without a window.
 
+#![allow(clippy::field_reassign_with_default)]
+
 use blockloom_core::blocks::{
     BlockDef, BlockPiece, BlockShape, DictDef, DictEntry, DictItem, Instruction, InstructionKind,
     ListDef, ListItem, Strand,

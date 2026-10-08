@@ -1380,6 +1380,60 @@ pub(crate) fn set_clouds(
     Ok(())
 }
 
+pub(crate) fn set_lighting_2d(
+    state: &SharedState,
+    app: &AppHandle,
+    lighting: blockloom_core::light2d::Lighting2d,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let mut lighting = lighting;
+    lighting.normalize();
+    if let Some(project) = s.project_mut() {
+        project.world.lighting2d = lighting;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+pub(crate) fn set_post_2d(
+    state: &SharedState,
+    app: &AppHandle,
+    post: blockloom_core::post2d::Post2d,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let mut post = post;
+    post.normalize();
+    if let Some(project) = s.project_mut() {
+        project.world.post2d = post;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+pub(crate) fn set_camera_2d(
+    state: &SharedState,
+    app: &AppHandle,
+    camera: blockloom_core::camera2d::Camera2dSettings,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let mut camera = camera;
+    camera.normalize();
+    if let Some(project) = s.project_mut() {
+        project.world.camera2d = camera;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
 pub(crate) fn set_cloud_layers(
     state: &SharedState,
     app: &AppHandle,
@@ -3836,6 +3890,40 @@ pub(crate) fn set_import_role(
         &project_dir(&s)?,
         &path,
         pipeline::ImportRole::parse(&role)?,
+    )
+}
+
+/// Bakes a sprite's brightness into a normal map beside it (`art_n.png`)
+/// and returns the new path.
+pub(crate) fn bake_normal_map(
+    state: &SharedState,
+    path: String,
+    strength: f32,
+) -> Result<String, String> {
+    let s = lock(state)?;
+    let dir = project_dir(&s)?;
+    let out = blockloom_core::normalmap::bake_file(&dir, &path, strength)?;
+    let _ = pipeline::note_imported(&dir, &out, "baked normal map");
+    Ok(out)
+}
+
+/// A normal map lit from a point over it (`x`, `y` in 0-1 from the top left,
+/// `height` over the sprite), as a PNG data URL.
+pub(crate) fn preview_normal_map(
+    state: &SharedState,
+    path: String,
+    x: f32,
+    y: f32,
+    height: f32,
+    size: u32,
+) -> Result<String, String> {
+    let s = lock(state)?;
+    let dir = project_dir(&s)?;
+    blockloom_core::normalmap::preview_url(
+        &dir,
+        &path,
+        blockloom_core::normalmap::light_toward(x, y, height),
+        size,
     )
 }
 

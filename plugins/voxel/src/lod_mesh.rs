@@ -278,7 +278,13 @@ fn append(group: &mut Group, other: Group) {
 fn clip(group: &Group, lo: [f32; 3], hi: [f32; 3]) -> Group {
     let mut result = group.clone();
     let mut moved = vec![false; group.positions.len() / 3];
-    for (i, position) in result.positions.chunks_exact_mut(3).enumerate() {
+    for (i, position) in result
+        .positions
+        .as_chunks_mut::<3>()
+        .0
+        .iter_mut()
+        .enumerate()
+    {
         for a in 0..3 {
             let before = position[a];
             position[a] = before.clamp(lo[a], hi[a]);
@@ -290,7 +296,7 @@ fn clip(group: &Group, lo: [f32; 3], hi: [f32; 3]) -> Group {
     }
     // Project partial edge cells onto the exact world box, retaining outer caps.
     let mut projected = Group::default();
-    for tri in group.indices.chunks_exact(3) {
+    for tri in group.indices.as_chunks::<3>().0 {
         let p = tri
             .iter()
             .map(|&i| std::array::from_fn::<_, 3, _>(|a| result.positions[i as usize * 3 + a]))
@@ -422,13 +428,15 @@ mod tests {
             let group = &groups[&Some(7)];
             assert_eq!(group.indices.len(), 36);
             let base = key.tile.map(|c| c * TILE * scale);
-            for p in group.positions.chunks_exact(3) {
+            for p in group.positions.as_chunks::<3>().0 {
                 assert!((0..3).all(|a| p[a] + base[a] as f32 <= grid.size()[a] as f32));
                 assert!((0..3).all(|a| p[a] + base[a] as f32 >= 0.0));
             }
             let max_x = group
                 .positions
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|p| p[0])
                 .fold(f32::MIN, f32::max);
             assert_eq!(max_x + base[0] as f32, 33.0);
@@ -513,8 +521,10 @@ mod tests {
         let seam = |group: &Group, offset: f32| -> BTreeMap<[i32; 3], [i32; 3]> {
             group
                 .positions
-                .chunks_exact(3)
-                .zip(group.normals.chunks_exact(3))
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .zip(group.normals.as_chunks::<3>().0)
                 .filter(|(p, _)| (p[0] + offset - 17.0).abs() < 1e-5)
                 .map(|(p, n)| {
                     (
@@ -545,7 +555,7 @@ mod tests {
         let groups = finish(&mut Cache::default(), key(2, 0), &mut grid, Surface::Smooth);
         let group = &groups[&None];
         let mut edges = BTreeMap::<([i32; 3], [i32; 3]), usize>::new();
-        for tri in group.indices.chunks_exact(3) {
+        for tri in group.indices.as_chunks::<3>().0 {
             let p = tri
                 .iter()
                 .map(|&i| {

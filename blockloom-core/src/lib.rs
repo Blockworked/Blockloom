@@ -34,6 +34,8 @@
 //! - [`wire`] converts documents to and from the flat JSON shape the
 //!   blockstitch frontend speaks.
 
+#![cfg_attr(test, allow(clippy::field_reassign_with_default))]
+
 pub mod ai;
 pub mod android;
 pub mod animation;
@@ -41,6 +43,7 @@ pub mod assets;
 pub mod blocks;
 pub mod build;
 pub mod build_control;
+pub mod camera2d;
 pub mod codegen;
 pub mod components;
 pub mod decals;
@@ -50,14 +53,18 @@ pub mod fields;
 pub mod fog;
 pub mod input;
 pub mod library;
+pub mod light2d;
 pub mod lightning;
 pub mod material;
+pub mod movers;
 pub mod nav;
+pub mod normalmap;
 pub mod pack;
 pub mod physics;
 pub mod physics_query;
 pub mod pipeline;
 pub mod player_camera;
+pub mod post2d;
 pub mod probe;
 pub mod process;
 pub mod project;
@@ -83,6 +90,7 @@ pub mod vm;
 pub mod vocabulary;
 pub mod volume;
 pub mod water;
+pub mod weather2d;
 pub mod web_build;
 pub mod wind;
 pub mod wire;

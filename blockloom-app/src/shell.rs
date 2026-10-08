@@ -1054,6 +1054,39 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "set-lighting-2d",
+        cmd: "set_lighting_2d",
+        aliases: &["set_lighting_2d"],
+        summary: "Set the 2D lighting: on/off, ambient colour and level, the lights-off height, and the time-of-day ramp.",
+        args: &[ArgSpec {
+            name: "lighting",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-post-2d",
+        cmd: "set_post_2d",
+        aliases: &["set_post_2d"],
+        summary: "Set the 2D post look: pixelation, color levels or a palette, dither, outline and the CRT preset (scanlines, curvature, vignette, mask), with an optional split for comparing.",
+        args: &[ArgSpec {
+            name: "post",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-camera-2d",
+        cmd: "set_camera_2d",
+        aliases: &["set_camera_2d"],
+        summary: "Set the 2D camera rules: axis locks, world bounds with a soft edge, zoom or view height, pixel snap, roll and shake.",
+        args: &[ArgSpec {
+            name: "camera",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "set-cloud-layers",
         cmd: "set_cloud_layers",
         aliases: &["set_cloud_layers"],
@@ -2097,6 +2130,57 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             ArgSpec {
                 name: "role",
                 ty: "auto|texture|hdr|volume|heightmap|ies|cookie",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "bake-normal-map",
+        cmd: "bake_normal_map",
+        aliases: &["bake_normal_map"],
+        summary: "Bake an image's brightness into a normal map beside it (art.png -> art_n.png) and return the path. Strength 0-32.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+            ArgSpec {
+                name: "strength",
+                ty: "number",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "preview-normal-map",
+        cmd: "preview_normal_map",
+        aliases: &["preview_normal_map"],
+        summary: "A normal map lit by a light dot over it (x, y 0-1 from the top left, height over the sprite), as a PNG data URL no larger than size pixels.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+            ArgSpec {
+                name: "x",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "y",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "height",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "size",
+                ty: "number",
                 required: true,
             },
         ],

@@ -45,6 +45,8 @@ pub enum Trigger {
     EnteredRoom {
         room: String,
     },
+    /// The actor's character motor did this.
+    Motor(crate::physics::motor::MotorEvent),
     /// The newly loaded scene finished warming up and its actors started.
     SceneStarted,
     /// The weather blend landed on the named preset. Empty matches any.
@@ -180,6 +182,10 @@ pub enum Action {
     },
     SetRenderSetting {
         setting: crate::quality::Setting,
+        value: Value,
+    },
+    SetLook2d {
+        dial: crate::blocks::Look2dDial,
         value: Value,
     },
     SetExposure(Value),
@@ -637,6 +643,7 @@ pub fn compile(graph: &ActorGraph) -> Program {
             InstructionKind::WhenEnterRoom { room } => Some(Trigger::EnteredRoom {
                 room: room.trim().to_string(),
             }),
+            InstructionKind::WhenMotor { event } => Some(Trigger::Motor(*event)),
             InstructionKind::WhenSceneStarts => Some(Trigger::SceneStarted),
             InstructionKind::WhenWeather { weather } => Some(Trigger::Weather {
                 weather: weather.trim().to_string(),
@@ -804,6 +811,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
         Action::Move(value)
         | Action::SetScale(value)
         | Action::SetRenderSetting { value, .. }
+        | Action::SetLook2d { value, .. }
         | Action::SetExposure(value)
         | Action::SetLightIntensity(value)
         | Action::SetEmissiveStrength(value)
@@ -1107,6 +1115,10 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         Action::SetScale(v) => Action::SetScale(lift_one(v, ctx)),
         Action::SetRenderSetting { setting, value } => Action::SetRenderSetting {
             setting,
+            value: lift_one(value, ctx),
+        },
+        Action::SetLook2d { dial, value } => Action::SetLook2d {
+            dial,
             value: lift_one(value, ctx),
         },
         Action::SetExposure(v) => Action::SetExposure(lift_one(v, ctx)),
@@ -1670,6 +1682,7 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenParticles { .. }
         | K::WhenAnimationMarker { .. }
         | K::WhenEnterRoom { .. }
+        | K::WhenMotor { .. }
         | K::WhenQualityDrops
         | K::WhenSceneStarts
         | K::WhenWeather { .. }
@@ -1783,6 +1796,10 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
                 value: value.clone(),
             }))
         }
+        K::SetLook2d { dial, value } => steps.push(Step::Action(Action::SetLook2d {
+            dial: *dial,
+            value: value.clone(),
+        })),
         K::SetExposure { ev } => steps.push(Step::Action(Action::SetExposure(ev.clone()))),
         K::SetLightIntensity { intensity } => {
             steps.push(Step::Action(Action::SetLightIntensity(intensity.clone())))

@@ -63,6 +63,8 @@ impl SpriteDials {
                 };
             }
             SpriteDial::OutlineWidth => spec.outline_width = clamp_outline(value),
+            // A pop is a timed render effect, started by the effect handler.
+            SpriteDial::Pop | SpriteDial::FloatNumber => {}
         }
     }
 }
@@ -347,7 +349,7 @@ pub fn sync_sprites(
                 let quad = size + Vec2::splat(width * 2.0);
                 let palette = (!spec.palette.is_empty())
                     .then(|| assets.load(asset_path(dir.as_deref(), &spec.palette)));
-                let material = fx_material(
+                let mut material = fx_material(
                     base,
                     (size, uv_rect, pixels),
                     width,
@@ -355,6 +357,9 @@ pub fn sync_sprites(
                     palette,
                     spec.palette_index,
                 );
+                // Glow lifts the colors past 1.0 for bloom; alpha stays.
+                let boost = 1.0 + spec.glow;
+                material.tint = (material.tint.truncate() * boost).extend(material.tint.w);
                 place_quad(
                     &mut commands,
                     &mut meshes,
@@ -633,6 +638,44 @@ pub fn apply_sort_depth(
             transform.translation.z += offset;
             commands.entity(entity).insert(SortDepth(offset));
         }
+    }
+}
+
+/// A squash-and-stretch pop running on an actor.
+#[derive(Component)]
+pub struct Pop {
+    pub strength: f32,
+    pub age: f32,
+}
+
+/// The scale a pop multiplied in this frame, taken off again next frame.
+#[derive(Component)]
+pub struct PopApplied(Vec3);
+
+/// Scales popping actors for this frame's render only.
+pub fn apply_pop(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut actors: Query<(Entity, &mut Transform, &mut Pop)>,
+) {
+    for (entity, mut transform, mut pop) in &mut actors {
+        pop.age += time.delta_secs();
+        let [x, y] = blockloom_core::sprite2d::pop_scale(pop.strength, pop.age);
+        if pop.age >= blockloom_core::sprite2d::POP_SECONDS {
+            commands.entity(entity).remove::<Pop>();
+            continue;
+        }
+        let factor = Vec3::new(x, y, 1.0);
+        transform.scale *= factor;
+        commands.entity(entity).insert(PopApplied(factor));
+    }
+}
+
+/// Takes the render-only pop back off.
+pub fn clear_pop(mut commands: Commands, mut actors: Query<(Entity, &mut Transform, &PopApplied)>) {
+    for (entity, mut transform, applied) in &mut actors {
+        transform.scale /= applied.0;
+        commands.entity(entity).remove::<PopApplied>();
     }
 }
 

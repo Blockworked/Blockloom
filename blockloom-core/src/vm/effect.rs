@@ -137,6 +137,11 @@ pub enum Effect {
         setting: crate::quality::Setting,
         value: String,
     },
+    /// One dial of the 2D lit look for the rest of the run. World-global.
+    SetLook2d {
+        dial: crate::blocks::Look2dDial,
+        value: String,
+    },
     SetExposure {
         ev: f32,
     },

@@ -36,6 +36,7 @@ fn main() {
                 "qml/PhysicsUpgradeCard.qml",
                 "qml/PlayerCameraForm.qml",
                 "qml/PlayerSetupCard.qml",
+                "qml/FlipbookStrip.qml",
                 "qml/InspectorRow.qml",
                 "qml/SurfaceDetailRows.qml",
                 "qml/EmitterGraphRows.qml",

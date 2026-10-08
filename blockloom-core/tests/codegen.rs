@@ -18,6 +18,8 @@
 //! skips rather than fails - the same bargain `blockloom-runtime`'s script
 //! tests make.
 
+#![allow(clippy::field_reassign_with_default)]
+
 use blockloom_core::animation::TweenEasing;
 use blockloom_core::blocks::{
     BlockDef, BlockPiece, BlockShape, DictDef, DictEntry, DictItem, EmitterDial, InputValueType,
@@ -344,6 +346,7 @@ impl Host for Recorder {
             | Act::SetUiTheme { .. }
             | Act::SetBusVolume { .. }
             | Act::SetRenderSetting { .. }
+            | Act::SetLook2d { .. }
             | Act::SetExposure { .. }
             | Act::SetHdrOutput { .. }
             | Act::SetPeakBrightness { .. }
@@ -1146,6 +1149,7 @@ fn line_of(act: &Act) -> String {
         Act::Turn { axis, degrees } => format!("Turn {axis} {degrees:?}"),
         Act::SetScale { factor } => format!("SetScale {factor:?}"),
         Act::SetRenderSetting { setting, value } => format!("SetRenderSetting {setting} {value:?}"),
+        Act::SetLook2d { dial, value } => format!("SetLook2d {dial} {value:?}"),
         Act::SetExposure { ev } => format!("SetExposure {ev:?}"),
         Act::SetLightIntensity { intensity } => format!("SetLightIntensity {intensity:?}"),
         Act::SetEmissiveStrength { strength } => format!("SetEmissiveStrength {strength:?}"),
@@ -1322,6 +1326,7 @@ fn main() {
     runner.fire("Particles", "a1", "Die", "");
     runner.fire("AnimationMarker", "a1", "Step", "");
     runner.fire("EnteredRoom", "a1", "Cave", "");
+    runner.fire("Motor", "a1", "land", "");
     // A storm arriving, beside the green flag: a case with a `when weather
     // becomes` strand gets one, and nothing else sees it.
     runner.fire("Weather", "", "Storm", "");
@@ -1445,6 +1450,7 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SetRenderSetting { setting, value } => {
             format!("|SetRenderSetting {setting:?} {value:?}")
         }
+        Effect::SetLook2d { dial, value } => format!("|SetLook2d {dial:?} {value:?}"),
         Effect::SetExposure { ev } => format!("|SetExposure {ev:?}"),
         Effect::SetLightIntensity { actor, intensity } => {
             format!("{actor}|SetLightIntensity {intensity:?}")
@@ -1979,6 +1985,10 @@ fn by_vm_ticks(project: &Project) -> Vec<String> {
     vm.fire(Event::EnteredRoom {
         actor: ACTOR.to_string(),
         room: "Cave".to_string(),
+    });
+    vm.fire(Event::Motor {
+        actor: ACTOR.to_string(),
+        event: blockloom_core::physics::motor::MotorEvent::Land,
     });
     // A storm arriving, beside the green flag: a case with a `when weather
     // becomes` strand gets one, like above.
@@ -3951,6 +3961,32 @@ fn when_enter_room_starts_only_for_its_room() {
 }
 
 #[test]
+fn when_motor_starts_only_for_its_event() {
+    use blockloom_core::physics::motor::MotorEvent;
+    assert_same_headed(
+        "motor",
+        vec![
+            (
+                K::WhenMotor {
+                    event: MotorEvent::Land,
+                },
+                vec![K::Say {
+                    text: Value::text("thud"),
+                }],
+            ),
+            (
+                K::WhenMotor {
+                    event: MotorEvent::Jump,
+                },
+                vec![K::Say {
+                    text: Value::text("never"),
+                }],
+            ),
+        ],
+    );
+}
+
+#[test]
 fn level_blocks_ask_the_same_things_in_order() {
     assert_same(
         "level",
@@ -5471,6 +5507,41 @@ fn render_settings_match_compiled_logic() {
             K::SetRenderSetting {
                 setting: Setting::DlssMode,
                 value: Value::text("Balanced"),
+            },
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn look2d_dials_compiled_logic() {
+    use blockloom_core::blocks::Look2dDial;
+    assert_same(
+        "look2d",
+        vec![
+            K::SetLook2d {
+                dial: Look2dDial::AmbientLight,
+                value: number(0.4),
+            },
+            K::SetLook2d {
+                dial: Look2dDial::AmbientColor,
+                value: Value::text("#334466"),
+            },
+            K::SetLook2d {
+                dial: Look2dDial::Pixelation,
+                value: number(4.0),
+            },
+            K::SetLook2d {
+                dial: Look2dDial::Scanlines,
+                value: number(0.5),
+            },
+            K::SetLook2d {
+                dial: Look2dDial::Shake,
+                value: number(0.4),
+            },
+            K::SetLook2d {
+                dial: Look2dDial::BoundsLeft,
+                value: number(-100.0),
             },
         ],
         &[],

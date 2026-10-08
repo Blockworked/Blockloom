@@ -38,6 +38,7 @@ QtObject {
         .concat("abcdefghijklmnopqrstuvwxyz".split("")).concat("0123456789".split("")))
     // The atmosphere slot's readings, spelled as `AtmosphereSense::field` takes them.
     readonly property var atmosphereOptions: opts(["sun x","sun y","sun z","sun brightness","wind x","wind y","wind z","wind speed","wind gust","wind direction","storm","fog density","cloud cover","rain","snow","wetness","temperature","exposure","luminance","hdr","peak brightness","ray tracing","ray tracing available","aurora","lightning","time of day","sun elevation"])
+    readonly property var motorEventOptions: [{value:"Jump",label:"jump"},{value:"Land",label:"land"},{value:"LeftGround",label:"leave the ground"},{value:"HeadHit",label:"hit my head"},{value:"StanceChanged",label:"change stance"}]
     readonly property var particleEventOptions: [{value:"Spawn",label:"spawn"},{value:"Die",label:"die"},{value:"Collide",label:"collide"}]
     readonly property var axisOptions: [{value:"X",label:"x"},{value:"Y",label:"y"},{value:"Z",label:"z"}]
     readonly property var bodyOptions: [{value:"None",label:"none (blocks only)"},{value:"Static",label:"static"},{value:"Dynamic",label:"dynamic"},{value:"Kinematic",label:"kinematic"}]
@@ -61,7 +62,7 @@ QtObject {
     readonly property var controllerTextOptions: opts(["actor","body","collider","error"])
     readonly property var moveModeOptions: [{value:"Move",label:"by"},{value:"Simple",label:"at speed"}]
     readonly property var controllerPropertyOptions: [{value:"Enabled",label:"enabled"},{value:"Radius",label:"radius"},{value:"Height",label:"height"},{value:"SlopeLimit",label:"slope limit"},{value:"StepOffset",label:"step offset"},{value:"SkinWidth",label:"skin width"},{value:"MinMoveDistance",label:"minimum move"},{value:"DetectCollisions",label:"detect collisions"},{value:"OverlapRecovery",label:"overlap recovery"}]
-    readonly property var motorNumberOptions: opts(["grounded","rising","falling","landed","jumped","left ground","hit head","changed stance","crouching","speed","desired speed","vertical speed","can jump","jumps used","jumps left","slope","ground normal x","ground normal y","ground normal z","knockback","walk speed","jump height","enabled"])
+    readonly property var motorNumberOptions: opts(["grounded","rising","falling","landed","jumped","left ground","hit head","changed stance","crouching","on wall","wall normal x","wall normal y","speed","desired speed","vertical speed","can jump","jumps used","jumps left","slope","ground normal x","ground normal y","ground normal z","knockback","walk speed","jump height","enabled"])
     readonly property var motorTextOptions: opts(["state","support","owner","warning"])
     readonly property var jointActionOptions: [{value:"MotorSpeed",label:"turn motor at speed"},{value:"MotorTarget",label:"drive motor to"},{value:"MotorForce",label:"limit motor force to"},{value:"MotorOff",label:"stop motor"},{value:"Stiffness",label:"set stiffness to"},{value:"Damping",label:"set damping to"},{value:"Enable",label:"switch on"},{value:"Disable",label:"switch off"},{value:"Break",label:"break"}]
     readonly property var jointNumberOptions: opts(["angle","position","speed","force","torque","broken","enabled","count"])
@@ -152,7 +153,7 @@ QtObject {
     readonly property var icons: ({
         Fracture:"hammer", Splash:"droplets", PuffSmoke:"cloud", SpawnDecal:"stamp", FadeDecals:"eraser",
         WhenStarted:"flag", WhenKeyPressed:"keyboard", WhenActionPressed:"gamepad-2", WhenTouched:"pointer", WhenClicked:"mouse-pointer-click",
-        WhenQualityDrops:"gauge", SetRenderSetting:"gauge", WhenCollision:"crosshair", WhenMessage:"radio", WhenCloned:"copy", WhenParticles:"sparkles", WhenAnimationMarker:"flag", WhenEnterRoom:"square-dashed", WhenUiEvent:"square-mouse-pointer", WhenWeather:"cloud", WhenUiClicked:"square-mouse-pointer", WhenUiChanged:"sliders-horizontal",
+        WhenQualityDrops:"gauge", SetRenderSetting:"gauge", SetLook2d:"lamp", WhenCollision:"crosshair", WhenMessage:"radio", WhenCloned:"copy", WhenParticles:"sparkles", WhenMotor:"footprints", WhenAnimationMarker:"flag", WhenEnterRoom:"square-dashed", WhenUiEvent:"square-mouse-pointer", WhenWeather:"cloud", WhenUiClicked:"square-mouse-pointer", WhenUiChanged:"sliders-horizontal",
         BlockHeader:"blocks", Move:"arrow-right", GoTo:"move", NavigateTo:"navigation", ChangePosition:"move-3d", Glide:"wind", TweenScale:"maximize", TweenRotation:"rotate-cw", TweenColor:"palette", StopTweens:"square", PlayAnimation:"play", StopAnimation:"square", SetAnimationSpeed:"gauge", FireAnimationTrigger:"zap", SetRigSlot:"git-branch", SetSlotTint:"palette", SetIkTarget:"crosshair", SetSpriteDial:"sliders-horizontal", Turn:"rotate-cw",
         SetRotation:"rotate-cw", PointTowards:"target", SetScale:"maximize", SetBody:"boxes", SetTrigger:"ghost", SetCollisionLayer:"layers",
         SetCollisionMask:"filter", ApplyImpulse:"zap", AddForce:"arrow-right", AddTorque:"rotate-cw", ControllerMove:"footprints", SetController:"sliders-horizontal", MotorAct:"person-standing", SetMotor:"gauge", JointAct:"link", CastRay:"crosshair", CastBall:"circle-dot", OverlapBall:"search", FindClosest:"target", SetVelocity:"trending-up", SetGravity:"cloud", SetDensity:"weight", SetMass:"weight",
@@ -186,6 +187,7 @@ QtObject {
             WhenCollision: header([lb("when I"), dd("phase", contactPhaseOptions), dd("with", () => [{ value: "", label: "anything" }].concat(actorOptions(false)), { placeholder: "anything" }), lb("as"), dd("scope", contactScopeOptions)]),
             WhenMessage: header([lb("when I get"), field("name", "message")]),
             WhenCloned: header([lb("when I start as a clone")]),
+            WhenMotor: header([lb("when I"), dd("event", () => motorEventOptions)]),
             WhenParticles: header([lb("when my particles"), dd("event", () => particleEventOptions)]),
             WhenUiEvent: header([lb("when"), field("element", "element id"), dd("event", () => opts(["press", "release", "hover", "leave", "drag", "scroll", "focus"]))]),
             WhenUiClicked: header([lb("when"), field("element", "element id"), lb("clicked")]),
@@ -247,6 +249,7 @@ QtObject {
             SetVisible: row([flagDefaultTrue("visible", visibleOptions), lb("myself")]),
             SetColor: row([lb("set color to"), slot("ColorText", "color")]),
             WhenQualityDrops: header([lb("when quality drops")]),
+            SetLook2d: row([lb("set"), dd("dial", () => [{ value: "AmbientLight", label: "ambient light" }, { value: "AmbientColor", label: "ambient color" }, { value: "Pixelation", label: "pixelation" }, { value: "Levels", label: "color levels" }, { value: "Dither", label: "dither" }, { value: "Outline", label: "outline" }, { value: "Scanlines", label: "scanlines" }, { value: "Curvature", label: "screen curve" }, { value: "Vignette", label: "vignette" }, { value: "Zoom", label: "camera zoom" }, { value: "ZoomHeight", label: "camera view height" }, { value: "Rotation", label: "camera roll" }, { value: "Shake", label: "camera shake" }, { value: "Hitstop", label: "hitstop seconds" }, { value: "BoundsLeft", label: "camera left bound" }, { value: "BoundsRight", label: "camera right bound" }, { value: "BoundsBottom", label: "camera bottom bound" }, { value: "BoundsTop", label: "camera top bound" }, { value: "LockX", label: "lock camera x" }, { value: "LockY", label: "lock camera y" }, { value: "PixelSnap", label: "camera pixel snap" }, { value: "Flash", label: "screen flash seconds" }, { value: "FlashColor", label: "screen flash color" }, { value: "Cover", label: "screen cover (0-1)" }, { value: "CoverKind", label: "screen cover kind" }, { value: "CoverColor", label: "screen cover color" }, { value: "CoverTime", label: "screen cover seconds" }]), lb("to"), slot("Look2dValue", "value")]),
             SetRenderSetting: row([lb("set"), dd("setting", () => ["Quality", "ResolutionScale", "Upscaler", "DlssMode"].map(v => ({ value: v, label: ({Quality:"quality", ResolutionScale:"resolution scale", Upscaler:"upscaler", DlssMode:"DLSS mode"})[v] }))), lb("to"), slot("RenderSettingValue", "value")]),
             SetExposure: row([lb("set exposure to"), slot("ExposureEv", "ev"), lb("EV")]),
             SetLightIntensity: row([lb("set my light to"), slot("LightIntensity", "intensity"), lb("lumens")]),
@@ -296,7 +299,7 @@ QtObject {
             SetRigSlot: row([lb("set rig slot"), slot("RigSlot", "slot"), lb("to attachment"), slot("RigAttachment", "attachment")]),
             SetSlotTint: row([lb("tint rig slot"), slot("RigSlot", "slot"), lb("with"), slot("SlotColor", "color")]),
             SetIkTarget: row([lb("point IK"), slot("IkConstraint", "constraint"), lb("at x"), slot("IkX", "x"), lb("y"), slot("IkY", "y")]),
-            SetSpriteDial: row([lb("set sprite"), dd("dial", () => opts(["FlipX","FlipY","Order","YSort","Palette","OutlineWidth"])), lb("to"), slot("SpriteValue", "value")]),
+            SetSpriteDial: row([lb("set sprite"), dd("dial", () => opts(["FlipX","FlipY","Order","YSort","Palette","OutlineWidth","Pop","FloatNumber"])), lb("to"), slot("SpriteValue", "value")]),
             // Sound
             PlaySound: row([lb("play sound"), slot("SoundAsset", "sound"), lb("volume"), slot("SoundVolume", "volume"), lb("pitch"), slot("SoundPitch", "pitch"), flag("loop", soundLoopOptions), lb("on"), dd("bus", soundBusOptions)]),
             PlaySoundAt: row([lb("play sound"), slot("SoundAsset", "sound"), lb("volume"), slot("SoundVolume", "volume"), lb("pitch"), slot("SoundPitch", "pitch"), flag("loop", soundLoopOptions), lb("on"), dd("bus", soundBusOptions), lb("at"), slot("SoundTarget", "target")]),
@@ -545,6 +548,7 @@ QtObject {
         case "Say": return { text: txt("Hello!") };
         case "SetVisible": return { visible: true };
         case "SetColor": return { color: txt("#FFAB19") };
+        case "SetLook2d": return { dial: "AmbientLight", value: txt("0.5") };
         case "SetRenderSetting": return { setting: "Quality", value: txt("High") };
         case "SetExposure": return { ev: num(9.7) };
         case "SetLightIntensity": return { intensity: num(800) };
@@ -584,6 +588,7 @@ QtObject {
         case "SetEmitterDial": return { dial: "Rate", value: num(24) };
         case "SetTrailEnabled": return { enabled: true };
         case "SetEmitterPlaying": return { playing: true };
+        case "WhenMotor": return { event: "Land" };
         case "WhenParticles": return { event: "Spawn" };
         case "SwitchScene": return { scene: txt("Scene 2"), transition: txt("none") };
         case "PlayCutscene": return { cutscene: txt("Opener") };
@@ -763,6 +768,12 @@ QtObject {
         IsRayTracing: { prefix: "ray tracing on?", result: "bool", arity: 0 },
         RayTracingAvailable: { prefix: "ray tracing available?", result: "bool", arity: 0 },
         WaterHeight: { prefix: "water height at", result: "number", arity: 2, args: ["number","number"] },
+        LightLevel: { prefix: "light level at", result: "number", arity: 2, args: ["number","number"] },
+        IsNight: { prefix: "is night?", result: "bool", arity: 0 },
+        CameraZoom: { prefix: "camera zoom", result: "number", arity: 0 },
+        CameraAtBounds: { prefix: "is camera at bounds?", result: "bool", arity: 0 },
+        IsScreenShaking: { prefix: "is screen shaking?", result: "bool", arity: 0 },
+        ScreenCover: { prefix: "screen cover", result: "number", arity: 0 },
         Underwater: { prefix: "is", suffix: "underwater?", result: "bool", arity: 1, args: ["text"] },
         TileAt: { prefix: "tile at", suffix: "of map", result: "number", arity: 4, args: ["number","number","number","text"] },
         RoomContaining: { prefix: "room containing", result: "text", arity: 1, args: ["text"] },
@@ -782,7 +793,7 @@ QtObject {
     })
     // Palette groups, the way the sidebar shows them.
     readonly property var operatorGroups: [
-        { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","CameraPosition","CameraDirection","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","QueryNumber","QueryText","ControllerNumber","ControllerText","MotorNumber","MotorText","JointNumber","ActorPosition","ActorLocalPosition","Velocity","AngularVelocity","Mass","IsGrounded","ComponentField","SoundPlaying","BusVolume","IsTweening","CurrentClip","CurrentFrame","AnimationPlaying","Atmosphere","TimeOfDay","SunElevation","CurrentWeather","FrameTime","DrawCalls","CurrentQuality","DlssAvailable","SceneLuminance","IsHdrDisplay","PeakBrightness","ActiveVolumes","CurrentScene","SceneNames","SaveSlot","SaveSlots","Language","LocalizedText","IsCutscenePlaying","CutsceneTime","CastsShadows","IsRayTracing","RayTracingAvailable","WaterHeight","Underwater","TileAt","RoomContaining","ParticleCount","ParticleEventCount","ParticleEventPosition"] },
+        { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","CameraPosition","CameraDirection","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","QueryNumber","QueryText","ControllerNumber","ControllerText","MotorNumber","MotorText","JointNumber","ActorPosition","ActorLocalPosition","Velocity","AngularVelocity","Mass","IsGrounded","ComponentField","SoundPlaying","BusVolume","IsTweening","CurrentClip","CurrentFrame","AnimationPlaying","Atmosphere","TimeOfDay","SunElevation","CurrentWeather","FrameTime","DrawCalls","CurrentQuality","DlssAvailable","SceneLuminance","IsHdrDisplay","PeakBrightness","ActiveVolumes","CurrentScene","SceneNames","SaveSlot","SaveSlots","Language","LocalizedText","IsCutscenePlaying","CutsceneTime","CastsShadows","IsRayTracing","RayTracingAvailable","WaterHeight","LightLevel","IsNight","CameraZoom","CameraAtBounds","IsScreenShaking","ScreenCover","Underwater","TileAt","RoomContaining","ParticleCount","ParticleEventCount","ParticleEventPosition"] },
         { label: "Interface", kinds: ["UiSelectedIndex","UiValue","UiText","UiShown","UiExists","UiFocus","GamePaused"] },
         { label: "Actors", kinds: ["IsClone","MyParent","NewActor","ActorCount"] },
         { label: "Maths", kinds: ["Add","Sub","Mul","Div","Mod","Round","Math","Random"] },
@@ -792,10 +803,10 @@ QtObject {
     readonly property var listOperatorKinds: ["ListItem","ListItemNumber","ListAmount","ListLength","ListContains","ListItemExists","ListIsEmpty","ListAsJson"]
     readonly property var dictOperatorKinds: ["DictValue","DictHasKey","DictSize","DictKeys","DictAsJson","DictIsEmpty"]
     readonly property var blockGroups: [
-        { label: "Events", types: ["WhenStarted","WhenQualityDrops","WhenSceneStarts","WhenSceneEnds","WhenWeather","WhenCutsceneSignal","WhenCutsceneEnds","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenParticles","WhenAnimationEnds","WhenAnimationMarker","WhenEnterRoom","WhenUiEvent","WhenUiClicked","WhenUiChanged","Broadcast"] },
+        { label: "Events", types: ["WhenStarted","WhenQualityDrops","WhenSceneStarts","WhenSceneEnds","WhenWeather","WhenCutsceneSignal","WhenCutsceneEnds","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenParticles","WhenMotor","WhenAnimationEnds","WhenAnimationMarker","WhenEnterRoom","WhenUiEvent","WhenUiClicked","WhenUiChanged","Broadcast"] },
         { label: "Motion", types: ["Move","GoTo","NavigateTo","ChangePosition","Glide","TweenScale","TweenRotation","TweenColor","StopTweens","Turn","SetRotation","PointTowards","SetScale"] },
         { label: "Physics", types: ["SetBody","ApplyImpulse","AddForce","AddTorque","ControllerMove","SetController","MotorAct","SetMotor","JointAct","CastRay","CastBall","OverlapBall","FindClosest","SetVelocity","SetGravity","SetDensity","SetMass","SetTrigger","SetCollisionLayer","SetCollisionMask"] },
-        { label: "Looks", types: ["Say","SetVisible","SetColor","SetRenderSetting","SetExposure","SetLightIntensity","SetEmissiveStrength","SetHdrOutput","SetPeakBrightness","EnableVolume","SetVolumeWeight","CaptureProbes","SetShadowDistance","SetLightShadows","SetRayTracing","SetGiBounces","SetGiSamples","SetFogDensity","SetAurora","StrikeLightning","SetLightningRate","SetWind","SetCloudDrift","SetClouds","SetCloudLayer","SetWater","SetTimeOfDay","AdvanceTime","SetPrecipitation","BlendWeather","Fracture","Splash","PuffSmoke","SpawnDecal","FadeDecals","PaintTile","SetParallax","BurstParticles","SetEmitterDial","SetTrailEnabled","SetEmitterPlaying","PlayAnimation","StopAnimation","SetAnimationSpeed","FireAnimationTrigger","SetRigSlot","SetSlotTint","SetIkTarget","SetSpriteDial"] },
+        { label: "Looks", types: ["Say","SetVisible","SetColor","SetRenderSetting","SetLook2d","SetExposure","SetLightIntensity","SetEmissiveStrength","SetHdrOutput","SetPeakBrightness","EnableVolume","SetVolumeWeight","CaptureProbes","SetShadowDistance","SetLightShadows","SetRayTracing","SetGiBounces","SetGiSamples","SetFogDensity","SetAurora","StrikeLightning","SetLightningRate","SetWind","SetCloudDrift","SetClouds","SetCloudLayer","SetWater","SetTimeOfDay","AdvanceTime","SetPrecipitation","BlendWeather","Fracture","Splash","PuffSmoke","SpawnDecal","FadeDecals","PaintTile","SetParallax","BurstParticles","SetEmitterDial","SetTrailEnabled","SetEmitterPlaying","PlayAnimation","StopAnimation","SetAnimationSpeed","FireAnimationTrigger","SetRigSlot","SetSlotTint","SetIkTarget","SetSpriteDial"] },
         { label: "Sound", types: ["PlaySound","PlaySoundAt","StopSound","SetSoundVolume","SetSoundPitch","SetBusVolume"] },
         { label: "Components", types: ["SetComponentField","SetCameraView","SetCameraPitch","SetCameraFov","AttachComponent","DetachComponent","SetParent"] },
         { label: "Actors", types: ["CreateClone","CreateActor","DeleteActor"] },
@@ -842,7 +853,7 @@ QtObject {
         Fracture:"fracture an actor into debris", Splash:"make a water ripple", PuffSmoke:"puff advected smoke", SpawnDecal:"spawn a transient surface decal", FadeDecals:"fade decals in a radius",
         WhenStarted:"when the project starts", WhenKeyPressed:"when a key is pressed", WhenActionPressed:"when an input action is pressed",
         WhenTouched:"when the screen is touched", WhenClicked:"when I am clicked", WhenCollision:"when I touch", WhenMessage:"when I get a message", WhenAnimationEnds:"when an animation ends", WhenAnimationMarker:"when an animation reaches a marker", WhenEnterRoom:"when I enter a room",
-        WhenQualityDrops:"when quality drops", SetRenderSetting:"set rendering quality", WhenUiEvent:"when an interface event occurs", WhenCloned:"when I start as a clone", WhenParticles:"when my particles spawn, die or collide", WhenUiClicked:"when an element is clicked", WhenUiChanged:"when an input is changed",
+        WhenQualityDrops:"when quality drops", SetRenderSetting:"set rendering quality", SetLook2d:"set a 2D look, camera or screen dial (ambient, post, zoom, shake, flash, cover)", WhenUiEvent:"when an interface event occurs", WhenCloned:"when I start as a clone", WhenParticles:"when my particles spawn, die or collide", WhenMotor:"when my character jumps, lands or leaves the ground", WhenUiClicked:"when an element is clicked", WhenUiChanged:"when an input is changed",
         WhenSceneStarts:"when scene starts", WhenSceneEnds:"when scene ends", WhenWeather:"when weather becomes", WhenCutsceneSignal:"when cutscene signal", WhenCutsceneEnds:"when cutscene ends", SwitchScene:"switch scene to", PlayCutscene:"play cutscene", SkipCutscene:"skip cutscene", CameraShake:"shake camera", SetTimeScale:"set time scale", Hitstop:"hitstop frames", SetLetterbox:"set letterbox", FadeScreen:"fade screen",
         BlockHeader:"block definition", Move:"move forward", GoTo:"go to", NavigateTo:"navigate to", ChangePosition:"change position",
         Glide:"glide to", TweenScale:"tween size", TweenRotation:"tween rotation", TweenColor:"tween color", StopTweens:"stop my tweens", PlayAnimation:"play animation", StopAnimation:"stop my animation", SetAnimationSpeed:"set animation speed", FireAnimationTrigger:"fire an animation trigger", SetRigSlot:"swap a rig slot", SetSlotTint:"tint a rig slot", SetIkTarget:"point a rig IK chain", SetSpriteDial:"set a sprite dial", Turn:"turn", SetRotation:"point in direction", PointTowards:"point towards", SetScale:"set size", SetBody:"set body",

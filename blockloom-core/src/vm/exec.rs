@@ -347,6 +347,11 @@ pub enum Event {
         actor: String,
         room: String,
     },
+    /// `actor`'s character motor did `event`.
+    Motor {
+        actor: String,
+        event: crate::physics::motor::MotorEvent,
+    },
     /// The weather blend landed on the named preset.
     Weather {
         weather: String,
@@ -410,7 +415,8 @@ impl Event {
             | Event::AnimationEnded { actor, .. }
             | Event::Particles { actor, .. }
             | Event::AnimationMarker { actor, .. }
-            | Event::EnteredRoom { actor, .. } => Some(actor),
+            | Event::EnteredRoom { actor, .. }
+            | Event::Motor { actor, .. } => Some(actor),
             Event::Plugin { actor, .. } => actor.as_deref(),
             _ => None,
         }
@@ -895,6 +901,9 @@ impl Vm {
                     room,
                 },
             ) => entered == actor && (want.is_empty() || want.eq_ignore_ascii_case(room)),
+            (Trigger::Motor(want), Event::Motor { actor: from, event }) => {
+                from == actor && want == event
+            }
             (Trigger::Weather { weather: want }, Event::Weather { weather }) => {
                 want.is_empty() || want.eq_ignore_ascii_case(weather)
             }
@@ -1580,6 +1589,10 @@ impl Vm {
                     dial: *dial,
                     value,
                 });
+            }
+            Action::SetLook2d { dial, value } => {
+                let value = self.eval(value, actor, params, temps, out).as_text();
+                out.push(Effect::SetLook2d { dial: *dial, value });
             }
             Action::SetRenderSetting { setting, value } => {
                 let value = self.eval(value, actor, params, temps, out).as_text();

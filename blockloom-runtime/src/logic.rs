@@ -23,8 +23,8 @@ use blockloom_core::codegen::{
     ACT_SET_EMISSIVE_STRENGTH, ACT_SET_EMITTER_DIAL, ACT_SET_EMITTER_PLAYING, ACT_SET_EXPOSURE,
     ACT_SET_FIELD, ACT_SET_FOCUS, ACT_SET_FOG_DENSITY, ACT_SET_GI_BOUNCES, ACT_SET_GI_SAMPLES,
     ACT_SET_GRAVITY, ACT_SET_HDR_OUTPUT, ACT_SET_IK_TARGET, ACT_SET_LANGUAGE, ACT_SET_LETTERBOX,
-    ACT_SET_LIGHT_INTENSITY, ACT_SET_LIGHT_SHADOWS, ACT_SET_LIGHTNING_RATE, ACT_SET_MASS,
-    ACT_SET_MOUSE_LOCKED, ACT_SET_PARALLAX, ACT_SET_PARENT, ACT_SET_PAUSED,
+    ACT_SET_LIGHT_INTENSITY, ACT_SET_LIGHT_SHADOWS, ACT_SET_LIGHTNING_RATE, ACT_SET_LOOK_2D,
+    ACT_SET_MASS, ACT_SET_MOUSE_LOCKED, ACT_SET_PARALLAX, ACT_SET_PARENT, ACT_SET_PAUSED,
     ACT_SET_PEAK_BRIGHTNESS, ACT_SET_PRECIPITATION, ACT_SET_RAY_TRACING, ACT_SET_RENDER_SETTING,
     ACT_SET_RIG_SLOT, ACT_SET_ROTATION, ACT_SET_SCALE, ACT_SET_SHADOW_DISTANCE, ACT_SET_SLOT_TINT,
     ACT_SET_SOUND_PITCH, ACT_SET_SOUND_VOLUME, ACT_SET_SPRITE_DIAL, ACT_SET_TIME_OF_DAY,
@@ -246,6 +246,7 @@ impl LoadedLogic {
                 self.fire_raw("AnimationMarker", &actor, &marker, "")
             }
             Event::EnteredRoom { actor, room } => self.fire_raw("EnteredRoom", &actor, &room, ""),
+            Event::Motor { actor, event } => self.fire_raw("Motor", &actor, event.name(), ""),
             Event::Weather { weather } => self.fire_raw("Weather", "", &weather, ""),
             Event::CutsceneSignal { signal } => self.fire_raw("CutsceneSignal", "", &signal, ""),
             Event::CutsceneEnded { cutscene } => self.fire_raw("CutsceneEnded", "", &cutscene, ""),
@@ -692,6 +693,15 @@ extern "C" fn act(
             },
             value: b.to_string(),
         },
+        ACT_SET_LOOK_2D => {
+            let Some(dial) = blockloom_core::blocks::Look2dDial::parse(a) else {
+                return;
+            };
+            Effect::SetLook2d {
+                dial,
+                value: b.to_string(),
+            }
+        }
         ACT_SET_EXPOSURE => Effect::SetExposure { ev: n0 as f32 },
         ACT_SET_LIGHT_INTENSITY => Effect::SetLightIntensity {
             actor,

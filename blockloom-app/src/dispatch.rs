@@ -347,6 +347,18 @@ impl Backend {
                 let clouds: blockloom_core::clouds::Clouds = arg(&args, "clouds")?;
                 to_json(commands::set_clouds(state, app, clouds)?)
             }
+            "set_lighting_2d" => {
+                let lighting: blockloom_core::light2d::Lighting2d = arg(&args, "lighting")?;
+                to_json(commands::set_lighting_2d(state, app, lighting)?)
+            }
+            "set_post_2d" => {
+                let post: blockloom_core::post2d::Post2d = arg(&args, "post")?;
+                to_json(commands::set_post_2d(state, app, post)?)
+            }
+            "set_camera_2d" => {
+                let camera: blockloom_core::camera2d::Camera2dSettings = arg(&args, "camera")?;
+                to_json(commands::set_camera_2d(state, app, camera)?)
+            }
             "set_cloud_layers" => {
                 let layers: Vec<blockloom_core::cloud_layers::CloudLayer> = arg(&args, "layers")?;
                 to_json(commands::set_cloud_layers(state, app, layers)?)
@@ -825,6 +837,19 @@ impl Backend {
                 state,
                 arg(&args, "path")?,
                 arg(&args, "role")?,
+            )?),
+            "bake_normal_map" => to_json(commands::bake_normal_map(
+                state,
+                arg(&args, "path")?,
+                arg(&args, "strength")?,
+            )?),
+            "preview_normal_map" => to_json(commands::preview_normal_map(
+                state,
+                arg(&args, "path")?,
+                arg(&args, "x")?,
+                arg(&args, "y")?,
+                arg(&args, "height")?,
+                arg(&args, "size")?,
             )?),
             "set_exposure_bias" => to_json(commands::set_exposure_bias(
                 state,

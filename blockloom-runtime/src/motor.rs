@@ -10,9 +10,11 @@ use crate::controller::ControllerAccess;
 use crate::engine::Engine;
 use crate::world::WorldCamera;
 use bevy::prelude::*;
+use blockloom_core::movers::Invulnerable;
 use blockloom_core::physics::PhysicsPlan;
 use blockloom_core::physics::motor::{self, MotorOwner, MoveSpace};
 use blockloom_core::scene::Mode;
+use blockloom_core::vm::Event;
 use std::collections::HashMap;
 
 /// Registers every motor of a plan and forgets the last world's.
@@ -91,9 +93,13 @@ pub fn drive_motors(
     mut commands: Commands,
     time: Res<Time<Fixed>>,
     mut carried: Local<Carried>,
+    mut safe: Local<Invulnerable>,
 ) {
     if !engine.running || engine.paused {
         return;
+    }
+    if engine.contact_ticks == 0 {
+        safe.clear();
     }
     let actors = motor::actors();
     if actors.is_empty() {
@@ -122,7 +128,7 @@ pub fn drive_motors(
             MoveSpace::Actor => own_yaw,
             MoveSpace::Camera => camera_yaw.unwrap_or(own_yaw),
         };
-        let carry = carry_of(&actor, &engine, &transforms, &mut carried);
+        let carry = carry_of(&actor, &engine, &transforms, &mut carried, dt);
         let _ = global;
         let driven = access.scope(tick, || motor::drive(&actor, yaw, carry));
         match driven {
@@ -162,8 +168,15 @@ pub fn drive_motors(
             }
         }
     }
-    // Events are for reporters (read off the motor); nothing queues them here.
-    motor::take_events();
+    strike_hazards(
+        &mut engine,
+        &transforms,
+        &mut safe,
+        tick as f64 * f64::from(dt),
+    );
+    for (actor, event) in motor::take_events() {
+        engine.fire(Event::Motor { actor, event });
+    }
 }
 
 /// How far the thing an actor stands on moved since last tick. A jump past a
@@ -173,6 +186,7 @@ fn carry_of(
     engine: &Engine,
     transforms: &Query<(&Transform, &GlobalTransform)>,
     carried: &mut Carried,
+    dt: f32,
 ) -> [f32; 3] {
     const TELEPORT: f32 = 5.0;
     let Some(support) = motor::support_of(actor) else {
@@ -187,14 +201,71 @@ fn carry_of(
         return [0.0; 3];
     };
     let now = global.translation();
-    let delta = match carried.get(actor) {
+    let mut delta = match carried.get(actor) {
         Some((was, before)) if *was == support => now - *before,
         _ => Vec3::ZERO,
     };
-    carried.insert(actor.to_string(), (support, now));
+    carried.insert(actor.to_string(), (support.clone(), now));
     if delta.length() > TELEPORT {
-        [0.0; 3]
-    } else {
-        delta.to_array()
+        return [0.0; 3];
+    }
+    if let Some(belt) = engine.actor(&support).and_then(|a| a.components.conveyor()) {
+        let yaw = transforms
+            .get(entity)
+            .map_or(0.0, |(t, _)| t.rotation.to_euler(EulerRot::ZYX).0);
+        let [x, y] = belt.velocity(yaw);
+        delta += Vec3::new(x, y, 0.0) * dt;
+    }
+    delta.to_array()
+}
+
+/// Throws every motor touching a hazard, once per invulnerability window.
+fn strike_hazards(
+    engine: &mut Engine,
+    transforms: &Query<(&Transform, &GlobalTransform)>,
+    safe: &mut Invulnerable,
+    now: f64,
+) {
+    let mut hurts = Vec::new();
+    for victim in motor::actors() {
+        let touching = blockloom_core::sense::read(|s| {
+            s.actors
+                .get(&victim)
+                .map(|a| a.touching.clone())
+                .unwrap_or_default()
+        });
+        let mut hit = touching
+            .iter()
+            .filter_map(|id| {
+                let spec = engine.actor(id)?.components.hazard()?;
+                spec.enabled.then(|| (id.clone(), spec.clone()))
+            })
+            .collect::<Vec<_>>();
+        // The same hazard wins every run, whatever the set's order.
+        hit.sort_by(|a, b| a.0.cmp(&b.0));
+        let Some((hazard, spec)) = hit.into_iter().next() else {
+            continue;
+        };
+        if !safe.strike(&victim, now, spec.invulnerability) {
+            continue;
+        }
+        let at = |id: &str| {
+            engine
+                .entities
+                .get(id)
+                .and_then(|&e| transforms.get(e).ok())
+                .map(|(_, g)| g.translation())
+        };
+        let (Some(from), Some(to)) = (at(&hazard), at(&victim)) else {
+            continue;
+        };
+        let [x, y] = spec.throw([from.x, from.y], [to.x, to.y]);
+        let _ = motor::run_op(&victim, "push", [x, y, 0.0]);
+        if !spec.message.is_empty() {
+            hurts.push(spec.message);
+        }
+    }
+    for message in hurts {
+        engine.fire(Event::Message(message));
     }
 }

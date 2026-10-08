@@ -14,6 +14,7 @@
 //! `player::Launch` is the whole of the difference.
 //!
 
+#![cfg_attr(test, allow(clippy::field_reassign_with_default))]
 // A Bevy system declares every query and resource it touches as an argument, so
 // the usual argument-count limit doesn't apply here.
 #![allow(clippy::too_many_arguments)]
@@ -29,6 +30,7 @@ mod atmosphere;
 mod batching;
 mod beams;
 mod bridge;
+mod camera2d;
 mod capture;
 mod cinematic;
 mod cloud_layers;
@@ -55,6 +57,7 @@ mod gpu;
 mod hdr;
 mod indirect;
 mod lan;
+mod light2d;
 mod light_probes;
 mod lightning;
 mod lights;
@@ -64,8 +67,11 @@ mod materials;
 mod model;
 mod motor;
 mod player_camera;
+mod post2d;
 mod wind;
 // Plumbing the Phase 5 passes build on; nothing reads most of it yet.
+mod floaters;
+mod onion;
 mod overlay;
 #[allow(dead_code)]
 mod passes;
@@ -89,6 +95,7 @@ mod probes;
 mod quality;
 mod queries;
 mod ray_tracing;
+mod screenfx;
 mod script;
 #[cfg(all(
     feature = "components",
@@ -119,6 +126,7 @@ mod vfx;
 mod volume_heat;
 mod volumes;
 mod water;
+mod weather2d;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 mod world;
@@ -349,6 +357,9 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // registers all three, so systems can take their asset stores
     // unconditionally; an unused plugin costs nothing at runtime.
     materials::register(app);
+    light2d::register(app);
+    camera2d::register(app);
+    post2d::register(app);
     sprites::register(app);
     app.init_resource::<anim2d::RigCache>()
         .init_resource::<plugin_meshes::PluginMeshes>()
@@ -463,6 +474,10 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // The veil and the audio scale follow the live scene, not the launch
     // mode, so they run once outside the gated dimension blocks.
     app.add_systems(Update, transition::drive_veil);
+    screenfx::register(app);
+    floaters::register(app);
+    weather2d::register(app);
+    onion::register(app);
     app.add_systems(Update, world::sync_audio_scale.after(world::rebuild_world));
     // Both dimensions register always for live cross-dimension switches;
     // each side's chains run only while its Dimension is live.
@@ -550,7 +565,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .after(SimStep::Common)
                     .before(SimStep::VolumeEffects),
                 (
-                    lights::apply_light_effects.run_if(is_3d),
+                    lights::apply_light_effects,
+                    light2d::apply_look2d_effects.run_if(is_2d),
                     ray_tracing::apply_ray_tracing_effects.run_if(is_3d),
                 )
                     .chain()
@@ -710,6 +726,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             First,
             (
                 sprites::clear_sort_depth.run_if(is_2d),
+                sprites::clear_pop.run_if(is_2d),
                 tiles::clear_parallax,
                 tiles::clear_parallax_3d.run_if(is_3d),
             ),
@@ -724,7 +741,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         )
         .add_systems(
             PostUpdate,
-            sprites::apply_sort_depth
+            (sprites::apply_sort_depth, sprites::apply_pop)
                 .before(bevy::transform::TransformSystems::Propagate)
                 .run_if(is_2d),
         )

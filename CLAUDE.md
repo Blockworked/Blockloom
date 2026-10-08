@@ -1766,6 +1766,128 @@ import Blockloom's library (`blockloom::fbm`, ...) and Bevy's own modules
 (`bevy_pbr` in 3D, `bevy_sprite_render` in 2D);
 a project's other files aren't modules, so `package::`/`super::` are refused.
 
+### 2D lighting
+
+`blockloom-core/src/light2d.rs` is the model and the maths both halves share.
+A `Light2D` component (`Light2dSpec`: point or spot, color, intensity, range in
+pixels, falloff, cone, shadows, softness, seeded `Flicker`) lights the world;
+`World.lighting2d` (`Lighting2d`) turns it on and holds the ambient level and
+colour, `unlit_above` (the z above which nothing is darkened, so a HUD layer
+stays bright) and an ambient `ramp` that follows the director's clock.
+`Light2dSense` is the published snapshot (`Sensors.light2d`) that `light level
+at` and `is night?` read through `LightLevel`/`IsNight`.
+
+`blockloom-runtime/src/light2d.rs` draws it: one full-screen `Material2d`
+quad (`LightLayer`, z = `unlit_above` + 0.5) that multiplies what is under it
+by ambient plus every light (`shaders/light2d.wesl`, up to `MAX_LIGHTS`).
+Shadows are per-light 256-sample distance maps (`distance_map`) built on the CPU
+from solid tilemap rects and `casts_shadow` sprites, cached in `ShadowCache`
+by a fingerprint of the light and its occluders. The shader and
+`Light2dSense::color_at` apply the same maths: change them together. A sprite's
+`glow` scales its tint past 1.0 so it feeds bloom. `set ambient light to` and
+`set ambient color to` (`SetLook2d`) land in `engine.look2d` for the run.
+Not done: per-sorting-layer lighting and normal-map lit sprites.
+
+### 2D weather
+
+`blockloom-core/src/weather2d.rs` is rain and snow motes as a stateless
+function of the clock (`mote(kind, i, time, wind_x)`), so a replay matches.
+`blockloom-runtime/src/weather2d.rs` draws a pool of UI nodes (z 5) from the
+weather blend's `precipitation` and `snow`, slanted by the global wind. Rain
+ends in a splash ring; leaves blow in once the wind passes 4 m/s (`leaf_intensity`).
+
+The sprite atlas bakes at a per-target size (`build::DESKTOP_ATLAS`, `WEB_ATLAS`,
+`ANDROID_ATLAS`), and each `TargetStatus` carries a `look2d_note` the Build
+dialog shows.
+
+The scene view's 2D aids ride `TileDebug` (`PROTOCOL_VERSION` 35): `pixel_grid`
+(one-pixel cells once the view is 8 screen pixels a cell), `light_radius`
+(each `Light2d`'s range and spot cone), `camera_bounds`, `parallax_ruler`
+(a cross per layer, cool when slow and warm when fast), drawn by `edit.rs`
+(`draw_level_aids`, `draw_actor_aids`), and `onion_skin` (`onion.rs`: blue and green
+ghost children with the frames either side of an animated sprite's frame, its
+first frame in the scene view, wrapping unless the clip plays once). The 2D inspector has an All/Sprite/Anim/
+Tiles/Light/Camera tab bar that filters the component cards, a live aspect
+thumbnail on the Look card, `FlipbookStrip.qml` under each animation clip (scrub,
+play, timings, markers) and a far-to-near layer stack on the Parallax card.
+The strip outlines the first enabled collider on each frame (eye button).
+
+### 2D post
+
+`blockloom-core/src/post2d.rs` (`World.post2d`) holds pixelation, per-channel
+levels or a palette (up to `MAX_PALETTE` hex colours), an ordered 4x4 dither,
+an edge outline and a CRT preset (scanlines, curvature, vignette, phosphor
+mask), plus a `split` that limits the look to the left part of the frame for
+comparing. `blockloom-runtime/src/post2d.rs` puts one `Post2dPass` fullscreen
+material (`shaders/post2d.wesl`) on the 2D world camera while any effect is
+on: after the tonemapper and `PostLdrPass`, before the UI pass so the HUD
+stays crisp. The look works on display values (the shader converts from the
+linear texture), and the CPU functions in core are the reference the shader
+copies: change them together. `set [look] to` (`SetLook2d`) also takes
+`Pixelation`, `Levels`, `Dither`, `Outline`, `Scanlines`, `Curvature` and
+`Vignette` dials, laid over the project's values for the run
+(`engine.look2d.post`).
+
+### Normal-map authoring
+
+`blockloom-core/src/normalmap.rs` bakes an image's brightness into a
+tangent-space normal map (Sobel slope, strength 0-32, +Y up the image) beside
+its source as `<name>_n.png`, and shades a normal map under a light direction
+for a preview (`bake_normal_map`, `preview_normal_map` in the shell and the
+Sprite card, which draws the preview as a PNG data URL with a draggable light
+dot). Nothing uses the baked file at run time yet: 2D lighting is a screen
+multiply layer, so a sprite's normal map does not change how lights fall on it.
+
+### 2D camera
+
+`blockloom-core/src/camera2d.rs` (`World.camera2d`) is the finishing over the
+PlayerCamera's follow: axis locks, bounds with an exponential soft edge (a
+view larger than the bounds centres), zoom by view height or pixels per unit,
+pixel snap (whole-pixel zoom and position), roll, and trauma shake (trauma
+squared, seeded noise, decay per second). `blockloom-runtime/src/camera2d.rs`
+applies it after `drive_camera`; the shake offset is taken off again before
+the next follow (`remove_shake`) so smoothing never chases the tremor. All of
+it is `SetLook2d` dials laid over the project's values for the run
+(`Zoom`, `ZoomHeight`, `Rotation`, `Shake` adds trauma, `Hitstop` freezes the
+world on the real clock via `set_paused` while interface strands keep going,
+`Bounds*`, `LockX/Y`, `PixelSnap`). `camera zoom` and `is camera at bounds?`
+read `Sensors.camera2d`. Not done: a `set camera target` block, a `when camera
+reaches bounds` hat and split-screen.
+
+### 2D movement helpers
+
+`blockloom-core/src/movers.rs`: the `Conveyor` component (`ConveyorSpec`,
+`speed` along the actor's +X turned by its rotation) and `Hazard`
+(`HazardSpec`: `knockback`, `lift`, `invulnerability`, `message`). Phase 4's
+motor already does variable jump, coyote time, jump buffer, air control and
+platform carry; these add the rest. `carry_of` in `blockloom-runtime/src/
+motor.rs` adds the belt under a motor to its carry each fixed tick, and
+`strike_hazards` (end of `drive_motors`) throws each motor in a hazard's
+`touching` set away (`HazardSpec::throw`, through the motor's `push`) once
+per `Invulnerable` window, on the fixed-tick clock so replays match, then
+broadcasts `message`. The hazard needs a collider (a trigger works) so
+touches are reported. `MotorState::wall` is the vertical wall pressed last
+tick: the `on wall` and `wall normal x/y` motor readings. `InstructionKind::
+WhenMotor` is the `when I jump/land/leave the ground/hit my head/change
+stance` hat (`Trigger::Motor`, `Event::Motor`, codegen kind `Motor`, no script
+ABI yet); `drive_motors` fires each event the motor reports.
+
+### 2D screen feedback
+
+`blockloom-runtime/src/screenfx.rs`: `SetLook2d` dials `Flash` (seconds, fades
+out), `FlashColor`, `Cover` (0-1 target), `CoverKind` (`fade`, `wipe`,
+`circle`), `CoverColor` and `CoverTime` (seconds clear to opaque). They queue
+on `engine.look2d.fx` and `drive_screenfx` folds them into `ScreenFx`, steps
+it on `Time<Real>` (so a pause or hitstop never freezes it) and draws Bevy UI
+nodes over the interface (z 52 cover, 54 flash), separate from the scene
+switch veil in `transition.rs` (which it borrows `normalize_kind` and the iris
+size from). `screen cover` and `is screen shaking?` read `Camera2dSense`.
+Slow-mo, hitstop, fade-to-black and shake blocks already exist from the
+cinematic work. The `Iris` cover kind is a ring that closes to a hole. The
+sprite dials `Pop` (area-preserving squash-and-stretch, render-only, applied
+in PostUpdate and cleared in First) and `FloatNumber` (a UI label that rises
+and fades, `floaters.rs`) finish the feedback set. Not done: a script ABI.
+
 ### 2D animation and sprites
 
 `blockloom-core/src/animation.rs` is the one animation player, both

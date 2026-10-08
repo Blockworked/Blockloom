@@ -475,6 +475,8 @@ pub struct Engine {
     pub last_created: HashMap<String, String>,
     /// Actor id -> lumens a block or script set its light to this run.
     pub light_intensity: HashMap<String, f32>,
+    /// What `set ambient light to` and friends set the 2D lit look to.
+    pub look2d: crate::light2d::Look2d,
     /// Actor id -> what `enable volume` and `set weight of volume` set this
     /// run, over the authored `Volume`.
     pub volume_enabled: HashMap<String, bool>,
@@ -632,6 +634,7 @@ impl Engine {
             clones: HashMap::new(),
             parents: HashMap::new(),
             light_intensity: HashMap::new(),
+            look2d: Default::default(),
             volume_enabled: HashMap::new(),
             volume_weight: HashMap::new(),
             time_scale: None,

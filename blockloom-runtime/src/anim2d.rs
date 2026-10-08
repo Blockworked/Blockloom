@@ -143,7 +143,7 @@ fn playable(spec: &AnimationSpec, rig: Option<&Rig>, name: &str) -> Result<(), S
 
 /// What `play animation` means by `name`: a state first, then a clip. The
 /// clip, the state, a speed multiple and the root-motion switch.
-fn resolve(
+pub(crate) fn resolve(
     spec: &AnimationSpec,
     rig: Option<&Rig>,
     name: &str,
@@ -201,6 +201,7 @@ pub fn apply_animation_effects(
     mut players: Query<&mut AnimationPlayer>,
     mut rigs: Query<&mut RigInstance>,
     mut dials: Query<&mut SpriteDials>,
+    transforms: Query<&Transform>,
 ) {
     if !engine.running || engine.paused {
         return;
@@ -329,6 +330,27 @@ pub fn apply_animation_effects(
                 instance.targets.retain(|(which, _)| *which != index);
                 instance.targets.push((index, [*x, *y]));
             }
+            Effect::SetSpriteDial {
+                dial: blockloom_core::blocks::SpriteDial::Pop,
+                value,
+                ..
+            } => {
+                commands.entity(entity).insert(crate::sprites::Pop {
+                    strength: *value,
+                    age: 0.0,
+                });
+            }
+            Effect::SetSpriteDial {
+                dial: blockloom_core::blocks::SpriteDial::FloatNumber,
+                value,
+                ..
+            } => {
+                if let (Some(def), Ok(transform)) = (engine.actor(actor), transforms.get(entity)) {
+                    let anchor =
+                        crate::world::actor_top(def, transform, blockloom_core::scene::Mode::TwoD);
+                    crate::floaters::spawn(&mut commands, *value, anchor);
+                }
+            }
             Effect::SetSpriteDial { dial, value, .. } => {
                 if let Some(dials) = fresh_dials.get_mut(&entity) {
                     dials.set(*dial, *value);
@@ -406,7 +428,7 @@ pub fn cell_rect(
 
 /// Puts `frame` on `sprite`. A sheet cell waits for its sheet to load rather
 /// than flashing the whole sheet.
-fn show_frame(
+pub(crate) fn show_frame(
     sprite: &mut Sprite,
     frame: ClipFrame<'_>,
     dir: Option<&Path>,

@@ -244,6 +244,10 @@ pub enum Act {
         setting: &'static str,
         value: String,
     },
+    SetLook2d {
+        dial: &'static str,
+        value: String,
+    },
     SetExposure {
         ev: f32,
     },
@@ -973,7 +977,9 @@ impl Runner {
                     entry.detail.is_empty() || entry.detail.eq_ignore_ascii_case(detail)
                 }
                 ("CutsceneEnded", "CutsceneEnded") => true,
-                ("Particles", "Particles") => entry.actor == &*template && entry.detail == detail,
+                ("Particles", "Particles") | ("Motor", "Motor") => {
+                    entry.actor == &*template && entry.detail == detail
+                }
                 // A plugin's event reaches every actor, or only the one it names.
                 ("Plugin", "Plugin") => {
                     (actor.is_empty() || entry.actor == &*template)
@@ -989,7 +995,7 @@ impl Runner {
             // starts every copy's.
             let running = match kind {
                 "Clicked" | "Collision" | "AnimationEnded" | "AnimationMarker" | "Particles"
-                | "EnteredRoom" => {
+                | "Motor" | "EnteredRoom" => {
                     vec![Rc::from(actor)]
                 }
                 "Plugin" if !actor.is_empty() => vec![Rc::from(actor)],
@@ -1342,7 +1348,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 38;
+pub const LOGIC_ABI_VERSION: u32 = 39;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1586,6 +1592,8 @@ pub const ACT_SWITCH_SAVE_SLOT: u32 = 126;
 pub const ACT_DELETE_SAVE_SLOT: u32 = 127;
 /// `a` = language tag (`en`, `fr`, ...). Window-global.
 pub const ACT_SET_LANGUAGE: u32 = 128;
+/// `a` = dial name, `b` = the value as text. Window-global.
+pub const ACT_SET_LOOK_2D: u32 = 200;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1975,6 +1983,9 @@ impl Host for AbiHost {
                 [0.0; 3],
                 &zero,
             ),
+            Act::SetLook2d { dial, value } => {
+                self.act_wire(actor, ACT_SET_LOOK_2D, dial, &value, [0.0; 3], &zero)
+            }
             Act::SetExposure { ev } => self.act_wire(
                 actor,
                 ACT_SET_EXPOSURE,

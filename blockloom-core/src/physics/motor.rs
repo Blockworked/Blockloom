@@ -323,9 +323,10 @@ pub struct MovementIntent {
 }
 
 /// What the motor tells the game about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum MotorEvent {
     Jump,
+    #[default]
     Land,
     LeftGround,
     HeadHit,
@@ -402,6 +403,8 @@ pub struct MotorState {
     pub fall_speed: f32,
     /// A steep slope it stands against, for sliding.
     pub steep: Option<[f32; 3]>,
+    /// The normal of a wall it pressed against last tick.
+    pub wall: Option<[f32; 3]>,
     /// Which way the motor wants the actor to face (radians about up).
     pub face: Option<f32>,
     pub warning: Option<String>,
@@ -642,6 +645,7 @@ impl MotorState {
         let mut events = Vec::new();
         let was_grounded = self.grounded;
         self.steep = None;
+        self.wall = None;
         let rising = dot(self.velocity, up);
         let mut floor: Option<(&controller::ControllerHit, f32)> = None;
         for hit in &result.hits {
@@ -666,6 +670,9 @@ impl MotorState {
                     }
                 }
                 Surface::Wall => {
+                    if dot(hit.normal, up).abs() <= 0.05 {
+                        self.wall = Some(hit.normal);
+                    }
                     let tilt = dot(hit.normal, up);
                     if tilt > 0.05 {
                         self.steep = Some(hit.normal);
@@ -915,6 +922,9 @@ pub fn read_number(actor: &str, field: &str) -> f64 {
             "hit head" => n(t.state.last_events.contains(&MotorEvent::HeadHit)),
             "changed stance" => n(t.state.last_events.contains(&MotorEvent::StanceChanged)),
             "crouching" => n(t.state.crouching),
+            "on wall" => n(t.state.wall.is_some()),
+            "wall normal x" => f64::from(t.state.wall.map_or(0.0, |w| w[0])),
+            "wall normal y" => f64::from(t.state.wall.map_or(0.0, |w| w[1])),
             "speed" => f64::from(t.state.speed),
             "desired speed" => f64::from(t.state.desired_speed),
             "vertical speed" => f64::from(t.state.vertical),
@@ -1543,6 +1553,20 @@ mod tests {
         };
         m.settle(&s, &result, &env(), 0.1);
         assert_eq!(m.velocity, [0.0, 0.0, 2.0]);
+    }
+
+    #[test]
+    fn a_vertical_wall_is_remembered_for_one_tick() {
+        let s = spec();
+        let mut m = MotorState::default();
+        let result = MoveResult {
+            hits: vec![hit([-1.0, 0.0, 0.0])],
+            ..MoveResult::default()
+        };
+        m.settle(&s, &result, &env(), 0.1);
+        assert_eq!(m.wall, Some([-1.0, 0.0, 0.0]));
+        m.settle(&s, &MoveResult::default(), &env(), 0.1);
+        assert_eq!(m.wall, None);
     }
 
     #[test]

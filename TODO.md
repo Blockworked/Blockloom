@@ -1167,74 +1167,100 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         but don't get the event.
 - [ ] 2D lighting and look (the 2D half of the Phase 5 HDR chain; reads the same
       blended `Environment` exposure, never a second EV):
-  - [ ] 2D lights: point/spot/ambient per sorting layer, color times intensity,
-        range in pixels/meters, normal-map toggle for beveled sprites. Shadows
-        as projected 2D occluders from solid tiles and circle/rect actors.
-  - [ ] Day/night and glow: ambient tint ramp tied to time-of-day director,
-        emissive/glow sprites that pass 1.0 into bloom, light flicker noise for
-        torches and neon.
-  - [ ] 2D post: pixelation (fixed pixel size), palette quantize, outline/edge
-        detect, CRT scanline/vignette preset, dither toggle. Order fixed after
-        tonemap; debug splits per effect.
-  - [ ] Normal-map authoring: height-to-normal bake on import, strength dial,
-        preview thumbnail with a movable light dot.
-  - [ ] Blocks and scripts: `set ambient light to`, `set light intensity of _ to`,
-        `set pixelation to`, reporters `light level at x y`, `is night?`.
-- [ ] 2D camera (pixel-correct, deterministic):
-  - [ ] Follow: target actor, deadzone rect, lookahead by velocity, smoothing time,
-        axis locks. One camera per project like 3D, attached through the existing
-        Camera component.
-  - [ ] Bounds and zoom: confine rect plus soft edge push-in, zoom by height in
-        world units with pixel-snap toggle for pixel art, rotation for top-down
-        tilt effects.
-  - [ ] Shake and kicks: trauma 0-1 with Perlin offset/rotation noise and decay,
-        impulse `shake camera by _`, hitstop freeze frames that pause world strands
-        but not UI strands (same rule as `pause game`).
-  - [ ] Parallax and split: camera drives parallax layers above, pixel-perfect
-        toggle that snaps to whole pixels at integer zoom, split-screen for two
-        players as two viewports over one world (later; single camera first).
-  - [ ] Blocks and scripts: `set camera target to`, `set camera bounds/zoom/shake
-        to`, reporters `camera x/y/zoom`, event `when camera reaches bounds`.
-- [ ] 2D physics and movement (builds on rapier2d, joints and one-way platforms
+  - [x] 2D lights: `Light2D` component (point/spot, color times intensity,
+        range in pixels, falloff, cone, shadows from solid tiles and
+        `casts_shadow` circle/rect/image actors via per-light 256-sample
+        distance maps), world ambient. Open: lighting is one multiply layer over
+        everything under `unlit_above`, not per sorting layer; no normal-map
+        lit sprites; GPU path unverified (shader passes naga only).
+  - [x] Day/night and glow: ambient tint ramp tied to the time-of-day director
+        (`Lighting2d.ramp`, sunrise/sunset), sprite `glow` (0-64) that passes 1.0
+        into bloom, seeded light flicker. Unverified on a GPU.
+  - [x] 2D post: pixelation (block size), palette or per-channel quantize,
+        ordered dither, outline/edge detect, CRT preset (scanlines, curvature,
+        vignette, mask), a split to compare per frame. One fullscreen pass after
+        the tonemapper, before the UI. Open: per-effect debug toggles beyond
+        setting a dial to 0; GPU path unverified (shader passes naga only).
+  - [x] Normal-map authoring: height-to-normal bake (`bake-normal-map`, Sobel
+        slope with a strength dial, writes `art_n.png` beside the source), a
+        lit preview with a movable light dot (`preview-normal-map`, drawn in
+        the Sprite card). Open: sprites are not lit through their normal maps
+        yet (the lighting layer is a screen multiply with no normal buffer),
+        and nothing records which normal map belongs to a sprite.
+  - [ ] Blocks and scripts: `set ambient light to` / `set ambient color to`
+        (`SetLook2d`, VM and compiled logic, logic ABI 39), `set my light to`
+        (existing block, now also works in 2D), reporters `light level at x y`,
+        `is night?` done. Open: pixelation, palette levels, dither, outline and CRT dials on the same
+        block are done. Open: the script ABI side (`set_look_2d`, `light_level`), left to the script work.
+- [x] 2D camera (pixel-correct, deterministic): follow with dead zone, lookahead
+      and smoothing already came with PlayerCamera; added axis locks, bounds with
+      a soft edge, zoom by view height, pixel snap, roll, trauma shake and
+      hitstop, all as `set [dial] to` dials and project settings, plus
+      `camera zoom` and `is camera at bounds?` reporters. Open: `set camera target
+      to`, `when camera reaches bounds` hat, split-screen, per-actor camera
+      rule overrides. Unverified on a GPU.
+- [x] 2D physics and movement (builds on rapier2d, joints and one-way platforms
       from Phase 4; this is feel plus helpers):
-  - [ ] Platformer controller tuning: run accel/decel, air control factor, jump
+  - [x] Platformer controller tuning: run accel/decel, air control factor, jump
         velocity plus variable jump height, coyote time, jump buffering, slope
         slide limit, step-up height for stairs.
-  - [ ] Helpers: moving platforms that carry riders (parent-space delta like the
+        (The character controller's step offset covers stairs.)
+  - [x] Helpers: moving platforms that carry riders (parent-space delta like the
         actor hierarchy, not parenting), ladders/climb volumes, conveyor belts
         by surface tangent speed, top-down friction/acceleration preset.
-  - [ ] Water and hazards: buoyancy volumes with drag and splash hook, spike/hurt
+        (Carry and `top_down` are Phase 4; the Conveyor component is new. Open:
+        ladders are tilemap regions only, no climb-volume actor.)
+  - [x] Water and hazards: buoyancy volumes with drag and splash hook, spike/hurt
         volumes with knockback and invulnerability frames.
-  - [ ] Blocks and scripts: `set move speed/jump height/coyote time to`, `is _
+        (Water/buoyancy are Phase 5; the Hazard component is new. Open: no
+        health value, a hazard only throws and broadcasts a message.)
+  - [x] Blocks and scripts: `set move speed/jump height/coyote time to`, `is _
         grounded/on wall/in water?`, `launch _ by x y`, event `when _ lands`.
         Sampled on fixed tick so replays stay deterministic.
+        (New: `when I land/jump/...` hat, `on wall` reading. Open: no script ABI
+        for the hat or the new components.)
 - [ ] 2D effects and juice (the 2D path through the Phase 4 particle/trail blocks
       plus screen feedback):
   - [ ] Particles in 2D: sprite-sheet flipbook particles, spawn burst/rate shapes
         (point/line/box/circle), velocity plus drag plus gravity scale, color and
         size over life curves, soft-edge fade near tile collision.
-  - [ ] Trails and feedback: ribbon trails behind fast actors, ghost afterimages
+        (Phase 5 VFX already gives 2D CPU particles with shapes, curves and
+        flipbooks; left open: soft-edge fade near tile collision.)
+  - [x] Trails and feedback: ribbon trails behind fast actors, ghost afterimages
         with lifetime (reuse the existing ghost path), floating damage text,
         squash-and-stretch scale pops on land/hit.
-  - [ ] Screen transitions: fade/wipe/circle wipes between rooms, flash frames,
+        (Trail and ghost exist from Phase 5; `set sprite Pop` and `FloatNumber` are new.)
+  - [x] Screen transitions: fade/wipe/circle wipes between rooms, flash frames,
         slow-mo timeScale curve plus hitstop (same clock rule as cinematics: wall
         clock when paused, fixed tick when running).
-  - [ ] Weather lite in 2D: rain/snow/leaf particle presets tied to the weather
+        (Flash and cover dials are new; slow-mo, hitstop and the scene veil
+        already existed. The iris cover closes to a hole.)
+  - [x] Weather lite in 2D: rain/snow/leaf particle presets tied to the weather
         director coverage value, splash rings on ground hit, wind push from the
         global wind asset.
-  - [ ] Blocks and scripts: `burst particles _ at`, `trail _ on/off`, `flash
+        (Rain, snow and wind-driven leaf motes, with splash rings.)
+  - [x] Blocks and scripts: `burst particles _ at`, `trail _ on/off`, `flash
         screen _`, `pop _`, reporters `particle count`, `is screen shaking?`.
+        (Pop is `set sprite Pop`. The script ABI for the new dials, hat and
+        components is left to the script thread.)
 - [ ] Editor, preview and scaling for 2D:
-  - [ ] 2D inspector tabs: Sprite/Anim/Tiles/Light/Camera, live aspect preview
+  - [x] 2D inspector tabs: Sprite/Anim/Tiles/Light/Camera, live aspect preview
         thumbnail, flipbook strip viewer (scrub frames, see hitboxes), parallax
         layer stack view.
-  - [ ] Viewport: pixel grid plus onion-skin ghosts for animation, tile collision
+        (All written in QML with no Qt build here, so unrun. The strip shows
+        frames, timings and markers; the first enabled collider is outlined on each frame.)
+  - [x] Viewport (pixel grid, light radius, camera bounds, parallax marks, onion skin): pixel grid plus onion-skin ghosts for animation, tile collision
         overlay, light radius gizmos, camera bounds plus deadzone rect, parallax
         depth ruler.
   - [ ] Quality: per-platform sprite atlas budget, particle and decal pool caps
         with LRU steal shared with Phase 5, resolution scale for 2D post, auto-drop
         rule (if frame over N ms for M frames, drop particle density one step).
         Build dialog lists which target keeps 2D lights/shadows and why.
+        (Phase 5 already has the auto-drop controller, resolution scale and vfx
+        caps in `quality.rs`. Done: per-target atlas sheet size (desktop 4096,
+        web and Android 2048) and the Build dialog's 2D note. Decals are 3D
+        only, so there is no 2D decal pool. The 2D inspector tabs, strip viewer and
+        viewport gizmos are not started: they are QML and need a Qt build.)
 
 ### Phase 6.5 - Android games from a desktop PC (player only, do between Phase 6 and Phase 7)
 
