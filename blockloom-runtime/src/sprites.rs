@@ -347,7 +347,7 @@ pub fn sync_sprites(
                 let quad = size + Vec2::splat(width * 2.0);
                 let palette = (!spec.palette.is_empty())
                     .then(|| assets.load(asset_path(dir.as_deref(), &spec.palette)));
-                let material = fx_material(
+                let mut material = fx_material(
                     base,
                     (size, uv_rect, pixels),
                     width,
@@ -355,6 +355,9 @@ pub fn sync_sprites(
                     palette,
                     spec.palette_index,
                 );
+                // Glow lifts the colors past 1.0 for bloom; alpha stays.
+                let boost = 1.0 + spec.glow;
+                material.tint = (material.tint.truncate() * boost).extend(material.tint.w);
                 place_quad(
                     &mut commands,
                     &mut meshes,

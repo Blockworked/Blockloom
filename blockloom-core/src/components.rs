@@ -17,6 +17,7 @@
 
 use crate::ai::BrainSpec;
 use crate::animation::AnimationSpec;
+use crate::light2d::Light2dSpec;
 use crate::material::{ParticleSpec, SurfaceMaterial, TrailSpec};
 use crate::physics::controller::CharacterControllerSpec;
 use crate::physics::motor::CharacterMotorSpec;
@@ -55,6 +56,7 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "Emitter",
     "Trail",
     "Light",
+    "Light2D",
     "Animation",
     "Volume",
     "Probe",
@@ -384,6 +386,9 @@ pub enum ActorComponent {
     Trail { trail: TrailSpec },
     /// A point or spot light riding the actor.
     Light { light: LightSpec },
+    /// A 2D point or spot light, lighting the layers under the world's
+    /// `lighting2d` multiply layer. 2D only.
+    Light2d { light2d: Light2dSpec },
     /// Sprite flipbooks and the named states over them. The runtime's player
     /// swaps the displayed frame; `play clip` changes state and `when
     /// animation ends` fires the transition.
@@ -443,6 +448,7 @@ impl ActorComponent {
             ActorComponent::Emitter { .. } => "Emitter",
             ActorComponent::Trail { .. } => "Trail",
             ActorComponent::Light { .. } => "Light",
+            ActorComponent::Light2d { .. } => "Light2D",
             ActorComponent::Animation { .. } => "Animation",
             ActorComponent::Volume { .. } => "Volume",
             ActorComponent::Probe { .. } => "Probe",
@@ -974,6 +980,14 @@ impl Components {
     pub fn light(&self) -> Option<&LightSpec> {
         match self.get("Light") {
             Some(ActorComponent::Light { light }) => Some(light),
+            _ => None,
+        }
+    }
+
+    /// The 2D light, if the actor carries one.
+    pub fn light2d(&self) -> Option<&Light2dSpec> {
+        match self.get("Light2D") {
+            Some(ActorComponent::Light2d { light2d }) => Some(light2d),
             _ => None,
         }
     }

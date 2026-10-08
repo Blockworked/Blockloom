@@ -346,6 +346,7 @@ impl Host for Recorder {
             | Act::SetUiTheme { .. }
             | Act::SetBusVolume { .. }
             | Act::SetRenderSetting { .. }
+            | Act::SetLook2d { .. }
             | Act::SetExposure { .. }
             | Act::SetHdrOutput { .. }
             | Act::SetPeakBrightness { .. }
@@ -1148,6 +1149,7 @@ fn line_of(act: &Act) -> String {
         Act::Turn { axis, degrees } => format!("Turn {axis} {degrees:?}"),
         Act::SetScale { factor } => format!("SetScale {factor:?}"),
         Act::SetRenderSetting { setting, value } => format!("SetRenderSetting {setting} {value:?}"),
+        Act::SetLook2d { dial, value } => format!("SetLook2d {dial} {value:?}"),
         Act::SetExposure { ev } => format!("SetExposure {ev:?}"),
         Act::SetLightIntensity { intensity } => format!("SetLightIntensity {intensity:?}"),
         Act::SetEmissiveStrength { strength } => format!("SetEmissiveStrength {strength:?}"),
@@ -1447,6 +1449,7 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SetRenderSetting { setting, value } => {
             format!("|SetRenderSetting {setting:?} {value:?}")
         }
+        Effect::SetLook2d { dial, value } => format!("|SetLook2d {dial:?} {value:?}"),
         Effect::SetExposure { ev } => format!("|SetExposure {ev:?}"),
         Effect::SetLightIntensity { actor, intensity } => {
             format!("{actor}|SetLightIntensity {intensity:?}")
@@ -5471,6 +5474,25 @@ fn render_settings_match_compiled_logic() {
             K::SetRenderSetting {
                 setting: Setting::DlssMode,
                 value: Value::text("Balanced"),
+            },
+        ],
+        &[],
+    );
+}
+
+#[test]
+fn look2d_dials_compiled_logic() {
+    use blockloom_core::blocks::Look2dDial;
+    assert_same(
+        "look2d",
+        vec![
+            K::SetLook2d {
+                dial: Look2dDial::AmbientLight,
+                value: number(0.4),
+            },
+            K::SetLook2d {
+                dial: Look2dDial::AmbientColor,
+                value: Value::text("#334466"),
             },
         ],
         &[],

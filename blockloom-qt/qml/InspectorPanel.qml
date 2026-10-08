@@ -78,6 +78,11 @@ Rectangle {
     function emitterOf(c) { return Object.assign({ rate: 24, lifetime: 0.8, speed: 120, spread: 60, gravity_scale: 0.5, size_start: 6, size_end: 1, color_start: "#FFFFFF", color_end: "#FFAB19", max: 128, wind: 1 }, c.emitter || {}); }
     function lightOf(c) { return Object.assign({ kind: "Point", color: "#FFFFFF", intensity: 800, range: 20, radius: 0, inner_angle: 30, outer_angle: 45, shadows: false,
         unit: "Lumens", width: 1, height: 1, cookie: "", cookie_tiling: 1, ies: "", contact_shadows: false, soft_shadows: false, shadow_depth_bias: null, shadow_normal_bias: null, ray_traced: true, volumetric: true }, c.light || {}); }
+    function light2dOf(c) {
+        const l = Object.assign({ kind: "Point", color: "#FFE2A8", intensity: 1, range: 240, falloff: 2, inner_angle: 25, outer_angle: 40, shadows: false, softness: 12, flicker: {} }, c.light2d || {});
+        l.flicker = Object.assign({ amount: 0, speed: 8, seed: 1 }, l.flicker);
+        return l;
+    }
     function beamOf(l) {
         const b = Object.assign({ density: 0, anisotropy: null, falloff: 1, near_fade: 0.5, far_fade: 2, mode: "Auto", shaft_intensity: 1, shaft_noise: 0.4, shaft_scroll: 0.3, motes: {} }, l.beam || {});
         b.motes = Object.assign({ enabled: false, count: 160, size: 0.012, alpha: 0.6, twinkle: 0.5, drift: 0.05 }, b.motes);
@@ -98,7 +103,7 @@ Rectangle {
     function trailOf(c) { return Object.assign({ interval: 0.05, life: 0.4, color: "#FFFFFF" }, c.trail || {}); }
     function jointOf(c) { return Object.assign({ target: "", kind: "Fixed", anchor: [0, 0, 0], length: 2 }, c.joint || {}); }
     function animationOf(c) { return Object.assign({ clips: [], states: [], initial: "", crossfade: 0, rig: "", skin: "", slot_tints: [] }, c.animation || {}); }
-    function spriteOf(c) { return Object.assign({ flip_x: false, flip_y: false, order: 0, y_sort: false, slice: null, stack: null, palette: "", palette_index: 0, outline_width: 0, outline_color: "#000000" }, c.sprite || {}); }
+    function spriteOf(c) { return Object.assign({ flip_x: false, flip_y: false, order: 0, y_sort: false, slice: null, stack: null, palette: "", palette_index: 0, glow: 0, casts_shadow: false, outline_width: 0, outline_color: "#000000" }, c.sprite || {}); }
     // Transitions read and write as one line each: "run if speed > 2 blend 0.2",
     // "idle on end", "land on marker land", "jump on trigger jump".
     readonly property var compareSigns: ({ Less: "<", LessOrEqual: "<=", Equal: "=", NotEqual: "!=", Greater: ">", GreaterOrEqual: ">=" })
@@ -255,6 +260,7 @@ Rectangle {
     function writeShader(c, next) { writeMaterial(c, { shader: merged(materialOf(c).shader || { mode: "Solid", speed: 1, strength: 0.5, color: "#FFFFFF" }, next) }); }
     function writeEmitter(c, next) { write("Emitter", { component: "Emitter", emitter: merged(emitterOf(c), next) }); }
     function writeLight(c, next) { write("Light", { component: "Light", light: merged(lightOf(c), next) }); }
+    function writeLight2d(c, next) { write("Light2d", { component: "Light2d", light2d: merged(light2dOf(c), next) }); }
     function writeBeam(c, next) { writeLight(c, { beam: merged(beamOf(lightOf(c)), next) }); }
     function writeMotes(c, next) { writeBeam(c, { motes: merged(beamOf(lightOf(c)).motes, next) }); }
     function writeTrail(c, next) { write("Trail", { component: "Trail", trail: merged(trailOf(c), next) }); }
@@ -360,10 +366,11 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Rigidbody","Collider","Constraint","CharacterController","CharacterMotor","PlayerCamera","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
+        return ["Look","Render","Body","Rigidbody","Collider","Constraint","CharacterController","CharacterMotor","PlayerCamera","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Light2d","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
             .filter(n => n !== "Sprite" || !is3d)
             .filter(n => n !== "Fracture" || is3d)
-            .filter(n => n === "Custom" || n === "Collider" || n === "Constraint" || n === "Script" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }))
+            .filter(n => n !== "Light2d" || !is3d)
+            .filter(n => n === "Custom" || n === "Collider" || n === "Constraint" || n === "Script" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : (n === "Light2d" ? "2D light" : n) }))
             .concat(pluginTypes.filter(t => t.kind === "component" && held.indexOf(t.name) < 0).map(t => ({ value: "plugin:" + t.name, label: t.displayName + " (" + t.pluginName + ")" })));
     }
     function blank(name) {
@@ -380,6 +387,7 @@ Rectangle {
         case "Emitter": return { component: "Emitter", emitter: emitterOf({}) };
         case "Trail": return { component: "Trail", trail: trailOf({}) };
         case "Light": return { component: "Light", light: lightOf({}) };
+        case "Light2d": return { component: "Light2d", light2d: light2dOf({}) };
         case "Animation": return { component: "Animation", animation: { clips: [], states: [] } };
         case "Sprite": return { component: "Sprite", sprite: spriteOf({}) };
         case "Volume": return { component: "Volume", volume: volumeOf({}) };
@@ -487,7 +495,7 @@ Rectangle {
                                 Layout.fillWidth: true
                                 readonly property var c: card.c
                                 sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Rigidbody: rigidbodyCard, Collider: colliderCard, Constraint: constraintCard, CharacterController: controllerCard, CharacterMotor: motorCard, PlayerCamera: playerCameraCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                    Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard, Plugin: pluginCard })[card.c.component] || null
+                                                    Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Light2d: light2dCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard, Plugin: pluginCard })[card.c.component] || null
                             }
                         }
                     }
@@ -1196,6 +1204,36 @@ Rectangle {
                 onEdited: next => root.writeEmitter(em.c, next) }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "Plays in the scene view while this actor is selected, looping every Duration. In a run it sprays while attached; detaching stops the spray and what is already flying fades out on its own." }
+        }
+    }
+    Component {
+        id: light2dCard
+        ColumnLayout {
+            id: l2
+            readonly property var c: parent.c
+            readonly property var l: root.light2dOf(c)
+            spacing: 6
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Lights the 2D world once Lighting is on in Project Settings. Range and softness are in pixels." }
+            InspectorRow { label: "Kind"; Layout.fillWidth: true
+                ChoiceField { options: [{ value: "Point", label: "Point" }, { value: "Spot", label: "Spot" }]; value: l2.l.kind; onChosen: k => root.writeLight2d(l2.c, { kind: k }) } }
+            InspectorRow { label: "Color"; Layout.fillWidth: true; ColorField { value: l2.l.color; onPicked: col => root.writeLight2d(l2.c, { color: col }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Intensity"; Layout.fillWidth: true
+                NumberField { value: l2.l.intensity; fallback: 1; onCommitted: n => root.writeLight2d(l2.c, { intensity: Math.max(0, n) }) } }
+            InspectorRow { label: "Range"; Layout.fillWidth: true
+                NumberField { value: l2.l.range; fallback: 240; onCommitted: n => root.writeLight2d(l2.c, { range: Math.max(1, n) }) } }
+            InspectorRow { label: "Falloff"; Layout.fillWidth: true
+                NumberField { value: l2.l.falloff; fallback: 2; onCommitted: n => root.writeLight2d(l2.c, { falloff: Math.min(Math.max(n, 0.1), 8) }) } }
+            InspectorRow { visible: l2.l.kind === "Spot"; label: "Cone °"; Layout.fillWidth: true
+                NumberField { value: l2.l.inner_angle; fallback: 25; onCommitted: n => root.writeLight2d(l2.c, { inner_angle: n }) }
+                NumberField { value: l2.l.outer_angle; fallback: 40; onCommitted: n => root.writeLight2d(l2.c, { outer_angle: n }) } }
+            InspectorRow { label: "Shadows"; Layout.fillWidth: true
+                SwitchField { value: l2.l.shadows; onToggled: on => root.writeLight2d(l2.c, { shadows: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { visible: l2.l.shadows; label: "Softness"; Layout.fillWidth: true
+                NumberField { value: l2.l.softness; fallback: 12; onCommitted: n => root.writeLight2d(l2.c, { softness: Math.max(0, n) }) } }
+            InspectorRow { label: "Flicker"; Layout.fillWidth: true
+                NumberField { value: l2.l.flicker.amount; fallback: 0; onCommitted: n => root.writeLight2d(l2.c, { flicker: Object.assign({}, l2.l.flicker, { amount: Math.min(Math.max(n, 0), 1) }) }) }
+                NumberField { value: l2.l.flicker.speed; fallback: 8; onCommitted: n => root.writeLight2d(l2.c, { flicker: Object.assign({}, l2.l.flicker, { speed: Math.max(0, n) }) }) } }
         }
     }
     Component {
@@ -1996,6 +2034,10 @@ Rectangle {
                 NumberField { value: sp.s.order; fallback: 0; onCommitted: n => root.writeSprite(sp.c, { order: Math.max(-40, Math.min(40, Math.round(n))) }) } }
             InspectorRow { label: "Y-sort"; Layout.fillWidth: true
                 SwitchField { value: sp.s.y_sort; onToggled: on => root.writeSprite(sp.c, { y_sort: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Glow"; Layout.fillWidth: true
+                NumberField { value: sp.s.glow; fallback: 0; onCommitted: n => root.writeSprite(sp.c, { glow: Math.min(Math.max(n, 0), 64) }) } }
+            InspectorRow { label: "Casts shadow"; Layout.fillWidth: true
+                SwitchField { value: sp.s.casts_shadow; onToggled: on => root.writeSprite(sp.c, { casts_shadow: on }) } Item { Layout.fillWidth: true } }
             InspectorRow { label: "9-slice"; Layout.fillWidth: true
                 SwitchField { value: !!sp.s.slice; onToggled: on => root.writeSprite(sp.c, { slice: on ? { border: [8, 8, 8, 8], center: "Stretch", sides: "Stretch", max_corner_scale: 1 } : null }) } Item { Layout.fillWidth: true } }
             RowLayout {

@@ -193,6 +193,8 @@ pub struct Sensors {
     pub atmosphere: AtmosphereSense,
     /// Every water body, sampled with the atmosphere on the fixed tick.
     pub water: crate::water::WaterSense,
+    /// The 2D lit look: what `light level at` and `is night?` read.
+    pub light2d: crate::light2d::Light2dSense,
     /// Live tilemaps and room bounds, which `tile at` and `room containing`
     /// read.
     pub level: crate::tilemap::LevelSense,
@@ -660,6 +662,11 @@ pub fn publish_ui(ui: HashMap<String, UiSense>, focus: String) {
         s.ui = ui;
         s.ui_focus = focus;
     });
+}
+
+/// Publishes the frame's 2D lights for `light level at` and `is night?`.
+pub fn publish_light2d(light2d: crate::light2d::Light2dSense) {
+    SENSORS.with(|slot| slot.borrow_mut().light2d = light2d);
 }
 
 /// Samples the atmosphere at the head of each fixed tick.

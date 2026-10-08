@@ -1727,6 +1727,28 @@ import Blockloom's library (`blockloom::fbm`, ...) and Bevy's own modules
 (`bevy_pbr` in 3D, `bevy_sprite_render` in 2D);
 a project's other files aren't modules, so `package::`/`super::` are refused.
 
+### 2D lighting
+
+`blockloom-core/src/light2d.rs` is the model and the maths both halves share.
+A `Light2D` component (`Light2dSpec`: point or spot, color, intensity, range in
+pixels, falloff, cone, shadows, softness, seeded `Flicker`) lights the world;
+`World.lighting2d` (`Lighting2d`) turns it on and holds the ambient level and
+colour, `unlit_above` (the z above which nothing is darkened, so a HUD layer
+stays bright) and an ambient `ramp` that follows the director's clock.
+`Light2dSense` is the published snapshot (`Sensors.light2d`) that `light level
+at` and `is night?` read through `LightLevel`/`IsNight`.
+
+`blockloom-runtime/src/light2d.rs` draws it: one full-screen `Material2d`
+quad (`LightLayer`, z = `unlit_above` + 0.5) that multiplies what is under it
+by ambient plus every light (`shaders/light2d.wesl`, up to `MAX_LIGHTS`).
+Shadows are per-light 256-sample distance maps (`distance_map`) built on the CPU
+from solid tilemap rects and `casts_shadow` sprites, cached in `ShadowCache`
+by a fingerprint of the light and its occluders. The shader and
+`Light2dSense::color_at` apply the same maths: change them together. A sprite's
+`glow` scales its tint past 1.0 so it feeds bloom. `set ambient light to` and
+`set ambient color to` (`SetLook2d`) land in `engine.look2d` for the run.
+Not done: per-sorting-layer lighting and normal-map lit sprites.
+
 ### 2D animation and sprites
 
 `blockloom-core/src/animation.rs` is the one animation player, both

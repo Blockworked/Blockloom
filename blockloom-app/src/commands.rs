@@ -1380,6 +1380,24 @@ pub(crate) fn set_clouds(
     Ok(())
 }
 
+pub(crate) fn set_lighting_2d(
+    state: &SharedState,
+    app: &AppHandle,
+    lighting: blockloom_core::light2d::Lighting2d,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let mut lighting = lighting;
+    lighting.normalize();
+    if let Some(project) = s.project_mut() {
+        project.world.lighting2d = lighting;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
 pub(crate) fn set_cloud_layers(
     state: &SharedState,
     app: &AppHandle,

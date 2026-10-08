@@ -45,6 +45,31 @@ impl SpriteDial {
     }
 }
 
+/// The 2D look `set [look] to` can change for the run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Look2dDial {
+    /// The ambient multiplier over the project's colour.
+    AmbientLight,
+    /// A colour that replaces the ambient colour; empty puts it back.
+    AmbientColor,
+}
+
+impl Look2dDial {
+    /// A dial by the name a script or compiled logic sends.
+    pub fn parse(name: &str) -> Option<Look2dDial> {
+        match name
+            .trim()
+            .to_lowercase()
+            .replace(['_', '-', ' '], "")
+            .as_str()
+        {
+            "ambientlight" | "ambient" => Some(Look2dDial::AmbientLight),
+            "ambientcolor" | "ambientcolour" => Some(Look2dDial::AmbientColor),
+            _ => None,
+        }
+    }
+}
+
 /// Runtime emitter settings available to blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EmitterDial {
@@ -326,6 +351,11 @@ pub enum InstructionKind {
     /// brighter. Outranks auto-exposure and the project's own value.
     SetRenderSetting {
         setting: crate::quality::Setting,
+        value: Value,
+    },
+    /// Changes one dial of the 2D lit look for the rest of the run.
+    SetLook2d {
+        dial: Look2dDial,
         value: Value,
     },
     SetExposure {
@@ -1231,6 +1261,7 @@ impl BlockKind for InstructionKind {
             | K::SetRotation { degrees: v, .. }
             | K::SetScale { factor: v }
             | K::SetRenderSetting { value: v, .. }
+            | K::SetLook2d { value: v, .. }
             | K::SetExposure { ev: v }
             | K::SetLightIntensity { intensity: v }
             | K::SetEmissiveStrength { strength: v }

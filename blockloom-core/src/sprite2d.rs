@@ -88,6 +88,13 @@ pub struct SpriteSpec {
     pub outline_width: f32,
     #[serde(default = "default_outline")]
     pub outline_color: String,
+    /// Extra brightness on the sprite's colors, added to 1: above zero it
+    /// passes 1.0 on an HDR frame and blooms, and survives a dark ambient.
+    #[serde(default)]
+    pub glow: f32,
+    /// Whether this actor's shape blocks 2D lights that cast shadows.
+    #[serde(default)]
+    pub casts_shadow: bool,
 }
 
 fn default_outline() -> String {
@@ -107,6 +114,8 @@ impl Default for SpriteSpec {
             palette_index: 0,
             outline_width: 0.0,
             outline_color: default_outline(),
+            glow: 0.0,
+            casts_shadow: false,
         }
     }
 }
@@ -146,15 +155,21 @@ impl SpriteSpec {
         self.palette = self.palette.trim().to_string();
         self.palette_index = self.palette_index.min(255);
         self.outline_width = clamp_outline(self.outline_width);
+        self.glow = if self.glow.is_finite() {
+            self.glow.clamp(0.0, 64.0)
+        } else {
+            0.0
+        };
         self.outline_color = self.outline_color.trim().to_string();
         if self.outline_color.is_empty() {
             self.outline_color = default_outline();
         }
     }
 
-    /// True when the sprite needs the effect shader: a palette or outline.
+    /// True when the sprite needs the effect shader: a palette, an outline
+    /// or a glow.
     pub fn needs_effect(&self) -> bool {
-        !self.palette.is_empty() || self.outline_width > 0.0
+        !self.palette.is_empty() || self.outline_width > 0.0 || self.glow > 0.0
     }
 }
 

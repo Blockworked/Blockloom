@@ -55,6 +55,7 @@ mod gpu;
 mod hdr;
 mod indirect;
 mod lan;
+mod light2d;
 mod light_probes;
 mod lightning;
 mod lights;
@@ -344,6 +345,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // registers all three, so systems can take their asset stores
     // unconditionally; an unused plugin costs nothing at runtime.
     materials::register(app);
+    light2d::register(app);
     sprites::register(app);
     app.init_resource::<anim2d::RigCache>()
         .init_resource::<plugin_meshes::PluginMeshes>()
@@ -545,7 +547,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .after(SimStep::Common)
                     .before(SimStep::VolumeEffects),
                 (
-                    lights::apply_light_effects.run_if(is_3d),
+                    lights::apply_light_effects,
+                    light2d::apply_look2d_effects.run_if(is_2d),
                     ray_tracing::apply_ray_tracing_effects.run_if(is_3d),
                 )
                     .chain()

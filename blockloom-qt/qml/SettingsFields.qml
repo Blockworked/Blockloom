@@ -304,6 +304,20 @@ Item {
                     ColorField { value: root.world ? root.world.background : "#000000"; onPicked: c => root.invoke("set_background", { color: c }) } Item { Layout.fillWidth: true } }
             }
             Section {
+                id: lit2d
+                heading: "2D lighting"; available: !!root.world && !root.is3d
+                readonly property var l: root.world && root.world.lighting2d ? root.world.lighting2d : ({ enabled: false, ambient_color: "#FFFFFF", ambient: 0.3, unlit_above: 100 })
+                function write(next) { root.invoke("set_lighting_2d", { lighting: Object.assign(JSON.parse(JSON.stringify(root.world.lighting2d || {})), next) }); }
+                InspectorRow { label: "Lighting"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: lit2d.l.enabled; onToggled: on => lit2d.write({ enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { label: "Ambient"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: lit2d.l.ambient; fallback: 0.3; onCommitted: n => lit2d.write({ ambient: root.clamp(n, 0, 4) }) }
+                    ColorField { value: lit2d.l.ambient_color; onPicked: c => lit2d.write({ ambient_color: c }) } Item { Layout.fillWidth: true } }
+                InspectorRow { label: "Unlit above"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: lit2d.l.unlit_above; fallback: 100; onCommitted: n => lit2d.write({ unlit_above: n }) } }
+                Note { text: "Darkens the world by the ambient level and adds each 2D light on top. Layers above Unlit above (the HUD, foreground) are not darkened. Add a 2D light component to an actor to light the scene." }
+            }
+            Section {
                 heading: "Physics"; available: !!root.world
                 InspectorRow { label: "Gravity"; labelWidth: 110; Layout.fillWidth: true
                     Repeater { model: root.is3d ? 3 : 2; delegate: NumberField { required property int index; value: root.world.gravity[index]; onCommitted: n => root.invoke("set_gravity", { gravity: root.withIndex(root.world.gravity, index, n) }) } } }

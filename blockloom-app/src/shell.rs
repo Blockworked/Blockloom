@@ -1054,6 +1054,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "set-lighting-2d",
+        cmd: "set_lighting_2d",
+        aliases: &["set_lighting_2d"],
+        summary: "Set the 2D lighting: on/off, ambient colour and level, the lights-off height, and the time-of-day ramp.",
+        args: &[ArgSpec {
+            name: "lighting",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "set-cloud-layers",
         cmd: "set_cloud_layers",
         aliases: &["set_cloud_layers"],

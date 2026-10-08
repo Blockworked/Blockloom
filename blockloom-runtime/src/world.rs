@@ -955,6 +955,7 @@ pub fn rebuild_world(
     engine.clones.clear();
     engine.last_created.clear();
     engine.light_intensity.clear();
+    engine.look2d = Default::default();
     engine.volume_enabled.clear();
     engine.volume_weight.clear();
     engine.light_shadows.clear();
@@ -2112,6 +2113,8 @@ pub fn publish_sensors(
         water: water.map(|water| water.0.clone()).unwrap_or_default(),
         // `tiles::publish_level` fills it straight after.
         level: Default::default(),
+        // `light2d::sync_lighting` fills it straight after.
+        light2d: Default::default(),
         current_scene: engine.project.active_scene().name.clone(),
         scene_names: engine
             .project
@@ -5258,6 +5261,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         // to carry out, and none of them is a change to a transform.
         Effect::SetGravity { .. }
         | Effect::SetRenderSetting { .. }
+        | Effect::SetLook2d { .. }
         | Effect::SetExposure { .. }
         | Effect::SetHdrOutput { .. }
         | Effect::SetPeakBrightness { .. }

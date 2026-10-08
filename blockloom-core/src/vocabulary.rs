@@ -1477,6 +1477,25 @@ pub const BLOCKS: &[BlockSpec] = &[
         bodies: NO_BODIES,
     },
     BlockSpec {
+        r#type: "SetLook2d",
+        category: "Looks",
+        purpose: "Sets the 2D lit look for the rest of the run: ambient light (0 is pitch black, 1 is the unlit picture) or ambient color. Needs 2D lighting turned on in Project Settings.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "value",
+            id: "Look2dValue",
+            value: "Any",
+        }],
+        dropdowns: &[Dropdown {
+            field: "dial",
+            options: &["AmbientLight", "AmbientColor"],
+        }],
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
         r#type: "SetExposure",
         category: "Looks",
         purpose: "Sets the camera's exposure in EV100 for the rest of the run (lower is brighter; 9.7 is the default). Outranks auto-exposure and the project's own value.",

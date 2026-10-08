@@ -986,6 +986,29 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "LightLevel",
+        op: "LightLevel",
+        arity: 2,
+        default_args: || vec![number(0.0), number(0.0)],
+        // The 2D light at a point as of the last frame: ambient plus every
+        // light, shadows included, 1 being the picture as drawn. A world
+        // without 2D lighting reads 1 everywhere.
+        eval: |args| {
+            let (x, y) = (num(args.first()) as f32, num(args.get(1)) as f32);
+            Ok(Evaluated::Number(
+                sense::read(|sensors| sensors.light2d.level_at([x, y])) as f64,
+            ))
+        },
+    },
+    ExtOperator {
+        kind: "IsNight",
+        op: "IsNight",
+        arity: 0,
+        default_args: Vec::new,
+        // Whether the time-of-day clock is outside the project's day hours.
+        eval: |_| Ok(Evaluated::Bool(sense::read(|s| s.light2d.night))),
+    },
+    ExtOperator {
         kind: "WaterHeight",
         op: "WaterHeight",
         arity: 2,

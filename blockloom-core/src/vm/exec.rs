@@ -1581,6 +1581,10 @@ impl Vm {
                     value,
                 });
             }
+            Action::SetLook2d { dial, value } => {
+                let value = self.eval(value, actor, params, temps, out).as_text();
+                out.push(Effect::SetLook2d { dial: *dial, value });
+            }
             Action::SetRenderSetting { setting, value } => {
                 let value = self.eval(value, actor, params, temps, out).as_text();
                 out.push(Effect::SetRenderSetting {

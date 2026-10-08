@@ -1166,19 +1166,25 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         but don't get the event.
 - [ ] 2D lighting and look (the 2D half of the Phase 5 HDR chain; reads the same
       blended `Environment` exposure, never a second EV):
-  - [ ] 2D lights: point/spot/ambient per sorting layer, color times intensity,
-        range in pixels/meters, normal-map toggle for beveled sprites. Shadows
-        as projected 2D occluders from solid tiles and circle/rect actors.
-  - [ ] Day/night and glow: ambient tint ramp tied to time-of-day director,
-        emissive/glow sprites that pass 1.0 into bloom, light flicker noise for
-        torches and neon.
+  - [x] 2D lights: `Light2D` component (point/spot, color times intensity,
+        range in pixels, falloff, cone, shadows from solid tiles and
+        `casts_shadow` circle/rect/image actors via per-light 256-sample
+        distance maps), world ambient. Open: lighting is one multiply layer over
+        everything under `unlit_above`, not per sorting layer; no normal-map
+        lit sprites; GPU path unverified (shader passes naga only).
+  - [x] Day/night and glow: ambient tint ramp tied to the time-of-day director
+        (`Lighting2d.ramp`, sunrise/sunset), sprite `glow` (0-64) that passes 1.0
+        into bloom, seeded light flicker. Unverified on a GPU.
   - [ ] 2D post: pixelation (fixed pixel size), palette quantize, outline/edge
         detect, CRT scanline/vignette preset, dither toggle. Order fixed after
         tonemap; debug splits per effect.
   - [ ] Normal-map authoring: height-to-normal bake on import, strength dial,
         preview thumbnail with a movable light dot.
-  - [ ] Blocks and scripts: `set ambient light to`, `set light intensity of _ to`,
-        `set pixelation to`, reporters `light level at x y`, `is night?`.
+  - [ ] Blocks and scripts: `set ambient light to` / `set ambient color to`
+        (`SetLook2d`, VM and compiled logic, logic ABI 39), `set my light to`
+        (existing block, now also works in 2D), reporters `light level at x y`,
+        `is night?` done. Open: `set pixelation to` (with 2D post), and the
+        script ABI side (`set_look_2d`, `light_level`), left to the script work.
 - [ ] 2D camera (pixel-correct, deterministic):
   - [ ] Follow: target actor, deadzone rect, lookahead by velocity, smoothing time,
         axis locks. One camera per project like 3D, attached through the existing

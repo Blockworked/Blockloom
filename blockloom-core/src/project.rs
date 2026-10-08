@@ -596,6 +596,9 @@ impl Scene {
             {
                 parallax.normalize();
             }
+            if let Some(ActorComponent::Light2d { light2d }) = actor.components.get_mut("Light2D") {
+                light2d.normalize();
+            }
             if let Some(ActorComponent::Room { room }) = actor.components.get_mut("Room") {
                 room.normalize();
             }
@@ -1984,6 +1987,7 @@ impl Project {
             world.clouds.normalize();
             crate::cloud_layers::normalize(&mut world.cloud_layers);
             world.lightning.normalize();
+            world.lighting2d.normalize();
             world.wind.normalize();
             world.director.normalize();
             for cutscene in &mut world.cutscenes {

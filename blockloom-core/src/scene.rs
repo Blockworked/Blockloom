@@ -1474,6 +1474,10 @@ pub struct World {
     /// Strikes and the storm that throws them.
     #[serde(default)]
     pub lightning: crate::lightning::Lightning,
+    /// The 2D lit look: ambient, its time-of-day ramp and the layer lighting
+    /// stops at. Off by default.
+    #[serde(default)]
+    pub lighting2d: crate::light2d::Lighting2d,
     /// The wind everything that moves with the air reads, and the clouds'
     /// drift on it.
     #[serde(default)]
@@ -1530,6 +1534,7 @@ impl Default for World {
             clouds: crate::clouds::Clouds::default(),
             cloud_layers: Vec::new(),
             lightning: crate::lightning::Lightning::default(),
+            lighting2d: crate::light2d::Lighting2d::default(),
             wind: crate::wind::Wind::default(),
             director: crate::director::Director::default(),
             surface: crate::material::SurfaceWeather::default(),
