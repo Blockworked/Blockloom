@@ -61,8 +61,12 @@ fn load_prebuilt(project_dir: &std::path::Path, relative: &str) -> Result<Script
     let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     #[cfg(feature = "components")]
     if crate::script_component::is_component(&bytes) {
-        return crate::script_component::ComponentScript::load_bytes(&bytes, relative)
-            .map(|script| ScriptBackend::Component(Box::new(script)));
+        return crate::script_component::ComponentScript::load_with(
+            &bytes,
+            relative,
+            Some(project_dir),
+        )
+        .map(|script| ScriptBackend::Component(Box::new(script)));
     }
     #[cfg(not(feature = "components"))]
     if bytes.get(6..8) == Some(&[0x01, 0x00]) {

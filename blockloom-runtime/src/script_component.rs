@@ -20,9 +20,10 @@ use blockloom_core::sense;
 use blockloom_core::vm::Effect;
 use blockloom_plugin_api::wasm::FUEL_PER_MS;
 use std::cell::RefCell;
+use wasmtime::component::types::ComponentItem;
 use wasmtime::component::{
     Component, ComponentNamedList, ComponentType, Instance, Lift, Linker, Lower, ResourceTable,
-    TypedFunc,
+    ResourceType, TypedFunc,
 };
 use wasmtime::{Config, Engine, Store, StoreContextMut, StoreLimits, StoreLimitsBuilder, Trap};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
@@ -144,8 +145,56 @@ fn read_text(c: &Ctx<'_>, what: u32, a: &str, b: &str) -> (Result<String, Missin
     (text(c, what, a, b).ok_or(Missing::Missing),)
 }
 
-fn link(linker: &mut Linker<HostState>) -> wasmtime::Result<()> {
+/// A resource type the denied interfaces name; nothing ever makes one.
+struct Denied;
+
+/// Defines every import under `wasi:http/` as a function that traps and a
+/// resource nothing can make. JS runtimes link `fetch` in even when the
+/// script never calls it; a script that does gets a trap, not a network.
+fn deny_http(linker: &mut Linker<HostState>, component: &Component) -> wasmtime::Result<()> {
+    let engine = linker.engine().clone();
+    for (name, item) in component.component_type().imports(&engine) {
+        if !name.starts_with("wasi:http/") {
+            continue;
+        }
+        let ComponentItem::ComponentInstance(instance) = item.ty else {
+            continue;
+        };
+        let mut defined = linker.instance(name)?;
+        for (export, item) in instance.exports(&engine) {
+            match item.ty {
+                ComponentItem::ComponentFunc(_) => {
+                    defined.func_new(export, |_, _, _, _| {
+                        Err(wasmtime::format_err!(
+                            "networking isn't available to scripts"
+                        ))
+                    })?;
+                }
+                ComponentItem::Resource(_) => {
+                    // The stream and pollable types are wasi:io's, shared
+                    // with the interfaces already linked above.
+                    use wasmtime_wasi::p2::{
+                        DynInputStream, DynOutputStream, DynPollable, IoError,
+                    };
+                    let ty = match export {
+                        "input-stream" => ResourceType::host::<DynInputStream>(),
+                        "output-stream" => ResourceType::host::<DynOutputStream>(),
+                        "pollable" => ResourceType::host::<DynPollable>(),
+                        "io-error" => ResourceType::host::<IoError>(),
+                        _ => ResourceType::host::<Denied>(),
+                    };
+                    defined.resource(export, ty, |_, _| Ok(()))?;
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+fn link(linker: &mut Linker<HostState>, component: &Component) -> wasmtime::Result<()> {
     wasmtime_wasi::p2::add_to_linker_sync(linker)?;
+    deny_http(linker, component)?;
 
     let mut sensors = linker.instance(&interface("sensors"))?;
     sensors.func_wrap(
@@ -453,6 +502,75 @@ fn link(linker: &mut Linker<HostState>) -> wasmtime::Result<()> {
     Ok(())
 }
 
+/// One engine for every script: compiled code is shared between engines of
+/// the same configuration only, and each actor loads its own copy.
+fn shared_engine() -> Result<Engine, String> {
+    static ENGINE: std::sync::OnceLock<Result<Engine, String>> = std::sync::OnceLock::new();
+    ENGINE
+        .get_or_init(|| {
+            let mut config = Config::new();
+            config.consume_fuel(true);
+            Engine::new(&config).map_err(|e| e.to_string())
+        })
+        .clone()
+}
+
+/// FNV-1a over the bytes: a cache key, not a security boundary.
+fn fingerprint(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf29ce484222325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    })
+}
+
+/// The component compiled once per process, and once per file on disk:
+/// compiling a guest runtime such as CPython takes seconds, so the second
+/// actor and the next Play reuse the machine code. The disk copy is keyed by
+/// the bytes and wasmtime's compatibility hash, and only ever holds what
+/// this function serialized.
+fn compiled(
+    engine: &Engine,
+    bytes: &[u8],
+    relative: &str,
+    project_dir: Option<&std::path::Path>,
+) -> Result<Component, String> {
+    type Cache = std::sync::Mutex<std::collections::HashMap<u64, Component>>;
+    static LOADED: std::sync::OnceLock<Cache> = std::sync::OnceLock::new();
+    let key = fingerprint(bytes);
+    let loaded = LOADED.get_or_init(Default::default);
+    if let Some(component) = loaded.lock().unwrap().get(&key) {
+        return Ok(component.clone());
+    }
+    let disk = project_dir.map(|dir| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&engine.precompile_compatibility_hash(), &mut hasher);
+        dir.join(".blockloom/build/components").join(format!(
+            "{key:016x}-{:016x}.cwasm",
+            std::hash::Hasher::finish(&hasher)
+        ))
+    });
+    let cached = disk
+        .as_ref()
+        .and_then(|path| std::fs::read(path).ok())
+        // Safety: the file is only ever written below from `serialize`.
+        .and_then(|image| unsafe { Component::deserialize(engine, image) }.ok());
+    let component = match cached {
+        Some(component) => component,
+        None => {
+            let component =
+                Component::new(engine, bytes).map_err(|e| format!("{relative}: {e}"))?;
+            if let (Some(path), Ok(image)) = (&disk, component.serialize()) {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(path, image);
+            }
+            component
+        }
+    };
+    loaded.lock().unwrap().insert(key, component.clone());
+    Ok(component)
+}
+
 fn export<P: ComponentNamedList + Lower, R: ComponentNamedList + Lift>(
     instance: &Instance,
     store: &mut Store<HostState>,
@@ -480,15 +598,23 @@ pub struct ComponentScript {
 impl ComponentScript {
     /// Compiles and instantiates `bytes` as `relative`'s script.
     pub fn load_bytes(bytes: &[u8], relative: &str) -> Result<ComponentScript, String> {
+        Self::load_with(bytes, relative, None)
+    }
+
+    /// As [`Self::load_bytes`], keeping the compiled code under the
+    /// project's `.blockloom/build/components` when a folder is given.
+    pub fn load_with(
+        bytes: &[u8],
+        relative: &str,
+        project_dir: Option<&std::path::Path>,
+    ) -> Result<ComponentScript, String> {
         if !is_component(bytes) {
             return Err(format!("{relative} isn't a WebAssembly component"));
         }
-        let mut config = Config::new();
-        config.consume_fuel(true);
-        let engine = Engine::new(&config).map_err(|e| e.to_string())?;
-        let component = Component::new(&engine, bytes).map_err(|e| format!("{relative}: {e}"))?;
+        let engine = shared_engine()?;
+        let component = compiled(&engine, bytes, relative, project_dir)?;
         let mut linker = <Linker<HostState>>::new(&engine);
-        link(&mut linker).map_err(|e| e.to_string())?;
+        link(&mut linker, &component).map_err(|e| e.to_string())?;
         let limits = StoreLimitsBuilder::new()
             .memory_size(MEMORY_LIMIT_MIB as usize * 1024 * 1024)
             .memories(4)
@@ -515,7 +641,7 @@ impl ComponentScript {
             .map_err(|e| e.to_string())?;
         let instance = linker
             .instantiate(&mut store, &component)
-            .map_err(|e| format!("{relative} couldn't start: {e}"))?;
+            .map_err(|e| format!("{relative} couldn't start: {e:#}"))?;
         let name = interface("entry");
         let entry = instance
             .get_export_index(&mut store, None, &name)
@@ -545,7 +671,7 @@ impl ComponentScript {
     ) -> Result<ComponentScript, String> {
         let path = project_dir.join(relative);
         let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        Self::load_bytes(&bytes, relative)
+        Self::load_with(&bytes, relative, Some(project_dir))
     }
 
     pub fn is_stopped(&self) -> bool {
@@ -779,19 +905,24 @@ mod tests {
         assert!(ComponentScript::load_bytes(&module, "x.wasm").is_err());
     }
 
-    /// Needs `componentize-py`: `BLOCKLOOM_PY_COMPONENT=<app.wasm>` names a
-    /// Python guest built against the frozen world (see
-    /// `blockloom-script-guest/templates/minimal.py`).
+    /// `BLOCKLOOM_COMPONENT=<file.wasm>` names a guest built against the
+    /// frozen world with its language's toolchain (`templates/minimal.py`
+    /// via componentize-py, `templates/minimal.mjs` via jco). Prints load and
+    /// per-tick cost.
     #[test]
     #[ignore]
-    fn a_python_component_runs_and_costs_what_it_costs() {
-        let Ok(path) = std::env::var("BLOCKLOOM_PY_COMPONENT") else {
+    fn a_component_guest_runs_and_costs_what_it_costs() {
+        let Ok(path) = std::env::var("BLOCKLOOM_COMPONENT") else {
             return;
         };
         publish_one("a1");
         let started = std::time::Instant::now();
-        let script = ComponentScript::load_file(std::path::Path::new("."), &path).expect("loads");
-        eprintln!("python load: {:?}", started.elapsed());
+        let script = ComponentScript::load_file(
+            &std::env::temp_dir().join("blockloom-component-test"),
+            &path,
+        )
+        .expect("loads");
+        eprintln!("component load: {:?}", started.elapsed());
         let mut asked = Asked::default();
         script.start("a1", &mut asked);
         assert!(
@@ -807,7 +938,7 @@ mod tests {
         for _ in 0..1000 {
             script.tick("a1", &mut asked, 1.0 / 60.0);
         }
-        eprintln!("python tick: {:?} each", started.elapsed() / 1000);
+        eprintln!("component tick: {:?} each", started.elapsed() / 1000);
         assert!(!script.is_stopped());
     }
 }

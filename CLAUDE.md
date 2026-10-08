@@ -845,7 +845,8 @@ mapping (a `wit-parser` test also resolves the text). Guests live in
 freestanding C binding (`c/blockloom.h`, `templates/minimal.c`, built with
 `clang --target=wasm32 -nostdlib`; its verb numbers are held to `abi.rs` by
 `c_header_covers_every_abi_verb`) and a Python component
-(`templates/minimal.py`, componentize-py). Runtime tests build the Rust and C
+(`templates/minimal.py`, componentize-py), and a JavaScript component
+(`templates/minimal.mjs`, jco; TypeScript compiles to it first). Runtime tests build the Rust and C
 templates and hold their effects to the WAT fixture's.
 
 Component-model guests (Python, TypeScript, Go, ...) emit wasm components,
@@ -856,7 +857,9 @@ wasm32 and Android). The guest imports the typed interfaces and exports
 `act_for_asked` the other backends use. Sandbox: 256 MiB, fuel per call, empty
 WASI context. A script path ending `.wasm` is prebuilt: Play does not run rustc
 on it and `ScriptBackend` loads a component under wasmtime or a core module
-under wasmi. wasmtime is why web and Android guests stay Rust and C only.
+under wasmi. Compiled components are cached per process and under
+`.blockloom/build/components` (first load of CPython or QuickJS is seconds),
+and `wasi:http` is defined as traps. wasmtime is why web and Android guests stay Rust and C only.
 
 ### Game view
 
