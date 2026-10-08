@@ -119,6 +119,7 @@ BwDialog {
         BwCheckBox { text: "HDR rendering and output"; enabled: !root.busy && !root.web && !root.android; checked: root.hdr && !root.web && !root.android; onToggled: root.hdr = checked }
         Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
             text: (root.chosen ? root.chosen.hdr_note + " " : "") + "Off makes an SDR-only build: 8-bit frames and no HDR window, for weak GPUs and old displays." }
+        Text { visible: !!root.chosen; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: root.chosen ? root.chosen.look2d_note : "" }
         Text { text: "Where to put it"; color: Theme.textDim; font.pixelSize: 12 }
         RowLayout {
             Layout.fillWidth: true

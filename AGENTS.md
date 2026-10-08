@@ -2409,6 +2409,10 @@ function of the clock (`mote(kind, i, time, wind_x)`), so a replay matches.
 weather blend's `precipitation` and `snow`, slanted by the global wind. Rain
 ends in a splash ring. Not done: leaf presets.
 
+The sprite atlas bakes at a per-target size (`build::DESKTOP_ATLAS`, `WEB_ATLAS`,
+`ANDROID_ATLAS`), and each `TargetStatus` carries a `look2d_note` the Build
+dialog shows.
+
 ### 2D post
 
 `blockloom-core/src/post2d.rs` (`World.post2d`) holds pixelation, per-channel
