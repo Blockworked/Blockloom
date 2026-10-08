@@ -397,6 +397,26 @@ TestCase {
         panel.finishMarquee({x0: 0, y0: 0, x1: 10, y1: 10});
         compare(panel.selectionIds, []);
     }
+    function test_align_and_distribute_send_one_batch_of_moves() {
+        const d = {widgets: [
+            {element: {id: "a", kind: "Panel", offset: [0,0], size: [100,50], anchor: "TopLeft"}},
+            {element: {id: "b", kind: "Panel", offset: [200,30], size: [100,50], anchor: "TopLeft"}},
+            {element: {id: "c", kind: "Panel", offset: [300,60], size: [100,50], anchor: "TopLeft"}}]};
+        panel.document = d; backend.appState.project.world.interface = d;
+        const box = (id, x, y) => ({id: id, size: [100,50], transform: [1,0,0,1,x+50,y+25], visible: true, paint_order: 1, clips: []});
+        panel.receiveLayout(JSON.stringify({revision: panel.revision, generation: panel.generation, viewport: [960,720], widgets: [box("a",0,0), box("b",200,30), box("c",300,60)]}));
+        panel.selectOnly("a"); panel.toggleSelected("b"); panel.toggleSelected("c");
+        verify(panel.arrange("top"));
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.kind, "Batch");
+        compare(edit.edits.map(e=>e.id+":"+e.offset[1]), ["b:0", "c:0"]);
+        compare(calls.filter(c=>c.command === "commit_interface_edit").length, 1);
+        panel.receiveLayout(JSON.stringify({revision: panel.revision, generation: panel.generation, viewport: [960,720], widgets: [box("a",0,0), box("b",200,0), box("c",300,0)]}));
+        verify(panel.arrange("hdist"));
+        edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.kind, "Move");
+        compare(edit.id, "b"); compare(edit.offset[0], 150);
+    }
     function test_locked_widgets_are_not_picked_or_edited_but_nothing_is_saved() {
         panel.selectedId = "back";
         verify(panel.editable(panel.widget));

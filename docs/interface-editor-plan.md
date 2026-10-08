@@ -248,7 +248,12 @@ Master since the seventh increment (Phase 6 2D work, script guests, bundled rust
 - Added `Batch {edits}`: edits applied in order as one, all or nothing, one undo step. It cannot nest and holds at most 1000 edits.
 - The viewport supports Shift-click and a marquee (drag on empty canvas; widgets whose centres fall inside, skipping locked and projected ones). The tree supports Ctrl/Shift-click. Delete (button or key) and Duplicate act on the whole selection as one Batch, skipping widgets whose ancestor is also selected. Dragging, handles and nudging still act on the primary widget only; group move and alignment/distribution are next.
 
-The next increment is group move and alignment/distribution tools, moving the inspector onto the metadata, then the world-reload-free commit path. Schema versioning and property metadata (phase 1). Schema versioning, complete property metadata and the broader phase 1 contracts remain open. Committed edits still use the existing world synchronization path; avoiding a world reload on commit remains open. The current preview still shows the idle scene behind the interface.
+### Group move, align and distribute (twelfth increment)
+
+- Dragging a widget that belongs to a multiselection moves the whole selection when every member is free-placed under the same parent: the draft is one `Batch` of `Move`s sharing the primary's snapped delta. Mixed selections drag only the primary widget. Handles and keyboard nudging remain primary-only.
+- Align (left, middle, right, top, middle, bottom) and Space H/V (equal gaps between the outer widgets) are QML computations over the runtime geometry, in the shared parent's frame, committed as one `Batch` of `Move`s. They require free-placed, unrotated widgets with one parent and report why otherwise. They write exact authored offsets, so no new backend command is needed.
+
+The next increment is moving the inspector onto the metadata, then the world-reload-free commit path. Schema versioning and property metadata (phase 1). Schema versioning, complete property metadata and the broader phase 1 contracts remain open. Committed edits still use the existing world synchronization path; avoiding a world reload on commit remains open. The current preview still shows the idle scene behind the interface.
 
 Open phase 0 checks: embedded/process rendering and teardown on actual platforms; native presentation timing and process screenshot metadata on actual platforms; viewport resize/DPI/safe-area matrices; real image/font asset loading; screenshot baselines and gameplay input isolation with held inputs. Rotation, text editing/IME, nine-slice and animation capabilities remain unproven. The fixture image node currently has no asset.
 

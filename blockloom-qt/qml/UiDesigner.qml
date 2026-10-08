@@ -177,6 +177,9 @@ Item {
             grid: snapGrid, align: snapAlign, step: Math.max(1,snapStep),
             tolerance: [6/(Math.max(0.05,zoom)*Math.hypot(frame[0],frame[1])),6/(Math.max(0.05,zoom)*Math.hypot(frame[2],frame[3]))],
             scale: designScale, committing: false, edit: null, sent: null, busy: false, released: false, canceled: false};
+        const others = selectionIds.slice(1).map(id => document.widgets.find(w => w.element.id === id));
+        g.group = kind === "Move" && others.length && others.every(w => w && editable(w) && (w.element.parent || "") === (widget.element.parent || ""))
+            ? others.map(w => ({id: w.element.id, offset: (w.element.offset || [0,0]).slice()})) : null;
         gesture = g;
         forceActiveFocus();
         const backend = app;
@@ -235,6 +238,10 @@ Item {
                 showSnapLines(g,hits.map(hit=>hit.target));
             }
             g.edit = {kind: "Move", id: g.id, offset: offset};
+            if (g.group) {
+                const shift = [offset[0]-g.offset[0], offset[1]-g.offset[1]];
+                g.edit = {kind: "Batch", edits: [g.edit].concat(g.group.map(o => ({kind: "Move", id: o.id, offset: [o.offset[0]+shift[0], o.offset[1]+shift[1]]})))};
+            }
         } else {
             const a = geometry.point(g.inverse, g.start.x, g.start.y), b = geometry.point(g.inverse, x, y);
             const direction = g.direction;
@@ -523,6 +530,50 @@ Item {
         if (!edits.length) return;
         structuralEdit(edits.length === 1 ? edits[0] : {kind: "Batch", edits: edits}, edits[0].new_id, edits.slice(1).map(e => e.new_id));
     }
+    // Align or distribute the selection inside its shared parent, as one Batch of Moves.
+    function arrange(op) {
+        const ids = topLevelSelection();
+        const widgets = ids.map(id => document.widgets.find(w => w.element.id === id));
+        const need = op === "hdist" || op === "vdist" ? 3 : 2;
+        if (!layoutReady || widgets.length < need) return false;
+        const parentId = widgets[0].element.parent || "";
+        if (!widgets.every(w => editable(w) && (w.element.parent || "") === parentId)) { error = "Select free-placed widgets that share a parent."; return false; }
+        const parent = bounds.find(b => b.id === parentId);
+        const frame = parent ? parent.transform.slice() : [designScale,0,0,designScale,safe[0],safe[1]];
+        const inverse = geometry.inverse(frame);
+        const boxes = {};
+        for (const id of ids) {
+            const b = bounds.find(x => x.id === id);
+            if (!b || !b.visible || !inverse) { error = "Wait for matching geometry before arranging."; return false; }
+            const origin = geometry.point(inverse, b.transform[4], b.transform[5]);
+            const ax = geometry.point(inverse, b.transform[4]+b.transform[0], b.transform[5]+b.transform[1]);
+            const ay = geometry.point(inverse, b.transform[4]+b.transform[2], b.transform[5]+b.transform[3]);
+            if (Math.abs(ax.y-origin.y) > 0.001 || Math.abs(ay.x-origin.x) > 0.001 || ax.x <= origin.x || ay.y <= origin.y) { error = "Rotated widgets cannot be aligned."; return false; }
+            boxes[id] = boxInFrame(b, inverse);
+        }
+        const axis = op === "left" || op === "hcenter" || op === "right" || op === "hdist" ? 0 : 1;
+        const lo = id => boxes[id][axis], hi = id => boxes[id][axis+2], mid = id => (lo(id)+hi(id))/2;
+        const delta = {};
+        if (op === "hdist" || op === "vdist") {
+            const sorted = ids.slice().sort((a, b) => mid(a) - mid(b));
+            const span = hi(sorted[sorted.length-1]) - lo(sorted[0]);
+            const total = sorted.reduce((sum, id) => sum + hi(id) - lo(id), 0);
+            const gap = (span - total) / (sorted.length - 1);
+            let at = lo(sorted[0]);
+            sorted.forEach(id => { delta[id] = at - lo(id); at += hi(id) - lo(id) + gap; });
+        } else {
+            const first = op === "left" || op === "top", last = op === "right" || op === "bottom";
+            const target = first ? Math.min(...ids.map(lo)) : last ? Math.max(...ids.map(hi)) : (Math.min(...ids.map(lo)) + Math.max(...ids.map(hi))) / 2;
+            ids.forEach(id => { delta[id] = target - (first ? lo(id) : last ? hi(id) : mid(id)); });
+        }
+        const edits = widgets.filter(w => Math.abs(delta[w.element.id]) > 0.005).map(w => {
+            const offset = (w.element.offset || [0,0]).slice();
+            offset[axis] = Math.round((offset[axis] + delta[w.element.id]) * 100) / 100;
+            return {kind: "Move", id: w.element.id, offset: offset};
+        });
+        if (!edits.length) return true;
+        return structuralEdit(edits.length === 1 ? edits[0] : {kind: "Batch", edits: edits}, selectedId, extraIds.slice());
+    }
     function removeSelected() {
         if (!widget) return;
         const edits = topLevelSelection().map(id => ({kind: "Delete", id: id}));
@@ -604,6 +655,19 @@ Item {
                 Button { objectName: "interfaceLater"; text: "Later"; enabled: root.designing && !root.gesture && root.siblingIndex >= 0 && root.siblingIndex+1 < root.siblings.length; onClicked: root.reorderSibling(1) }
             }
             Label { Layout.fillWidth: true; wrapMode: Text.Wrap; text: "Sibling order controls flow layout and draw order." }
+            GridLayout {
+                columns: 4; Layout.leftMargin: 6; Layout.rightMargin: 6
+                enabled: root.designing && !root.gesture && root.selectionIds.length > 1
+                Repeater {
+                    model: [["Left","left"],["Mid","hcenter"],["Right","right"],["Space H","hdist"],["Top","top"],["Mid","vcenter"],["Bottom","bottom"],["Space V","vdist"]]
+                    delegate: Button {
+                        required property var modelData
+                        objectName: "interfaceArrange_" + modelData[1]
+                        Layout.fillWidth: true; Layout.preferredWidth: 1; text: modelData[0]
+                        onClicked: root.arrange(modelData[1])
+                    }
+                }
+            }
             RowLayout {
                 Button { objectName: "interfaceDuplicate"; text: "Duplicate"; enabled: root.designing && !root.gesture && !!root.widget && !root.widget.world_actor; onClicked: root.duplicateSelected() }
                 Button { objectName: "interfaceDelete"; text: "Delete"; enabled: root.designing && !root.gesture && !!root.widget; onClicked: root.removeSelected() }
