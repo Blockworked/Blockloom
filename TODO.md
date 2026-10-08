@@ -1253,6 +1253,10 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         with LRU steal shared with Phase 5, resolution scale for 2D post, auto-drop
         rule (if frame over N ms for M frames, drop particle density one step).
         Build dialog lists which target keeps 2D lights/shadows and why.
+        (Phase 5 already has the auto-drop controller, resolution scale and vfx
+        caps in `quality.rs`; open: 2D-specific atlas budget, decal pool caps
+        and the Build dialog row. The 2D inspector tabs, strip viewer and
+        viewport gizmos are not started: they are QML and need a Qt build.)
 
 ### Phase 6.5 - Android games from a desktop PC (player only, do between Phase 6 and Phase 7)
 
