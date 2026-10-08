@@ -605,7 +605,9 @@ impl Components {
 
     /// Adds `component`, replacing one of the same name. Returns whether it
     /// was new. A [`ActorComponent::Collider`] is repeatable, so it replaces the
-    /// collider with the same id and otherwise joins the list.
+    /// collider with the same id and otherwise joins the list. A
+    /// [`ActorComponent::Script`] is repeatable by path, so one actor can run
+    /// several scripts in list order.
     pub fn insert(&mut self, component: ActorComponent) -> bool {
         if let ActorComponent::Collider { collider } = &component {
             let id = collider.id.clone();
@@ -614,6 +616,22 @@ impl Components {
                 .iter_mut()
                 .find(|slot| slot.collider_id() == Some(&id))
             {
+                Some(slot) => {
+                    *slot = component;
+                    false
+                }
+                None => {
+                    self.0.push(component);
+                    true
+                }
+            };
+        }
+        if let ActorComponent::Script { path } = &component {
+            let path = path.clone();
+            return match self.0.iter_mut().find(|slot| match slot {
+                ActorComponent::Script { path: other } => *other == path,
+                _ => false,
+            }) {
                 Some(slot) => {
                     *slot = component;
                     false
@@ -655,8 +673,9 @@ impl Components {
 
     /// Drops the named component. The required one stays; everything else
     /// goes, and reads of it fall back to its default. A name that more than
-    /// one component answers to (several colliders) removes nothing: use
-    /// [`Components::remove_collider`].
+    /// one component answers to (several colliders, several scripts) removes
+    /// nothing: use [`Components::remove_collider`] or
+    /// [`Components::remove_script`].
     pub fn remove(&mut self, name: &str) -> bool {
         if self.count(name) > 1 {
             return false;
@@ -982,12 +1001,63 @@ impl Components {
         }
     }
 
-    /// The script file this actor runs, if any.
+    /// The script file this actor runs, if any. An actor may now carry
+    /// several scripts, run in list order; this is the first one, kept for
+    /// callers that predate multiples.
     pub fn script(&self) -> Option<&str> {
         match self.get("Script") {
             Some(ActorComponent::Script { path }) => Some(path),
             _ => None,
         }
+    }
+
+    /// Every script file this actor runs, in the order their `start`, `event`
+    /// and `tick` entry points run.
+    pub fn scripts(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().filter_map(|component| match component {
+            ActorComponent::Script { path } => Some(path.as_str()),
+            _ => None,
+        })
+    }
+
+    /// Takes the script naming `path` off. Returns whether there was one.
+    pub fn remove_script(&mut self, path: &str) -> bool {
+        let Some(index) = self.0.iter().position(|component| match component {
+            ActorComponent::Script { path: other } => other == path,
+            _ => false,
+        }) else {
+            return false;
+        };
+        self.0.remove(index);
+        true
+    }
+
+    /// Moves the script naming `path` to `index`, keeping the rest in order.
+    /// Returns false when there is no such script.
+    pub fn move_script(&mut self, path: &str, index: usize) -> bool {
+        let Some(from) = self.0.iter().position(|component| match component {
+            ActorComponent::Script { path: other } => other == path,
+            _ => false,
+        }) else {
+            return false;
+        };
+        let component = self.0.remove(from);
+        // Clamp into the script run, not the whole list: the order that
+        // matters is scripts against scripts.
+        let mut slots: Vec<usize> = self
+            .0
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| matches!(c, ActorComponent::Script { .. }).then_some(i))
+            .collect();
+        slots.push(self.0.len());
+        let at = slots
+            .get(index.min(slots.len().saturating_sub(1)))
+            .copied()
+            .unwrap_or(self.0.len());
+        let at = at.min(self.0.len());
+        self.0.insert(at, component);
+        true
     }
 
     /// The actor this one hangs off, by id, if any.
@@ -1153,6 +1223,39 @@ mod tests {
         }));
         assert_eq!(components.physics().body, BodyKind::Static);
         assert_eq!(components.0.len(), 4);
+    }
+
+    #[test]
+    fn scripts_stack_in_order_and_move_keeps_the_rest() {
+        let mut components = Components::new(rect());
+        assert!(components.insert(ActorComponent::Script {
+            path: "assets/scripts/a.rs".to_string()
+        }));
+        assert!(components.insert(ActorComponent::Script {
+            path: "assets/scripts/b.rs".to_string()
+        }));
+        // Same path replaces in place, not another slot.
+        assert!(!components.insert(ActorComponent::Script {
+            path: "assets/scripts/a.rs".to_string()
+        }));
+        assert_eq!(
+            components.scripts().collect::<Vec<_>>(),
+            vec!["assets/scripts/a.rs", "assets/scripts/b.rs"]
+        );
+        assert_eq!(components.script(), Some("assets/scripts/a.rs"));
+        // Generic remove refuses multiples; the path one removes one slot.
+        assert!(!components.remove("Script"));
+        assert!(components.move_script("assets/scripts/b.rs", 0));
+        assert_eq!(
+            components.scripts().collect::<Vec<_>>(),
+            vec!["assets/scripts/b.rs", "assets/scripts/a.rs"]
+        );
+        assert!(components.remove_script("assets/scripts/b.rs"));
+        assert_eq!(
+            components.scripts().collect::<Vec<_>>(),
+            vec!["assets/scripts/a.rs"]
+        );
+        assert!(!components.remove_script("assets/scripts/b.rs"));
     }
 
     #[test]

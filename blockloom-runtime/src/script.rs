@@ -23,6 +23,7 @@ use blockloom_core::sound::{SoundBus, clamp_pitch, user_to_gain};
 use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp, UiTheme};
 use blockloom_core::value::Evaluated;
 use blockloom_core::vm::Effect;
+use blockloom_core::vm::{Lists, Variables};
 use blockloom_protocol::RuntimeMessage;
 #[cfg(not(target_arch = "wasm32"))]
 use std::ffi::c_void;
@@ -32,6 +33,10 @@ use std::path::Path;
 type StartFn = unsafe extern "C" fn(*mut c_void, *const HostApi);
 #[cfg(not(target_arch = "wasm32"))]
 type TickFn = unsafe extern "C" fn(*mut c_void, *const HostApi, f32);
+#[cfg(not(target_arch = "wasm32"))]
+type FrameFn = unsafe extern "C" fn(*mut c_void, *const HostApi, f32);
+#[cfg(not(target_arch = "wasm32"))]
+type StopFn = unsafe extern "C" fn(*mut c_void, *const HostApi);
 #[cfg(not(target_arch = "wasm32"))]
 type EventFn = unsafe extern "C" fn(*mut c_void, *const HostApi, u32, f64, f64, f64, f64);
 #[cfg(not(target_arch = "wasm32"))]
@@ -52,6 +57,14 @@ pub struct LoadedScript {
     start: StartFn,
     #[cfg(not(target_arch = "wasm32"))]
     tick: TickFn,
+    #[cfg(not(target_arch = "wasm32"))]
+    frame: Option<FrameFn>,
+    #[cfg(not(target_arch = "wasm32"))]
+    ui: Option<FrameFn>,
+    #[cfg(not(target_arch = "wasm32"))]
+    stop: Option<StopFn>,
+    #[cfg(not(target_arch = "wasm32"))]
+    destroy: Option<StopFn>,
     #[cfg(not(target_arch = "wasm32"))]
     event: EventFn,
 }
@@ -124,10 +137,20 @@ impl LoadedScript {
             let event = *library
                 .get::<EventFn>(abi::SYM_EVENT)
                 .map_err(|_| missing_export(relative))?;
+            // Phase 2 entry points are optional: a script built before them
+            // simply has no symbol, and behaves as if it left them out.
+            let frame = library.get::<FrameFn>(abi::SYM_FRAME).ok().map(|f| *f);
+            let ui = library.get::<FrameFn>(abi::SYM_UI).ok().map(|f| *f);
+            let stop = library.get::<StopFn>(abi::SYM_STOP).ok().map(|f| *f);
+            let destroy = library.get::<StopFn>(abi::SYM_DESTROY).ok().map(|f| *f);
             Ok(LoadedScript {
                 library,
                 start,
                 tick,
+                frame,
+                ui,
+                stop,
+                destroy,
                 event,
             })
         }
@@ -142,6 +165,50 @@ impl LoadedScript {
     pub fn tick(&self, actor: &str, asked: &mut Asked, dt: f32) {
         self.call(actor, asked, |entry, ctx| unsafe {
             (self.tick)(ctx, entry, dt);
+        });
+    }
+
+    /// Once per rendered frame while unpaused. A script without a `frame`
+    /// entry point does nothing here.
+    pub fn frame(&self, actor: &str, asked: &mut Asked, dt: f32) {
+        let Some(frame) = self.frame else {
+            return;
+        };
+        self.call(actor, asked, |entry, ctx| unsafe {
+            frame(ctx, entry, dt);
+        });
+    }
+
+    /// Once per rendered frame even while paused. A script without a `ui`
+    /// entry point does nothing here.
+    pub fn ui(&self, actor: &str, asked: &mut Asked, dt: f32) {
+        let Some(ui) = self.ui else {
+            return;
+        };
+        self.call(actor, asked, |entry, ctx| unsafe {
+            ui(ctx, entry, dt);
+        });
+    }
+
+    /// Once when the run ends. A script without a `stop` entry point does
+    /// nothing here.
+    pub fn stop(&self, actor: &str, asked: &mut Asked) {
+        let Some(stop) = self.stop else {
+            return;
+        };
+        self.call(actor, asked, |entry, ctx| unsafe {
+            stop(ctx, entry);
+        });
+    }
+
+    /// Once when this actor is deleted mid-run. A script without a `destroy`
+    /// entry point does nothing here.
+    pub fn destroy(&self, actor: &str, asked: &mut Asked) {
+        let Some(destroy) = self.destroy else {
+            return;
+        };
+        self.call(actor, asked, |entry, ctx| unsafe {
+            destroy(ctx, entry);
         });
     }
 
@@ -191,6 +258,22 @@ impl LoadedScript {
         self.instance.call(actor, asked, browser::Entry::Tick(dt));
     }
 
+    pub fn frame(&self, actor: &str, asked: &mut Asked, dt: f32) {
+        self.instance.call(actor, asked, browser::Entry::Frame(dt));
+    }
+
+    pub fn ui(&self, actor: &str, asked: &mut Asked, dt: f32) {
+        self.instance.call(actor, asked, browser::Entry::Ui(dt));
+    }
+
+    pub fn stop(&self, actor: &str, asked: &mut Asked) {
+        self.instance.call(actor, asked, browser::Entry::Stop);
+    }
+
+    pub fn destroy(&self, actor: &str, asked: &mut Asked) {
+        self.instance.call(actor, asked, browser::Entry::Destroy);
+    }
+
     pub fn event(&self, actor: &str, asked: &mut Asked, event: &ScriptEvent) {
         with_event_words(event, || {
             self.instance
@@ -211,7 +294,7 @@ pub struct ScriptEvent {
 }
 
 impl ScriptEvent {
-    fn new(kind: u32, subject: impl Into<String>) -> ScriptEvent {
+    pub(crate) fn new(kind: u32, subject: impl Into<String>) -> ScriptEvent {
         ScriptEvent {
             kind,
             subject: subject.into(),
@@ -359,6 +442,14 @@ thread_local! {
     /// starts; nothing here is saved.
     static SCRIPT_DATA: std::cell::RefCell<ScriptData> =
         std::cell::RefCell::new(ScriptData::new());
+    /// The run's block variables and lists, shared with the VM and compiled
+    /// logic. Set for the duration of each script step so a canvas counter
+    /// and a script counter are the same counter. `None` outside a run, where
+    /// reads answer empty and writes do nothing.
+    static SCRIPT_VARS: std::cell::RefCell<Option<Variables>> =
+        const { std::cell::RefCell::new(None) };
+    static SCRIPT_LISTS: std::cell::RefCell<Option<Lists>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Forgets every script's per-actor storage. A run starts empty.
@@ -366,7 +457,18 @@ pub fn clear_script_data() {
     SCRIPT_DATA.with(|data| data.borrow_mut().clear());
 }
 
-fn with_event_words(event: &ScriptEvent, f: impl FnOnce()) {
+/// Runs `f` with the run's variable and list stores visible to scripts.
+/// Writes through these handles land at once, the way the VM's own writes
+/// do, so a read straight after sees them.
+pub fn with_script_stores(variables: &Variables, lists: &Lists, f: impl FnOnce()) {
+    SCRIPT_VARS.with(|vars| vars.replace(Some(variables.clone())));
+    SCRIPT_LISTS.with(|stored| stored.replace(Some(lists.clone())));
+    f();
+    SCRIPT_VARS.with(|vars| vars.replace(None));
+    SCRIPT_LISTS.with(|stored| stored.replace(None));
+}
+
+pub(crate) fn with_event_words(event: &ScriptEvent, f: impl FnOnce()) {
     EVENT_WORDS.with(|words| words.replace(Some((event.subject.clone(), event.detail.clone()))));
     f();
     EVENT_WORDS.with(|words| words.replace(None));
@@ -402,6 +504,21 @@ fn missing_export(relative: &str) -> String {
 struct Ctx<'a> {
     actor: &'a str,
     asked: &'a mut Asked,
+}
+
+/// The wasm host's way in: the same acts a native script reaches through its
+/// function pointers, without exposing the context type behind them.
+pub(crate) fn act_for_asked(
+    actor: &str,
+    asked: &mut Asked,
+    what: u32,
+    a: &str,
+    b: &str,
+    c: &str,
+    numbers: &[f64],
+) {
+    let mut ctx = Ctx { actor, asked };
+    act_for(&mut ctx, what, a, b, c, numbers);
 }
 
 /// # Safety
@@ -524,7 +641,7 @@ fn plugin_answer(actor: &str, plugin: &str, asked: &str) -> Option<Evaluated> {
     }
 }
 
-fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64> {
+pub(crate) fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64> {
     let bool_as = |value: bool| Some(if value { 1.0 } else { 0.0 });
     match what {
         abi::READ_POSITION => sense::read(|s| {
@@ -849,8 +966,107 @@ fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> Option<f64>
                 }
             })
         }
+        abi::READ_VARIABLE => Some(script_variable_number(actor, a)),
+        abi::READ_LIST_LENGTH => Some(script_list_len(actor, a) as f64),
+        abi::READ_LIST_ITEM => script_list_number(actor, a, arg),
         _ => None,
     }
+}
+
+/// The block variable `actor` reads as a number: its own value first, then
+/// the shared one, else 0. Mirrors what the canvas reporter answers.
+fn script_variable_number(actor: &str, name: &str) -> f64 {
+    let name = name.trim();
+    if name.is_empty() {
+        return 0.0;
+    }
+    SCRIPT_VARS.with(|vars| {
+        let vars = vars.borrow();
+        let Some(vars) = vars.as_ref() else {
+            return 0.0;
+        };
+        match vars.read(actor, name) {
+            Evaluated::Number(n) => n,
+            Evaluated::Bool(value) => {
+                if value {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Evaluated::Text(text) => text.trim().parse().unwrap_or(0.0),
+        }
+    })
+}
+
+/// How many items the block list `actor` reads holds. Unknown names read
+/// as 0, like the length reporter.
+fn script_list_len(actor: &str, name: &str) -> usize {
+    let name = name.trim();
+    if name.is_empty() {
+        return 0;
+    }
+    SCRIPT_LISTS.with(|stored| {
+        let stored = stored.borrow();
+        let Some(stored) = stored.as_ref() else {
+            return 0;
+        };
+        stored.snapshot_for(actor).get(name).map_or(0, Vec::len)
+    })
+}
+
+/// The 1-based item `index` as a number, or [`None`] for an unknown list or
+/// an out-of-range index. Text that reads as a number answers with it.
+fn script_list_number(actor: &str, name: &str, index: f64) -> Option<f64> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    SCRIPT_LISTS.with(|stored| {
+        let stored = stored.borrow();
+        let stored = stored.as_ref()?;
+        let lists = stored.snapshot_for(actor);
+        let list = lists.get(name)?;
+        let at = blockloom_core::blocks::list_index(index, list.len(), false)?;
+        match &list[at] {
+            blockloom_core::blocks::ListItem::Number(n) => Some(*n),
+            blockloom_core::blocks::ListItem::Text(text) => text.trim().parse().ok(),
+        }
+    })
+}
+
+/// The block variable `actor` reads, as text. Unknown names read as `"0"`,
+/// the way a canvas reporter shows one.
+fn script_variable_text(actor: &str, name: &str) -> String {
+    let name = name.trim();
+    if name.is_empty() {
+        return "0".to_string();
+    }
+    SCRIPT_VARS.with(|vars| {
+        let vars = vars.borrow();
+        let Some(vars) = vars.as_ref() else {
+            return "0".to_string();
+        };
+        vars.read(actor, name).as_text()
+    })
+}
+
+/// The 1-based item of the block list `actor` reads, as text, or [`None`]
+/// for an unknown list or an out-of-range index.
+fn script_list_text(actor: &str, name: &str, index: &str) -> Option<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let index = index.trim().parse::<f64>().ok()?;
+    SCRIPT_LISTS.with(|stored| {
+        let stored = stored.borrow();
+        let stored = stored.as_ref()?;
+        let lists = stored.snapshot_for(actor);
+        let list = lists.get(name)?;
+        let at = blockloom_core::blocks::list_index(index, list.len(), false)?;
+        Some(list[at].evaluated().as_text())
+    })
 }
 
 /// The nearest collider on a segment, asked of the physics world as `actor`.
@@ -887,6 +1103,77 @@ fn nearest_within(actor: &str, center: [f32; 3], radius: f32) -> Option<query::Q
         .next()
 }
 
+/// Appends `item` to the block list `actor` writes. A name nobody declared
+/// is a no-op, like the add block.
+fn script_list_push(actor: &str, name: &str, item: blockloom_core::blocks::ListItem) {
+    let name = name.trim();
+    if name.is_empty() {
+        return;
+    }
+    SCRIPT_LISTS.with(|stored| {
+        if let Some(stored) = stored.borrow().as_ref() {
+            stored.with_list_mut(actor, name, |list| list.push(item));
+        }
+    });
+}
+
+/// Inserts `item` at the 1-based `index`, allowing one past the end. Out of
+/// range changes nothing.
+fn script_list_insert(actor: &str, name: &str, index: f64, item: blockloom_core::blocks::ListItem) {
+    let name = name.trim();
+    if name.is_empty() {
+        return;
+    }
+    SCRIPT_LISTS.with(|stored| {
+        if let Some(stored) = stored.borrow().as_ref() {
+            stored.with_list_mut(actor, name, |list| {
+                if let Some(at) = blockloom_core::blocks::list_index(index, list.len(), true) {
+                    list.insert(at, item);
+                }
+            });
+        }
+    });
+}
+
+/// Replaces the 1-based `index` with `item`. Out of range changes nothing.
+fn script_list_replace(
+    actor: &str,
+    name: &str,
+    index: f64,
+    item: blockloom_core::blocks::ListItem,
+) {
+    let name = name.trim();
+    if name.is_empty() {
+        return;
+    }
+    SCRIPT_LISTS.with(|stored| {
+        if let Some(stored) = stored.borrow().as_ref() {
+            stored.with_list_mut(actor, name, |list| {
+                if let Some(at) = blockloom_core::blocks::list_index(index, list.len(), false) {
+                    list[at] = item;
+                }
+            });
+        }
+    });
+}
+
+/// Deletes the 1-based `index`. Out of range changes nothing.
+fn script_list_delete(actor: &str, name: &str, index: f64) {
+    let name = name.trim();
+    if name.is_empty() {
+        return;
+    }
+    SCRIPT_LISTS.with(|stored| {
+        if let Some(stored) = stored.borrow().as_ref() {
+            stored.with_list_mut(actor, name, |list| {
+                if let Some(at) = blockloom_core::blocks::list_index(index, list.len(), false) {
+                    list.remove(at);
+                }
+            });
+        }
+    });
+}
+
 /// The name blocks use for an actor id, or the id itself when it has none.
 fn actor_name(id: &str) -> String {
     sense::read(|sensors| {
@@ -906,6 +1193,45 @@ fn trigger_target(running: &str, target: &str) -> Option<bool> {
     sense::read(|sensors| sensors.find(target.trim()).map(|found| found.trigger))
 }
 
+/// Which running id a cross-actor write means. Empty, `me` and `myself`
+/// mean the running actor; otherwise an id wins over a name, like
+/// `Sensors::find` does. `None` is nothing at all.
+fn script_target_id(running: &str, wanted: &str) -> Option<String> {
+    let wanted = wanted.trim();
+    if wanted.is_empty()
+        || wanted.eq_ignore_ascii_case("myself")
+        || wanted.eq_ignore_ascii_case("me")
+    {
+        return Some(running.to_string());
+    }
+    sense::read(|sensors| {
+        if sensors.actors.contains_key(wanted) {
+            return Some(wanted.to_string());
+        }
+        sensors
+            .actors
+            .iter()
+            .find(|(_, other)| other.name.eq_ignore_ascii_case(wanted))
+            .map(|(id, _)| id.clone())
+    })
+}
+
+/// The id a cross-actor write applies to, or an error for the running actor
+/// when nothing answers to `wanted`.
+fn target_or_error(ctx: &mut Ctx, wanted: &str) -> Option<String> {
+    let running = ctx.actor.to_string();
+    match script_target_id(&running, wanted) {
+        Some(id) => Some(id),
+        None => {
+            ctx.asked.effects.push(Effect::Error {
+                actor: running,
+                message: format!("there's no actor named \"{wanted}\""),
+            });
+            None
+        }
+    }
+}
+
 /// Three space-separated numbers, as the prelude sends a point across.
 fn parse_triple(text: &str) -> Option<[f32; 3]> {
     let mut numbers = text.split_whitespace().map(|part| part.parse::<f32>());
@@ -916,7 +1242,7 @@ fn parse_triple(text: &str) -> Option<[f32; 3]> {
 }
 
 // Copy only the numeric pose while the snapshot is borrowed.
-fn pose_bytes_for(actor: &str, target: &str) -> Option<[u8; abi::POSE_BYTES]> {
+pub(crate) fn pose_bytes_for(actor: &str, target: &str) -> Option<[u8; abi::POSE_BYTES]> {
     let target = target.trim();
     sense::read(|s| {
         let me = if target.is_empty() {
@@ -972,7 +1298,7 @@ extern "C" fn read_text(
     abi::OK
 }
 
-fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
+pub(crate) fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
     match what {
         abi::TEXT_ACTOR_NAME => me(actor).map(|me| me.name),
         abi::TEXT_FIELD => me(actor)
@@ -1057,6 +1383,8 @@ fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<String> {
         abi::TEXT_DATA => SCRIPT_DATA
             .with(|data| data.borrow().get_text(actor, a.trim()).map(str::to_string))
             .filter(|text| !text.is_empty()),
+        abi::TEXT_VARIABLE => Some(script_variable_text(actor, a)),
+        abi::TEXT_LIST_ITEM => script_list_text(actor, a, b),
         abi::TEXT_SCENE_NAMES => {
             serde_json::to_string(&sense::read(|s| s.scene_names.clone())).ok()
         }
@@ -1695,6 +2023,216 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
             });
             return;
         }
+        // Block variables and lists land at once too, through the same
+        // stores the VM writes: a canvas counter and a script counter stay
+        // one counter, and a read straight after sees the write.
+        abi::ACT_SET_VARIABLE => {
+            let name = a.trim();
+            if !name.is_empty() {
+                SCRIPT_VARS.with(|vars| {
+                    if let Some(vars) = vars.borrow().as_ref() {
+                        vars.write(&actor, name, Evaluated::Number(n0));
+                    }
+                });
+            }
+            return;
+        }
+        abi::ACT_SET_VARIABLE_TEXT => {
+            let name = a.trim();
+            if !name.is_empty() {
+                SCRIPT_VARS.with(|vars| {
+                    if let Some(vars) = vars.borrow().as_ref() {
+                        vars.write(&actor, name, Evaluated::Text(c.to_string()));
+                    }
+                });
+            }
+            return;
+        }
+        abi::ACT_LIST_ADD => {
+            script_list_push(&actor, a, blockloom_core::blocks::ListItem::Number(n0));
+            return;
+        }
+        abi::ACT_LIST_ADD_TEXT => {
+            script_list_push(
+                &actor,
+                a,
+                blockloom_core::blocks::ListItem::Text(c.to_string()),
+            );
+            return;
+        }
+        abi::ACT_LIST_INSERT => {
+            script_list_insert(&actor, a, n0, blockloom_core::blocks::ListItem::Number(n1));
+            return;
+        }
+        abi::ACT_LIST_INSERT_TEXT => {
+            script_list_insert(
+                &actor,
+                a,
+                n0,
+                blockloom_core::blocks::ListItem::Text(c.to_string()),
+            );
+            return;
+        }
+        abi::ACT_LIST_REPLACE => {
+            script_list_replace(&actor, a, n0, blockloom_core::blocks::ListItem::Number(n1));
+            return;
+        }
+        abi::ACT_LIST_REPLACE_TEXT => {
+            script_list_replace(
+                &actor,
+                a,
+                n0,
+                blockloom_core::blocks::ListItem::Text(c.to_string()),
+            );
+            return;
+        }
+        abi::ACT_LIST_DELETE => {
+            script_list_delete(&actor, a, n0);
+            return;
+        }
+        abi::ACT_LIST_CLEAR => {
+            let name = a.trim();
+            if !name.is_empty() {
+                SCRIPT_LISTS.with(|stored| {
+                    if let Some(stored) = stored.borrow().as_ref() {
+                        stored.with_list_mut(&actor, name, Vec::clear);
+                    }
+                });
+            }
+            return;
+        }
+        // Cross-actor writes: the same effects with an explicit target. `a`
+        // always names who to act on; the rest matches the self-only verb.
+        // Reads still go through the `*_of` helpers, so a read straight
+        // after one of these sees the old snapshot, like a self-write does.
+        abi::ACT_GO_TO_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            Effect::GoTo {
+                actor: target,
+                position: vector,
+            }
+        }
+        abi::ACT_CHANGE_POSITION_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            Effect::ChangePosition {
+                actor: target,
+                axis: axis_of(n0),
+                by: n1 as f32,
+            }
+        }
+        abi::ACT_MOVE_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            Effect::Move {
+                actor: target,
+                steps: n0 as f32,
+            }
+        }
+        abi::ACT_TURN_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            Effect::Turn {
+                actor: target,
+                axis: axis_of(n0),
+                degrees: n1 as f32,
+            }
+        }
+        abi::ACT_SET_ROTATION_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            Effect::SetRotation {
+                actor: target,
+                axis: axis_of(n0),
+                degrees: n1 as f32,
+            }
+        }
+        abi::ACT_SET_SCALE_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            Effect::SetScale {
+                actor: target,
+                factor: n0 as f32,
+            }
+        }
+        abi::ACT_POINT_TOWARDS_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            Effect::PointTowards {
+                actor: target,
+                target: b.to_string(),
+            }
+        }
+        abi::ACT_SET_VISIBLE_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            Effect::SetVisible {
+                actor: target,
+                visible: n0 != 0.0,
+            }
+        }
+        abi::ACT_SET_COLOR_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            Effect::SetColor {
+                actor: target,
+                color: b.to_string(),
+            }
+        }
+        abi::ACT_SAY_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            Effect::Say {
+                actor: target,
+                text: b.to_string(),
+            }
+        }
+        abi::ACT_APPLY_IMPULSE_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            Effect::ApplyImpulse {
+                actor: target,
+                impulse: vector,
+            }
+        }
+        abi::ACT_SET_VELOCITY_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            Effect::SetVelocity {
+                actor: target,
+                velocity: vector,
+            }
+        }
+        abi::ACT_ADD_FORCE_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            match blockloom_core::physics::ForceMode::parse(b) {
+                Some(mode) => Effect::AddForce {
+                    actor: target,
+                    mode,
+                    torque: c == "torque",
+                    vector,
+                },
+                None => Effect::Error {
+                    actor: target,
+                    message: format!("there's no force mode called \"{b}\""),
+                },
+            }
+        }
         // A verb this runtime doesn't know is a script built against a newer
         // ABI, which the load-time check should already have caught.
         _ => return,
@@ -1724,6 +2262,10 @@ mod browser {
         relative: String,
         start: Function,
         tick: Function,
+        frame: Option<Function>,
+        ui: Option<Function>,
+        stop: Option<Function>,
+        destroy: Option<Function>,
         event: Function,
         /// Set once the script traps: a wasm trap leaves its stack and heap
         /// wherever they were, so calling back in isn't safe.
@@ -1860,6 +2402,16 @@ mod browser {
         let start = export(abi::SYM_START)?;
         let tick = export(abi::SYM_TICK)?;
         let event = export(abi::SYM_EVENT)?;
+        let optional = |name: &[u8]| -> Option<Function> {
+            let name = String::from_utf8_lossy(name);
+            Reflect::get(&exports, &JsValue::from_str(&name))
+                .ok()
+                .and_then(|value| value.dyn_into::<Function>().ok())
+        };
+        let frame = optional(abi::SYM_FRAME);
+        let ui = optional(abi::SYM_UI);
+        let stop = optional(abi::SYM_STOP);
+        let destroy = optional(abi::SYM_DESTROY);
         let own_memory = Reflect::get(&exports, &JsValue::from_str("memory"))
             .ok()
             .and_then(|value| value.dyn_into::<WebAssembly::Memory>().ok())
@@ -1869,6 +2421,10 @@ mod browser {
             relative: relative.to_string(),
             start,
             tick,
+            frame,
+            ui,
+            stop,
+            destroy,
             event,
             stopped: Cell::new(false),
             last_log,
@@ -1928,6 +2484,10 @@ mod browser {
     pub enum Entry<'a> {
         Start,
         Tick(f32),
+        Frame(f32),
+        Ui(f32),
+        Stop,
+        Destroy,
         Event(&'a super::ScriptEvent),
     }
 
@@ -1949,6 +2509,22 @@ mod browser {
                     self.tick
                         .call3(&JsValue::NULL, &pointer, &host, &JsValue::from(dt))
                 }
+                Entry::Frame(dt) => match &self.frame {
+                    Some(frame) => frame.call3(&JsValue::NULL, &pointer, &host, &JsValue::from(dt)),
+                    None => Ok(JsValue::UNDEFINED),
+                },
+                Entry::Ui(dt) => match &self.ui {
+                    Some(ui) => ui.call3(&JsValue::NULL, &pointer, &host, &JsValue::from(dt)),
+                    None => Ok(JsValue::UNDEFINED),
+                },
+                Entry::Stop => match &self.stop {
+                    Some(stop) => stop.call2(&JsValue::NULL, &pointer, &host),
+                    None => Ok(JsValue::UNDEFINED),
+                },
+                Entry::Destroy => match &self.destroy {
+                    Some(destroy) => destroy.call2(&JsValue::NULL, &pointer, &host),
+                    None => Ok(JsValue::UNDEFINED),
+                },
                 Entry::Event(event) => {
                     let args = js_sys::Array::of3(&pointer, &host, &JsValue::from(event.kind));
                     for n in event.numbers {
@@ -2337,6 +2913,349 @@ blockloom::export!(tick = tick);
     }
 
     #[test]
+    fn a_compiled_script_shares_block_variables_and_lists_with_the_vm() {
+        let project = TempProject::new("varlist");
+        let Some(script) = project.build(
+            r#"
+use blockloom::*;
+
+fn tick(me: &Actor, _dt: f32) {
+    me.set_variable("score", me.variable("score") + 1.0);
+    if me.variable_text("mode") == "0" {
+        me.set_variable_text("mode", "hot");
+    }
+    me.list_add("bag", 1.0);
+    me.list_add_text("bag", "two");
+    me.say("shared");
+}
+
+blockloom::export!(tick = tick);
+"#,
+        ) else {
+            return;
+        };
+
+        let variables = Variables::default();
+        let lists = Lists::default();
+        let mut list_project =
+            blockloom_core::project::Project::starter("varlist", blockloom_core::scene::Mode::TwoD);
+        list_project.create_global_list("bag").unwrap();
+        lists.load(&list_project);
+        publish_one("a1");
+        let mut asked = Asked::default();
+        with_script_stores(&variables, &lists, || {
+            script.tick("a1", &mut asked, 0.5);
+            script.tick("a1", &mut asked, 0.5);
+        });
+
+        // Two ticks accumulated in the shared stores; the only effect is the say.
+        assert_eq!(
+            variables.read("a1", "score"),
+            blockloom_core::value::Evaluated::Number(2.0)
+        );
+        assert_eq!(
+            variables.read("a1", "mode"),
+            blockloom_core::value::Evaluated::Text("hot".to_string())
+        );
+        with_script_stores(&variables, &lists, || {
+            assert_eq!(
+                number_for("a1", abi::READ_LIST_LENGTH, "bag", "", 0.0),
+                Some(4.0)
+            );
+            assert_eq!(
+                text_for("a1", abi::TEXT_LIST_ITEM, "bag", "2"),
+                Some("two".to_string())
+            );
+        });
+        assert_eq!(asked.effects.len(), 2);
+    }
+
+    #[test]
+    fn two_scripts_on_one_actor_run_in_component_order() {
+        use blockloom_core::script::{compile, source_path};
+        if blockloom_core::script::toolchain_version().is_err() {
+            return;
+        }
+        let project = TempProject::new("twoscripts");
+        let build_named = |relative: &str, source: &str| -> Option<LoadedScript> {
+            std::fs::write(project.0.join(relative), source).expect("the script");
+            let built = compile(&project.0, relative)
+                .unwrap_or_else(|e| panic!("the test script didn't compile:\n{e}"));
+            assert!(built.is_file());
+            // `source_path` is covered by the write above.
+            let _ = source_path(&project.0, relative);
+            Some(LoadedScript::load(&project.0, relative).expect("a loadable script"))
+        };
+        let Some(first) = build_named(
+            "assets/scripts/a.rs",
+            r#"
+use blockloom::*;
+fn tick(me: &Actor, _dt: f32) {
+    me.set_variable("score", me.variable("score") + 1.0);
+    me.say("a");
+}
+blockloom::export!(tick = tick);
+"#,
+        ) else {
+            return;
+        };
+        let Some(second) = build_named(
+            "assets/scripts/b.rs",
+            r#"
+use blockloom::*;
+fn tick(me: &Actor, _dt: f32) {
+    me.set_variable("score", me.variable("score") + 10.0);
+    me.say("b");
+}
+blockloom::export!(tick = tick);
+"#,
+        ) else {
+            return;
+        };
+
+        let variables = Variables::default();
+        let lists = Lists::default();
+        publish_one("a1");
+        let mut asked = Asked::default();
+        with_script_stores(&variables, &lists, || {
+            // Component order: `a` then `b`, like `open_scripts` loads them.
+            first.tick("a1", &mut asked, 0.5);
+            second.tick("a1", &mut asked, 0.5);
+        });
+        // Both ran, sharing one counter: 0 + 1 + 10.
+        assert_eq!(
+            variables.read("a1", "score"),
+            blockloom_core::value::Evaluated::Number(11.0)
+        );
+        let says: Vec<String> = asked
+            .effects
+            .iter()
+            .filter_map(|effect| match effect {
+                blockloom_core::vm::Effect::Say { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(says, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn timers_cooldowns_and_intervals_accumulate_dt() {
+        use blockloom_core::script::timing::{Cooldown, Every, Timer};
+        let mut once = Timer::after(0.5);
+        assert!(!once.done());
+        assert!(!once.tick(0.2));
+        assert!(!once.tick(0.2));
+        assert!(once.tick(0.2));
+        assert!(once.done());
+        assert!(!once.tick(0.2));
+        once.reset(0.1);
+        assert!(!once.done());
+        assert!(once.tick(0.1));
+
+        let mut beat = Every::new(0.5);
+        assert_eq!(beat.tick(0.2), 0);
+        assert_eq!(beat.tick(0.4), 1);
+        assert_eq!(beat.tick(1.1), 2);
+
+        let mut gate = Cooldown::new(1.0);
+        assert!(gate.ready());
+        gate.trigger();
+        assert!(!gate.ready());
+        gate.trigger();
+        gate.tick(0.5);
+        assert!(!gate.ready());
+        gate.tick(0.5);
+        assert!(gate.ready());
+    }
+
+    #[test]
+    fn per_actor_timers_fire_on_dt_without_statics() {
+        let project = TempProject::new("timers");
+        let Some(script) = project.build(
+            r#"
+use blockloom::*;
+
+fn tick(me: &Actor, dt: f32) {
+    if me.after("hello", 0.3, dt) {
+        me.say("waited");
+    }
+    for _ in 0..me.every("beat", 0.2, dt) {
+        me.change_variable("beats", 1.0);
+    }
+    me.cooldown_tick("jump", dt);
+    if me.action_pressed("jump") && me.cooldown_ready("jump") {
+        me.cooldown_trigger("jump", 1.0);
+        me.say("jumped");
+    }
+}
+
+blockloom::export!(tick = tick);
+"#,
+        ) else {
+            return;
+        };
+
+        // Drive the script by hand over fixed 0.1 steps with its stores
+        // visible, the way `step_scripts` would.
+        let variables = Variables::default();
+        let lists = Lists::default();
+        publish_one("a1");
+        // Fake an action press on the first step only.
+        let mut asked = Asked::default();
+        with_script_stores(&variables, &lists, || {
+            script.tick("a1", &mut asked, 0.1);
+        });
+        // Not yet: 0.1 of 0.3 waited, no full 0.2 beat.
+        assert!(asked.effects.is_empty());
+        let mut asked = Asked::default();
+        with_script_stores(&variables, &lists, || {
+            script.tick("a1", &mut asked, 0.1);
+        });
+        // One 0.2 beat elapsed over two 0.1 steps.
+        assert_eq!(
+            variables.read("a1", "beats"),
+            blockloom_core::value::Evaluated::Number(1.0)
+        );
+        // `after` fires once the accumulated `dt` covers the wait; f32
+        // rounding may need one more step past the nominal count.
+        let mut says: Vec<String> = Vec::new();
+        for _ in 0..5 {
+            let mut asked = Asked::default();
+            with_script_stores(&variables, &lists, || {
+                script.tick("a1", &mut asked, 0.1);
+            });
+            says.extend(asked.effects.iter().filter_map(|effect| match effect {
+                Effect::Say { text, .. } => Some(text.clone()),
+                _ => None,
+            }));
+        }
+        assert!(says.contains(&"waited".to_string()));
+    }
+
+    #[test]
+    fn frame_ui_stop_and_destroy_run_where_tick_does() {
+        let project = TempProject::new("lifecycle");
+        let Some(script) = project.build(
+            r#"
+use blockloom::*;
+
+fn tick(me: &Actor, _dt: f32) {
+    me.say("tick");
+}
+
+fn frame(me: &Actor, _dt: f32) {
+    me.say("frame");
+}
+
+fn ui(me: &Actor, _dt: f32) {
+    me.say("ui");
+}
+
+fn stop(me: &Actor) {
+    me.say("stop");
+}
+
+fn destroy(me: &Actor) {
+    me.say("destroy");
+}
+
+blockloom::export!(tick = tick, frame = frame, ui = ui, stop = stop, destroy = destroy);
+"#,
+        ) else {
+            return;
+        };
+
+        publish_one("a1");
+        let mut asked = Asked::default();
+        script.tick("a1", &mut asked, 0.1);
+        script.frame("a1", &mut asked, 0.016);
+        script.ui("a1", &mut asked, 0.016);
+        script.stop("a1", &mut asked);
+        script.destroy("a1", &mut asked);
+        let says: Vec<String> = asked
+            .effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Say { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(says, vec!["tick", "frame", "ui", "stop", "destroy"]);
+    }
+
+    #[test]
+    fn scripts_without_the_new_entries_still_load_and_tick() {
+        // Built before `frame`/`ui`/`stop`/`destroy` existed: the old
+        // three-entry `export!` keeps working, and the missing entries are
+        // no-ops rather than load errors.
+        let project = TempProject::new("legacy");
+        let Some(script) = project.build(
+            r#"
+use blockloom::*;
+
+fn tick(me: &Actor, _dt: f32) {
+    me.say("old tick");
+}
+
+blockloom::export!(tick = tick);
+"#,
+        ) else {
+            return;
+        };
+
+        publish_one("a1");
+        let mut asked = Asked::default();
+        script.tick("a1", &mut asked, 0.1);
+        script.frame("a1", &mut asked, 0.016);
+        script.ui("a1", &mut asked, 0.016);
+        script.stop("a1", &mut asked);
+        script.destroy("a1", &mut asked);
+        let says: Vec<String> = asked
+            .effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Say { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(says, vec!["old tick"]);
+    }
+
+    #[test]
+    fn typed_enums_compile_and_ask_like_their_string_spellings() {
+        // The checked spellings ride the same verbs as the strings, so one
+        // tick through each proves the whole typed surface builds and runs.
+        let project = TempProject::new("typed");
+        let Some(script) = project.build(
+            r#"
+use blockloom::*;
+
+fn tick(me: &Actor, _dt: f32) {
+    me.add_force_mode(ForceMode::Impulse, 1.0, 0.0, 0.0);
+    me.add_torque_mode(ForceMode::Force, 0.0, 0.0, 1.0);
+    me.set_wind_dial(WindDial::Speed, 3.0);
+    me.set_water_dial(WaterDial::Chop, 0.5);
+    me.set_clouds_dial(CloudDial::Coverage, 0.5);
+    me.set_precipitation_kind(Precipitation::Snow, 0.5);
+    me.set_color_rgb(Color::RED);
+    me.tween_scale_eased(2.0, 1.0, Easing::EaseOut);
+    me.tween_rotation_eased(Axis::Z, 90.0, 1.0, Easing::Linear);
+    me.tween_color_eased(Color::BLUE, 1.0, Easing::EaseIn);
+}
+
+blockloom::export!(tick = tick);
+"#,
+        ) else {
+            return;
+        };
+
+        publish_one("a1");
+        let mut asked = Asked::default();
+        script.tick("a1", &mut asked, 0.1);
+        assert_eq!(asked.effects.len(), 10);
+    }
+
+    #[test]
     fn a_broadcast_is_carried_out_separately_and_a_panic_stays_inside() {
         let project = TempProject::new("broadcast");
         let Some(script) = project.build(
@@ -2551,6 +3470,243 @@ blockloom::export!(start = start, tick = tick);
     }
 
     #[test]
+    fn cross_actor_writes_target_ids_and_miss_as_errors() {
+        use blockloom_core::scene::Axis;
+        let mut sensors = Sensors::default();
+        sensors.actors.insert(
+            "a1".to_string(),
+            ActorSense {
+                name: "Me".to_string(),
+                position: [0.0, 0.0, 0.0],
+                ..Default::default()
+            },
+        );
+        sensors.actors.insert(
+            "b1".to_string(),
+            ActorSense {
+                name: "Friend".to_string(),
+                position: [3.0, 7.0, 0.0],
+                ..Default::default()
+            },
+        );
+        sense::publish(sensors);
+
+        // By name, by id, and the self spellings all resolve.
+        assert_eq!(script_target_id("a1", "Friend"), Some("b1".to_string()));
+        assert_eq!(script_target_id("a1", "friend"), Some("b1".to_string()));
+        assert_eq!(script_target_id("a1", "b1"), Some("b1".to_string()));
+        assert_eq!(script_target_id("a1", ""), Some("a1".to_string()));
+        assert_eq!(script_target_id("a1", "me"), Some("a1".to_string()));
+        assert_eq!(script_target_id("a1", "MYSELF"), Some("a1".to_string()));
+        assert_eq!(script_target_id("a1", "Nobody"), None);
+
+        let mut asked = Asked::default();
+        let mut ctx = Ctx {
+            actor: "a1",
+            asked: &mut asked,
+        };
+        act_for(
+            &mut ctx,
+            abi::ACT_GO_TO_OTHER,
+            "Friend",
+            "",
+            "",
+            &[1.0, 2.0, 3.0],
+        );
+        act_for(&mut ctx, abi::ACT_SET_COLOR_OTHER, "b1", "red", "", &[]);
+        act_for(&mut ctx, abi::ACT_SAY_OTHER, "", "hi", "", &[]);
+        act_for(
+            &mut ctx,
+            abi::ACT_ADD_FORCE_OTHER,
+            "Friend",
+            "Impulse",
+            "",
+            &[1.0, 0.0, 0.0],
+        );
+        act_for(
+            &mut ctx,
+            abi::ACT_GO_TO_OTHER,
+            "Nobody",
+            "",
+            "",
+            &[0.0, 0.0, 0.0],
+        );
+        assert_eq!(
+            asked.effects,
+            vec![
+                Effect::GoTo {
+                    actor: "b1".to_string(),
+                    position: [1.0, 2.0, 3.0],
+                },
+                Effect::SetColor {
+                    actor: "b1".to_string(),
+                    color: "red".to_string(),
+                },
+                Effect::Say {
+                    actor: "a1".to_string(),
+                    text: "hi".to_string(),
+                },
+                Effect::AddForce {
+                    actor: "b1".to_string(),
+                    mode: blockloom_core::physics::ForceMode::Impulse,
+                    torque: false,
+                    vector: [1.0, 0.0, 0.0],
+                },
+                Effect::Error {
+                    actor: "a1".to_string(),
+                    message: "there's no actor named \"Nobody\"".to_string(),
+                },
+            ]
+        );
+        // Reads still see the snapshot, not the queued writes.
+        assert_eq!(
+            number_for("a1", abi::READ_POSITION_OF, "Friend", "", 0.0),
+            Some(3.0)
+        );
+        let _ = Axis::X;
+    }
+
+    #[test]
+    fn script_variables_share_the_vm_store_and_lists_follow_block_rules() {
+        use blockloom_core::value::Evaluated;
+        let variables = Variables::default();
+        let lists = Lists::default();
+        // One shared list, as the editor declares it: a global the run loads.
+        let mut project =
+            blockloom_core::project::Project::starter("vars", blockloom_core::scene::Mode::TwoD);
+        project.create_global_list("bag").unwrap();
+        project.global_lists[0].items = vec![
+            blockloom_core::blocks::ListItem::Number(1.0),
+            blockloom_core::blocks::ListItem::Text("two".to_string()),
+        ];
+        lists.load(&project);
+        variables.write("a1", "score", Evaluated::Number(1.0));
+
+        with_script_stores(&variables, &lists, || {
+            let mut asked = Asked::default();
+            let mut ctx = Ctx {
+                actor: "a1",
+                asked: &mut asked,
+            };
+            // Reads see the VM's store: a canvas counter and a script
+            // counter are the same counter.
+            assert_eq!(
+                number_for("a1", abi::READ_VARIABLE, "score", "", 0.0),
+                Some(1.0)
+            );
+            assert_eq!(
+                text_for("a1", abi::TEXT_VARIABLE, "score", ""),
+                Some("1".to_string())
+            );
+            // Unknown names read as blocks do: 0 and "0", empty lists.
+            assert_eq!(
+                number_for("a1", abi::READ_VARIABLE, "missing", "", 0.0),
+                Some(0.0)
+            );
+            assert_eq!(
+                text_for("a1", abi::TEXT_VARIABLE, "missing", ""),
+                Some("0".to_string())
+            );
+            assert_eq!(
+                number_for("a1", abi::READ_LIST_LENGTH, "bag", "", 0.0),
+                Some(2.0)
+            );
+            assert_eq!(
+                number_for("a1", abi::READ_LIST_LENGTH, "missing", "", 0.0),
+                Some(0.0)
+            );
+            assert_eq!(
+                number_for("a1", abi::READ_LIST_ITEM, "bag", "", 1.0),
+                Some(1.0)
+            );
+            assert_eq!(number_for("a1", abi::READ_LIST_ITEM, "bag", "", 2.0), None);
+            assert_eq!(
+                text_for("a1", abi::TEXT_LIST_ITEM, "bag", "2"),
+                Some("two".to_string())
+            );
+            assert_eq!(text_for("a1", abi::TEXT_LIST_ITEM, "bag", "9"), None);
+
+            // Writes land at once, through the same stores.
+            act_for(&mut ctx, abi::ACT_SET_VARIABLE, "score", "", "", &[5.0]);
+            assert_eq!(
+                number_for("a1", abi::READ_VARIABLE, "score", "", 0.0),
+                Some(5.0)
+            );
+            act_for(&mut ctx, abi::ACT_SET_VARIABLE_TEXT, "mode", "", "hot", &[]);
+            assert_eq!(
+                text_for("a1", abi::TEXT_VARIABLE, "mode", ""),
+                Some("hot".to_string())
+            );
+            // An empty name writes nothing.
+            act_for(&mut ctx, abi::ACT_SET_VARIABLE, "", "", "", &[3.0]);
+            assert_eq!(number_for("a1", abi::READ_VARIABLE, "", "", 0.0), Some(0.0));
+
+            act_for(&mut ctx, abi::ACT_LIST_ADD, "bag", "", "", &[3.0]);
+            assert_eq!(
+                number_for("a1", abi::READ_LIST_LENGTH, "bag", "", 0.0),
+                Some(3.0)
+            );
+            act_for(&mut ctx, abi::ACT_LIST_ADD_TEXT, "bag", "", "four", &[]);
+            assert_eq!(
+                text_for("a1", abi::TEXT_LIST_ITEM, "bag", "4"),
+                Some("four".to_string())
+            );
+            act_for(&mut ctx, abi::ACT_LIST_INSERT, "bag", "", "", &[2.0, 9.0]);
+            assert_eq!(
+                number_for("a1", abi::READ_LIST_ITEM, "bag", "", 2.0),
+                Some(9.0)
+            );
+            act_for(&mut ctx, abi::ACT_LIST_REPLACE, "bag", "", "", &[2.0, 8.0]);
+            assert_eq!(
+                number_for("a1", abi::READ_LIST_ITEM, "bag", "", 2.0),
+                Some(8.0)
+            );
+            act_for(
+                &mut ctx,
+                abi::ACT_LIST_REPLACE_TEXT,
+                "bag",
+                "",
+                "eight",
+                &[2.0],
+            );
+            assert_eq!(
+                text_for("a1", abi::TEXT_LIST_ITEM, "bag", "2"),
+                Some("eight".to_string())
+            );
+            act_for(&mut ctx, abi::ACT_LIST_DELETE, "bag", "", "", &[2.0]);
+            assert_eq!(
+                number_for("a1", abi::READ_LIST_LENGTH, "bag", "", 0.0),
+                Some(4.0)
+            );
+            // Out of range changes nothing; unknown names are a no-op.
+            act_for(&mut ctx, abi::ACT_LIST_DELETE, "bag", "", "", &[99.0]);
+            act_for(&mut ctx, abi::ACT_LIST_ADD, "missing", "", "", &[1.0]);
+            assert_eq!(
+                number_for("a1", abi::READ_LIST_LENGTH, "bag", "", 0.0),
+                Some(4.0)
+            );
+            assert_eq!(
+                number_for("a1", abi::READ_LIST_LENGTH, "missing", "", 0.0),
+                Some(0.0)
+            );
+            act_for(&mut ctx, abi::ACT_LIST_CLEAR, "bag", "", "", &[]);
+            assert_eq!(
+                number_for("a1", abi::READ_LIST_LENGTH, "bag", "", 0.0),
+                Some(0.0)
+            );
+            // No effects: these are immediate store writes, not world writes.
+            assert!(asked.effects.is_empty());
+        });
+
+        // The VM sees what the script wrote, since it is the same store.
+        assert_eq!(variables.read("a1", "score"), Evaluated::Number(5.0));
+        assert_eq!(
+            variables.read("a1", "mode"),
+            Evaluated::Text("hot".to_string())
+        );
+    }
+
+    #[test]
     fn a_compiled_script_reads_batched_poses_without_observing_queued_writes() {
         let project = TempProject::new("poses");
         let Some(script) = project.build(
@@ -2682,6 +3838,79 @@ blockloom::export!(start = start, tick = tick);
                 actor: "a1".to_string(),
                 text: "Friend is at 3,7".to_string(),
             }]
+        );
+    }
+
+    #[test]
+    fn a_compiled_script_drives_another_actor_through_a_handle() {
+        let project = TempProject::new("actorref");
+        let Some(script) = project.build(
+            r#"
+use blockloom::*;
+
+fn tick(me: &Actor, _dt: f32) {
+    let ball = me.world().actor("Friend");
+    let pose = ball.pose().unwrap();
+    // Reads see the snapshot, so this is where it stands now.
+    me.say(&format!("friend at {}", pose.position[0]));
+    ball.go_to(pose.position[0] + 10.0, pose.position[1], pose.position[2]);
+    ball.set_color("red");
+    ball.push(1.0, 0.0, 0.0);
+    // A read straight after a write still sees the old value.
+    assert_eq!(ball.pose(), Some(pose));
+    me.actor("Nobody").go_to(0.0, 0.0, 0.0);
+}
+
+blockloom::export!(tick = tick);
+"#,
+        ) else {
+            return;
+        };
+
+        let mut sensors = Sensors::default();
+        sensors.actors.insert(
+            "a1".to_string(),
+            ActorSense {
+                name: "Me".to_string(),
+                ..Default::default()
+            },
+        );
+        sensors.actors.insert(
+            "b1".to_string(),
+            ActorSense {
+                name: "Friend".to_string(),
+                position: [3.0, 7.0, 0.0],
+                ..Default::default()
+            },
+        );
+        sense::publish(sensors);
+
+        let mut asked = Asked::default();
+        script.tick("a1", &mut asked, 0.1);
+        assert_eq!(
+            asked.effects,
+            vec![
+                Effect::Say {
+                    actor: "a1".to_string(),
+                    text: "friend at 3".to_string(),
+                },
+                Effect::GoTo {
+                    actor: "b1".to_string(),
+                    position: [13.0, 7.0, 0.0],
+                },
+                Effect::SetColor {
+                    actor: "b1".to_string(),
+                    color: "red".to_string(),
+                },
+                Effect::ApplyImpulse {
+                    actor: "b1".to_string(),
+                    impulse: [1.0, 0.0, 0.0],
+                },
+                Effect::Error {
+                    actor: "a1".to_string(),
+                    message: "there's no actor named \"Nobody\"".to_string(),
+                },
+            ]
         );
     }
 

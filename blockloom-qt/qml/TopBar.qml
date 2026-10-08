@@ -174,6 +174,13 @@ Rectangle {
                 .slice()
                 .sort((a, b) => b.value - a.value);
         }
+        // Per-script-file timings, most expensive first.
+        function scriptRows() {
+            return allMetrics()
+                .filter(m => m.name.indexOf("script/") === 0)
+                .slice()
+                .sort((a, b) => b.value - a.value);
+        }
         contentItem: Flickable {
             clip: true
             contentHeight: metricsColumn.implicitHeight
@@ -294,6 +301,19 @@ Rectangle {
                     Text {
                         required property var modelData
                         text: modelData.name.replace(/^update\//, "") + ": " + modelData.value.toFixed(2) + " ms"
+                        color: Theme.textDim; font.pixelSize: 11
+                    }
+                }
+                Text {
+                    visible: profilerPopup.scriptRows().length > 0
+                    text: "Scripts"; color: Theme.text; font.bold: true; font.pixelSize: 12
+                }
+                Repeater {
+                    model: profilerPopup.scriptRows()
+                    Text {
+                        required property var modelData
+                        width: parent.width; wrapMode: Text.Wrap
+                        text: modelData.name.replace(/^script\//, "") + ": " + modelData.value.toFixed(2) + " ms"
                         color: Theme.textDim; font.pixelSize: 11
                     }
                 }

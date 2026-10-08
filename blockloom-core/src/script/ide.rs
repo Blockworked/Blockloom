@@ -61,6 +61,16 @@ pub struct ToolchainStatus {
     pub rustc_error: Option<String>,
     pub cargo_version: Option<String>,
     pub cargo_error: Option<String>,
+    /// `rustfmt` for Save+Format. Missing only disables the Format button.
+    #[serde(default)]
+    pub rustfmt_version: Option<String>,
+    #[serde(default)]
+    pub rustfmt_error: Option<String>,
+    /// `cargo clippy` for the opt-in lint pass. Missing disables it the same way.
+    #[serde(default)]
+    pub clippy_version: Option<String>,
+    #[serde(default)]
+    pub clippy_error: Option<String>,
     /// What to tell somebody whose scripts won't build.
     pub help: String,
 }
@@ -110,10 +120,13 @@ fn collect_scripts(root: &Path, dir: &Path, out: &mut Vec<String>) {
 
 /// A `[[bin]]` name per script, deduplicated: two files that sanitize to the
 /// same stem get `_2`, `_3`, like [`super::unused_path`] does for paths.
+/// Shared library code under `shared/` is not a runnable script, so it gets
+/// no target: rust-analyzer still sees it through each script's `mod`.
 pub fn ide_scripts(project_dir: &Path) -> Vec<IdeScript> {
     let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
     list_scripts(project_dir)
         .into_iter()
+        .filter(|path| super::is_script_entry(path))
         .map(|path| {
             let mut name = unique_crate_name(&path, &mut used);
             if name.is_empty() {
@@ -227,7 +240,15 @@ pub fn sync_ide_project(project_dir: &Path) -> Result<SyncReport, String> {
     let src_dir = crate_dir.join("src");
     std::fs::create_dir_all(&src_dir).map_err(|e| format!("{}: {e}", src_dir.display()))?;
     let lib = src_dir.join("lib.rs");
-    std::fs::write(&lib, super::PRELUDE_SOURCE).map_err(|e| format!("{}: {e}", lib.display()))?;
+    // The analysis crate matches what Play compiles: the API plus this
+    // project's symbols, so renames complete and break the same way.
+    let (symbols_source, _) = super::symbols::project_symbols_for_dir(project_dir);
+    let mut assembled =
+        String::with_capacity(super::PRELUDE_SOURCE.len() + symbols_source.len() + 1);
+    assembled.push_str(super::PRELUDE_SOURCE);
+    assembled.push('\n');
+    assembled.push_str(&symbols_source);
+    std::fs::write(&lib, assembled).map_err(|e| format!("{}: {e}", lib.display()))?;
     let crate_manifest = crate_dir.join("Cargo.toml");
     std::fs::write(&crate_manifest, ide_crate_manifest())
         .map_err(|e| format!("{}: {e}", crate_manifest.display()))?;
@@ -251,12 +272,24 @@ pub fn toolchain_status() -> ToolchainStatus {
         Ok(version) => (Some(version), None),
         Err(error) => (None, Some(error)),
     };
+    let (rustfmt_version, rustfmt_error) = match rustfmt_version() {
+        Ok(version) => (Some(version), None),
+        Err(error) => (None, Some(error)),
+    };
+    let (clippy_version, clippy_error) = match clippy_version() {
+        Ok(version) => (Some(version), None),
+        Err(error) => (None, Some(error)),
+    };
     ToolchainStatus {
         available: rustc_version.is_some(),
         rustc_version,
         rustc_error,
         cargo_version,
         cargo_error,
+        rustfmt_version,
+        rustfmt_error,
+        clippy_version,
+        clippy_error,
         help: INSTALL_HELP.to_string(),
     }
 }
@@ -270,6 +303,71 @@ fn cargo_version() -> Result<String, String> {
         return Err("`cargo --version` failed".to_string());
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// The formatter Save+Format uses, or why there isn't one. Missing is a
+/// status, not a failure: only the Format button needs it.
+pub fn rustfmt_version() -> Result<String, String> {
+    let output = Command::new("rustfmt")
+        .arg("--version")
+        .output()
+        .map_err(|e| {
+            format!(
+                "`rustfmt` couldn't be run ({e}). Install it with `rustup component add rustfmt`."
+            )
+        })?;
+    if !output.status.success() {
+        return Err("`rustfmt --version` failed".to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// The linter the opt-in Clippy pass uses. Same deal: missing only disables
+/// that button, via `rustup component add clippy`.
+pub fn clippy_version() -> Result<String, String> {
+    let output = Command::new("cargo")
+        .arg("clippy")
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("`cargo clippy` couldn't be run ({e}). Install it with `rustup component add clippy`."))?;
+    if !output.status.success() {
+        return Err(
+            "`cargo clippy --version` failed - install it with `rustup component add clippy`"
+                .to_string(),
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Runs `rustfmt` over `source` and answers the formatted text. Errors are the
+/// formatter's own stderr, so a file rustfmt can't parse says why.
+pub fn format_source(source: &str) -> Result<String, String> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new("rustfmt")
+        .arg("--edition")
+        .arg("2024")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            format!(
+                "`rustfmt` couldn't be run ({e}). Install it with `rustup component add rustfmt`."
+            )
+        })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(source.as_bytes())
+            .map_err(|e| format!("couldn't hand the script to rustfmt: {e}"))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("couldn't read rustfmt back: {e}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    String::from_utf8(output.stdout).map_err(|e| format!("rustfmt answered non-UTF-8: {e}"))
 }
 
 /// Diagnostics for one script, newest write first: `cargo check` over the
@@ -288,8 +386,30 @@ pub fn diagnostics_for(project_dir: &Path, relative: &str) -> Vec<ScriptDiagnost
 }
 
 fn diagnostics_via_cargo(project_dir: &Path, relative: &str) -> Vec<ScriptDiagnostic> {
-    let output = Command::new("cargo")
-        .arg("check")
+    cargo_json_diagnostics(project_dir, relative, &["check"])
+}
+
+/// The opt-in lint pass: `cargo clippy` over the analysis project, filtered
+/// to this script like `check` is. Clippy's lints arrive as the same JSON
+/// compiler messages, so one parser serves both.
+pub fn clippy_for(project_dir: &Path, relative: &str) -> Vec<ScriptDiagnostic> {
+    let _ = sync_ide_project(project_dir);
+    if cargo_version().is_err() || clippy_version().is_err() {
+        return Vec::new();
+    }
+    cargo_json_diagnostics(project_dir, relative, &["clippy"])
+}
+
+fn cargo_json_diagnostics(
+    project_dir: &Path,
+    relative: &str,
+    tool: &[&str],
+) -> Vec<ScriptDiagnostic> {
+    let mut command = Command::new("cargo");
+    for arg in tool {
+        command.arg(arg);
+    }
+    let output = command
         .arg("--message-format=json")
         .arg("--tests")
         .current_dir(project_dir)
@@ -379,6 +499,11 @@ fn diagnostics_via_rustc(
 ) -> Result<Vec<ScriptDiagnostic>, String> {
     if !super::is_valid_path(relative) {
         return Err(format!("\"{relative}\" isn't a script path"));
+    }
+    // Shared code is never a crate root, so checking it alone would only
+    // report a missing `export!`. Cargo already covers it as a `mod`.
+    if super::is_shared_path(relative) {
+        return Ok(Vec::new());
     }
     let source = super::source_path(project_dir, relative);
     if !source.is_file() {
@@ -554,6 +679,23 @@ mod tests {
     }
 
     #[test]
+    fn shared_code_gets_no_ide_target() {
+        let dir = temp_project("shared-ide");
+        std::fs::write(dir.join("assets/scripts/player.rs"), b"// rust").unwrap();
+        std::fs::create_dir_all(dir.join("assets/scripts/shared")).unwrap();
+        std::fs::write(dir.join("assets/scripts/shared/util.rs"), b"// rust").unwrap();
+
+        let scripts = ide_scripts(&dir);
+        assert_eq!(scripts.len(), 1);
+        assert_eq!(scripts[0].path, "assets/scripts/player.rs");
+        let report = sync_ide_project(&dir).unwrap();
+        assert_eq!(report.scripts, 1);
+        let manifest = std::fs::read_to_string(manifest_path(&dir)).unwrap();
+        assert!(!manifest.contains("shared/util.rs"), "{manifest}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn cargo_messages_for_other_files_are_ignored() {
         let line = serde_json::json!({
             "reason": "compiler-message",
@@ -581,5 +723,28 @@ mod tests {
         let found = parse_rustc_json_diagnostics(line, "assets/scripts/player.rs");
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].line, 1);
+    }
+
+    #[test]
+    fn toolchain_status_reports_formatter_and_linter() {
+        let status = toolchain_status();
+        assert_eq!(
+            status.rustfmt_version.is_some(),
+            status.rustfmt_error.is_none()
+        );
+        assert_eq!(
+            status.clippy_version.is_some(),
+            status.clippy_error.is_none()
+        );
+    }
+
+    #[test]
+    fn rustfmt_round_trips_a_script() {
+        if rustfmt_version().is_err() {
+            return;
+        }
+        let formatted = format_source("fn main() {\nlet x=1;\n}\n").expect("formats");
+        assert!(formatted.contains("let x = 1;"), "{formatted}");
+        assert!(format_source("fn main( {").is_err());
     }
 }

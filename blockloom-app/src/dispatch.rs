@@ -833,12 +833,58 @@ impl Backend {
             "create_script" => {
                 to_json(commands::create_script(state, app, arg(&args, "actorId")?)?)
             }
-            "check_script" => to_json(commands::check_script(state, app, arg(&args, "actorId")?)?),
-            "read_script" => to_json(commands::read_script(state, arg(&args, "actorId")?)?),
+            "add_script" => to_json(commands::add_script(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg::<Option<String>>(&args, "path")?,
+            )?),
+            "remove_script" => to_json(commands::remove_script(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "path")?,
+            )?),
+            "move_script" => to_json(commands::move_script(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "path")?,
+                arg(&args, "index")?,
+            )?),
+            "check_script" => to_json(commands::check_script(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg::<Option<String>>(&args, "path")?,
+            )?),
+            "read_script" => to_json(commands::read_script(
+                state,
+                arg(&args, "actorId")?,
+                arg::<Option<String>>(&args, "path")?,
+            )?),
             "script_toolchain" => to_json(commands::script_toolchain(state)?),
-            "script_diagnostics" => {
-                to_json(commands::script_diagnostics(state, arg(&args, "actorId")?)?)
-            }
+            "script_diagnostics" => to_json(commands::script_diagnostics(
+                state,
+                arg(&args, "actorId")?,
+                arg::<Option<String>>(&args, "path")?,
+            )?),
+            "format_script" => to_json(commands::format_script(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg::<Option<String>>(&args, "path")?,
+            )?),
+            "clippy_script" => to_json(commands::clippy_script(
+                state,
+                arg(&args, "actorId")?,
+                arg::<Option<String>>(&args, "path")?,
+            )?),
+            "script_completions" => to_json(commands::script_completions(
+                state,
+                arg(&args, "prefix").unwrap_or_default(),
+            )?),
+            "script_hover" => to_json(commands::script_hover(state, arg(&args, "symbol")?)?),
             "sync_script_ide" => to_json(commands::sync_script_ide(state)?),
             "open_script_ide" => to_json(commands::open_script_ide(state)?),
             "write_script" => to_json(commands::write_script(
@@ -846,6 +892,7 @@ impl Backend {
                 app,
                 arg(&args, "actorId")?,
                 arg(&args, "source")?,
+                arg::<Option<String>>(&args, "path")?,
             )?),
 
             "set_actor_visual" => {

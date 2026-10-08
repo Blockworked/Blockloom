@@ -17,18 +17,45 @@
 //! machine that presses Play. [`compile`] says so plainly when it isn't.
 
 pub mod abi;
+pub mod complete;
 pub mod data;
 pub mod ide;
+pub mod symbols;
+pub mod timing;
+pub mod typed;
+pub mod wit;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// The crate a script links against, assembled from the two halves that make
 /// it: the boundary the host also compiles, and the API over it.
-pub(crate) const PRELUDE_SOURCE: &str = concat!(include_str!("abi.rs"), include_str!("prelude.rs"));
+pub(crate) const PRELUDE_SOURCE: &str = concat!(
+    include_str!("abi.rs"),
+    include_str!("timing.rs"),
+    include_str!("typed.rs"),
+    include_str!("prelude.rs")
+);
 
 /// Where scripts live inside a project folder.
 pub const SCRIPTS_DIR: &str = "assets/scripts";
+
+/// Shared library code for scripts, as `mod` sources rather than runnable
+/// scripts. A file under here is never built on its own; a script pulls it in
+/// with `#[path] mod`, and its edits invalidate every script build.
+pub const SHARED_DIR: &str = "assets/scripts/shared";
+
+/// Whether `relative` names shared library code rather than a runnable script.
+pub fn is_shared_path(relative: &str) -> bool {
+    let relative = relative.replace('\\', "/");
+    relative.starts_with(&format!("{SHARED_DIR}/")) && relative.ends_with(".rs")
+}
+
+/// Whether `relative` is a runnable script: a valid path outside the shared
+/// tree. Only these attach to actors and compile to libraries.
+pub fn is_script_entry(relative: &str) -> bool {
+    is_valid_path(relative) && !is_shared_path(relative)
+}
 
 /// Where built libraries and the generated `blockloom` crate go. Inside the
 /// project folder because that is all the runtime is told about, and dotted
@@ -38,7 +65,8 @@ pub const BUILD_DIR: &str = ".blockloom/build";
 /// The edition a script is compiled as, which is the one the workspace uses.
 const EDITION: &str = "2024";
 
-/// What a new script file starts as.
+/// What a new script file starts as. The canonical example: the docs'
+/// Rosetta page (`docs/script-rosetta.md`) maps every block to its call here.
 pub fn starter(actor: &str) -> String {
     format!(
         r#"// {actor}'s script. Real Rust, compiled when you press Play.
@@ -46,6 +74,10 @@ pub fn starter(actor: &str) -> String {
 // `std` is available; other crates aren't - there's no Cargo behind this, so
 // a build stays under a second. Everything you can do to the world is on
 // `Actor`, and it lands as the same effect the blocks produce.
+//
+// Prefer the checked spellings: `ForceMode`, `WindDial`, `WaterDial`,
+// `CloudDial`, `Precipitation`, `Easing` and `Color` over dial strings, and
+// `symbols::actors::...` over string literals (see docs/script-rosetta.md).
 use blockloom::*;
 
 fn start(me: &Actor) {{
@@ -272,6 +304,36 @@ fn stamp_for(toolchain: &str, target: Option<&str>, source: &str) -> String {
     )
 }
 
+/// Every shared source file, sorted, as project-relative paths.
+pub fn shared_sources(project_dir: &Path) -> Vec<String> {
+    crate::script::ide::list_scripts(project_dir)
+        .into_iter()
+        .filter(|path| is_shared_path(path))
+        .collect()
+}
+
+/// Fingerprint of the shared tree: any edit, add or delete rebuilds every
+/// script, since each one may `mod` it in. Empty when nothing is shared.
+fn shared_stamp(project_dir: &Path) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    let mut sources = shared_sources(project_dir);
+    sources.sort();
+    let mut bytes = 0usize;
+    for relative in &sources {
+        let content = std::fs::read(source_path(project_dir, relative)).unwrap_or_default();
+        bytes += content.len();
+        relative.hash(&mut hash);
+        content.hash(&mut hash);
+    }
+    format!(
+        "shared {} files {} bytes {:016x}\n",
+        sources.len(),
+        bytes,
+        hash.finish(),
+    )
+}
+
 /// Builds `relative` into a shared library and returns where it landed.
 /// Re-uses the last build when the source, the toolchain and the ABI are all
 /// unchanged, so pressing Play twice costs nothing the second time.
@@ -299,7 +361,12 @@ pub fn compile_for_with_linker(
     target: Option<&str>,
     linker: Option<&Path>,
 ) -> Result<PathBuf, String> {
-    if !is_valid_path(relative) {
+    if !is_script_entry(relative) {
+        if is_shared_path(relative) {
+            return Err(format!(
+                "\"{relative}\" is shared library code under {SHARED_DIR}/, not a runnable script"
+            ));
+        }
         return Err(format!(
             "\"{relative}\" isn't a script path - a script lives in {SCRIPTS_DIR}/ and ends in .rs"
         ));
@@ -323,6 +390,11 @@ pub fn compile_for_with_linker(
     let stamp = stamp_path(project_dir, relative, target);
     let mut wanted = stamp_for(&toolchain, target, &source);
     wanted.push_str(&stamp_for(&toolchain, target, PRELUDE_SOURCE));
+    wanted.push_str(&shared_stamp(project_dir));
+    // Project symbols ride in the `blockloom` rlib: a rename changes them,
+    // so it must rebuild every script even when no source changed.
+    wanted.push_str(&symbols::project_symbols_for_dir(project_dir).1);
+    wanted.push('\n');
     // A moved SDK row moves the linker: without it in the stamp a stale
     // library would survive the move.
     if let Some(linker) = linker {
@@ -335,7 +407,7 @@ pub fn compile_for_with_linker(
         return Ok(library);
     }
 
-    let rlib = build_prelude(&build, &toolchain, target)?;
+    let rlib = build_prelude(&build, project_dir, &toolchain, target)?;
     let mut command = rustc_command();
     if let Some(triple) = target {
         command.arg("--target").arg(triple);
@@ -384,17 +456,30 @@ pub fn compile_for_with_linker(
 
 /// Builds (or reuses) the `blockloom` crate every script links against. It
 /// depends only on this build of Blockloom and on the toolchain, so one copy
-/// per project folder is enough.
-fn build_prelude(build: &Path, toolchain: &str, target: Option<&str>) -> Result<PathBuf, String> {
+/// per project folder is enough - plus the project's own symbols, so a
+/// rename rebuilds every script against the new names.
+fn build_prelude(
+    build: &Path,
+    project_dir: &Path,
+    toolchain: &str,
+    target: Option<&str>,
+) -> Result<PathBuf, String> {
     let source_path = build.join("blockloom.rs");
     let rlib = build.join("libblockloom.rlib");
     let stamp = build.join("blockloom.stamp");
-    let wanted = stamp_for(toolchain, target, PRELUDE_SOURCE);
+    let (symbols_source, symbols_stamp) = symbols::project_symbols_for_dir(project_dir);
+    let mut wanted = stamp_for(toolchain, target, PRELUDE_SOURCE);
+    wanted.push_str(&symbols_stamp);
+    wanted.push('\n');
     if rlib.is_file() && std::fs::read_to_string(&stamp).is_ok_and(|previous| previous == wanted) {
         return Ok(rlib);
     }
 
-    std::fs::write(&source_path, PRELUDE_SOURCE)
+    let mut assembled = String::with_capacity(PRELUDE_SOURCE.len() + symbols_source.len() + 1);
+    assembled.push_str(PRELUDE_SOURCE);
+    assembled.push('\n');
+    assembled.push_str(&symbols_source);
+    std::fs::write(&source_path, assembled)
         .map_err(|e| format!("{}: {e}", source_path.display()))?;
     let mut command = rustc_command();
     if let Some(triple) = target {
@@ -443,9 +528,15 @@ fn is_newer(built: &Path, source: &Path) -> bool {
 }
 
 /// Makes a script file from the starter template, failing if one is already
-/// there. Returns the path relative to the project folder.
+/// there. Returns the path relative to the project folder. Shared library
+/// code is not a starter script: make it as a text asset instead.
 pub fn create(project_dir: &Path, relative: &str, actor: &str) -> Result<String, String> {
-    if !is_valid_path(relative) {
+    if !is_script_entry(relative) {
+        if is_shared_path(relative) {
+            return Err(format!(
+                "\"{relative}\" is shared library code under {SHARED_DIR}/, not a runnable script"
+            ));
+        }
         return Err(format!(
             "\"{relative}\" isn't a script path - a script lives in {SCRIPTS_DIR}/ and ends in .rs"
         ));
@@ -551,6 +642,29 @@ mod tests {
         assert!(!is_valid_path("/etc/passwd.rs"));
         assert!(!is_valid_path("assets/player.png"));
         assert!(!is_valid_path("assets/scripts/player.png"));
+    }
+
+    #[test]
+    fn shared_code_is_not_a_runnable_script() {
+        assert!(is_shared_path("assets/scripts/shared/util.rs"));
+        assert!(!is_shared_path("assets/scripts/player.rs"));
+        assert!(is_script_entry("assets/scripts/player.rs"));
+        assert!(!is_script_entry("assets/scripts/shared/util.rs"));
+        // Compiling shared code alone is refused, not a library.
+        let dir = std::env::temp_dir().join(format!("blockloom-shared-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets/scripts/shared")).unwrap();
+        std::fs::write(dir.join("assets/scripts/shared/util.rs"), "pub fn x() {}").unwrap();
+        assert!(compile(&dir, "assets/scripts/shared/util.rs").is_err());
+        // Its fingerprint moves with edits, so dependents rebuild.
+        let before = shared_stamp(&dir);
+        std::fs::write(
+            dir.join("assets/scripts/shared/util.rs"),
+            "pub fn x() -> i32 { 1 }",
+        )
+        .unwrap();
+        assert_ne!(before, shared_stamp(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

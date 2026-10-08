@@ -298,6 +298,7 @@ Item {
                 }
             }
             InspectorPanel {
+                id: inspector
                 visible: panels.tab !== 2
                 Layout.fillHeight: true
                 Layout.preferredWidth: panels.rightOpen ? panels.rightWidth : 34
@@ -308,7 +309,7 @@ Item {
             }
         }
         AssetTray { visible: panels.tab !== 2; Layout.fillWidth: true; app: root.app }
-        RunLog { Layout.fillWidth: true; app: root.app }
+        RunLog { Layout.fillWidth: true; app: root.app; onOpenScriptRequested: (path, line) => inspector.openScript(path, line) }
     }
 
     BwDialog {

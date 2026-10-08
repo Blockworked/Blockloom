@@ -2093,34 +2093,100 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "create-script",
         cmd: "create_script",
         aliases: &["create_script"],
-        summary: "Give an actor a Rust script, made from the starter template.",
+        summary: "Give an actor its first Rust script, made from the starter template.",
         args: &[A],
+    },
+    CommandSpec {
+        name: "add-script",
+        cmd: "add_script",
+        aliases: &["add_script"],
+        summary: "Attach another script to an actor; scripts run in component order.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "path",
+                ty: "string",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "remove-script",
+        cmd: "remove_script",
+        aliases: &["remove_script"],
+        summary: "Detach one script from an actor; the file stays on disk.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "path",
+                ty: "string",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "move-script",
+        cmd: "move_script",
+        aliases: &["move_script"],
+        summary: "Move one of an actor's scripts to an index among its scripts.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "path",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "index",
+                ty: "number",
+                required: true,
+            },
+        ],
     },
     CommandSpec {
         name: "check-script",
         cmd: "check_script",
         aliases: &["check_script"],
-        summary: "Compile one actor's script and log what rustc says.",
-        args: &[A],
+        summary: "Compile one of an actor's scripts and log what rustc says.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "path",
+                ty: "string",
+                required: false,
+            },
+        ],
     },
     CommandSpec {
         name: "read-script",
         cmd: "read_script",
         aliases: &["read_script"],
-        summary: "An actor's script source.",
-        args: &[A],
+        summary: "One of an actor's scripts source.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "path",
+                ty: "string",
+                required: false,
+            },
+        ],
     },
     CommandSpec {
         name: "write-script",
         cmd: "write_script",
         aliases: &["write_script"],
-        summary: "Replace an actor's script source.",
+        summary: "Replace one of an actor's scripts source.",
         args: &[
             A,
             ArgSpec {
                 name: "source",
                 ty: "string",
                 required: true,
+            },
+            ArgSpec {
+                name: "path",
+                ty: "string",
+                required: false,
             },
         ],
     },
@@ -2135,8 +2201,65 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "script-diagnostics",
         cmd: "script_diagnostics",
         aliases: &["script_diagnostics", "diagnostics"],
-        summary: "One actor's script errors pinned to their lines, for inline display.",
-        args: &[A],
+        summary: "One of an actor's scripts errors pinned to their lines, for inline display.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "path",
+                ty: "string",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "format-script",
+        cmd: "format_script",
+        aliases: &["format_script"],
+        summary: "Run rustfmt over one of an actor's scripts and write the result back.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "path",
+                ty: "string",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "clippy-script",
+        cmd: "clippy_script",
+        aliases: &["clippy_script", "clippy"],
+        summary: "Run cargo clippy over the script project, filtered to one actor's script.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "path",
+                ty: "string",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "script-completions",
+        cmd: "script_completions",
+        aliases: &["script_completions", "completions"],
+        summary: "Completion rows for the script editor: API methods plus project symbols.",
+        args: &[ArgSpec {
+            name: "prefix",
+            ty: "string",
+            required: false,
+        }],
+    },
+    CommandSpec {
+        name: "script-hover",
+        cmd: "script_hover",
+        aliases: &["script_hover", "hover"],
+        summary: "One or two lines about a script name: API doc, symbol or keyword note.",
+        args: &[ArgSpec {
+            name: "symbol",
+            ty: "string",
+            required: true,
+        }],
     },
     CommandSpec {
         name: "sync-script-ide",

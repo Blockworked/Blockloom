@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 43;
+pub const ABI_VERSION: u32 = 46;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -220,6 +220,14 @@ pub const TEXT_CUTSCENE_NAME: u32 = 20;
 /// `a` = key. This actor's stored text under it, or [`MISSING`] when the key
 /// is unset or holds a number.
 pub const TEXT_DATA: u32 = 25;
+/// `a` = variable name. The block variable this actor reads, as text: its
+/// own value first, then the shared one, else `"0"`. Numbers answer with
+/// their text. Always answers.
+pub const TEXT_VARIABLE: u32 = 26;
+/// `a` = list name, `b` = 1-based index. That item as text, or [`MISSING`]
+/// when the list is unknown or the index is out of range. Numbers answer
+/// with their text.
+pub const TEXT_LIST_ITEM: u32 = 27;
 
 /// Separates the parts a plugin call or event is spelled with in one string.
 pub const PLUGIN_SEP: char = '\u{1f}';
@@ -255,6 +263,18 @@ pub const READ_GROUNDED: u32 = 59;
 /// answers 1.0 for either kind. Host-owned per-actor storage, so every actor
 /// running one file - clones included - keeps its own copy.
 pub const READ_DATA: u32 = 60;
+/// `a` = variable name. The block variable this actor reads, as a number:
+/// its own value first, then the shared one, else 0. Text that reads as a
+/// number answers with it; anything else reads as 0. Always answers, so a
+/// canvas counter and a script counter are the same counter.
+pub const READ_VARIABLE: u32 = 61;
+/// `a` = list name. How many items the block list this actor reads holds.
+/// An unknown list reads as 0, the way the list blocks read one.
+pub const READ_LIST_LENGTH: u32 = 62;
+/// `a` = list name, `arg` = 1-based index. That item as a number, or
+/// [`MISSING`] when the list is unknown or the index is out of range. Text
+/// that reads as a number answers with it.
+pub const READ_LIST_ITEM: u32 = 63;
 /// `a` = field name (`actor`, `body`, `collider`, `error`), `b` = which
 /// obstacle, from 1. Words from this actor's last controller move.
 pub const TEXT_CONTROLLER: u32 = 23;
@@ -511,6 +531,59 @@ pub const ACT_SET_DATA_TEXT: u32 = 105;
 /// `a` = key; empty forgets every key this actor holds. Immediate, like the
 /// other two.
 pub const ACT_CLEAR_DATA: u32 = 106;
+// ─── Cross-actor writes ───────────────────────────────────────────────────
+// Same effects as the self-only verbs above, but `a` always names the actor
+// to act on (by id or name, empty for the running actor). The host resolves
+// it against the snapshot and emits the same `vm::Effect` with that actor's
+// id. A name nothing answers to is an `Effect::Error` for the running actor,
+// and reads of another actor still go through the `*_of` methods - so a read
+// straight after one of these still sees the old value, exactly as for self.
+pub const ACT_GO_TO_OTHER: u32 = 111;
+pub const ACT_CHANGE_POSITION_OTHER: u32 = 112;
+pub const ACT_MOVE_OTHER: u32 = 113;
+pub const ACT_TURN_OTHER: u32 = 114;
+pub const ACT_SET_ROTATION_OTHER: u32 = 115;
+pub const ACT_SET_SCALE_OTHER: u32 = 116;
+/// `a` = actor to turn, `b` = who to face (`"mouse"` or an actor name).
+pub const ACT_POINT_TOWARDS_OTHER: u32 = 117;
+pub const ACT_SET_VISIBLE_OTHER: u32 = 118;
+/// `a` = actor, `b` = `#RRGGBB` color.
+pub const ACT_SET_COLOR_OTHER: u32 = 119;
+/// `a` = actor, `b` = bubble text (empty clears it).
+pub const ACT_SAY_OTHER: u32 = 120;
+pub const ACT_APPLY_IMPULSE_OTHER: u32 = 121;
+pub const ACT_SET_VELOCITY_OTHER: u32 = 122;
+/// `a` = actor, `b` = force mode, `c` = `torque` to turn instead of pushing;
+/// `n0..n2` = the vector. Acts for one fixed step, like `ACT_ADD_FORCE`.
+pub const ACT_ADD_FORCE_OTHER: u32 = 123;
+/// `a` = variable name, `n0` = number. Writes the block variable this actor
+/// writes: its own slot when it has one, the shared one when only that
+/// exists, else a new slot on this actor. Immediate, so a read straight
+/// after sees it. An empty name writes nothing.
+pub const ACT_SET_VARIABLE: u32 = 124;
+/// `a` = variable name, `c` = text. Writes it the same way.
+pub const ACT_SET_VARIABLE_TEXT: u32 = 125;
+/// `a` = list name, `n0` = number. Appends it to the block list this actor
+/// writes (its own first, then the shared one). A name nobody declared is
+/// a no-op, the way the list blocks treat one. Immediate.
+pub const ACT_LIST_ADD: u32 = 126;
+/// `a` = list name, `c` = text. Appends it the same way.
+pub const ACT_LIST_ADD_TEXT: u32 = 127;
+/// `a` = list name, `n0` = 1-based index, `n1` = number. Inserts there,
+/// allowing one past the end. Out of range changes nothing.
+pub const ACT_LIST_INSERT: u32 = 128;
+/// `a` = list name, `n0` = 1-based index, `c` = text. Inserts it the same way.
+pub const ACT_LIST_INSERT_TEXT: u32 = 129;
+/// `a` = list name, `n0` = 1-based index, `n1` = number. Replaces that item.
+/// Out of range changes nothing.
+pub const ACT_LIST_REPLACE: u32 = 130;
+/// `a` = list name, `n0` = 1-based index, `c` = text. Replaces it the same way.
+pub const ACT_LIST_REPLACE_TEXT: u32 = 131;
+/// `a` = list name, `n0` = 1-based index. Deletes that item. Out of range
+/// changes nothing.
+pub const ACT_LIST_DELETE: u32 = 132;
+/// `a` = list name. Empties that list. Unknown names do nothing.
+pub const ACT_LIST_CLEAR: u32 = 133;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per
@@ -537,6 +610,16 @@ pub struct HostApi {
 pub const SYM_ABI: &[u8] = b"blockloom_script_abi";
 pub const SYM_START: &[u8] = b"blockloom_script_start";
 pub const SYM_TICK: &[u8] = b"blockloom_script_tick";
+/// `(ctx, api, dt)`: once per rendered frame while unpaused, for camera and
+/// UI motion. Optional; a script without one behaves as before.
+pub const SYM_FRAME: &[u8] = b"blockloom_script_frame";
+/// `(ctx, api, dt)`: once per rendered frame even while paused, for menus.
+/// Optional; UI strands are what blocks use for the same job.
+pub const SYM_UI: &[u8] = b"blockloom_script_ui";
+/// `(ctx, api)`: once when the run ends. Optional.
+pub const SYM_STOP: &[u8] = b"blockloom_script_stop";
+/// `(ctx, api)`: once when this actor is deleted mid-run. Optional.
+pub const SYM_DESTROY: &[u8] = b"blockloom_script_destroy";
 /// `(ctx, api, kind, n0, n1, n2, n3)`: one [`EVENT_MESSAGE`]-style kind, its
 /// numbers, and its words through [`TEXT_EVENT`].
 pub const SYM_EVENT: &[u8] = b"blockloom_script_event";

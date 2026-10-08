@@ -471,6 +471,263 @@ impl Actor {
         );
     }
 
+    // ─── Per-actor timers ──────────────────────────────────────────────
+    // The same `dt`-accumulation idea as [`Timer`], [`Every`] and
+    // [`Cooldown`], but keyed in this actor's script storage instead of a
+    // `static` - so every actor and clone running this file keeps its own
+    // countdown. Feed them the step's `dt` each tick.
+
+    /// A repeating one-shot wait: answers true on the tick `seconds` elapse,
+    /// then starts over. For fire-once, guard with a flag or `clear_data`.
+    pub fn after(&self, key: &str, seconds: f32, dt: f32) -> bool {
+        let mut left = if self.has_data(key) {
+            self.data(key)
+        } else {
+            seconds as f64
+        };
+        left -= dt.max(0.0) as f64;
+        if left <= 0.0 {
+            self.clear_data(key);
+            return true;
+        }
+        self.set_data(key, left);
+        false
+    }
+
+    /// How many whole `interval`s elapsed this step (usually 0 or 1). A slow
+    /// frame reports each missed beat rather than dropping one.
+    pub fn every(&self, key: &str, interval: f32, dt: f32) -> u32 {
+        if interval <= 0.0 {
+            return 1;
+        }
+        let mut acc = if self.has_data(key) {
+            self.data(key)
+        } else {
+            0.0
+        };
+        acc += dt.max(0.0) as f64;
+        let mut beats = 0;
+        while acc >= interval as f64 {
+            acc -= interval as f64;
+            beats += 1;
+        }
+        self.set_data(key, acc);
+        beats
+    }
+
+    /// Whether the named cooldown may fire now: unset or counted down.
+    pub fn cooldown_ready(&self, key: &str) -> bool {
+        !self.has_data(key) || self.data(key) <= 0.0
+    }
+
+    /// Starts a `seconds` wait under `key`, unless one is already running -
+    /// so a held button does not restart the clock every tick.
+    pub fn cooldown_trigger(&self, key: &str, seconds: f32) {
+        if self.cooldown_ready(key) {
+            self.set_data(key, seconds.max(0.0) as f64);
+        }
+    }
+
+    /// Counts a running cooldown down by `dt`.
+    pub fn cooldown_tick(&self, key: &str, dt: f32) {
+        if self.has_data(key) {
+            let left = (self.data(key) - dt.max(0.0) as f64).max(0.0);
+            self.set_data(key, left);
+        }
+    }
+
+    // ─── Block variables and lists ─────────────────────────────────────
+    // The same working memory the canvas uses: this actor's own variables
+    // over the shared ones, and the same for lists. Writes land at once, so
+    // a read straight after sees them, and `save_variable` persists them
+    // the same way it does for a block. A list name nobody declared reads
+    // empty and writes nothing, exactly as the list blocks do.
+
+    /// The block variable `name` as a number: this actor's value first, then
+    /// the shared one, else 0. Text that reads as a number answers with it.
+    pub fn variable(&self, name: &str) -> f64 {
+        self.number(READ_VARIABLE, Str::borrow(name), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+    }
+
+    /// The same variable as text: numbers answer with their text, and an
+    /// unknown name reads as `"0"`, the way a canvas reporter shows one.
+    pub fn variable_text(&self, name: &str) -> String {
+        self.text(TEXT_VARIABLE, Str::borrow(name), Str::EMPTY)
+            .unwrap_or_else(|| "0".to_string())
+    }
+
+    /// Writes the block variable `name`: this actor's slot when it has one,
+    /// the shared one when only that exists, else a new slot on this actor.
+    /// An empty name writes nothing.
+    pub fn set_variable(&self, name: &str, value: f64) {
+        self.act(
+            ACT_SET_VARIABLE,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::EMPTY,
+            value,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Writes the block variable `name` as text, the same way.
+    pub fn set_variable_text(&self, name: &str, value: &str) {
+        self.act(
+            ACT_SET_VARIABLE_TEXT,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::borrow(value),
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Adds `by` to the block variable `name`, counting text that does not
+    /// read as a number as zero, as the change block does.
+    pub fn change_variable(&self, name: &str, by: f64) {
+        self.set_variable(name, self.variable(name) + by);
+    }
+
+    /// How many items the block list `name` holds: this actor's list first,
+    /// then the shared one, else 0.
+    pub fn list_len(&self, name: &str) -> usize {
+        self.number(READ_LIST_LENGTH, Str::borrow(name), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            .max(0.0) as usize
+    }
+
+    /// The 1-based item `index` as a number. Out of range, unknown lists and
+    /// text that does not read as a number all answer 0.
+    pub fn list_number(&self, name: &str, index: usize) -> f64 {
+        self.number(
+            READ_LIST_ITEM,
+            Str::borrow(name),
+            Str::EMPTY,
+            index as f64,
+        )
+        .unwrap_or(0.0)
+    }
+
+    /// The 1-based item `index` as text. Numbers answer with their text;
+    /// out of range and unknown lists answer empty.
+    pub fn list_text(&self, name: &str, index: usize) -> String {
+        self.text(
+            TEXT_LIST_ITEM,
+            Str::borrow(name),
+            Str::borrow(&index.to_string()),
+        )
+        .unwrap_or_default()
+    }
+
+    /// Appends a number to the block list `name`. Unknown names do nothing.
+    pub fn list_add(&self, name: &str, value: f64) {
+        self.act(
+            ACT_LIST_ADD,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::EMPTY,
+            value,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Appends text to the block list `name`, the same way.
+    pub fn list_add_text(&self, name: &str, value: &str) {
+        self.act(
+            ACT_LIST_ADD_TEXT,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::borrow(value),
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Inserts a number at the 1-based `index`, allowing one past the end.
+    /// Out of range changes nothing.
+    pub fn list_insert(&self, name: &str, index: usize, value: f64) {
+        self.act(
+            ACT_LIST_INSERT,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::EMPTY,
+            index as f64,
+            value,
+            0.0,
+        );
+    }
+
+    /// Inserts text at the 1-based `index`, the same way.
+    pub fn list_insert_text(&self, name: &str, index: usize, value: &str) {
+        self.act(
+            ACT_LIST_INSERT_TEXT,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::borrow(value),
+            index as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Replaces the 1-based item `index` with a number. Out of range changes
+    /// nothing.
+    pub fn list_replace(&self, name: &str, index: usize, value: f64) {
+        self.act(
+            ACT_LIST_REPLACE,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::EMPTY,
+            index as f64,
+            value,
+            0.0,
+        );
+    }
+
+    /// Replaces the 1-based item `index` with text, the same way.
+    pub fn list_replace_text(&self, name: &str, index: usize, value: &str) {
+        self.act(
+            ACT_LIST_REPLACE_TEXT,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::borrow(value),
+            index as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Deletes the 1-based item `index`. Out of range changes nothing.
+    pub fn list_delete(&self, name: &str, index: usize) {
+        self.act(
+            ACT_LIST_DELETE,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::EMPTY,
+            index as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Empties the block list `name`. Unknown names do nothing.
+    pub fn list_clear(&self, name: &str) {
+        self.act(
+            ACT_LIST_CLEAR,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
     /// Seconds since the green flag.
     pub fn timer(&self) -> f64 {
         self.number(READ_TIMER, Str::EMPTY, Str::EMPTY, 0.0)
@@ -1154,7 +1411,8 @@ impl Actor {
 
     /// Tweens the size towards `factor` over `seconds`, eased like the
     /// block. `easing` names a [`TweenEasing`]: "Linear", "EaseIn",
-    /// "EaseOut", "EaseInOut", "Bounce" or "Elastic".
+    /// "EaseOut", "EaseInOut", "Bounce" or "Elastic". Prefer
+    /// [`tween_scale_eased`](Self::tween_scale_eased): the checked spelling.
     pub fn tween_scale(&self, factor: f32, seconds: f32, easing: &str) {
         self.act(
             ACT_TWEEN_SCALE,
@@ -1167,7 +1425,14 @@ impl Actor {
         );
     }
 
-    /// Tweens one axis towards `degrees` over `seconds`, eased.
+    /// The checked spelling of [`tween_scale`](Self::tween_scale).
+    pub fn tween_scale_eased(&self, factor: f32, seconds: f32, easing: Easing) {
+        self.tween_scale(factor, seconds, easing.name());
+    }
+
+    /// Tweens one axis towards `degrees` over `seconds`, eased. Prefer
+    /// [`tween_rotation_eased`](Self::tween_rotation_eased): the checked
+    /// spelling.
     pub fn tween_rotation(&self, axis: Axis, degrees: f32, seconds: f32, easing: &str) {
         self.act(
             ACT_TWEEN_ROTATION,
@@ -1180,8 +1445,14 @@ impl Actor {
         );
     }
 
+    /// The checked spelling of [`tween_rotation`](Self::tween_rotation).
+    pub fn tween_rotation_eased(&self, axis: Axis, degrees: f32, seconds: f32, easing: Easing) {
+        self.tween_rotation(axis, degrees, seconds, easing.name());
+    }
+
     /// Tweens the tint towards a `#RRGGBB` color over `seconds`, eased.
-    /// No-op on an image actor, like `set color`.
+    /// No-op on an image actor, like `set color`. Prefer
+    /// [`tween_color_eased`](Self::tween_color_eased): the checked spelling.
     pub fn tween_color(&self, color: &str, seconds: f32, easing: &str) {
         self.act(
             ACT_TWEEN_COLOR,
@@ -1192,6 +1463,11 @@ impl Actor {
             0.0,
             0.0,
         );
+    }
+
+    /// The checked spelling of [`tween_color`](Self::tween_color).
+    pub fn tween_color_eased(&self, color: Color, seconds: f32, easing: Easing) {
+        self.tween_color(&color.hex(), seconds, easing.name());
     }
 
     /// Stops every tween on this actor where it stands: glides included.
@@ -1576,6 +1852,7 @@ impl Actor {
 
     /// One of the wind's dials for the rest of the run: `"direction"` in
     /// degrees clockwise from north, `"speed"`, `"gust"` or `"storm"` 0-1.
+    /// Prefer [`set_wind_dial`](Self::set_wind_dial): the checked spelling.
     pub fn set_wind(&self, dial: &str, value: f32) {
         self.act(
             ACT_SET_WIND,
@@ -1586,6 +1863,11 @@ impl Actor {
             0.0,
             0.0,
         );
+    }
+
+    /// The checked spelling of [`set_wind`](Self::set_wind).
+    pub fn set_wind_dial(&self, dial: WindDial, value: f32) {
+        self.set_wind(dial.name(), value);
     }
 
     /// One of cloud layer `layer`'s dials (from 1) for the rest of the run:
@@ -1604,7 +1886,8 @@ impl Actor {
 
     /// A water dial for the rest of the run: `"level"` (the surface's height
     /// at rest), `"chop"` 0-1 or `"foam"` 0-2. Moves this actor's own water
-    /// when it has some, and every body's otherwise.
+    /// when it has some, and every body's otherwise. Prefer
+    /// [`set_water_dial`](Self::set_water_dial): the checked spelling.
     pub fn set_water(&self, dial: &str, value: f32) {
         self.act(
             ACT_SET_WATER,
@@ -1615,6 +1898,11 @@ impl Actor {
             0.0,
             0.0,
         );
+    }
+
+    /// The checked spelling of [`set_water`](Self::set_water).
+    pub fn set_water_dial(&self, dial: WaterDial, value: f32) {
+        self.set_water(dial.name(), value);
     }
 
     /// Paints one tilemap cell at a world point for the rest of the run: a
@@ -1764,7 +2052,9 @@ impl Actor {
     }
 
     /// Rain or snow intensity, 0-1, for the rest of the run: `"rain"` or
-    /// `"snow"`.
+    /// `"snow"`. Prefer
+    /// [`set_precipitation_kind`](Self::set_precipitation_kind): the checked
+    /// spelling.
     pub fn set_precipitation(&self, kind: &str, value: f32) {
         self.act(
             ACT_SET_PRECIPITATION,
@@ -1775,6 +2065,11 @@ impl Actor {
             0.0,
             0.0,
         );
+    }
+
+    /// The checked spelling of [`set_precipitation`](Self::set_precipitation).
+    pub fn set_precipitation_kind(&self, kind: Precipitation, value: f32) {
+        self.set_precipitation(kind.name(), value);
     }
 
     /// Blends the weather towards a preset (Clear, Overcast, Storm, Sunset,
@@ -1943,6 +2238,7 @@ impl Actor {
 
     /// One of the volumetric clouds' dials for the rest of the run:
     /// `"coverage"` 0-1, `"density"` 0-10 or `"type"` 0-1 (stratus to cumulus).
+    /// Prefer [`set_clouds_dial`](Self::set_clouds_dial): the checked spelling.
     pub fn set_clouds(&self, dial: &str, value: f32) {
         self.act(
             ACT_SET_CLOUDS,
@@ -1953,6 +2249,11 @@ impl Actor {
             0.0,
             0.0,
         );
+    }
+
+    /// The checked spelling of [`set_clouds`](Self::set_clouds).
+    pub fn set_clouds_dial(&self, dial: CloudDial, value: f32) {
+        self.set_clouds(dial.name(), value);
     }
 
     /// Extra cloud drift, world units per second, for the rest of the run.
@@ -2051,7 +2352,8 @@ impl Actor {
     }
 
     /// A force on this body for one fixed step. `mode` is `"Force"`,
-    /// `"Acceleration"`, `"Impulse"` or `"VelocityChange"`.
+    /// `"Acceleration"`, `"Impulse"` or `"VelocityChange"`. Prefer
+    /// [`add_force_mode`](Self::add_force_mode): the checked spelling.
     pub fn add_force(&self, mode: &str, x: f32, y: f32, z: f32) {
         self.act(
             ACT_ADD_FORCE,
@@ -2062,6 +2364,12 @@ impl Actor {
             y as f64,
             z as f64,
         );
+    }
+
+    /// The checked spelling of [`add_force`](Self::add_force): a typo fails
+    /// compile instead of silently doing nothing at runtime.
+    pub fn add_force_mode(&self, mode: ForceMode, x: f32, y: f32, z: f32) {
+        self.add_force(mode.name(), x, y, z);
     }
 
     /// Moves this actor's character controller by a displacement in world
@@ -2227,7 +2535,8 @@ impl Actor {
         self.controller_text(&format!("motor {field}"), 0)
     }
 
-    /// The same for a torque. A 2D body turns about z only.
+    /// The same for a torque. A 2D body turns about z only. Prefer
+    /// [`add_torque_mode`](Self::add_torque_mode): the checked spelling.
     pub fn add_torque(&self, mode: &str, x: f32, y: f32, z: f32) {
         self.act(
             ACT_ADD_FORCE,
@@ -2238,6 +2547,11 @@ impl Actor {
             y as f64,
             z as f64,
         );
+    }
+
+    /// The checked spelling of [`add_torque`](Self::add_torque).
+    pub fn add_torque_mode(&self, mode: ForceMode, x: f32, y: f32, z: f32) {
+        self.add_torque(mode.name(), x, y, z);
     }
 
     pub fn set_velocity(&self, x: f32, y: f32, z: f32) {
@@ -2277,7 +2591,8 @@ impl Actor {
         );
     }
 
-    /// A `#RRGGBB` string. Does nothing to an image actor.
+    /// A `#RRGGBB` string. Does nothing to an image actor. Prefer
+    /// [`set_color_rgb`](Self::set_color_rgb): the checked spelling.
     pub fn set_color(&self, color: &str) {
         self.act(
             ACT_SET_COLOR,
@@ -2288,6 +2603,11 @@ impl Actor {
             0.0,
             0.0,
         );
+    }
+
+    /// The checked spelling of [`set_color`](Self::set_color).
+    pub fn set_color_rgb(&self, color: Color) {
+        self.set_color(&color.hex());
     }
 
     /// Plays a sound file from the project's assets as a global voice.
@@ -2760,6 +3080,325 @@ impl Actor {
         self.number(READ_GAME_PAUSED, Str::EMPTY, Str::EMPTY, 0.0)
             .unwrap_or(0.0)
             != 0.0
+    }
+
+    /// The world as this script sees it, for reaching other actors. Reads see
+    /// the same snapshot and writes land as the same effects, only with an
+    /// explicit target - so a read straight after a write still sees the old
+    /// value, exactly as for self.
+    pub fn world(&self) -> World {
+        World {
+            ctx: self.ctx,
+            api: self.api,
+        }
+    }
+
+    /// Another actor by name or id, for reading and writing it directly.
+    /// An empty name means this actor. A missing actor reads as zero/false/
+    /// `None` and writes report an error, like the `_of` readers do.
+    pub fn actor(&self, name: &str) -> ActorRef {
+        self.world().actor(name)
+    }
+}
+
+/// The world a script runs in, as a handle for reaching other actors.
+/// Obtain it from [`Actor::world`], then name an actor to drive it:
+///
+/// ```ignore
+/// let ball = me.world().actor("Ball");
+/// if let Some(pose) = ball.pose() {
+///     ball.go_to(pose.position[0], 0.0, 0.0);
+/// }
+/// ```
+#[derive(Clone, Copy)]
+pub struct World {
+    ctx: *mut std::ffi::c_void,
+    api: *const HostApi,
+}
+
+impl World {
+    fn helper(&self) -> Actor {
+        Actor {
+            ctx: self.ctx,
+            api: self.api,
+        }
+    }
+
+    /// Another actor by name or id. Empty means the running actor. Nothing is
+    /// resolved here: reads use the snapshot and writes resolve on the host,
+    /// so a stale handle simply misses until the actor exists again.
+    pub fn actor(&self, name: &str) -> ActorRef {
+        ActorRef {
+            ctx: self.ctx,
+            api: self.api,
+            target: name.to_string(),
+        }
+    }
+
+    /// How many actors answer to `name` right now, clones included. Empty
+    /// counts every actor.
+    pub fn actor_count(&self, name: &str) -> usize {
+        self.helper().actor_count(name)
+    }
+}
+
+/// Another actor, named by id or name, for cross-actor reads and writes.
+/// An empty target means the running actor. Reads use the snapshot (`None`,
+/// zero or false when nothing answers to the name); writes become the same
+/// effects a self-write would, with that actor's id, and a missing target is
+/// an error for the running actor.
+#[derive(Clone)]
+pub struct ActorRef {
+    ctx: *mut std::ffi::c_void,
+    api: *const HostApi,
+    target: String,
+}
+
+impl ActorRef {
+    fn helper(&self) -> Actor {
+        Actor {
+            ctx: self.ctx,
+            api: self.api,
+        }
+    }
+
+    fn act_other(&self, what: u32, a_extra: &str, b_extra: &str, numbers: &[f64]) {
+        let me = self.helper();
+        me.act_many(
+            what,
+            Str::borrow(&self.target),
+            Str::borrow(a_extra),
+            Str::borrow(b_extra),
+            numbers,
+        );
+    }
+
+    /// What was passed to [`World::actor`], trimmed only on the host.
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+
+    /// Whether anything answers to this name or id right now.
+    pub fn exists(&self) -> bool {
+        self.helper().pose_of(&self.target).is_some()
+    }
+
+    /// Its world pose, or `None` when nothing answers to the name.
+    pub fn pose(&self) -> Option<Pose> {
+        self.helper().pose_of(&self.target)
+    }
+
+    /// Its position on an axis. Zero when it is missing.
+    pub fn position(&self, axis: Axis) -> f32 {
+        self.helper().position_of(&self.target, axis)
+    }
+
+    pub fn x(&self) -> f32 {
+        self.position(Axis::X)
+    }
+
+    pub fn y(&self) -> f32 {
+        self.position(Axis::Y)
+    }
+
+    pub fn z(&self) -> f32 {
+        self.position(Axis::Z)
+    }
+
+    /// Its Euler rotation in degrees, read through its pose. Zero missing.
+    pub fn rotation(&self, axis: Axis) -> f32 {
+        self.pose().map(|pose| pose.rotation[axis as usize]).unwrap_or(0.0)
+    }
+
+    /// Its uniform scale, read through its pose. Missing reads as 1.
+    pub fn scale(&self) -> f32 {
+        self.pose().map(|pose| pose.scale).unwrap_or(1.0)
+    }
+
+    /// Where it stands in its parent's frame. Zero when missing.
+    pub fn local_position(&self, axis: Axis) -> f32 {
+        self.helper().local_position_of(&self.target, axis)
+    }
+
+    pub fn velocity(&self, axis: Axis) -> f32 {
+        self.helper().velocity_of(&self.target, axis)
+    }
+
+    pub fn angular_velocity(&self, axis: Axis) -> f32 {
+        self.helper().angular_velocity_of(&self.target, axis)
+    }
+
+    pub fn mass(&self) -> f32 {
+        self.helper().mass_of(&self.target)
+    }
+
+    pub fn grounded(&self) -> bool {
+        self.helper().grounded_of(&self.target)
+    }
+
+    pub fn is_trigger(&self) -> bool {
+        self.helper().is_trigger(&self.target)
+    }
+
+    pub fn collision_layer(&self) -> u8 {
+        self.helper().collision_layer(&self.target)
+    }
+
+    pub fn casts_shadows(&self) -> bool {
+        self.helper().casts_shadows(&self.target)
+    }
+
+    pub fn is_underwater(&self) -> bool {
+        self.helper().is_underwater(&self.target)
+    }
+
+    pub fn room_containing(&self) -> Option<String> {
+        self.helper().room_containing(&self.target)
+    }
+
+    pub fn distance_to(&self, other: &str) -> f32 {
+        // Distance between two named actors, read from the snapshot.
+        let me = self.helper();
+        let (a, b) = (me.pose_of(&self.target), me.pose_of(other));
+        match (a, b) {
+            (Some(a), Some(b)) => {
+                let d = [
+                    a.position[0] - b.position[0],
+                    a.position[1] - b.position[1],
+                    a.position[2] - b.position[2],
+                ];
+                (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+            }
+            _ => 0.0,
+        }
+    }
+
+    /// Places it at a world position. Pixels in 2D, metres in 3D.
+    pub fn go_to(&self, x: f32, y: f32, z: f32) {
+        self.act_other(
+            ACT_GO_TO_OTHER,
+            "",
+            "",
+            &[x as f64, y as f64, z as f64],
+        );
+    }
+
+    pub fn change_position(&self, axis: Axis, by: f32) {
+        self.act_other(
+            ACT_CHANGE_POSITION_OTHER,
+            "",
+            "",
+            &[axis.index(), by as f64, 0.0],
+        );
+    }
+
+    /// Forward along its own facing.
+    pub fn move_forward(&self, steps: f32) {
+        self.act_other(ACT_MOVE_OTHER, "", "", &[steps as f64, 0.0, 0.0]);
+    }
+
+    pub fn turn(&self, axis: Axis, degrees: f32) {
+        self.act_other(
+            ACT_TURN_OTHER,
+            "",
+            "",
+            &[axis.index(), degrees as f64, 0.0],
+        );
+    }
+
+    pub fn set_rotation(&self, axis: Axis, degrees: f32) {
+        self.act_other(
+            ACT_SET_ROTATION_OTHER,
+            "",
+            "",
+            &[axis.index(), degrees as f64, 0.0],
+        );
+    }
+
+    pub fn set_scale(&self, factor: f32) {
+        self.act_other(ACT_SET_SCALE_OTHER, "", "", &[factor as f64, 0.0, 0.0]);
+    }
+
+    /// Turns it to face another actor by name, or `"mouse"`.
+    pub fn point_towards(&self, target: &str) {
+        self.act_other(ACT_POINT_TOWARDS_OTHER, target, "", &[]);
+    }
+
+    /// A speech bubble over it; empty clears it.
+    pub fn say(&self, text: &str) {
+        self.act_other(ACT_SAY_OTHER, text, "", &[]);
+    }
+
+    pub fn set_visible(&self, visible: bool) {
+        self.act_other(
+            ACT_SET_VISIBLE_OTHER,
+            "",
+            "",
+            &[if visible { 1.0 } else { 0.0 }, 0.0, 0.0],
+        );
+    }
+
+    /// A `#RRGGBB` string. Does nothing to an image actor. Prefer
+    /// [`set_color_rgb`](Self::set_color_rgb): the checked spelling.
+    pub fn set_color(&self, color: &str) {
+        self.act_other(ACT_SET_COLOR_OTHER, color, "", &[]);
+    }
+
+    /// The checked spelling of [`set_color`](Self::set_color).
+    pub fn set_color_rgb(&self, color: Color) {
+        self.set_color(&color.hex());
+    }
+
+    /// A one-shot push. Only a dynamic body responds.
+    pub fn push(&self, x: f32, y: f32, z: f32) {
+        self.act_other(
+            ACT_APPLY_IMPULSE_OTHER,
+            "",
+            "",
+            &[x as f64, y as f64, z as f64],
+        );
+    }
+
+    pub fn set_velocity(&self, x: f32, y: f32, z: f32) {
+        self.act_other(
+            ACT_SET_VELOCITY_OTHER,
+            "",
+            "",
+            &[x as f64, y as f64, z as f64],
+        );
+    }
+
+    /// A force on its body for one fixed step. `mode` is `"Force"`,
+    /// `"Acceleration"`, `"Impulse"` or `"VelocityChange"`. Prefer
+    /// [`add_force_mode`](Self::add_force_mode): the checked spelling.
+    pub fn add_force(&self, mode: &str, x: f32, y: f32, z: f32) {
+        self.act_other(
+            ACT_ADD_FORCE_OTHER,
+            mode,
+            "",
+            &[x as f64, y as f64, z as f64],
+        );
+    }
+
+    /// The checked spelling of [`add_force`](Self::add_force).
+    pub fn add_force_mode(&self, mode: ForceMode, x: f32, y: f32, z: f32) {
+        self.add_force(mode.name(), x, y, z);
+    }
+
+    /// The same for a torque. A 2D body turns about z only. Prefer
+    /// [`add_torque_mode`](Self::add_torque_mode): the checked spelling.
+    pub fn add_torque(&self, mode: &str, x: f32, y: f32, z: f32) {
+        self.act_other(
+            ACT_ADD_FORCE_OTHER,
+            mode,
+            "torque",
+            &[x as f64, y as f64, z as f64],
+        );
+    }
+
+    /// The checked spelling of [`add_torque`](Self::add_torque).
+    pub fn add_torque_mode(&self, mode: ForceMode, x: f32, y: f32, z: f32) {
+        self.add_torque(mode.name(), x, y, z);
     }
 }
 
@@ -3379,10 +4018,23 @@ pub fn no_start(_: &Actor) {}
 #[doc(hidden)]
 pub fn no_tick(_: &Actor, _: f32) {}
 #[doc(hidden)]
+pub fn no_frame(_: &Actor, _: f32) {}
+#[doc(hidden)]
+pub fn no_ui(_: &Actor, _: f32) {}
+#[doc(hidden)]
+pub fn no_stop(_: &Actor) {}
+#[doc(hidden)]
+pub fn no_destroy(_: &Actor) {}
+#[doc(hidden)]
 pub fn no_event(_: &Actor, _: &Event) {}
 
 /// Names the functions the runtime should call, and writes the entry points
-/// that call them. Any of the three may be left out, in any order.
+/// that call them. Any of the seven may be left out, in any order.
+///
+/// `tick` runs on the fixed step (physics), `frame` once per rendered frame
+/// while unpaused (camera and UI motion), and `ui` once per rendered frame
+/// even while paused (menus). `stop` runs when the run ends and `destroy`
+/// when the actor is deleted mid-run.
 ///
 /// ```ignore
 /// use blockloom::*;
@@ -3390,8 +4042,8 @@ pub fn no_event(_: &Actor, _: &Event) {}
 /// fn start(me: &Actor) { me.say("hello"); }
 /// fn tick(me: &Actor, dt: f32) { me.move_forward(60.0 * dt); }
 /// fn event(me: &Actor, event: &Event) {
-///     if let Event::Particles { kind: ParticleKind::Collide, at, .. } = event {
-///         me.log(&format!("a spark hit at {at:?}"));
+///     if let Event::Message(message) = event {
+///         me.say(message);
 ///     }
 /// }
 ///
@@ -3399,19 +4051,31 @@ pub fn no_event(_: &Actor, _: &Event) {}
 /// ```
 #[macro_export]
 macro_rules! export {
-    (@take [$start:path, $tick:path, $event:path]) => {
-        $crate::export!(@emit $start, $tick, $event);
+    (@take [$start:path, $tick:path, $frame:path, $ui:path, $stop:path, $destroy:path, $event:path]) => {
+        $crate::export!(@emit $start, $tick, $frame, $ui, $stop, $destroy, $event);
     };
-    (@take [$start:path, $tick:path, $event:path] start = $value:path $(, $($rest:tt)*)?) => {
-        $crate::export!(@take [$value, $tick, $event] $($($rest)*)?);
+    (@take [$start:path, $tick:path, $frame:path, $ui:path, $stop:path, $destroy:path, $event:path] start = $value:path $(, $($rest:tt)*)?) => {
+        $crate::export!(@take [$value, $tick, $frame, $ui, $stop, $destroy, $event] $($($rest)*)?);
     };
-    (@take [$start:path, $tick:path, $event:path] tick = $value:path $(, $($rest:tt)*)?) => {
-        $crate::export!(@take [$start, $value, $event] $($($rest)*)?);
+    (@take [$start:path, $tick:path, $frame:path, $ui:path, $stop:path, $destroy:path, $event:path] tick = $value:path $(, $($rest:tt)*)?) => {
+        $crate::export!(@take [$start, $value, $frame, $ui, $stop, $destroy, $event] $($($rest)*)?);
     };
-    (@take [$start:path, $tick:path, $event:path] event = $value:path $(, $($rest:tt)*)?) => {
-        $crate::export!(@take [$start, $tick, $value] $($($rest)*)?);
+    (@take [$start:path, $tick:path, $frame:path, $ui:path, $stop:path, $destroy:path, $event:path] frame = $value:path $(, $($rest:tt)*)?) => {
+        $crate::export!(@take [$start, $tick, $value, $ui, $stop, $destroy, $event] $($($rest)*)?);
     };
-    (@emit $start:path, $tick:path, $event:path) => {
+    (@take [$start:path, $tick:path, $frame:path, $ui:path, $stop:path, $destroy:path, $event:path] ui = $value:path $(, $($rest:tt)*)?) => {
+        $crate::export!(@take [$start, $tick, $frame, $value, $stop, $destroy, $event] $($($rest)*)?);
+    };
+    (@take [$start:path, $tick:path, $frame:path, $ui:path, $stop:path, $destroy:path, $event:path] stop = $value:path $(, $($rest:tt)*)?) => {
+        $crate::export!(@take [$start, $tick, $frame, $ui, $value, $destroy, $event] $($($rest)*)?);
+    };
+    (@take [$start:path, $tick:path, $frame:path, $ui:path, $stop:path, $destroy:path, $event:path] destroy = $value:path $(, $($rest:tt)*)?) => {
+        $crate::export!(@take [$start, $tick, $frame, $ui, $stop, $value, $event] $($($rest)*)?);
+    };
+    (@take [$start:path, $tick:path, $frame:path, $ui:path, $stop:path, $destroy:path, $event:path] event = $value:path $(, $($rest:tt)*)?) => {
+        $crate::export!(@take [$start, $tick, $frame, $ui, $stop, $destroy, $value] $($($rest)*)?);
+    };
+    (@emit $start:path, $tick:path, $frame:path, $ui:path, $stop:path, $destroy:path, $event:path) => {
         #[unsafe(no_mangle)]
         pub extern "C" fn blockloom_script_abi() -> u32 {
             $crate::ABI_VERSION
@@ -3437,6 +4101,44 @@ macro_rules! export {
         }
 
         #[unsafe(no_mangle)]
+        pub extern "C" fn blockloom_script_frame(
+            ctx: *mut ::std::ffi::c_void,
+            api: *const $crate::HostApi,
+            dt: f32,
+        ) {
+            let me = unsafe { $crate::Actor::from_raw(ctx, api) };
+            $crate::guard(&me, "frame", || $frame(&me, dt));
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn blockloom_script_ui(
+            ctx: *mut ::std::ffi::c_void,
+            api: *const $crate::HostApi,
+            dt: f32,
+        ) {
+            let me = unsafe { $crate::Actor::from_raw(ctx, api) };
+            $crate::guard(&me, "ui", || $ui(&me, dt));
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn blockloom_script_stop(
+            ctx: *mut ::std::ffi::c_void,
+            api: *const $crate::HostApi,
+        ) {
+            let me = unsafe { $crate::Actor::from_raw(ctx, api) };
+            $crate::guard(&me, "stop", || $stop(&me));
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn blockloom_script_destroy(
+            ctx: *mut ::std::ffi::c_void,
+            api: *const $crate::HostApi,
+        ) {
+            let me = unsafe { $crate::Actor::from_raw(ctx, api) };
+            $crate::guard(&me, "destroy", || $destroy(&me));
+        }
+
+        #[unsafe(no_mangle)]
         pub extern "C" fn blockloom_script_event(
             ctx: *mut ::std::ffi::c_void,
             api: *const $crate::HostApi,
@@ -3453,6 +4155,6 @@ macro_rules! export {
         }
     };
     ($($rest:tt)*) => {
-        $crate::export!(@take [$crate::no_start, $crate::no_tick, $crate::no_event] $($rest)*);
+        $crate::export!(@take [$crate::no_start, $crate::no_tick, $crate::no_frame, $crate::no_ui, $crate::no_stop, $crate::no_destroy, $crate::no_event] $($rest)*);
     };
 }

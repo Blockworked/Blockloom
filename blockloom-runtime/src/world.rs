@@ -513,10 +513,91 @@ pub fn pump_editor(
     }
 }
 
+/// Gives every script its `stop` call as the run ends, in component order.
+/// Movement and world effects are moot - the world is going away - so only
+/// speech, errors and saves are honoured: a `stop` that logs or saves still
+/// lands, one that moves does not.
+fn run_script_stops(engine: &mut Engine) {
+    if !engine.running || engine.scripts.is_empty() {
+        return;
+    }
+    let mut actors: Vec<String> = engine.scripts.keys().cloned().collect();
+    actors.sort();
+    let mut asked = crate::script::Asked::default();
+    crate::script::with_script_stores(&engine.variables, &engine.lists, || {
+        for actor in &actors {
+            let Some(scripts) = engine.scripts.get(actor) else {
+                continue;
+            };
+            for entry in scripts {
+                entry.script.stop(actor, &mut asked);
+            }
+        }
+    });
+    for effect in asked.effects {
+        match effect {
+            Effect::Say { actor, text } => {
+                engine.note_say(&actor, &text);
+                bridge::send(&RuntimeMessage::Say { actor, text });
+            }
+            Effect::Error { actor, message } => {
+                bridge::send(&RuntimeMessage::Error { actor, message })
+            }
+            Effect::SaveVariable { actor, name, clear } => {
+                apply_stop_save(engine, &actor, &name, clear);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Applies one `save variable` from a `stop` call at once, since the fixed
+/// chain that would have carried it is done. Mirrors `apply_saved_data`.
+fn apply_stop_save(engine: &mut Engine, actor: &str, name: &str, clear: bool) {
+    let owner = engine
+        .clones
+        .get(actor)
+        .cloned()
+        .unwrap_or_else(|| actor.to_string());
+    let project = engine.project.clone();
+    let snapshot = engine.variables.snapshot();
+    let changed = if clear {
+        engine.save_data.clear(&project, &owner, name)
+    } else {
+        engine
+            .save_data
+            .capture(&project, &snapshot, &owner, actor, name)
+    };
+    if !changed && !clear {
+        bridge::send(&RuntimeMessage::Error {
+            actor: actor.to_string(),
+            message: format!("there's no variable called \"{name}\" to save"),
+        });
+        return;
+    }
+    if changed {
+        #[cfg(target_arch = "wasm32")]
+        {
+            crate::web::store_save(&engine.project.id, &engine.save_data)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Err(message) = blockloom_core::save::write(&engine.save_path, &engine.save_data)
+            {
+                bridge::send(&RuntimeMessage::Error {
+                    actor: actor.to_string(),
+                    message: format!("couldn't save variable \"{name}\": {message}"),
+                });
+            }
+        }
+    }
+}
+
 /// Ends the run and puts the world back as the document authored it, so
 /// the editor's Game view never keeps what the run did to it.
 pub fn end_run(engine: &mut Engine, manager: &mut crate::ui::UiManager) {
     crate::plugins::end(engine);
+    run_script_stops(engine);
     engine.stop_program();
     engine.speech.clear();
     engine.pending_scene = None;
@@ -993,10 +1074,11 @@ pub fn rebuild_world(
     // A built game answers to nobody, so it says what it built in its own
     // log. The editor already shows all of this in its own panels.
     if !bridge::attached() {
+        let scripts: usize = engine.scripts.values().map(Vec::len).sum();
         info!(
             "built {} actors and opened {} scripts for '{}'",
             engine.entities.len(),
-            engine.scripts.len(),
+            scripts,
             engine.project.name
         );
     }
@@ -1027,41 +1109,46 @@ fn project_sound(engine: &Engine) -> blockloom_core::sound::SoundMixer {
     engine.project.world.sound
 }
 
-/// Opens every actor's compiled script. The editor builds them before Play,
-/// and report missing libraries and loader errors to the editor.
+/// Opens every actor's compiled scripts, in component order. The editor
+/// builds them before Play, and reports missing libraries and loader errors
+/// to the editor.
 fn open_scripts(engine: &mut Engine, project: &blockloom_core::project::Project) {
     let Some(dir) = engine.project_dir.clone() else {
         return;
     };
     for actor in project.actors.iter().chain(engine.spawned.values()) {
-        let Some(path) = actor.components.script() else {
-            continue;
-        };
-        if !crate::script::LoadedScript::is_built(&dir, path) {
-            bridge::send(&RuntimeMessage::ScriptLoaded {
-                actor: actor.id.clone(),
-                path: path.to_string(),
-                error: Some(
-                    "No compiled library found. Check the script or press Play to build it."
-                        .to_string(),
-                ),
-            });
-            continue;
-        }
-        match crate::script::LoadedScript::load(&dir, path) {
-            Ok(script) => {
-                engine.scripts.insert(actor.id.clone(), script);
+        for path in actor.components.scripts() {
+            if !crate::script::LoadedScript::is_built(&dir, path) {
                 bridge::send(&RuntimeMessage::ScriptLoaded {
                     actor: actor.id.clone(),
                     path: path.to_string(),
-                    error: None,
+                    error: Some(
+                        "No compiled library found. Check the script or press Play to build it."
+                            .to_string(),
+                    ),
                 });
+                continue;
             }
-            Err(message) => bridge::send(&RuntimeMessage::ScriptLoaded {
-                actor: actor.id.clone(),
-                path: path.to_string(),
-                error: Some(message),
-            }),
+            match crate::script::LoadedScript::load(&dir, path) {
+                Ok(script) => {
+                    engine.scripts.entry(actor.id.clone()).or_default().push(
+                        crate::engine::ActorScript {
+                            path: path.to_string(),
+                            script,
+                        },
+                    );
+                    bridge::send(&RuntimeMessage::ScriptLoaded {
+                        actor: actor.id.clone(),
+                        path: path.to_string(),
+                        error: None,
+                    });
+                }
+                Err(message) => bridge::send(&RuntimeMessage::ScriptLoaded {
+                    actor: actor.id.clone(),
+                    path: path.to_string(),
+                    error: Some(message),
+                }),
+            }
         }
     }
 }
@@ -1088,9 +1175,10 @@ fn open_logic(engine: &mut Engine) {
     }
 }
 
-/// Runs every scripted for this fixed step: `start` once per run, then `tick`
-/// with the step's delta. Their effects join the VM's in the same list, so a
-/// script and a canvas driving one actor are applied together, in order.
+/// Runs every script for this fixed step: `start` once per run, then `tick`
+/// with the step's delta. An actor with several scripts runs them in
+/// component order; their effects join the VM's in the same list, so scripts
+/// and a canvas driving one actor are applied together, in order.
 pub fn step_scripts(
     mut engine: NonSendMut<Engine>,
     time: Res<Time>,
@@ -1101,13 +1189,21 @@ pub fn step_scripts(
         return;
     }
     let dt = time.delta_secs();
-    let actors: Vec<String> = engine.scripts.keys().cloned().collect();
-    // `start` runs once per actor rather than once per run, so a clone made
+    let mut actors: Vec<String> = engine.scripts.keys().cloned().collect();
+    actors.sort();
+    // `start` runs once per script rather than once per run, so a clone made
     // half way through gets its own, on the first step it exists for.
-    let fresh: Vec<String> = actors
+    let fresh: Vec<(String, String)> = actors
         .iter()
-        .filter(|actor| !engine.scripts_started.contains(*actor))
-        .cloned()
+        .flat_map(|actor| {
+            engine
+                .scripts
+                .get(actor)
+                .into_iter()
+                .flatten()
+                .map(|entry| (actor.clone(), entry.path.clone()))
+        })
+        .filter(|key| !engine.scripts_started.contains(key))
         .collect();
 
     // What happened since the last step, as each script will hear it.
@@ -1130,22 +1226,35 @@ pub fn step_scripts(
         .collect();
 
     let mut asked = crate::script::Asked::default();
-    queries.scope(engine.contact_ticks, || {
-        for actor in &actors {
-            let Some(script) = engine.scripts.get(actor) else {
-                continue;
-            };
-            if fresh.contains(actor) {
-                script.start(actor, &mut asked);
-            }
-            for (to, event) in &heard {
-                if to.as_ref().is_none_or(|to| to == actor) {
-                    script.event(actor, &mut asked, event);
+    // Scripts read and write the run's block variables and lists through the
+    // same stores the VM does, so the two stay one working memory.
+    let mut timed: Vec<(String, f64)> = Vec::new();
+    crate::script::with_script_stores(&engine.variables, &engine.lists, || {
+        queries.scope(engine.contact_ticks, || {
+            for actor in &actors {
+                let Some(scripts) = engine.scripts.get(actor) else {
+                    continue;
+                };
+                for entry in scripts {
+                    let started = std::time::Instant::now();
+                    if fresh.contains(&(actor.clone(), entry.path.clone())) {
+                        entry.script.start(actor, &mut asked);
+                    }
+                    for (to, event) in &heard {
+                        if to.as_ref().is_none_or(|to| to == actor) {
+                            entry.script.event(actor, &mut asked, event);
+                        }
+                    }
+                    entry.script.tick(actor, &mut asked, dt);
+                    timed.push((entry.path.clone(), started.elapsed().as_secs_f64() * 1000.0));
                 }
             }
-            script.tick(actor, &mut asked, dt);
-        }
+        });
     });
+    for (path, ms) in timed {
+        let slot = engine.script_times.entry(path).or_insert(ms);
+        *slot += (ms - *slot) * 0.1;
+    }
     engine.scripts_started.extend(fresh);
     for message in asked.messages.drain(..) {
         engine.fire(Event::Message(message));
@@ -1193,6 +1302,104 @@ pub fn step_scripts(
                 engine.veil.start(&transition);
                 engine.pending_scene = Some((scene, transition, 2));
             }
+        }
+    }
+    effects.0.append(&mut asked.effects);
+}
+
+/// Once per rendered frame: `frame` while unpaused (camera and UI motion on
+/// the variable frame delta), and `ui` always (menus, on the same delta).
+/// Fixed-step `tick` stays the physics clock; these are the presentation one.
+///
+/// While paused the fixed step skips scripts, so this drains the queued events
+/// and hands them to `event` alongside `ui` - which is what lets a script
+/// menu answer clicks while the world is frozen, the way UI strands do. While
+/// unpaused events stay for the fixed step, so nothing is heard twice.
+pub fn step_scripts_frame_ui(
+    mut engine: NonSendMut<Engine>,
+    time: Res<Time>,
+    mut effects: ResMut<PendingEffects>,
+    queries: crate::queries::QueryAccess,
+) {
+    if !engine.running || engine.scripts.is_empty() {
+        return;
+    }
+    let dt = time.delta_secs();
+    let paused = engine.paused;
+    let mut actors: Vec<String> = engine.scripts.keys().cloned().collect();
+    actors.sort();
+    // While paused, the fixed step leaves events queued; hand them over here.
+    // While unpaused, leave them for the fixed step.
+    let heard: Vec<_> = if paused {
+        let fired = std::mem::take(&mut engine.script_events);
+        let name_of = |id: &str| {
+            engine
+                .actor(id)
+                .map(|actor| actor.name.clone())
+                .unwrap_or_default()
+        };
+        fired
+            .iter()
+            .flat_map(|event| {
+                let touch = crate::script::ScriptEvent::contact_of(event, name_of)
+                    .map(|(to, heard)| (Some(to), heard));
+                crate::script::ScriptEvent::of(event, name_of)
+                    .into_iter()
+                    .chain(touch)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let mut asked = crate::script::Asked::default();
+    let mut timed: Vec<(String, f64)> = Vec::new();
+    crate::script::with_script_stores(&engine.variables, &engine.lists, || {
+        queries.scope(engine.contact_ticks, || {
+            for actor in &actors {
+                let Some(scripts) = engine.scripts.get(actor) else {
+                    continue;
+                };
+                for entry in scripts {
+                    let started = std::time::Instant::now();
+                    if !paused {
+                        entry.script.frame(actor, &mut asked, dt);
+                    }
+                    entry.script.ui(actor, &mut asked, dt);
+                    if paused {
+                        for (to, event) in &heard {
+                            if to.as_ref().is_none_or(|to| to == actor) {
+                                entry.script.event(actor, &mut asked, event);
+                            }
+                        }
+                    }
+                    timed.push((entry.path.clone(), started.elapsed().as_secs_f64() * 1000.0));
+                }
+            }
+        });
+    });
+    for (path, ms) in timed {
+        let slot = engine.script_times.entry(path).or_insert(ms);
+        *slot += (ms - *slot) * 0.1;
+    }
+    for message in asked.messages.drain(..) {
+        engine.fire(Event::Message(message));
+    }
+    script_lifetimes(&mut engine, &mut asked);
+    for effect in &asked.effects {
+        match effect {
+            Effect::Say { actor, text } => {
+                engine.note_say(actor, text);
+                bridge::send(&RuntimeMessage::Say {
+                    actor: actor.clone(),
+                    text: text.clone(),
+                });
+            }
+            Effect::Error { actor, message } => bridge::send(&RuntimeMessage::Error {
+                actor: actor.clone(),
+                message: message.clone(),
+            }),
+            _ => {}
         }
     }
     effects.0.append(&mut asked.effects);
@@ -3636,7 +3843,29 @@ fn detach(
             commands.entity(entity).remove::<CameraRig>();
         }
         "Script" => {
-            engine.scripts.remove(actor);
+            // Detaching the script takes its code away mid-run, so its
+            // `destroy` runs first, like a deleted actor's does.
+            if let Some(scripts) = engine.scripts.remove(actor) {
+                let mut asked = crate::script::Asked::default();
+                crate::script::with_script_stores(&engine.variables, &engine.lists, || {
+                    for entry in &scripts {
+                        entry.script.destroy(actor, &mut asked);
+                    }
+                });
+                for effect in asked.effects {
+                    match effect {
+                        Effect::Say { actor, text } => {
+                            engine.note_say(&actor, &text);
+                            bridge::send(&RuntimeMessage::Say { actor, text });
+                        }
+                        Effect::Error { actor, message } => {
+                            bridge::send(&RuntimeMessage::Error { actor, message })
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            engine.scripts_started.retain(|(owner, _)| owner != actor);
         }
         "Parent" => {
             engine.parents.remove(actor);
@@ -3911,45 +4140,72 @@ fn claim_camera(commands: &mut Commands, engine: &mut Engine, actor: &str) {
     }
 }
 
-/// Opens one actor's script and reports its load result to the editor.
+/// Opens one actor's scripts and reports each load result to the editor.
 fn open_script_for(engine: &mut Engine, actor: &Actor) {
     let Some(dir) = engine.project_dir.clone() else {
         return;
     };
-    let Some(path) = actor.components.script() else {
-        return;
-    };
-    if !crate::script::LoadedScript::is_built(&dir, path) {
-        bridge::send(&RuntimeMessage::ScriptLoaded {
-            actor: actor.id.clone(),
-            path: path.to_string(),
-            error: Some(
-                "No compiled library found. Check the script or press Play to build it."
-                    .to_string(),
-            ),
-        });
-        return;
-    }
-    match crate::script::LoadedScript::load(&dir, path) {
-        Ok(script) => {
-            engine.scripts.insert(actor.id.clone(), script);
+    for path in actor.components.scripts() {
+        if !crate::script::LoadedScript::is_built(&dir, path) {
             bridge::send(&RuntimeMessage::ScriptLoaded {
                 actor: actor.id.clone(),
                 path: path.to_string(),
-                error: None,
+                error: Some(
+                    "No compiled library found. Check the script or press Play to build it."
+                        .to_string(),
+                ),
             });
+            continue;
         }
-        Err(message) => bridge::send(&RuntimeMessage::ScriptLoaded {
-            actor: actor.id.clone(),
-            path: path.to_string(),
-            error: Some(message),
-        }),
+        match crate::script::LoadedScript::load(&dir, path) {
+            Ok(script) => {
+                engine.scripts.entry(actor.id.clone()).or_default().push(
+                    crate::engine::ActorScript {
+                        path: path.to_string(),
+                        script,
+                    },
+                );
+                bridge::send(&RuntimeMessage::ScriptLoaded {
+                    actor: actor.id.clone(),
+                    path: path.to_string(),
+                    error: None,
+                });
+            }
+            Err(message) => bridge::send(&RuntimeMessage::ScriptLoaded {
+                actor: actor.id.clone(),
+                path: path.to_string(),
+                error: Some(message),
+            }),
+        }
     }
 }
 
 /// Takes an actor out of the world for the rest of the run. An authored one
 /// comes back on the next Play: the document was never touched.
 pub(crate) fn delete_actor(commands: &mut Commands, engine: &mut Engine, actor: &str) {
+    // A dying actor's scripts get their `destroy` call first, while their
+    // storage is still there to read. Only speech and errors are honoured;
+    // the actor is already going away.
+    if let Some(scripts) = engine.scripts.get(actor) {
+        let mut asked = crate::script::Asked::default();
+        crate::script::with_script_stores(&engine.variables, &engine.lists, || {
+            for entry in scripts {
+                entry.script.destroy(actor, &mut asked);
+            }
+        });
+        for effect in asked.effects {
+            match effect {
+                Effect::Say { actor, text } => {
+                    engine.note_say(&actor, &text);
+                    bridge::send(&RuntimeMessage::Say { actor, text });
+                }
+                Effect::Error { actor, message } => {
+                    bridge::send(&RuntimeMessage::Error { actor, message })
+                }
+                _ => {}
+            }
+        }
+    }
     let Some(entity) = engine.entities.remove(actor) else {
         return;
     };
@@ -3962,7 +4218,7 @@ pub(crate) fn delete_actor(commands: &mut Commands, engine: &mut Engine, actor: 
     engine.contacts.remove_actor(actor);
     engine.speech.remove(actor);
     engine.scripts.remove(actor);
-    engine.scripts_started.remove(actor);
+    engine.scripts_started.retain(|(owner, _)| owner != actor);
     engine.parents.remove(actor);
     // Its children are let go rather than deleted with it, and nobody is
     // left pointing at it as the actor they just made.
@@ -4357,6 +4613,17 @@ pub fn report_status(
             name,
             value,
             unit: "plugin".into(),
+        });
+    }
+    // One row per script file, so a heavy file stands out from a busy
+    // project. Keyed by path, named by it: two folders may hold one stem.
+    let mut script_rows: Vec<(&String, &f64)> = engine.script_times.iter().collect();
+    script_rows.sort_by(|a, b| a.0.cmp(b.0));
+    for (path, ms) in script_rows {
+        render_metrics.push(RenderMetric {
+            name: format!("script/{path}"),
+            value: *ms,
+            unit: "ms".into(),
         });
     }
     if let Some(state) = destruction {

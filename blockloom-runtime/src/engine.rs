@@ -22,6 +22,13 @@ use std::sync::mpsc::{Receiver, Sender};
 #[derive(Component, Debug, Clone)]
 pub struct ActorId(pub String);
 
+/// One loaded script on one actor, with the path that names it. An actor
+/// runs its scripts in list order: `start`, then `event`, then `tick`.
+pub struct ActorScript {
+    pub path: String,
+    pub script: crate::script::LoadedScript,
+}
+
 /// The actor's custom components, live. Authored values seed it on every
 /// rebuild; `set <field> of <component>` writes here, and the sensing
 /// snapshot reads back out, so a run's changes last exactly as long as the
@@ -208,13 +215,18 @@ pub struct Engine {
     /// The open project's folder, which is where its assets and its built
     /// script libraries are. `None` until the editor says.
     pub project_dir: Option<PathBuf>,
-    /// Each actor's loaded script, by actor id. Reopened on every rebuild, so
-    /// a script edited and rebuilt between runs takes effect on the next Play.
-    pub scripts: HashMap<String, crate::script::LoadedScript>,
-    /// Which actors' scripts have had their `start` called. Per actor rather
-    /// than one flag for the run, since a clone made half way through still
-    /// needs its own.
-    pub scripts_started: HashSet<String>,
+    /// Each actor's loaded scripts, by actor id, in component order. Reopened
+    /// on every rebuild, so a script edited and rebuilt between runs takes
+    /// effect on the next Play.
+    pub scripts: HashMap<String, Vec<ActorScript>>,
+    /// Smoothed milliseconds per script path, for the profiler's `script/*`
+    /// rows. Timed around each entry's callbacks so one heavy file stands
+    /// out from a busy project.
+    pub script_times: HashMap<String, f64>,
+    /// Which scripts have had their `start` called, by actor and path. Per
+    /// script rather than one flag for the run, since a clone made half way
+    /// through still needs its own.
+    pub scripts_started: HashSet<(String, String)>,
     /// Events fired since scripts last ran, for their `event` entry points.
     pub script_events: Vec<blockloom_core::vm::Event>,
     /// Which components each actor is carrying right now. Seeded from the
@@ -382,6 +394,10 @@ impl Engine {
             scripts: HashMap::new(),
             scripts_started: HashSet::new(),
             script_events: Vec::new(),
+            // Smoothed milliseconds per script path, for the profiler's
+            // `script/*` rows. Timed around each entry's callbacks so one
+            // heavy file stands out from a busy project.
+            script_times: HashMap::new(),
             attached: HashMap::new(),
             spawned: HashMap::new(),
             clones: HashMap::new(),
@@ -579,8 +595,10 @@ impl Engine {
     }
 
     pub fn fire(&mut self, event: blockloom_core::vm::Event) {
-        // Scripts don't run while paused, so they don't hear what happens then.
-        if self.running && !self.paused && !self.scripts.is_empty() {
+        // Queued even while paused: the fixed `tick` skips paused steps, but
+        // the per-frame `ui` entry point drains these so menus answer while
+        // the world is frozen, the way UI strands do.
+        if self.running && !self.scripts.is_empty() {
             self.script_events.push(event.clone());
         }
         if let Some(logic) = &mut self.logic {

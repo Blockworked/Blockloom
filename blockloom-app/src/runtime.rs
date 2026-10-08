@@ -20,6 +20,15 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 
 static NEXT_RUNTIME_ID: AtomicU64 = AtomicU64::new(1);
 
+/// The script file an actor runs, when it runs exactly one. Enough to link a
+/// run-log line back to its file; an actor with several scripts names none,
+/// since no single file owns the line.
+fn lone_script_path(s: &crate::state::AppState, actor_id: &str) -> Option<String> {
+    let mut scripts = s.project()?.actor(actor_id)?.components.scripts();
+    let first = scripts.next()?.to_string();
+    scripts.next().is_none().then_some(first)
+}
+
 /// Starts a game world inside this process instead of as a child. The Qt
 /// editor supplies one, so its Game view can show the world's frames.
 pub trait EmbeddedRuntime: Send + Sync {
@@ -195,7 +204,7 @@ impl Backend {
             RuntimeMessage::ScriptLoaded { actor, path, error } => {
                 if s.project()
                     .and_then(|project| project.actor(&actor))
-                    .is_none_or(|actor| actor.components.script() != Some(path.as_str()))
+                    .is_none_or(|actor| !actor.components.scripts().any(|other| other == path))
                 {
                     return;
                 }
@@ -217,11 +226,11 @@ impl Backend {
                     );
                 }
                 if !build_failed && let Some(error) = error {
-                    s.push_log(LogLine {
-                        kind: "error".to_string(),
-                        actor: name,
-                        text: format!("{path} couldn't load:\n{error}"),
-                    });
+                    s.push_log(LogLine::script_error(
+                        name,
+                        &path,
+                        format!("{path} couldn't load:\n{error}"),
+                    ));
                 }
             }
             RuntimeMessage::LanSession(status) => {
@@ -238,31 +247,21 @@ impl Backend {
             RuntimeMessage::Ready { protocol } => {
                 s.lan_session = None;
                 if protocol != blockloom_protocol::PROTOCOL_VERSION {
-                    s.push_log(LogLine {
-                        kind: "error".to_string(),
-                        actor: "Blockloom".to_string(),
-                        text: format!(
+                    s.push_log(LogLine::error("Blockloom".to_string(), format!(
                             "The game runtime speaks protocol {protocol}, this editor speaks {}. Rebuild the workspace.",
                             blockloom_protocol::PROTOCOL_VERSION
-                        ),
-                    });
+                        )));
                 }
             }
             RuntimeMessage::Say { actor, text } => {
-                let line = LogLine {
-                    kind: "say".to_string(),
-                    actor: name_of(&actor),
-                    text,
-                };
+                let mut line = LogLine::say(name_of(&actor), text);
+                line.path = lone_script_path(&s, &actor);
                 self.publish_log(s, line);
                 return;
             }
             RuntimeMessage::Error { actor, message } => {
-                let line = LogLine {
-                    kind: "error".to_string(),
-                    actor: name_of(&actor),
-                    text: message,
-                };
+                let mut line = LogLine::error(name_of(&actor), message);
+                line.path = lone_script_path(&s, &actor);
                 self.publish_log(s, line);
                 return;
             }
@@ -324,11 +323,7 @@ impl Backend {
             }
             RuntimeMessage::TerrainStroke { actor, stroke } => {
                 if let Err(message) = crate::commands::terrain_stroke(&mut s, &actor, stroke) {
-                    s.push_log(LogLine {
-                        kind: "error".to_string(),
-                        actor: "Blockloom".to_string(),
-                        text: message,
-                    });
+                    s.push_log(LogLine::error("Blockloom".to_string(), message));
                 }
             }
             RuntimeMessage::TileStroke {
@@ -339,11 +334,7 @@ impl Backend {
                 if let Err(message) =
                     crate::commands::tile_stroke(&mut s, &actor, &brush, &segments)
                 {
-                    s.push_log(LogLine {
-                        kind: "error".to_string(),
-                        actor: "Blockloom".to_string(),
-                        text: message,
-                    });
+                    s.push_log(LogLine::error("Blockloom".to_string(), message));
                 }
             }
             RuntimeMessage::TilePicked { actor, tile } => {
@@ -370,11 +361,7 @@ impl Backend {
                     &hits,
                     &options,
                 ) {
-                    let line = LogLine {
-                        kind: "error".to_string(),
-                        actor: "Blockloom".to_string(),
-                        text: message,
-                    };
+                    let line = LogLine::error("Blockloom".to_string(), message);
                     if let Ok(s) = self.state.lock() {
                         self.publish_log(s, line);
                     }
@@ -398,11 +385,7 @@ impl Backend {
                     &block,
                     args,
                 ) {
-                    let line = LogLine {
-                        kind: "error".to_string(),
-                        actor: who,
-                        text: message,
-                    };
+                    let line = LogLine::error(who, message);
                     if let Ok(s) = self.state.lock() {
                         self.publish_log(s, line);
                     }
@@ -411,11 +394,7 @@ impl Backend {
             }
             RuntimeMessage::Fatal { message } => {
                 s.running = false;
-                s.push_log(LogLine {
-                    kind: "error".to_string(),
-                    actor: "Blockloom".to_string(),
-                    text: message,
-                });
+                s.push_log(LogLine::error("Blockloom".to_string(), message));
             }
         }
         let dto = crate::state::state_dto(&s);
@@ -470,6 +449,88 @@ mod script_status_tests {
     use super::*;
     use blockloom_core::{components::ActorComponent, project::Project};
     use serde_json::json;
+
+    #[test]
+    fn scripts_stack_run_in_order_and_shared_paths_are_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let backend = Backend::start(crate::AppHandle::new(|_| {}));
+        let project = Project::starter("Scripts", Mode::TwoD);
+        let id = project.actors.first().unwrap().id.clone();
+        {
+            let mut state = backend.state.lock().unwrap();
+            state.open = Some(crate::state::OpenProject::new(
+                project,
+                temp.path().into(),
+                0,
+                false,
+                false,
+            ));
+        }
+        let scripts_of = |backend: &Backend| -> Vec<String> {
+            let state = backend.state.lock().unwrap();
+            let project = state.project().unwrap();
+            project
+                .actor(&id)
+                .unwrap()
+                .components
+                .scripts()
+                .map(str::to_string)
+                .collect()
+        };
+        // First script via the legacy entry point.
+        let first: String = backend
+            .dispatch("create_script", json!({"actorId": id}))
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        // A second one appends rather than replacing the first.
+        let second: String = backend
+            .dispatch("add_script", json!({"actorId": id}))
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_ne!(first, second);
+        assert_eq!(scripts_of(&backend), vec![first.clone(), second.clone()]);
+        // Shared library code is not runnable.
+        assert!(
+            backend
+                .dispatch(
+                    "add_script",
+                    json!({"actorId": id, "path": "assets/scripts/shared/util.rs"}),
+                )
+                .is_err()
+        );
+        // Duplicates are refused.
+        assert!(
+            backend
+                .dispatch("add_script", json!({"actorId": id, "path": first}))
+                .is_err()
+        );
+        // Order is the run order: moving the second to the front sticks.
+        backend
+            .dispatch(
+                "move_script",
+                json!({"actorId": id, "path": second, "index": 0}),
+            )
+            .unwrap();
+        assert_eq!(scripts_of(&backend), vec![second.clone(), first.clone()]);
+        // One card edits one slot: rename the front slot by its old path.
+        let renamed = "assets/scripts/renamed.rs".to_string();
+        backend
+            .dispatch(
+                "set_actor_component",
+                json!({"actorId": id, "name": second, "component": {"component": "Script", "path": renamed}}),
+            )
+            .unwrap();
+        assert_eq!(scripts_of(&backend), vec![renamed.clone(), first.clone()]);
+        // Detaching one leaves the other running.
+        backend
+            .dispatch("remove_script", json!({"actorId": id, "path": renamed}))
+            .unwrap();
+        assert_eq!(scripts_of(&backend), vec![first.clone()]);
+    }
 
     #[test]
     fn load_results_publish_details_and_preserve_build_failures() {
@@ -563,5 +624,161 @@ mod script_status_tests {
             let state = backend.dispatch("get_state", json!({})).unwrap();
             assert_eq!(state["script_statuses"][path]["stage"], "built");
         }
+    }
+}
+
+#[cfg(test)]
+mod editor_phase4_tests {
+    use super::*;
+    use blockloom_core::{components::ActorComponent, project::Project};
+    use serde_json::json;
+
+    fn open_backend(project: Project, temp: &tempfile::TempDir) -> Backend {
+        let backend = Backend::start(crate::AppHandle::new(|_| {}));
+        {
+            let mut state = backend.state.lock().unwrap();
+            state.open = Some(crate::state::OpenProject::new(
+                project,
+                temp.path().into(),
+                0,
+                false,
+                false,
+            ));
+            let (incoming, _receiver) = channel();
+            state.runtime = Some(RuntimeHandle {
+                id: 77,
+                mode: Mode::TwoD,
+                link: Link::Embedded {
+                    incoming,
+                    world: None,
+                },
+            });
+        }
+        backend
+    }
+
+    #[test]
+    fn completions_and_hover_answer_from_the_backend() {
+        let temp = tempfile::tempdir().unwrap();
+        let backend = open_backend(Project::starter("Scripts", Mode::TwoD), &temp);
+        let found = backend
+            .dispatch("script_completions", json!({"prefix": "go_t"}))
+            .unwrap();
+        assert!(
+            found
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["insert"] == "go_to"),
+            "{found}"
+        );
+        let hovered = backend
+            .dispatch("script_hover", json!({"symbol": "say"}))
+            .unwrap();
+        assert!(hovered.as_str().unwrap().contains("Actor"), "{hovered}");
+        assert!(
+            backend
+                .dispatch("script_hover", json!({"symbol": "no_such_thing_here"}))
+                .unwrap()
+                .is_null()
+        );
+    }
+
+    #[test]
+    fn format_script_rewrites_through_rustfmt() {
+        let temp = tempfile::tempdir().unwrap();
+        let backend = open_backend(Project::starter("Scripts", Mode::TwoD), &temp);
+        let id = backend
+            .state
+            .lock()
+            .unwrap()
+            .project()
+            .unwrap()
+            .actors
+            .first()
+            .unwrap()
+            .id
+            .clone();
+        backend
+            .dispatch("create_script", json!({"actorId": id}))
+            .unwrap();
+        if blockloom_core::script::ide::rustfmt_version().is_err() {
+            assert!(
+                backend
+                    .dispatch("format_script", json!({"actorId": id}))
+                    .is_err()
+            );
+            return;
+        }
+        backend
+            .dispatch(
+                "write_script",
+                json!({"actorId": id, "source": "use blockloom::*;\nfn start(me: &Actor) {\nlet x=1;\n}\nblockloom::export!(start = start);\n"}),
+            )
+            .unwrap();
+        let formatted = backend
+            .dispatch("format_script", json!({"actorId": id}))
+            .unwrap();
+        assert!(
+            formatted.as_str().unwrap().contains("let x = 1;"),
+            "{formatted}"
+        );
+        // Formatting twice is stable, and the file holds the formatted text.
+        let again = backend
+            .dispatch("format_script", json!({"actorId": id}))
+            .unwrap();
+        assert_eq!(formatted, again);
+    }
+
+    #[test]
+    fn clippy_script_answers_without_crashing() {
+        let temp = tempfile::tempdir().unwrap();
+        let backend = open_backend(Project::starter("Scripts", Mode::TwoD), &temp);
+        let id = backend
+            .state
+            .lock()
+            .unwrap()
+            .project()
+            .unwrap()
+            .actors
+            .first()
+            .unwrap()
+            .id
+            .clone();
+        backend
+            .dispatch("create_script", json!({"actorId": id}))
+            .unwrap();
+        // Missing clippy is an empty answer, not an error; present clippy
+        // answers a diagnostics-shaped list.
+        let found = backend
+            .dispatch("clippy_script", json!({"actorId": id}))
+            .unwrap();
+        assert!(found.is_array(), "{found}");
+    }
+
+    #[test]
+    fn runtime_lines_link_back_to_the_script_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut project = Project::starter("Scripts", Mode::TwoD);
+        let id = project.actors.first().unwrap().id.clone();
+        let path = "assets/scripts/test.rs";
+        project
+            .actors
+            .first_mut()
+            .unwrap()
+            .components
+            .insert(ActorComponent::Script { path: path.into() });
+        let backend = open_backend(project, &temp);
+        backend.on_runtime_message(
+            77,
+            RuntimeMessage::Error {
+                actor: id.clone(),
+                message: "the script panicked in tick".to_string(),
+            },
+        );
+        let state = backend.dispatch("get_state", json!({})).unwrap();
+        let last = state["log"].as_array().unwrap().last().unwrap();
+        assert_eq!(last["path"], path);
+        assert_eq!(last["level"], "error");
     }
 }

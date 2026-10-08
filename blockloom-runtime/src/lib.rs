@@ -89,6 +89,9 @@ mod quality;
 mod queries;
 mod ray_tracing;
 mod script;
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)] // Not wired into Play yet - the editor build/load wiring is the next slice.
+mod script_wasm;
 mod shadows;
 mod simulation;
 mod sky;
@@ -608,6 +611,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 world::scroll_ui_lists,
                 world::detect_clicks,
                 world::publish_sensors,
+                world::step_scripts_frame_ui,
                 sound::maintain_voices,
                 world::interpolate_poses,
                 (

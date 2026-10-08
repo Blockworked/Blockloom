@@ -17,28 +17,73 @@ BwDialog {
     property var diagnostics: []
     property var toolchain: null
     property string ideNote: ""
+    property var completions: []
+    property bool completionOpen: false
+    property int selectedCompletion: 0
+    property string hoverDoc: ""
     readonly property var scriptStatus: (app.appState.script_statuses || {})[path] || null
     title: actor ? actor.name + " · " + path : path
     standardButtons: Dialog.NoButton
     width: Math.min(parent ? parent.width - 80 : 900, 900)
 
-    function openFor(a, p) {
+    function openFor(a, p, line) {
         actor = a; path = p; error = ""; ideNote = ""; diagnostics = []; toolchain = null; busy = true;
+        completionOpen = false; completions = []; hoverDoc = "";
         editor.text = "";
         open();
-        app.invoke("read_script", { actorId: a.id }, source => { editor.text = source; editor.cursorPosition = 0; busy = false; editor.forceActiveFocus(); }, e => { error = String(e); busy = false; });
+        app.invoke("read_script", { actorId: a.id, path: p }, source => { editor.text = source; editor.cursorPosition = 0; busy = false; editor.forceActiveFocus(); if (line > 0) jumpTo(line, 1); }, e => { error = String(e); busy = false; });
         refreshDiagnostics();
         app.invoke("script_toolchain", {}, status => toolchain = status, e => error = String(e));
     }
-    function refreshDiagnostics() { app.invoke("script_diagnostics", { actorId: actor.id }, list => diagnostics = list, () => diagnostics = []); }
+    function refreshDiagnostics() { if (!actor) return; app.invoke("script_diagnostics", { actorId: actor.id, path: path }, list => diagnostics = list, () => diagnostics = []); }
     function save(then) {
         error = "";
-        app.invoke("write_script", { actorId: actor.id, source: editor.text }, () => { if (then) then(); }, e => { busy = false; error = String(e); });
+        // The write itself clears the last build status; re-check what is on
+        // screen now, so diagnostics follow every save without a second click.
+        app.invoke("write_script", { actorId: actor.id, path: path, source: editor.text }, () => { refreshDiagnostics(); if (then) then(); }, e => { busy = false; error = String(e); });
     }
     // Saving first, so rustc is told about what's on screen.
     function check() {
         busy = true;
-        save(() => app.invoke("check_script", { actorId: actor.id }, () => { busy = false; refreshDiagnostics(); }, e => { busy = false; error = String(e); }));
+        save(() => app.invoke("check_script", { actorId: actor.id, path: path }, () => { busy = false; refreshDiagnostics(); }, e => { busy = false; error = String(e); }));
+    }
+    // Save+Format: rustfmt rewrites the file, and the box shows what it did.
+    function format() {
+        busy = true; error = "";
+        save(() => app.invoke("format_script", { actorId: actor.id, path: path }, formatted => { editor.text = formatted; busy = false; refreshDiagnostics(); }, e => { busy = false; error = String(e); }));
+    }
+    // Opt-in lint pass: clippy's rows land where check's do, same shape.
+    function lint() {
+        busy = true; error = "";
+        save(() => app.invoke("clippy_script", { actorId: actor.id, path: path }, list => { diagnostics = list; busy = false; }, e => { busy = false; error = String(e); }));
+    }
+    // Completion: Ctrl+Space lists API methods and project symbols starting
+    // with the word under the caret; Tab/Enter inserts the picked row.
+    function currentPrefix() {
+        const before = editor.text.slice(0, editor.cursorPosition);
+        const m = /[A-Za-z0-9_:]+$/.exec(before);
+        return m ? m[0] : "";
+    }
+    function requestCompletions() {
+        app.invoke("script_completions", { prefix: currentPrefix() }, list => {
+            completions = list; selectedCompletion = 0;
+            completionOpen = list.length > 0;
+            if (completionOpen) updateHover();
+        }, () => completionOpen = false);
+    }
+    function updateHover() {
+        const item = completions[selectedCompletion];
+        if (!item) { hoverDoc = ""; return; }
+        app.invoke("script_hover", { symbol: item.label }, doc => hoverDoc = doc || item.detail, () => hoverDoc = item.detail);
+    }
+    function acceptCompletion() {
+        const item = completions[selectedCompletion];
+        completionOpen = false;
+        if (!item) { editor.forceActiveFocus(); return; }
+        const prefix = currentPrefix(), at = editor.cursorPosition;
+        editor.remove(at - prefix.length, at);
+        editor.insert(at - prefix.length, item.insert);
+        editor.forceActiveFocus();
     }
     function openExternal() {
         busy = true; ideNote = "";
@@ -56,6 +101,13 @@ BwDialog {
         const out = {};
         for (const d of diagnostics) if (out[d.line] !== "error") out[d.line] = d.level === "error" ? "error" : "warning";
         return out;
+    }
+    // Continuous check: two quiet seconds re-run diagnostics on what's on
+    // screen, so inline errors follow typing, not just Check and Save.
+    Timer {
+        id: autoCheck
+        interval: 2000; repeat: false
+        onTriggered: if (!root.busy && root.actor && root.visible) root.refreshDiagnostics()
     }
 
     // ─── Rust highlighting ─────────────────────────────────────────────────
@@ -166,8 +218,23 @@ BwDialog {
                     selectByMouse: true; wrapMode: TextEdit.NoWrap; textFormat: TextEdit.PlainText
                     persistentSelection: true; readOnly: root.busy && !text.length
                     onCursorRectangleChanged: flick.ensureVisible(cursorRectangle)
+                    onTextChanged: autoCheck.restart()
+                    // Ctrl+Space completes; arrows/Enter/Tab drive the popup while open.
+                    Keys.onPressed: event => {
+                        if (event.key === Qt.Key_Space && (event.modifiers & Qt.ControlModifier)) {
+                            root.requestCompletions(); event.accepted = true;
+                        } else if (root.completionOpen) {
+                            if (event.key === Qt.Key_Escape) { root.completionOpen = false; event.accepted = true; }
+                            else if (event.key === Qt.Key_Down) { root.selectedCompletion = Math.min(root.completions.length - 1, root.selectedCompletion + 1); root.updateHover(); event.accepted = true; }
+                            else if (event.key === Qt.Key_Up) { root.selectedCompletion = Math.max(0, root.selectedCompletion - 1); root.updateHover(); event.accepted = true; }
+                            else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.acceptCompletion(); event.accepted = true; }
+                        }
+                    }
                     // Tab inserts two spaces and stays in the box.
-                    Keys.onTabPressed: event => { const at = cursorPosition; remove(selectionStart, selectionEnd); insert(selectionStart, "  "); cursorPosition = at + 2; event.accepted = true; }
+                    Keys.onTabPressed: event => {
+                        if (root.completionOpen) { root.acceptCompletion(); event.accepted = true; return; }
+                        const at = cursorPosition; remove(selectionStart, selectionEnd); insert(selectionStart, "  "); cursorPosition = at + 2; event.accepted = true;
+                    }
                     Text {
                         z: -1
                         x: editor.leftPadding; y: editor.topPadding
@@ -195,13 +262,52 @@ BwDialog {
                 Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 12; color: modelData.level === "error" ? "#ff8080" : "#e5c07b"; text: modelData.message }
             }
         }
+        Rectangle {
+            visible: root.completionOpen
+            Layout.fillWidth: true; Layout.preferredHeight: Math.min(190, completionList.contentHeight + hoverDocText.implicitHeight + 16)
+            radius: 6; color: "#24272f"; border.color: Theme.accent; clip: true
+            ColumnLayout {
+                anchors.fill: parent; anchors.margins: 6; spacing: 4
+                ListView {
+                    id: completionList
+                    Layout.fillWidth: true; Layout.preferredHeight: Math.min(120, contentHeight); clip: true
+                    model: root.completions
+                    currentIndex: root.selectedCompletion
+                    highlight: Rectangle { color: "#0cffffff"; radius: 3 }
+                    delegate: RowLayout {
+                        required property var modelData
+                        required property int index
+                        width: ListView.view.width; spacing: 8
+                        Text { font.family: "monospace"; font.pixelSize: 12; color: "#61afef"; text: modelData.insert }
+                        Text { Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: 11; color: Theme.textDim; text: modelData.detail }
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: { root.selectedCompletion = index; root.updateHover(); }
+                            onDoubleClicked: { root.selectedCompletion = index; root.acceptCompletion(); }
+                        }
+                    }
+                }
+                Text {
+                    id: hoverDocText
+                    visible: root.hoverDoc.length > 0
+                    Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 11; color: Theme.textDim
+                    text: root.hoverDoc
+                }
+            }
+        }
         Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
-            text: "Real Rust, compiled with rustc when you press Play. `std` is there; other crates aren't. Errors land in the run log and on their lines above. The project root holds a Cargo.toml for rust-analyzer, so this file also opens in VS Code, Zed or RustRover with completion and go-to-source on the API." }
+            text: "Real Rust, compiled with rustc when you press Play. `std` is there; other crates aren't. Ctrl+Space completes API methods and project names; Tab takes the picked row. Errors land in the run log and on their lines above. The project root holds a Cargo.toml for rust-analyzer, so this file also opens in VS Code, Zed or RustRover with completion and go-to-source on the API." }
+        Text { visible: !!root.toolchain && !root.toolchain.rustfmt_version; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#ffb86b"; font.pixelSize: 11
+            text: "rustfmt isn't installed, so Format is off. Install it with `rustup component add rustfmt`." }
+        Text { visible: !!root.toolchain && !root.toolchain.clippy_version; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#ffb86b"; font.pixelSize: 11
+            text: "Clippy isn't installed, so Lint is off. Install it with `rustup component add clippy`." }
         Text { visible: root.ideNote.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11; text: root.ideNote }
         RowLayout {
             Layout.alignment: Qt.AlignRight; spacing: 8
-            BwButton { text: "Cancel"; onClicked: root.close() }
+            BwButton { text: "Cancel"; onClicked: { root.completionOpen = false; root.close(); } }
             BwButton { text: "Open in editor"; enabled: !root.busy; onClicked: root.openExternal() }
+            BwButton { text: "Lint"; enabled: !root.busy && (!root.toolchain || !!root.toolchain.clippy_version); onClicked: root.lint() }
+            BwButton { text: "Format"; enabled: !root.busy && (!root.toolchain || !!root.toolchain.rustfmt_version); onClicked: root.format() }
             BwButton { text: "Check"; enabled: !root.busy; onClicked: root.check() }
             BwButton { text: "Save"; primary: true; enabled: !root.busy; onClicked: root.save(() => root.close()) }
         }

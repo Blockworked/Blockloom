@@ -15,6 +15,8 @@ Rectangle {
     border.color: Theme.borderSoft
 
     Settings { id: remembered; category: "runlog"; property bool open: true; property real height: 96 }
+    // A script-linked line offers its file back: the editor opens it on it.
+    signal openScriptRequested(string path, int line)
     // Appends the lines not yet shown and drops what the backend dropped.
     readonly property var log: app.log
     property real shownTotal: 0
@@ -22,7 +24,7 @@ Rectangle {
     Component.onCompleted: sync()
     function sync() {
         const incoming = log.lines, added = log.total - shownTotal;
-        const entry = line => ({ kind: line.kind, actor: line.actor, words: line.text });
+        const entry = line => ({ kind: line.kind, level: line.level || line.kind, actor: line.actor, words: line.text, path: line.path || "", line: line.line || 0 });
         if (added < 0 || added > incoming.length) {
             lineModel.clear();
             for (const line of incoming) lineModel.append(entry(line));
@@ -70,19 +72,32 @@ Rectangle {
             model: lineModel
             ScrollBar.vertical: ScrollBar {}
             onCountChanged: positionViewAtEnd()
-            delegate: TextEdit {
+            delegate: RowLayout {
                 required property string kind
+                required property string level
                 required property string actor
                 required property string words
+                required property string path
+                required property int line
                 width: lines.width - 16; x: 8
-                wrapMode: TextEdit.Wrap; font.family: "monospace"; font.pixelSize: 12
-                textFormat: TextEdit.PlainText
-                color: kind === "error" ? Theme.danger : Theme.text
-                text: (actor ? actor + "  " : "") + words
-                readOnly: true
-                selectByMouse: true
-                selectByKeyboard: true
-                persistentSelection: true
+                spacing: 8
+                TextEdit {
+                    Layout.fillWidth: true
+                    wrapMode: TextEdit.Wrap; font.family: "monospace"; font.pixelSize: 12
+                    textFormat: TextEdit.PlainText
+                    color: level === "error" || kind === "error" ? Theme.danger : Theme.text
+                    text: (actor ? actor + "  " : "") + words
+                    readOnly: true
+                    selectByMouse: true
+                    selectByKeyboard: true
+                    persistentSelection: true
+                }
+                BwButton {
+                    visible: path.length > 0
+                    flat: true; implicitHeight: 24; font.pixelSize: 11
+                    text: "Open script"
+                    onClicked: root.openScriptRequested(path, line > 0 ? line : 1)
+                }
             }
         }
     }

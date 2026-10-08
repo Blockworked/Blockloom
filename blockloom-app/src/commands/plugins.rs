@@ -1444,11 +1444,11 @@ fn with_module<T>(
     if !logs.is_empty() {
         let mut s = lock(state)?;
         for (level, message) in logs {
-            s.push_log(LogLine {
-                kind: if level <= LOG_WARN { "error" } else { "say" }.to_string(),
-                actor: plugin.to_string(),
-                text: message,
-            });
+            s.push_log(LogLine::with_kind(
+                if level <= LOG_WARN { "error" } else { "say" }.to_string(),
+                plugin.to_string(),
+                message,
+            ));
         }
         emit(app, &s);
     }
@@ -1755,17 +1755,12 @@ pub(crate) fn plugin_import(
     })?;
     let mut s = lock(state)?;
     for warning in &imported.warnings {
-        s.push_log(LogLine {
-            kind: "error".to_string(),
-            actor: plugin.clone(),
-            text: format!("{path}: {warning}"),
-        });
+        s.push_log(LogLine::error(plugin.clone(), format!("{path}: {warning}")));
     }
-    s.push_log(LogLine {
-        kind: "say".to_string(),
-        actor: plugin.clone(),
-        text: format!("Imported {path}: {} file(s)", imported.outputs.len()),
-    });
+    s.push_log(LogLine::say(
+        plugin.clone(),
+        format!("Imported {path}: {} file(s)", imported.outputs.len()),
+    ));
     emit(app, &s);
     Ok(imported)
 }
@@ -1804,11 +1799,10 @@ pub(crate) fn auto_import(state: &SharedState, app: &AppHandle, paths: &[String]
         if let Err(error) = plugin_import(state, app, path.clone(), None)
             && let Ok(mut s) = lock(state)
         {
-            s.push_log(LogLine {
-                kind: "error".to_string(),
-                actor: "Blockloom".to_string(),
-                text: format!("Couldn't import {path}: {error}"),
-            });
+            s.push_log(LogLine::error(
+                "Blockloom".to_string(),
+                format!("Couldn't import {path}: {error}"),
+            ));
             emit(app, &s);
         }
     }
@@ -1891,11 +1885,10 @@ pub(crate) fn refresh_imports(state: &SharedState, app: &AppHandle) {
     }
     if let Ok(mut s) = lock(state) {
         for failure in &done.failed {
-            s.push_log(LogLine {
-                kind: "error".to_string(),
-                actor: "Blockloom".to_string(),
-                text: format!("Couldn't import {failure}"),
-            });
+            s.push_log(LogLine::error(
+                "Blockloom".to_string(),
+                format!("Couldn't import {failure}"),
+            ));
         }
         emit(app, &s);
     }
@@ -1942,11 +1935,10 @@ pub(crate) fn run_build_hooks(
         if !run.warnings.is_empty() {
             let mut s = lock(state)?;
             for warning in &run.warnings {
-                s.push_log(LogLine {
-                    kind: "error".to_string(),
-                    actor: plugin.clone(),
-                    text: format!("{}: {warning}", hook.name),
-                });
+                s.push_log(LogLine::error(
+                    plugin.clone(),
+                    format!("{}: {warning}", hook.name),
+                ));
             }
             emit(app, &s);
         }

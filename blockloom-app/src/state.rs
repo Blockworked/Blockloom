@@ -188,9 +188,99 @@ impl AppState {
 pub(crate) struct LogLine {
     /// `"say"` or `"error"`.
     pub(crate) kind: String,
+    /// `"info"` for a `say`, `"error"` for an error. Kept beside `kind` so
+    /// the log can grow severities without renaming what QML already reads.
+    #[serde(default = "LogLine::info_level")]
+    pub(crate) level: String,
     /// Actor name, resolved when the line was made.
     pub(crate) actor: String,
     pub(crate) text: String,
+    /// Script file this line is about, when one names it. The log offers it
+    /// back to the editor, so a failure lands on its file and line.
+    #[serde(default)]
+    pub(crate) path: Option<String>,
+    #[serde(default)]
+    pub(crate) line: Option<u32>,
+}
+
+impl LogLine {
+    fn info_level() -> String {
+        "info".to_string()
+    }
+
+    pub(crate) fn say(actor: String, text: String) -> Self {
+        LogLine {
+            kind: "say".to_string(),
+            level: "info".to_string(),
+            actor,
+            text,
+            path: None,
+            line: None,
+        }
+    }
+
+    pub(crate) fn error(actor: String, text: String) -> Self {
+        LogLine {
+            kind: "error".to_string(),
+            level: "error".to_string(),
+            actor,
+            text,
+            path: None,
+            line: None,
+        }
+    }
+
+    /// A line with a caller-chosen kind (plugin log levels, the frontend's
+    /// own pushes). Anything but `"error"` reads as info.
+    pub(crate) fn with_kind(kind: String, actor: String, text: String) -> Self {
+        let level = if kind == "error" { "error" } else { "info" }.to_string();
+        LogLine {
+            kind,
+            level,
+            actor,
+            text,
+            path: None,
+            line: None,
+        }
+    }
+
+    /// An error about one script file: carries its path and the first
+    /// `path:line` the compiler or runtime message names, so the log can
+    /// offer the failure back to the editor.
+    pub(crate) fn script_error(actor: String, path: &str, text: String) -> Self {
+        let line = first_error_line(&text, path);
+        LogLine {
+            kind: "error".to_string(),
+            level: "error".to_string(),
+            actor,
+            text,
+            path: Some(path.to_string()),
+            line,
+        }
+    }
+}
+
+/// The first line number named as `path:line` (or `path:line:col`) in `text`,
+/// as rustc writes its spans. `None` when the message names none.
+fn first_error_line(text: &str, path: &str) -> Option<u32> {
+    for line in text.lines() {
+        let mut rest = line;
+        while let Some(found) = rest.find(path) {
+            rest = &rest[found + path.len()..];
+            let digits: String = rest
+                .strip_prefix(':')
+                .unwrap_or("")
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if let Ok(number) = digits.parse::<u32>()
+                && number > 0
+            {
+                return Some(number);
+            }
+        }
+    }
+    None
 }
 
 /// The run log as [`crate::Event::Log`] carries it.
@@ -403,4 +493,28 @@ pub(crate) struct InterfaceEditTransaction {
     pub(crate) project: Project,
     pub(crate) revision: u64,
     pub(crate) document: blockloom_core::ui::UiDocument,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_lines_point_at_the_named_span() {
+        let text = "error: cannot find value `foo`\n --> assets/scripts/player.rs:12:5\n  |\n12 |     foo();";
+        assert_eq!(first_error_line(text, "assets/scripts/player.rs"), Some(12));
+        assert_eq!(first_error_line("boom", "assets/scripts/player.rs"), None);
+        let line = LogLine::script_error(
+            "Player".to_string(),
+            "assets/scripts/player.rs",
+            text.to_string(),
+        );
+        assert_eq!(line.level, "error");
+        assert_eq!(line.path.as_deref(), Some("assets/scripts/player.rs"));
+        assert_eq!(line.line, Some(12));
+        assert_eq!(
+            LogLine::say("A".to_string(), "hi".to_string()).level,
+            "info"
+        );
+    }
 }

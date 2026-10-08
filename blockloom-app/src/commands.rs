@@ -2075,12 +2075,43 @@ fn check_parent(
 
 /// Writes `component` over the one called `name`. A custom component that
 /// came back under a different name has been renamed, so it takes the old
-/// one's place in the list rather than being appended.
+/// one's place in the list rather than being appended. A script names its
+/// old path as `name` when an actor runs several, so one card edits one
+/// slot instead of appending another.
 fn rename_or_replace(
     components: &mut Components,
     name: &str,
     component: ActorComponent,
 ) -> Result<(), String> {
+    if let ActorComponent::Script { path: new_path } = &component {
+        if name != "Script" {
+            let Some(index) = components.0.iter().position(|slot| match slot {
+                ActorComponent::Script { path } => path == name,
+                _ => false,
+            }) else {
+                return Err(format!("No script \"{name}\" to change"));
+            };
+            if new_path != name && components.scripts().any(|other| other == new_path) {
+                return Err(format!("This actor already runs {new_path}"));
+            }
+            components.0[index] = component;
+            return Ok(());
+        }
+        // Legacy `name == "Script"`: one script means a path change for that
+        // slot; several means an append, since the caller didn't say which.
+        if components.count("Script") == 1 {
+            if let Some(index) = components
+                .0
+                .iter()
+                .position(|slot| matches!(slot, ActorComponent::Script { .. }))
+            {
+                components.0[index] = component;
+                return Ok(());
+            }
+        }
+        components.insert(component);
+        return Ok(());
+    }
     if component.name() == name {
         components.insert(component);
         return Ok(());
@@ -2613,11 +2644,12 @@ fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
         .project()
         .into_iter()
         .flat_map(|project| project.actors.iter())
-        .filter_map(|actor| {
+        .flat_map(|actor| {
             actor
                 .components
-                .script()
+                .scripts()
                 .map(|path| (actor.name.clone(), path.to_string()))
+                .collect::<Vec<_>>()
         })
         .collect();
     if scripts.is_empty() {
@@ -2629,14 +2661,10 @@ fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
         for (_, path) in &scripts {
             s.record_script_status(path, "build_failed", Some(error.clone()));
         }
-        s.push_log(LogLine {
-            kind: "error".to_string(),
-            actor: "Scripts".to_string(),
-            text: format!(
+        s.push_log(LogLine::error("Scripts".to_string(), format!(
                 "Scripts need a Rust toolchain and this machine doesn't have one, so {} script(s) won't run. Blocks still run. {error}",
                 scripts.len()
-            ),
-        });
+            )));
         return scripts.len();
     }
     let mut failed = 0;
@@ -2660,11 +2688,11 @@ fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
         }
         if let Err(error) = result {
             failed += 1;
-            s.push_log(LogLine {
-                kind: "error".to_string(),
+            s.push_log(LogLine::script_error(
                 actor,
-                text: format!("{path} didn't compile:\n{error}"),
-            });
+                &path,
+                format!("{path} didn't compile:\n{error}"),
+            ));
         }
     }
     failed
@@ -2682,7 +2710,7 @@ pub(crate) fn list_build_targets(state: &SharedState) -> Result<Vec<build::Targe
         project
             .actors
             .iter()
-            .any(|actor| actor.components.script().is_some())
+            .any(|actor| actor.components.scripts().next().is_some())
     });
     let fast_source = project
         .as_ref()
@@ -2809,20 +2837,21 @@ pub(crate) fn run_build_game(
         .and_then(android::ndk_linker_for);
     let mut failed = false;
     for actor in &project.actors {
-        blockloom_core::build_control::check()?;
-        if let Some(path) = actor.components.script()
-            && let Err(error) =
-                script::compile_for_with_linker(&dir, path, script_target, linker.as_deref())
-        {
+        for path in actor.components.scripts() {
             blockloom_core::build_control::check()?;
-            failed = true;
-            let mut s = lock(state)?;
-            s.push_log(LogLine {
-                kind: "error".to_string(),
-                actor: actor.name.clone(),
-                text: format!("{path} didn't compile:\n{error}"),
-            });
-            emit(app, &s);
+            if let Err(error) =
+                script::compile_for_with_linker(&dir, path, script_target, linker.as_deref())
+            {
+                blockloom_core::build_control::check()?;
+                failed = true;
+                let mut s = lock(state)?;
+                s.push_log(LogLine::script_error(
+                    actor.name.clone(),
+                    path,
+                    format!("{path} didn't compile:\n{error}"),
+                ));
+                emit(app, &s);
+            }
         }
     }
     if failed {
@@ -2876,10 +2905,7 @@ pub(crate) fn run_build_game(
     // A cached Android build reused the previous APK, so say so instead of
     // claiming a fresh compile.
     let action = if built.cached { "Reusing" } else { "Built" };
-    s.push_log(LogLine {
-        kind: "say".to_string(),
-        actor: "Blockloom".to_string(),
-        text: format!(
+    s.push_log(LogLine::say("Blockloom".to_string(), format!(
             "{} {} for {}: {} asset(s), {} script(s), {} shader(s), {} blocks, {}{}{}{}, {} -> {} and {}{}",
             action,
             project.name,
@@ -2908,8 +2934,7 @@ pub(crate) fn run_build_game(
             } else {
                 ""
             },
-        ),
-    });
+        )));
     emit(app, &s);
     Ok(built)
 }
@@ -2974,18 +2999,13 @@ pub(crate) fn android_logcat_tail(
     if !dumped.lines.is_empty() || !dumped.panics.is_empty() {
         let mut s = lock(state)?;
         for line in &dumped.lines {
-            s.push_log(LogLine {
-                kind: "say".to_string(),
-                actor: "Android".to_string(),
-                text: line.trim().to_string(),
-            });
+            s.push_log(LogLine::say("Android".to_string(), line.trim().to_string()));
         }
         for line in &dumped.panics {
-            s.push_log(LogLine {
-                kind: "error".to_string(),
-                actor: "Android".to_string(),
-                text: line.trim().to_string(),
-            });
+            s.push_log(LogLine::error(
+                "Android".to_string(),
+                line.trim().to_string(),
+            ));
         }
         emit(app, &s);
     }
@@ -3825,16 +3845,8 @@ pub(crate) fn check_shader(
         .map_err(|e| format!("couldn't read {source}: {e}"))
         .and_then(|text| blockloom_core::material::check_surface_wesl(&text, dim3));
     let line = match verdict {
-        Ok(()) => LogLine {
-            kind: "say".to_string(),
-            actor: name,
-            text: format!("{source} compiles"),
-        },
-        Err(error) => LogLine {
-            kind: "error".to_string(),
-            actor: name,
-            text: format!("{source} doesn't compile:\n{error}"),
-        },
+        Ok(()) => LogLine::say(name, format!("{source} compiles")),
+        Err(error) => LogLine::error(name, format!("{source} doesn't compile:\n{error}")),
     };
     s.push_log(line);
     emit(app, &s);
@@ -3898,8 +3910,9 @@ fn repoint_assets(s: &mut AppState, app: &AppHandle, from: &str, to: &str) {
 
 // ─── Scripts ───────────────────────────────────────────────────────────────
 
-/// Gives an actor a script: makes the file from the starter template if it
-/// isn't there, and attaches the component that names it.
+/// Gives an actor its first script: makes the file from the starter template
+/// if it isn't there, and attaches the component that names it. An actor
+/// that already names one keeps it; [`add_script`] attaches another.
 pub(crate) fn create_script(
     state: &SharedState,
     app: &AppHandle,
@@ -3932,12 +3945,147 @@ pub(crate) fn create_script(
     Ok(path)
 }
 
-/// Compiles one actor's script without playing, so the editor can show what
-/// rustc thinks of it. The message is the success line or the errors.
+/// Attaches another script to an actor that already runs one. Scripts run in
+/// component order: `start`, then `event`, then `tick`, top to bottom.
+pub(crate) fn add_script(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    path: Option<String>,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    let dir = s
+        .project_dir()
+        .map(Path::to_path_buf)
+        .ok_or("No project is open")?;
+    let path = path.filter(|p| !p.trim().is_empty());
+    // Resolve the wanted path before borrowing the actor mutably.
+    let wanted = match path {
+        Some(path) => {
+            if !script::is_script_entry(&path) {
+                if script::is_shared_path(&path) {
+                    return Err(format!(
+                        "\"{path}\" is shared library code, not a runnable script"
+                    ));
+                }
+                return Err(format!("\"{path}\" isn't a script path"));
+            }
+            path
+        }
+        None => {
+            // Pick a fresh file name that no script on any actor uses yet.
+            let taken: std::collections::HashSet<String> = s
+                .project()
+                .into_iter()
+                .flat_map(|p| p.actors.iter())
+                .flat_map(|a| a.components.scripts())
+                .map(str::to_string)
+                .collect();
+            let mut candidate = script::unused_path(&dir, &{
+                s.project()
+                    .and_then(|p| p.actor(&actor_id))
+                    .map(|a| a.name.clone())
+                    .unwrap_or_else(|| "script".to_string())
+            });
+            let stem = candidate.trim_end_matches(".rs").to_string();
+            let mut n = 2;
+            while taken.contains(&candidate) || script::source_path(&dir, &candidate).exists() {
+                candidate = format!("{stem}_{n}.rs");
+                n += 1;
+            }
+            candidate
+        }
+    };
+    push_undo(&mut s);
+    let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
+        return Err("Actor not found".to_string());
+    };
+    if actor.components.scripts().any(|other| other == wanted) {
+        return Err(format!("This actor already runs {wanted}"));
+    }
+    let name = actor.name.clone();
+    script::create(&dir, &wanted, &name)?;
+    actor.components.insert(ActorComponent::Script {
+        path: wanted.clone(),
+    });
+    auto_save(&s);
+    sync_ide(&dir);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(wanted)
+}
+
+/// Detaches one script from an actor. The file stays on disk.
+pub(crate) fn remove_script(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    path: String,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
+        return Err("Actor not found".to_string());
+    };
+    if !actor.components.remove_script(&path) {
+        return Err(format!("This actor doesn't run {path}"));
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Moves one of an actor's scripts to `index` among its scripts.
+pub(crate) fn move_script(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    path: String,
+    index: usize,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
+        return Err("Actor not found".to_string());
+    };
+    if !actor.components.move_script(&path, index) {
+        return Err(format!("This actor doesn't run {path}"));
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
+/// Which script of an actor's an `actorId`-only call means: `path` when the
+/// caller names one it runs, else its first. Keeps old callers working after
+/// multiples landed.
+fn resolve_actor_script(
+    actor: &blockloom_core::project::Actor,
+    path: Option<String>,
+) -> Result<String, String> {
+    if let Some(wanted) = path.filter(|p| !p.trim().is_empty()) {
+        if actor.components.scripts().any(|other| other == wanted) {
+            return Ok(wanted);
+        }
+        return Err(format!("This actor doesn't run {wanted}"));
+    }
+    actor
+        .components
+        .script()
+        .map(str::to_string)
+        .ok_or_else(|| "This actor has no script".to_string())
+}
+
+/// Compiles one of an actor's scripts without playing, so the editor can show
+/// what rustc thinks of it. The message is the success line or the errors.
+/// `path` names which script; empty means its first.
 pub(crate) fn check_script(
     state: &SharedState,
     app: &AppHandle,
     actor_id: String,
+    path: Option<String>,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     let dir = s
@@ -3948,11 +4096,7 @@ pub(crate) fn check_script(
         return Err("Actor not found".to_string());
     };
     let name = actor.name.clone();
-    let path = actor
-        .components
-        .script()
-        .ok_or("This actor has no script")?
-        .to_string();
+    let path = resolve_actor_script(actor, path)?;
     sync_ide(&dir);
     let result = script::compile(&dir, &path);
     s.record_script_status(
@@ -3965,16 +4109,10 @@ pub(crate) fn check_script(
         result.as_ref().err().cloned(),
     );
     let line = match result {
-        Ok(_) => LogLine {
-            kind: "say".to_string(),
-            actor: name,
-            text: format!("{path} compiled"),
-        },
-        Err(error) => LogLine {
-            kind: "error".to_string(),
-            actor: name,
-            text: format!("{path} didn't compile:\n{error}"),
-        },
+        Ok(_) => LogLine::say(name, format!("{path} compiled")),
+        Err(error) => {
+            LogLine::script_error(name, &path, format!("{path} didn't compile:\n{error}"))
+        }
     };
     s.push_log(line);
     emit(app, &s);
@@ -3982,21 +4120,25 @@ pub(crate) fn check_script(
 }
 
 /// The script's source, for the editor to show. Missing is empty, not an
-/// error: a project can name a file somebody deleted.
-pub(crate) fn read_script(state: &SharedState, actor_id: String) -> Result<String, String> {
+/// error: a project can name a file somebody deleted. `path` names which
+/// script; empty means its first.
+pub(crate) fn read_script(
+    state: &SharedState,
+    actor_id: String,
+    path: Option<String>,
+) -> Result<String, String> {
     let s = lock(state)?;
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
         .ok_or("No project is open")?;
-    let Some(path) = s
-        .project()
-        .and_then(|p| p.actor(&actor_id))
-        .and_then(|actor| actor.components.script())
-    else {
+    let Some(actor) = s.project().and_then(|p| p.actor(&actor_id)) else {
         return Ok(String::new());
     };
-    Ok(std::fs::read_to_string(script::source_path(&dir, path)).unwrap_or_default())
+    let Ok(path) = resolve_actor_script(actor, path) else {
+        return Ok(String::new());
+    };
+    Ok(std::fs::read_to_string(script::source_path(&dir, &path)).unwrap_or_default())
 }
 
 /// Writes a script's source back. The file is the document here - it isn't
@@ -4006,6 +4148,7 @@ pub(crate) fn write_script(
     app: &AppHandle,
     actor_id: String,
     source: String,
+    path: Option<String>,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     let dir = s
@@ -4015,9 +4158,8 @@ pub(crate) fn write_script(
     let path = s
         .project()
         .and_then(|p| p.actor(&actor_id))
-        .and_then(|actor| actor.components.script())
-        .ok_or("This actor has no script")?
-        .to_string();
+        .map(|actor| resolve_actor_script(actor, path))
+        .ok_or("Actor not found")??;
     if !script::is_valid_path(&path) {
         return Err(format!("\"{path}\" isn't a script path"));
     }
@@ -4043,13 +4185,14 @@ pub(crate) fn script_toolchain(
     Ok(script::ide::toolchain_status())
 }
 
-/// One actor's script errors pinned to their lines, for the editor to show
-/// inline. `cargo check` over the analysis project when Cargo is here, else
-/// one `rustc` run. Empty means it compiled, or there is nothing to compile
-/// with - the run log says which.
+/// One of an actor's scripts errors pinned to their lines, for the editor to
+/// show inline. `cargo check` over the analysis project when Cargo is here,
+/// else one `rustc` run. Empty means it compiled, or there is nothing to
+/// compile with - the run log says which.
 pub(crate) fn script_diagnostics(
     state: &SharedState,
     actor_id: String,
+    path: Option<String>,
 ) -> Result<Vec<script::ide::ScriptDiagnostic>, String> {
     let s = lock(state)?;
     let dir = s
@@ -4059,12 +4202,95 @@ pub(crate) fn script_diagnostics(
     let path = s
         .project()
         .and_then(|p| p.actor(&actor_id))
-        .and_then(|actor| actor.components.script())
-        .ok_or("This actor has no script")?
-        .to_string();
+        .map(|actor| resolve_actor_script(actor, path))
+        .ok_or("Actor not found")??;
     drop(s);
     sync_ide(&dir);
     Ok(script::ide::diagnostics_for(&dir, &path))
+}
+
+/// Runs `rustfmt` over one of an actor's scripts and writes the formatted
+/// source back. Answers the formatted text, so the editor shows what rustfmt
+/// did. `path` names which script; empty means its first.
+pub(crate) fn format_script(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+    path: Option<String>,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    let dir = s
+        .project_dir()
+        .map(Path::to_path_buf)
+        .ok_or("No project is open")?;
+    let path = s
+        .project()
+        .and_then(|p| p.actor(&actor_id))
+        .map(|actor| resolve_actor_script(actor, path))
+        .ok_or("Actor not found")??;
+    let file = script::source_path(&dir, &path);
+    let source = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let formatted = script::ide::format_source(&source)?;
+    if formatted != source {
+        std::fs::write(&file, &formatted).map_err(|e| format!("{}: {e}", file.display()))?;
+        if let Some(open) = &mut s.open {
+            open.script_statuses.remove(&path);
+        }
+    }
+    sync_ide(&dir);
+    emit(app, &s);
+    Ok(formatted)
+}
+
+/// The opt-in lint pass: `cargo clippy` over the analysis project, filtered
+/// to one script like `check` is. Empty means clean, or nothing to lint with.
+/// `path` names which script; empty means its first.
+pub(crate) fn clippy_script(
+    state: &SharedState,
+    actor_id: String,
+    path: Option<String>,
+) -> Result<Vec<script::ide::ScriptDiagnostic>, String> {
+    let s = lock(state)?;
+    let dir = s
+        .project_dir()
+        .map(Path::to_path_buf)
+        .ok_or("No project is open")?;
+    let path = s
+        .project()
+        .and_then(|p| p.actor(&actor_id))
+        .map(|actor| resolve_actor_script(actor, path))
+        .ok_or("Actor not found")??;
+    drop(s);
+    sync_ide(&dir);
+    Ok(script::ide::clippy_for(&dir, &path))
+}
+
+/// Completion rows for the script editor: API methods plus this project's
+/// symbols, filtered by `prefix`. The editor shows them on Ctrl+Space.
+pub(crate) fn script_completions(
+    state: &SharedState,
+    prefix: String,
+) -> Result<Vec<script::complete::Completion>, String> {
+    let s = lock(state)?;
+    let dir = s
+        .project_dir()
+        .map(Path::to_path_buf)
+        .ok_or("No project is open")?;
+    drop(s);
+    Ok(script::complete::completions_for(&dir, &prefix))
+}
+
+/// One or two lines about a script name: an API method's doc and signature,
+/// a project symbol's original name, or a keyword note. `None` reads as null:
+/// the editor then shows nothing rather than a wrong doc.
+pub(crate) fn script_hover(state: &SharedState, symbol: String) -> Result<Option<String>, String> {
+    let s = lock(state)?;
+    let dir = s
+        .project_dir()
+        .map(Path::to_path_buf)
+        .ok_or("No project is open")?;
+    drop(s);
+    Ok(script::complete::hover_for(&dir, &symbol))
 }
 
 /// Regenerates the analysis project rust-analyzer opens and answers what it
@@ -5228,11 +5454,7 @@ pub(crate) fn push_log(
     text: String,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
-    s.push_log(LogLine {
-        kind,
-        actor: "Blockloom".to_string(),
-        text,
-    });
+    s.push_log(LogLine::with_kind(kind, "Blockloom".to_string(), text));
     emit(app, &s);
     Ok(())
 }

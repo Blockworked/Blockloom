@@ -1299,13 +1299,14 @@ fn android_native_libs(
 }
 
 /// The distinct script sources the project's actors name, like
-/// `copy_scripts` collects them.
+/// `copy_scripts` collects them. Every script on every actor, in no
+/// particular order: call order is per actor, builds are per file.
 fn script_paths(project: &Project) -> Vec<&str> {
     let mut paths: Vec<&str> = project
         .scenes
         .iter()
         .flat_map(|scene| scene.actors.iter())
-        .filter_map(|actor| actor.components.script())
+        .flat_map(|actor| actor.components.scripts())
         .collect();
     paths.sort_unstable();
     paths.dedup();
@@ -1765,7 +1766,7 @@ fn copy_scripts(
         .scenes
         .iter()
         .flat_map(|scene| scene.actors.iter())
-        .filter_map(|actor| actor.components.script())
+        .flat_map(|actor| actor.components.scripts())
         .collect();
     paths.sort_unstable();
     paths.dedup();

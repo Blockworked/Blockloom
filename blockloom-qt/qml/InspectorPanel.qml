@@ -47,11 +47,13 @@ Rectangle {
     function write(name, component) { if (actor) app.invoke("set_actor_component", { actorId: actor.id, name: name, component: component }); }
     function remove(name) { if (actor) app.invoke("remove_actor_component", { actorId: actor.id, name: name }); }
     // Physics components have their own commands: a collider is named by its id,
-    // since an actor may carry several.
+    // since an actor may carry several. Scripts are the same: one card edits
+    // one path.
     function removeComponent(c) {
         if (!actor) return;
         if (c.component === "Collider") app.invoke("remove_collider", { colliderId: c.collider.id });
         else if (c.component === "Constraint") app.invoke("remove_constraint", { constraintId: c.constraint.id });
+        else if (c.component === "Script") app.invoke("remove_script", { actorId: actor.id, path: c.path });
         else if (c.component === "Rigidbody") app.invoke("remove_rigidbody", { actorId: actor.id });
         else if (c.component === "CharacterController") app.invoke("remove_character_controller", { actorId: actor.id });
         else if (c.component === "CharacterMotor") app.invoke("remove_character_motor", { actorId: actor.id });
@@ -361,7 +363,7 @@ Rectangle {
         return ["Look","Render","Body","Rigidbody","Collider","Constraint","CharacterController","CharacterMotor","PlayerCamera","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
             .filter(n => n !== "Sprite" || !is3d)
             .filter(n => n !== "Fracture" || is3d)
-            .filter(n => n === "Custom" || n === "Collider" || n === "Constraint" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }))
+            .filter(n => n === "Custom" || n === "Collider" || n === "Constraint" || n === "Script" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : n }))
             .concat(pluginTypes.filter(t => t.kind === "component" && held.indexOf(t.name) < 0).map(t => ({ value: "plugin:" + t.name, label: t.displayName + " (" + t.pluginName + ")" })));
     }
     function blank(name) {
@@ -398,7 +400,12 @@ Rectangle {
     function add(name) {
         if (!actor) return;
         // A script needs a file on disk, so the backend makes both at once.
-        if (name === "Script") { app.invoke("create_script", { actorId: actor.id }); return; }
+        // The first one uses the legacy entry point; further ones append.
+        if (name === "Script") {
+            const hasScript = actor.components.some(c => c.component === "Script");
+            app.invoke(hasScript ? "add_script" : "create_script", { actorId: actor.id });
+            return;
+        }
         if (name === "CharacterMotor") { app.invoke("set_character_motor", { actorId: actor.id, motor: is3d ? {} : motor2dDefaults() }); return; }
         if (name === "CharacterController") { app.invoke("set_character_controller", { actorId: actor.id, controller: is3d ? {} : { radius: 16, height: 64, step_offset: 12, skin_width: 2, min_move_distance: 0.05 } }); return; }
         if (name === "Rigidbody") { app.invoke("set_rigidbody", { actorId: actor.id, rigidbody: { body_type: "Dynamic" } }); return; }
@@ -952,6 +959,9 @@ Rectangle {
         ColumnLayout {
             readonly property var c: parent.c
             readonly property var scriptStatus: (root.appState.script_statuses || {})[c.path] || null
+            // Position among this actor's scripts: the order `start` runs.
+            readonly property int scriptIndex: root.actor ? root.actor.components.filter(x => x.component === "Script").findIndex(x => x.path === c.path) : -1
+            readonly property int scriptCount: root.actor ? root.actor.components.filter(x => x.component === "Script").length : 0
             spacing: 6
             Text {
                 visible: true
@@ -961,14 +971,25 @@ Rectangle {
                     : scriptStatus.stage === "load_failed" ? "Load failed: " + scriptStatus.error
                     : scriptStatus.stage === "loaded" ? "Script loaded" : "Script compiled"
             }
-            AssetField { app: root.app; accept: ["script"]; value: c.path; Layout.fillWidth: true; onCommitted: p => root.write("Script", { component: "Script", path: p }) }
+            AssetField { app: root.app; accept: ["script"]; value: c.path; Layout.fillWidth: true; onCommitted: p => root.write(c.path, { component: "Script", path: p }) }
             RowLayout {
                 BwButton { text: "Edit"; iconName: "file-code"; implicitHeight: 30; onClicked: scriptDialog.openFor(root.actor, c.path) }
-                BwButton { text: "Check"; implicitHeight: 30; onClicked: root.app.invoke("check_script", { actorId: root.actor.id }) }
+                BwButton { text: "Check"; implicitHeight: 30; onClicked: root.app.invoke("check_script", { actorId: root.actor.id, path: c.path }) }
+                BwButton { visible: scriptIndex > 0; text: "Up"; implicitHeight: 30; onClicked: root.app.invoke("move_script", { actorId: root.actor.id, path: c.path, index: scriptIndex - 1 }) }
+                BwButton { visible: scriptIndex >= 0 && scriptIndex < scriptCount - 1; text: "Down"; implicitHeight: 30; onClicked: root.app.invoke("move_script", { actorId: root.actor.id, path: c.path, index: scriptIndex + 1 }) }
             }
+            Text { visible: scriptCount > 1; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Script " + (scriptIndex + 1) + " of " + scriptCount + ": `start` runs top to bottom." }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "Real Rust, compiled when you press Play. It runs alongside this actor's blocks, not instead of them." }
         }
+    }
+    // Opens a script file from outside the inspector (a run-log line): finds
+    // the actor running it and hands both to the script dialog, on its line.
+    function openScript(path, line) {
+        if (!appState.project) return;
+        const owner = appState.project.actors.find(a => (a.components || []).some(c => c.component === "Script" && c.path === path));
+        if (owner) scriptDialog.openFor(owner, path, line || 0);
     }
     // The QML section the plugin draws for one of its component types, from the
     // trusted editor modules: {file} once trusted, {file: null} until then, or

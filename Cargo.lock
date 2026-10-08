@@ -2702,6 +2702,8 @@ dependencies = [
  "tracing",
  "tracing-log",
  "wasm-bindgen",
+ "wasmi",
+ "wat",
  "web-sys",
  "web-time",
  "wgpu",
