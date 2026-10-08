@@ -838,16 +838,25 @@ or empty tank stops that script with an error effect, not the run. Play builds
 the wasm beside the native library when the machine has the target's std;
 `ScriptBackend` (`engine.rs`) loads native first and falls back to wasm
 (`BLOCKLOOM_SCRIPT_BACKEND=wasm` flips it); wasm32 and Android only have the
-one browser/native variant. The frozen `blockloom:script@0.1.0` WIT world is
+one browser/native variant. The frozen `blockloom:script@0.2.0` WIT world is
 `blockloom-core/src/script/wit.rs`, and drift tests refuse an ABI verb with no
-mapping. Guests live in `blockloom-script-guest`: the Rust crate (`src/`,
-`templates/minimal.rs`) and a freestanding C binding (`c/blockloom.h`,
-`templates/minimal.c`, built with `clang --target=wasm32 -nostdlib`; its verb
-numbers are held to `abi.rs` by `c_header_covers_every_abi_verb`). Runtime tests
-build both templates and hold their effects to the WAT fixture's. Python and
-TypeScript guests need the component model (componentize-py/-js emit
-components), which wasmi does not run; that waits on the wasmi vs wasmtime
-decision in `docs/script-plan.md`.
+mapping (a `wit-parser` test also resolves the text). Guests live in
+`blockloom-script-guest`: the Rust crate (`src/`, `templates/minimal.rs`), a
+freestanding C binding (`c/blockloom.h`, `templates/minimal.c`, built with
+`clang --target=wasm32 -nostdlib`; its verb numbers are held to `abi.rs` by
+`c_header_covers_every_abi_verb`) and a Python component
+(`templates/minimal.py`, componentize-py). Runtime tests build the Rust and C
+templates and hold their effects to the WAT fixture's.
+
+Component-model guests (Python, TypeScript, Go, ...) emit wasm components,
+which wasmi cannot run, so desktop builds host them under wasmtime
+(`script_component.rs`, cargo feature `components`, default on, absent on
+wasm32 and Android). The guest imports the typed interfaces and exports
+`entry`; each import is a thin wrapper over the same `number_for`/`text_for`/
+`act_for_asked` the other backends use. Sandbox: 256 MiB, fuel per call, empty
+WASI context. A script path ending `.wasm` is prebuilt: Play does not run rustc
+on it and `ScriptBackend` loads a component under wasmtime or a core module
+under wasmi. wasmtime is why web and Android guests stay Rust and C only.
 
 ### Game view
 

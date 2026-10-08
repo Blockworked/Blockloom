@@ -90,6 +90,11 @@ mod quality;
 mod queries;
 mod ray_tracing;
 mod script;
+#[cfg(all(
+    feature = "components",
+    not(any(target_arch = "wasm32", target_os = "android"))
+))]
+pub(crate) mod script_component;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod script_wasm;
 mod shadows;

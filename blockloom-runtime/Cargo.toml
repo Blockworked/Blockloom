@@ -65,6 +65,11 @@ wasmi.workspace = true
 # fall back to hard shadows as they do on WebGL2.
 bevy = { workspace = true, features = ["experimental_pbr_pcss"] }
 
+# Component-model guests (see `components` below and script_component.rs).
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "android")))'.dependencies]
+wasmtime = { workspace = true, optional = true }
+wasmtime-wasi = { workspace = true, optional = true }
+
 # Android entry and asset reads: the APK's NativeActivity handle behind
 # `ANDROID_APP`, which the asset manager and the data dir come from. Same
 # Bevy line the workspace pins, so no extra version to track. The manifest
@@ -114,7 +119,7 @@ windows = { version = "0.62", default-features = false, features = ["Win32_Graph
 blockloom-net = { path = "../blockloom-net", optional = true }
 
 [features]
-default = ["ray_tracing", "compressed_textures", "plugins", "multiplayer"]
+default = ["ray_tracing", "compressed_textures", "plugins", "multiplayer", "components"]
 # Native desktop LAN spectator hosting and replication.
 multiplayer = ["dep:blockloom-net"]
 # Solari's ray-traced lighting and reference path tracer. Experimental
@@ -125,6 +130,10 @@ ray_tracing = ["bevy/bevy_solari"]
 # the target, which the wasm target has none of here, so web builds leave
 # it out and ship PNG/JPEG instead (see `just web-check`).
 compressed_textures = ["bevy/ktx2", "bevy/basis-universal"]
+# Hosts script components (Python, TypeScript and other component-model
+# guests) under wasmtime. Desktop only: the dependency is not built for
+# wasm32 or Android, so turning the feature on there does nothing.
+components = ["dep:wasmtime", "dep:wasmtime-wasi"]
 # Hosts plugin code (native libraries and WebAssembly modules) in the world.
 # The web and Android players turn it on (portable modules only, run by
 # wasmi: neither can load a native library).

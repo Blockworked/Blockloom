@@ -435,13 +435,13 @@ impl WasmScript {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use blockloom_core::scene::Axis;
     use blockloom_core::sense::{ActorSense, Sensors};
 
     /// Publishes one actor the module can read, as the runtime would.
-    fn publish_one(actor: &str) {
+    pub(crate) fn publish_one(actor: &str) {
         let mut sensors = Sensors::default();
         sensors.actors.insert(
             actor.to_string(),

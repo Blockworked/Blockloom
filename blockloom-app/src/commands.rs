@@ -2790,6 +2790,8 @@ fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
             actor
                 .components
                 .scripts()
+                // A `.wasm` script is built by its language's own toolchain.
+                .filter(|path| !path.to_ascii_lowercase().ends_with(".wasm"))
                 .map(|path| (actor.name.clone(), path.to_string()))
                 .collect::<Vec<_>>()
         })
@@ -2998,6 +3000,10 @@ pub(crate) fn run_build_game(
     let mut failed = false;
     for actor in &project.actors {
         for path in actor.components.scripts() {
+            // Prebuilt guests ship as the assets they are.
+            if path.to_ascii_lowercase().ends_with(".wasm") {
+                continue;
+            }
             blockloom_core::build_control::check()?;
             if let Err(error) =
                 script::compile_for_with_linker(&dir, path, script_target, linker.as_deref())

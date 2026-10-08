@@ -1,4 +1,4 @@
-//! Typed Rust binding for the frozen script world `blockloom:script@0.1.0`.
+//! Typed Rust binding for the frozen script world `blockloom:script@0.2.0`.
 //!
 //! A guest written against this crate compiles to the core wasm shape the
 //! script sandbox already runs: three `blockloom` imports and the
@@ -46,11 +46,11 @@ pub use verbs::*;
 /// The frozen world this crate binds. Matches
 /// `blockloom_core::script::wit::WIT_VERSION`; the core drift test refuses a
 /// mismatch.
-pub const WIT_VERSION: u32 = 1;
+pub const WIT_VERSION: u32 = 2;
 
 /// `package` and version are part of the freeze: renaming either is a new
 /// world, not an edit.
-pub const WIT_PACKAGE: &str = "blockloom:script@0.1.0";
+pub const WIT_PACKAGE: &str = "blockloom:script@0.2.0";
 
 /// The numeric ABI this binding lowers to. Matches `abi::ABI_VERSION`; the
 /// core drift test refuses a mismatch.

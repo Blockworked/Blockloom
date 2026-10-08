@@ -38,6 +38,40 @@ pub enum ScriptBackend {
     Native(crate::script::LoadedScript),
     #[cfg(not(target_arch = "wasm32"))]
     Wasm(Box<crate::script_wasm::WasmScript>),
+    /// A component-model guest (Python, TypeScript, ...) under wasmtime.
+    #[cfg(all(
+        feature = "components",
+        not(any(target_arch = "wasm32", target_os = "android"))
+    ))]
+    Component(Box<crate::script_component::ComponentScript>),
+}
+
+/// A script path naming a `.wasm` file is already built by its language's own
+/// toolchain (a component or a core module), so Play doesn't compile it.
+#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+pub fn is_prebuilt(relative: &str) -> bool {
+    relative.to_ascii_lowercase().ends_with(".wasm")
+}
+
+/// Opens a prebuilt `.wasm` script: a component under wasmtime when this
+/// build has it, a core module under wasmi.
+#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+fn load_prebuilt(project_dir: &std::path::Path, relative: &str) -> Result<ScriptBackend, String> {
+    let path = project_dir.join(relative);
+    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    #[cfg(feature = "components")]
+    if crate::script_component::is_component(&bytes) {
+        return crate::script_component::ComponentScript::load_bytes(&bytes, relative)
+            .map(|script| ScriptBackend::Component(Box::new(script)));
+    }
+    #[cfg(not(feature = "components"))]
+    if bytes.get(6..8) == Some(&[0x01, 0x00]) {
+        return Err(format!(
+            "{relative} is a WebAssembly component, and this build has no component host"
+        ));
+    }
+    crate::script_wasm::WasmScript::load_bytes(&bytes, relative)
+        .map(|script| ScriptBackend::Wasm(Box::new(script)))
 }
 
 impl ScriptBackend {
@@ -50,6 +84,10 @@ impl ScriptBackend {
     /// Whether Play can run `relative` without rebuilding: either artifact
     /// counts. On Android only the native library beside the runtime does.
     pub fn is_built(project_dir: &std::path::Path, relative: &str) -> bool {
+        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        if is_prebuilt(relative) {
+            return project_dir.join(relative).is_file();
+        }
         #[cfg(any(target_os = "android", target_arch = "wasm32"))]
         {
             crate::script::LoadedScript::is_built(project_dir, relative)
@@ -71,6 +109,10 @@ impl ScriptBackend {
     /// artifact loads. When both fail the primary error is reported, so a
     /// broken native build doesn't surface as a confusing wasm complaint.
     pub fn load(project_dir: &std::path::Path, relative: &str) -> Result<ScriptBackend, String> {
+        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        if is_prebuilt(relative) {
+            return load_prebuilt(project_dir, relative);
+        }
         #[cfg(any(target_os = "android", target_arch = "wasm32"))]
         {
             crate::script::LoadedScript::load(project_dir, relative).map(ScriptBackend::Native)
@@ -106,6 +148,11 @@ impl ScriptBackend {
             ScriptBackend::Native(script) => script.start(actor, asked),
             #[cfg(not(target_arch = "wasm32"))]
             ScriptBackend::Wasm(script) => script.start(actor, asked),
+            #[cfg(all(
+                feature = "components",
+                not(any(target_arch = "wasm32", target_os = "android"))
+            ))]
+            ScriptBackend::Component(script) => script.start(actor, asked),
         }
     }
 
@@ -114,6 +161,11 @@ impl ScriptBackend {
             ScriptBackend::Native(script) => script.tick(actor, asked, dt),
             #[cfg(not(target_arch = "wasm32"))]
             ScriptBackend::Wasm(script) => script.tick(actor, asked, dt),
+            #[cfg(all(
+                feature = "components",
+                not(any(target_arch = "wasm32", target_os = "android"))
+            ))]
+            ScriptBackend::Component(script) => script.tick(actor, asked, dt),
         }
     }
 
@@ -122,6 +174,11 @@ impl ScriptBackend {
             ScriptBackend::Native(script) => script.frame(actor, asked, dt),
             #[cfg(not(target_arch = "wasm32"))]
             ScriptBackend::Wasm(script) => script.frame(actor, asked, dt),
+            #[cfg(all(
+                feature = "components",
+                not(any(target_arch = "wasm32", target_os = "android"))
+            ))]
+            ScriptBackend::Component(script) => script.frame(actor, asked, dt),
         }
     }
 
@@ -130,6 +187,11 @@ impl ScriptBackend {
             ScriptBackend::Native(script) => script.ui(actor, asked, dt),
             #[cfg(not(target_arch = "wasm32"))]
             ScriptBackend::Wasm(script) => script.ui(actor, asked, dt),
+            #[cfg(all(
+                feature = "components",
+                not(any(target_arch = "wasm32", target_os = "android"))
+            ))]
+            ScriptBackend::Component(script) => script.ui(actor, asked, dt),
         }
     }
 
@@ -138,6 +200,11 @@ impl ScriptBackend {
             ScriptBackend::Native(script) => script.stop(actor, asked),
             #[cfg(not(target_arch = "wasm32"))]
             ScriptBackend::Wasm(script) => script.stop(actor, asked),
+            #[cfg(all(
+                feature = "components",
+                not(any(target_arch = "wasm32", target_os = "android"))
+            ))]
+            ScriptBackend::Component(script) => script.stop(actor, asked),
         }
     }
 
@@ -146,6 +213,11 @@ impl ScriptBackend {
             ScriptBackend::Native(script) => script.destroy(actor, asked),
             #[cfg(not(target_arch = "wasm32"))]
             ScriptBackend::Wasm(script) => script.destroy(actor, asked),
+            #[cfg(all(
+                feature = "components",
+                not(any(target_arch = "wasm32", target_os = "android"))
+            ))]
+            ScriptBackend::Component(script) => script.destroy(actor, asked),
         }
     }
 
@@ -159,6 +231,11 @@ impl ScriptBackend {
             ScriptBackend::Native(script) => script.event(actor, asked, event),
             #[cfg(not(target_arch = "wasm32"))]
             ScriptBackend::Wasm(script) => script.event(actor, asked, event),
+            #[cfg(all(
+                feature = "components",
+                not(any(target_arch = "wasm32", target_os = "android"))
+            ))]
+            ScriptBackend::Component(script) => script.event(actor, asked, event),
         }
     }
 }
