@@ -71,7 +71,7 @@ wasmi = { version = "2.0.0", default-features = false, features = ["stable", "st
 # Component-model host for non-Rust script guests (desktop only: wasmtime
 # can't build for wasm32 or Android). Cranelift JIT, no async, no WASI
 # beyond the empty context its guests' runtimes import.
-wasmtime = { version = "49.0.2", default-features = false, features = ["component-model", "cranelift", "runtime", "std", "parallel-compilation", "wat"] }
+wasmtime = { version = "49.0.2", default-features = false, features = ["component-model", "cranelift", "runtime", "std", "parallel-compilation", "wat", "gc", "gc-drc"] }
 wasmtime-wasi = { version = "49.0.2", default-features = false }
 wat = "1.260.0"
 image = { version = "0.25.10", default-features = false, features = ["bmp", "dds", "exr", "gif", "hdr", "jpeg", "png", "tga", "webp"] }
