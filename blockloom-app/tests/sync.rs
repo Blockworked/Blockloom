@@ -687,6 +687,10 @@ fn interface_property_and_parent_transactions_round_trip_and_undo() {
         json!({"kind": "Create", "widget": {"element": {"id": "fresh", "parent": "canvas"}}}),
         json!({"kind": "Duplicate", "id": "canvas", "new_id": "canvas2"}),
         json!({"kind": "Delete", "id": "canvas"}),
+        json!({"kind": "Batch", "edits": [
+            {"kind": "SetProperty", "id": "child", "property": {"path": "element.content", "value": "b"}},
+            {"kind": "Create", "widget": {"element": {"id": "x"}}}
+        ]}),
     ] {
         let before =
             backend.dispatch("get_state", json!({})).unwrap()["project"]["world"]["interface"]

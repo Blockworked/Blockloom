@@ -948,6 +948,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[],
     },
     CommandSpec {
+        name: "interface-properties",
+        cmd: "interface_properties",
+        aliases: &["interface_properties"],
+        summary: "List every property path SetProperty accepts with its label, group, type, choices and the widget kinds it applies to.",
+        args: &[],
+    },
+    CommandSpec {
         name: "begin-interface-edit",
         cmd: "begin_interface_edit",
         aliases: &["begin_interface_edit"],
@@ -962,7 +969,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "update-interface-edit",
         cmd: "update_interface_edit",
         aliases: &["update_interface_edit"],
-        summary: "Replace the draft with Move, Resize, SetProperty {id, property: {path, value}}, Reorder {id, index: zero-based sibling position}, Create {widget: full widget; a Canvas parent makes it free, other parents flow}, Delete {id} (removes descendants), Duplicate {id, new_id, offset?} (copies the subtree as new_id and new_id.<old id>) or Reparent {id, parent, placement: {mode: Free, offset, size} or {mode: Flow}}. Property paths: element.kind/content/anchor/modal, layout (object or null). Does not save.",
+        summary: "Replace the draft with Move, Resize, SetProperty {id, property: {path, value}}, Reorder {id, index: zero-based sibling position}, Batch {edits: [..]} (applied in order as one, all or nothing), Create {widget: full widget; a Canvas parent makes it free, other parents flow}, Delete {id} (removes descendants), Duplicate {id, new_id, offset?} (copies the subtree as new_id and new_id.<old id>) or Reparent {id, parent, placement: {mode: Free, offset, size} or {mode: Flow}}. Property paths: element.kind/content/anchor/modal, layout (object or null). Does not save.",
         args: &[
             ArgSpec {
                 name: "token",

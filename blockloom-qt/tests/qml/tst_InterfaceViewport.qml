@@ -31,14 +31,18 @@ TestCase {
             } else if (command === "update_interface_edit") {
                 const next = JSON.parse(JSON.stringify(test.draft));
                 const w = next.widgets.find(w => w.element.id === args.edit.id);
-                if (args.edit.kind === "Create") next.widgets.push(args.edit.widget);
-                if (args.edit.kind === "Delete") next.widgets = next.widgets.filter(item => item.element.id !== args.edit.id);
-                if (args.edit.kind === "Duplicate") {
-                    const copy = JSON.parse(JSON.stringify(w));
-                    copy.element.id = args.edit.new_id;
-                    if (args.edit.offset) copy.element.offset = args.edit.offset;
-                    next.widgets.push(copy);
-                }
+                const structural = edit => {
+                    const target = next.widgets.find(item => item.element.id === edit.id);
+                    if (edit.kind === "Create") next.widgets.push(edit.widget);
+                    if (edit.kind === "Delete") next.widgets = next.widgets.filter(item => item.element.id !== edit.id);
+                    if (edit.kind === "Duplicate") {
+                        const copy = JSON.parse(JSON.stringify(target));
+                        copy.element.id = edit.new_id;
+                        if (edit.offset) copy.element.offset = edit.offset;
+                        next.widgets.push(copy);
+                    }
+                };
+                if (args.edit.kind === "Batch") args.edit.edits.forEach(structural); else structural(args.edit);
                 if (args.edit.kind === "Move" || args.edit.kind === "Resize") w.element.offset = args.edit.offset;
                 if (args.edit.kind === "Resize") w.element.size = args.edit.size;
                 if (args.edit.kind === "SetProperty") {
@@ -364,6 +368,34 @@ TestCase {
         panel.toggleHidden("front");
         compare(panel.hiddenList, []);
         verify(!calls.some(c => c.command === "set_interface"));
+    }
+    function test_multiselection_deletes_and_duplicates_as_one_batch() {
+        panel.selectOnly("back");
+        panel.toggleSelected("front");
+        compare(panel.selectionIds, ["back", "front"]);
+        panel.duplicateSelected();
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.kind, "Batch");
+        compare(edit.edits.map(e=>e.id+">"+e.new_id), ["back>back-copy", "front>front-copy"]);
+        compare(calls.filter(c=>c.command === "commit_interface_edit").length, 1);
+        panel.removeSelected();
+        edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.kind, "Batch");
+        verify(edit.edits.every(e=>e.kind === "Delete"));
+        panel.toggleSelected("front");
+        panel.toggleSelected("front");
+        compare(panel.selectionIds, panel.selectedId ? [panel.selectedId] : []);
+    }
+    function test_marquee_selects_unlocked_widgets_whose_centers_fall_inside() {
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision, panel.generation)));
+        panel.toggleLock("front");
+        panel.finishMarquee({x0: 0, y0: 0, x1: 960, y1: 720});
+        compare(panel.selectionIds, ["back"]);
+        panel.toggleLock("front");
+        panel.finishMarquee({x0: 0, y0: 0, x1: 960, y1: 720});
+        compare(panel.selectionIds.length, 2);
+        panel.finishMarquee({x0: 0, y0: 0, x1: 10, y1: 10});
+        compare(panel.selectionIds, []);
     }
     function test_locked_widgets_are_not_picked_or_edited_but_nothing_is_saved() {
         panel.selectedId = "back";

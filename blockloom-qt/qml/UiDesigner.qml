@@ -26,6 +26,35 @@ Item {
     }
     // Editor-only state: never saved and never sent to the runtime.
     property var lockedIds: ({})
+    // Further selected widgets beside selectedId (Shift-click, Ctrl-click in the tree, marquee).
+    property var extraIds: []
+    readonly property var selectionIds: {
+        if (!selectedId) return [];
+        const have = {};
+        document.widgets.forEach(w => { have[w.element.id] = true; });
+        return [selectedId].concat(extraIds.filter(id => have[id] && id !== selectedId && inScreen(id)));
+    }
+    // A selection never lists a widget together with its ancestor: the ancestor's edit covers it.
+    function topLevelSelection() {
+        return selectionIds.filter(id => !selectionIds.some(other => other !== id && descendant(id, other)));
+    }
+    function toggleSelected(id) {
+        if (!id) return;
+        if (!selectedId) { selectedId = id; return; }
+        if (id === selectedId) { selectedId = extraIds.length ? extraIds[0] : ""; extraIds = extraIds.slice(1); return; }
+        extraIds = extraIds.indexOf(id) >= 0 ? extraIds.filter(x => x !== id) : extraIds.concat([id]);
+    }
+    function selectOnly(id) { extraIds = []; selectedId = id; }
+    property var marquee: null
+    function finishMarquee(m) {
+        const x0 = Math.min(m.x0, m.x1), x1 = Math.max(m.x0, m.x1), y0 = Math.min(m.y0, m.y1), y1 = Math.max(m.y0, m.y1);
+        const ids = pickable.filter(b => b.visible && editableId(b.id)).filter(b => {
+            const c = geometry.point(b.transform, 0, 0);
+            return c.x >= x0 && c.x <= x1 && c.y >= y0 && c.y <= y1;
+        }).sort((a, b) => a.paint_order - b.paint_order).map(b => b.id);
+        extraIds = ids.slice(1); selectedId = ids.length ? ids[0] : "";
+    }
+    function editableId(id) { return document.widgets.some(w => w.element.id === id && !w.world_actor); }
     property var hiddenIds: ({})
     property var collapsedIds: ({})
     function toggleHidden(id) {
@@ -173,7 +202,7 @@ Item {
                 g.busy = false;
                 if (g.canceled || root.gesture !== g) return;
                 root.document = next;
-                if (g.select !== undefined) root.selectedId = g.select;
+                if (g.select !== undefined) { root.extraIds = g.more || []; root.selectedId = g.select; }
                 root.flushEdit(g);
             }, function(e) { root.failEdit(g, e); });
         } else if (g.released) {
@@ -325,6 +354,7 @@ Item {
     Keys.priority: Keys.AfterItem
     Keys.onPressed: event => {
         if (event.key === Qt.Key_Escape && gesture) { cancelEdit(); event.accepted = true; }
+        else if ((event.key === Qt.Key_Delete || event.key === Qt.Key_Backspace) && activeFocus && designing && !gesture && widget) { removeSelected(); event.accepted = true; }
         else event.accepted = nudge(event);
     }
     Keys.onReleased: event => {
@@ -389,6 +419,8 @@ Item {
     onPreviewHeightChanged: { cancelEdit(); ++generation; frameLayout = null; if (designing) previewDelay.restart(); }
     onSelectedIdChanged: { if (gesture && gesture.keyboard) cancelEdit(); overlay.requestPaint(); }
     onHoveredIdChanged: overlay.requestPaint()
+    onMarqueeChanged: overlay.requestPaint()
+    onExtraIdsChanged: overlay.requestPaint()
     onSnapLinesChanged: overlay.requestPaint()
     onFrameLayoutChanged: overlay.requestPaint()
     onLayoutReadyChanged: overlay.requestPaint()
@@ -444,10 +476,10 @@ Item {
         style[styleState.currentText][field] = value;
         extra("style", style);
     }
-    function structuralEdit(edit, select) {
+    function structuralEdit(edit, select, more) {
         if (!designing || gesture) return false;
         const g = {kind: edit.kind, id: "", original: copy(document), token: null, bound: null, committing: false,
-            edit: edit, sent: null, busy: false, released: true, canceled: false, select: select};
+            edit: edit, sent: null, busy: false, released: true, canceled: false, select: select, more: more || []};
         gesture = g;
         forceActiveFocus();
         const backend = app;
@@ -474,16 +506,27 @@ Item {
     }
     function duplicateSelected() {
         if (!widget || widget.world_actor) return;
-        const id = widget.element.id, base = id + "-copy";
-        let name = base, n = 1;
-        while (document.widgets.some(w => w.element.id === name)) name = base + (++n);
-        const edit = {kind: "Duplicate", id: id, new_id: name};
-        if (editable(widget)) { const o = widget.element.offset || [0,0]; edit.offset = [o[0]+16, o[1]+16]; }
-        structuralEdit(edit, name);
+        const taken = {};
+        document.widgets.forEach(w => { taken[w.element.id] = true; });
+        const edits = [];
+        topLevelSelection().forEach(id => {
+            const source = document.widgets.find(w => w.element.id === id);
+            if (!source || source.world_actor) return;
+            const base = id + "-copy";
+            let name = base, n = 1;
+            while (taken[name]) name = base + (++n);
+            taken[name] = true;
+            const edit = {kind: "Duplicate", id: id, new_id: name};
+            if (editable(source)) { const o = source.element.offset || [0,0]; edit.offset = [o[0]+16, o[1]+16]; }
+            edits.push(edit);
+        });
+        if (!edits.length) return;
+        structuralEdit(edits.length === 1 ? edits[0] : {kind: "Batch", edits: edits}, edits[0].new_id, edits.slice(1).map(e => e.new_id));
     }
     function removeSelected() {
         if (!widget) return;
-        structuralEdit({kind: "Delete", id: widget.element.id}, "");
+        const edits = topLevelSelection().map(id => ({kind: "Delete", id: id}));
+        structuralEdit(edits.length === 1 ? edits[0] : {kind: "Batch", edits: edits}, "");
     }
     RowLayout {
         anchors.fill: parent; spacing: 0
@@ -526,8 +569,8 @@ Item {
                 delegate: ItemDelegate {
                     required property var modelData
                     width: ListView.view.width; height: 30
-                    highlighted: root.selectedId === modelData.id
-                    onClicked: { root.selectedId = modelData.id; root.forceActiveFocus(); }
+                    highlighted: root.selectionIds.indexOf(modelData.id) >= 0
+                    onClicked: mouse => { if (mouse && (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier))) root.toggleSelected(modelData.id); else root.selectOnly(modelData.id); root.forceActiveFocus(); }
                     contentItem: RowLayout {
                         spacing: 2
                         Item { Layout.preferredWidth: 10 + modelData.depth * 14 }
@@ -631,7 +674,14 @@ Item {
                                 ctx.lineWidth = 2/Math.max(0.05, root.zoom); ctx.stroke();
                             }
                             if (root.hoveredId !== root.selectedId) outline(root.hoveredId, "#b9dfff");
+                            root.selectionIds.slice(1).forEach(id => outline(id, "#8fd0a0"));
                             outline(root.selectedId, "#70baff");
+                            const m = root.marquee;
+                            if (m) {
+                                ctx.fillStyle = "rgba(112,186,255,0.15)"; ctx.strokeStyle = "#70baff"; ctx.lineWidth = 1/Math.max(0.05,root.zoom);
+                                ctx.fillRect(Math.min(m.x0,m.x1), Math.min(m.y0,m.y1), Math.abs(m.x1-m.x0), Math.abs(m.y1-m.y0));
+                                ctx.strokeRect(Math.min(m.x0,m.x1), Math.min(m.y0,m.y1), Math.abs(m.x1-m.x0), Math.abs(m.y1-m.y0));
+                            }
                             ctx.strokeStyle = "#ffcc70";
                             ctx.lineWidth = 1/Math.max(0.05,root.zoom);
                             root.snapLines.forEach(line => { ctx.beginPath(); ctx.moveTo(line.a.x,line.a.y); ctx.lineTo(line.b.x,line.b.y); ctx.stroke(); });
@@ -645,6 +695,7 @@ Item {
                         property real pressY: 0
                         hoverEnabled: true
                         onPositionChanged: mouse => {
+                            if (pressed && marqueeStart) { root.marquee = {x0: marqueeStart.x, y0: marqueeStart.y, x1: mouse.x, y1: mouse.y}; return; }
                             if (pressed) {
                                 if (!root.gesture && Math.hypot(mouse.x-pressX, mouse.y-pressY) > 3/Math.max(0.05,root.zoom)) root.startEdit("Move", pressX, pressY);
                                 root.dragEdit(mouse.x, mouse.y, mouse.modifiers);
@@ -654,11 +705,19 @@ Item {
                         onExited: root.hoveredId = ""
                         onPressed: mouse => {
                             root.forceActiveFocus();
-                            root.selectedId = geometry.pick(root.pickable, mouse.x, mouse.y);
+                            const hit = geometry.pick(root.pickable, mouse.x, mouse.y);
                             pressX = mouse.x; pressY = mouse.y;
+                            if (mouse.modifiers & Qt.ShiftModifier) { root.toggleSelected(hit); marqueeStart = null; }
+                            else if (!hit) { root.selectOnly(""); marqueeStart = {x: mouse.x, y: mouse.y}; }
+                            else { if (hit !== root.selectedId) root.selectOnly(hit); marqueeStart = null; }
                         }
-                        onReleased: root.finishEdit()
-                        onCanceled: root.cancelEdit()
+                        property var marqueeStart: null
+                        onReleased: {
+                            if (marqueeStart && root.marquee) root.finishMarquee(root.marquee);
+                            marqueeStart = null; root.marquee = null;
+                            root.finishEdit();
+                        }
+                        onCanceled: { marqueeStart = null; root.marquee = null; root.cancelEdit(); }
                     }
                     Repeater {
                         model: root.resizeHandles

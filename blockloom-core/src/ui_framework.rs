@@ -282,6 +282,125 @@ pub enum UiPropertyEdit {
     Layout(#[serde(deserialize_with = "deserialize_edit_layout")] Option<UiLayout>),
 }
 
+/// How the inspector should draw a property path.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct UiPropertyInfo {
+    pub path: &'static str,
+    pub label: &'static str,
+    pub group: &'static str,
+    /// `choice`, `text`, `bool` or `layout`.
+    pub ty: &'static str,
+    /// Choices for a `choice`; empty otherwise.
+    pub choices: Vec<String>,
+    /// Kinds the property applies to; empty means every kind.
+    pub kinds: Vec<&'static str>,
+}
+
+impl UiPropertyEdit {
+    pub fn path(&self) -> &'static str {
+        match self {
+            UiPropertyEdit::Kind(_) => "element.kind",
+            UiPropertyEdit::Content(_) => "element.content",
+            UiPropertyEdit::Anchor(_) => "element.anchor",
+            UiPropertyEdit::Modal(_) => "element.modal",
+            UiPropertyEdit::Layout(_) => "layout",
+        }
+    }
+}
+
+/// One entry per `UiPropertyEdit` path; a test keeps them in step.
+pub fn property_metadata() -> Vec<UiPropertyInfo> {
+    let names = |values: serde_json::Value| -> Vec<String> {
+        values
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let kinds = names(
+        serde_json::to_value([
+            UiKind::Panel,
+            UiKind::Label,
+            UiKind::Button,
+            UiKind::Image,
+            UiKind::Input,
+            UiKind::Slider,
+            UiKind::Toggle,
+            UiKind::List,
+            UiKind::VerticalBox,
+            UiKind::HorizontalBox,
+            UiKind::Grid,
+            UiKind::Canvas,
+            UiKind::WrapBox,
+            UiKind::SizeBox,
+            UiKind::Spacer,
+            UiKind::Progress,
+            UiKind::RadialProgress,
+            UiKind::ListView,
+            UiKind::Tabs,
+            UiKind::Select,
+            UiKind::Scrollbar,
+            UiKind::RichText,
+            UiKind::Tooltip,
+        ])
+        .unwrap_or_default(),
+    );
+    let anchors = names(
+        serde_json::to_value([
+            UiAnchor::TopLeft,
+            UiAnchor::Top,
+            UiAnchor::TopRight,
+            UiAnchor::Left,
+            UiAnchor::Center,
+            UiAnchor::Right,
+            UiAnchor::BottomLeft,
+            UiAnchor::Bottom,
+            UiAnchor::BottomRight,
+        ])
+        .unwrap_or_default(),
+    );
+    let info =
+        |path, label, group, ty, choices: Vec<String>, kinds: Vec<&'static str>| UiPropertyInfo {
+            path,
+            label,
+            group,
+            ty,
+            choices,
+            kinds,
+        };
+    vec![
+        info("element.kind", "Type", "Content", "choice", kinds, vec![]),
+        info(
+            "element.content",
+            "Content",
+            "Content",
+            "text",
+            vec![],
+            vec![],
+        ),
+        info(
+            "element.anchor",
+            "Anchor",
+            "Layout",
+            "choice",
+            anchors,
+            vec![],
+        ),
+        info(
+            "element.modal",
+            "Modal",
+            "Interaction",
+            "bool",
+            vec![],
+            vec!["Panel"],
+        ),
+        info("layout", "Layout", "Layout", "layout", vec![], vec![]),
+    ]
+}
+
 fn deserialize_edit_layout<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<UiLayout>, D::Error> {
@@ -340,6 +459,10 @@ pub enum UiEdit {
         parent: String,
         placement: UiPlacement,
     },
+    /// Applies several edits in order as one; any failure rejects them all.
+    Batch {
+        edits: Vec<UiEdit>,
+    },
     /// Appends a new widget; a Canvas parent makes it free, any other parent flow.
     Create {
         widget: Box<UiWidget>,
@@ -378,6 +501,15 @@ impl UiDocument {
 
     fn apply_edit_inner(&mut self, edit: &UiEdit) -> Result<(), String> {
         match edit {
+            UiEdit::Batch { edits } => {
+                if edits.len() > 1000 || edits.iter().any(|e| matches!(e, UiEdit::Batch { .. })) {
+                    return Err("A batch holds at most 1000 edits and cannot nest".into());
+                }
+                for edit in edits {
+                    self.apply_edit_inner(edit)?;
+                }
+                return Ok(());
+            }
             UiEdit::Create { widget } => return self.create_widget(widget),
             UiEdit::Delete { id } => return self.delete_subtree(id),
             UiEdit::Duplicate { id, new_id, offset } => {
@@ -391,9 +523,10 @@ impl UiDocument {
             | UiEdit::SetProperty { id, .. }
             | UiEdit::Reparent { id, .. }
             | UiEdit::Reorder { id, .. } => id,
-            UiEdit::Create { .. } | UiEdit::Delete { .. } | UiEdit::Duplicate { .. } => {
-                unreachable!()
-            }
+            UiEdit::Batch { .. }
+            | UiEdit::Create { .. }
+            | UiEdit::Delete { .. }
+            | UiEdit::Duplicate { .. } => unreachable!(),
         };
         let index = self
             .widgets
@@ -927,6 +1060,47 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["canvas", "flow", "child", "grandchild"]
         );
+    }
+
+    #[test]
+    fn property_metadata_covers_every_editable_path_and_batches_are_atomic() {
+        let samples = [
+            UiPropertyEdit::Kind(UiKind::Label),
+            UiPropertyEdit::Content(String::new()),
+            UiPropertyEdit::Anchor(UiAnchor::Top),
+            UiPropertyEdit::Modal(true),
+            UiPropertyEdit::Layout(None),
+        ];
+        let metadata = property_metadata();
+        assert_eq!(metadata.len(), samples.len());
+        for sample in &samples {
+            assert!(metadata.iter().any(|m| m.path == sample.path()));
+        }
+        assert!(metadata[0].choices.contains(&"Canvas".to_string()));
+        assert_eq!(metadata[2].choices.len(), 9);
+        let mut doc: UiDocument = serde_json::from_value(serde_json::json!({"widgets": [
+            {"element": {"id": "a", "offset": [1, 1]}, "layout": {"absolute": true}},
+            {"element": {"id": "b", "offset": [2, 2]}, "layout": {"absolute": true}}
+        ]}))
+        .unwrap();
+        let parse = |value| serde_json::from_value::<UiEdit>(value).unwrap();
+        doc.apply_edit(&parse(serde_json::json!({"kind": "Batch", "edits": [
+            {"kind": "Move", "id": "a", "offset": [10, 10]},
+            {"kind": "Move", "id": "b", "offset": [20, 20]}
+        ]})))
+        .unwrap();
+        assert_eq!(doc.widgets[0].element.offset, [10., 10.]);
+        assert_eq!(doc.widgets[1].element.offset, [20., 20.]);
+        let before = doc.clone();
+        for value in [
+            serde_json::json!({"kind": "Batch", "edits": [
+                {"kind": "Move", "id": "a", "offset": [99, 99]},
+                {"kind": "Move", "id": "missing", "offset": [1, 1]}]}),
+            serde_json::json!({"kind": "Batch", "edits": [{"kind": "Batch", "edits": []}]}),
+        ] {
+            assert!(doc.apply_edit(&parse(value)).is_err());
+            assert_eq!(doc, before);
+        }
     }
 
     #[test]

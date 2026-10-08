@@ -5761,6 +5761,10 @@ pub(crate) fn preview_interface(
     Ok(())
 }
 
+pub(crate) fn interface_properties() -> Vec<blockloom_core::ui::UiPropertyInfo> {
+    blockloom_core::ui::property_metadata()
+}
+
 pub(crate) fn interface_layout(
     state: &SharedState,
 ) -> Result<Option<blockloom_protocol::InterfaceLayout>, String> {

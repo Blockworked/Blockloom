@@ -242,7 +242,13 @@ Master since the seventh increment (Phase 6 2D work, script guests, bundled rust
 - A document newer than this build is not rewritten: `validate()` refuses it with an upgrade message, so edits, previews and `set_interface` fail instead of silently dropping fields. Opening still works. Run-time loading is unaffected.
 - Later steps (style inheritance, component instances) add a version and a `migrate` arm each; the stored shape stays serde-defaulted so older builds keep ignoring nothing they cannot read.
 
-The next increment is property metadata (phase 1), marquee/multiselection (phase 3), then the world-reload-free commit path. Schema versioning and property metadata (phase 1). Schema versioning, complete property metadata and the broader phase 1 contracts remain open. Committed edits still use the existing world synchronization path; avoiding a world reload on commit remains open. The current preview still shows the idle scene behind the interface.
+### Property metadata and multiselection (eleventh increment)
+
+- `ui::property_metadata()` lists every `SetProperty` path with its label, group, type, choices and the widget kinds it applies to; a test keeps it in step with `UiPropertyEdit` (`path()` is an exhaustive match). It is exposed as `interface-properties` in dispatch, shell and MCP so inspectors and agents read one source. The inspector still draws its own controls from QML; moving it onto this table is the next step, together with the remaining styling paths.
+- Added `Batch {edits}`: edits applied in order as one, all or nothing, one undo step. It cannot nest and holds at most 1000 edits.
+- The viewport supports Shift-click and a marquee (drag on empty canvas; widgets whose centres fall inside, skipping locked and projected ones). The tree supports Ctrl/Shift-click. Delete (button or key) and Duplicate act on the whole selection as one Batch, skipping widgets whose ancestor is also selected. Dragging, handles and nudging still act on the primary widget only; group move and alignment/distribution are next.
+
+The next increment is group move and alignment/distribution tools, moving the inspector onto the metadata, then the world-reload-free commit path. Schema versioning and property metadata (phase 1). Schema versioning, complete property metadata and the broader phase 1 contracts remain open. Committed edits still use the existing world synchronization path; avoiding a world reload on commit remains open. The current preview still shows the idle scene behind the interface.
 
 Open phase 0 checks: embedded/process rendering and teardown on actual platforms; native presentation timing and process screenshot metadata on actual platforms; viewport resize/DPI/safe-area matrices; real image/font asset loading; screenshot baselines and gameplay input isolation with held inputs. Rotation, text editing/IME, nine-slice and animation capabilities remain unproven. The fixture image node currently has no asset.
 
