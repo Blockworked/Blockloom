@@ -1344,7 +1344,9 @@ There is no Cargo, so a script gets `std` and nothing else.
 The editor compiles scripts on Play (`commands::build_scripts`) so rustc's
 errors land in the run log against the script's own line numbers; the runtime
 only ever loads what it finds. **Scripts therefore need `rustc` on the machine
-that presses Play.** The boundary is three calls, not one per verb, so adding
+that presses Play** - a packaged install carries one in `tools/rust` beside the
+editor (`script::bundled_rustc`, or `BLOCKLOOM_RUSTC`), which wins over PATH; a
+linker is still the machine's own. The boundary is three calls, not one per verb, so adding
 something a script can do is a new constant in `abi.rs` rather than a new
 field in `HostApi` - which would break every script already built.
 

@@ -512,7 +512,7 @@ fn diagnostics_via_rustc(
     let build = super::build_dir(project_dir);
     std::fs::create_dir_all(&build).map_err(|e| format!("{}: {e}", build.display()))?;
     let rlib = super::compile(project_dir, relative).ok();
-    let mut command = Command::new("rustc");
+    let mut command = super::rustc_command();
     command
         .arg("--edition")
         .arg("2024")

@@ -225,6 +225,9 @@ fn stamp_path(project_dir: &Path, relative: &str, target: Option<&str>) -> PathB
 /// so out-of-tree guest builds (and their tests) pin the same toolchain Play
 /// does.
 pub fn rustc_command() -> Command {
+    if let Some(bundled) = bundled_rustc() {
+        return Command::new(bundled);
+    }
     let mut command = Command::new("rustc");
     if std::env::var_os("RUSTUP_TOOLCHAIN").is_none()
         && let Some(root) = crate::android::workspace_root()
@@ -243,12 +246,30 @@ pub fn rustc_command() -> Command {
     command
 }
 
+/// The `rustc` a packaged install carries in `tools/rust`, beside the editor
+/// (or one level up). `BLOCKLOOM_RUSTC` names another. It wins over PATH so a
+/// release builds scripts with the toolchain it shipped.
+pub fn bundled_rustc() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("BLOCKLOOM_RUSTC").map(PathBuf::from)
+        && path.is_file()
+    {
+        return Some(path);
+    }
+    let exe = std::env::current_exe().ok()?;
+    let name = if cfg!(windows) { "rustc.exe" } else { "rustc" };
+    exe.parent()?
+        .ancestors()
+        .take(2)
+        .map(|dir| dir.join("tools").join("rust").join("bin").join(name))
+        .find(|path| path.is_file())
+}
+
 /// The rustc this machine has, or why there isn't one.
 pub fn toolchain_version() -> Result<String, String> {
     let output = crate::build_control::output(rustc_command().arg("--version")).map_err(|e| {
         format!(
             "Scripts need a Rust toolchain, and `rustc` couldn't be run ({e}). \
-             Install one from https://rustup.rs and reopen Blockloom."
+             Install one from https://rustup.rs and reopen Blockloom, or set BLOCKLOOM_RUSTC."
         )
     })?;
     if !output.status.success() {
