@@ -612,6 +612,26 @@ pub const TEXTS: &[WitOp] = &[
         name: "TEXT_LIST_ITEM",
         wit: "lists.get-text",
     },
+    WitOp {
+        abi: abi::TEXT_SAVE_SLOT,
+        name: "TEXT_SAVE_SLOT",
+        wit: "texts.save-slot",
+    },
+    WitOp {
+        abi: abi::TEXT_SAVE_SLOTS,
+        name: "TEXT_SAVE_SLOTS",
+        wit: "texts.save-slots",
+    },
+    WitOp {
+        abi: abi::TEXT_LANGUAGE,
+        name: "TEXT_LANGUAGE",
+        wit: "texts.language",
+    },
+    WitOp {
+        abi: abi::TEXT_LOCALE_TEXT,
+        name: "TEXT_LOCALE_TEXT",
+        wit: "texts.locale-text",
+    },
 ];
 
 /// Every `abi::ACT_*` verb and its WIT path.
@@ -1266,6 +1286,21 @@ pub const ACTS: &[WitOp] = &[
         name: "ACT_LIST_CLEAR",
         wit: "lists.clear",
     },
+    WitOp {
+        abi: abi::ACT_SWITCH_SAVE_SLOT,
+        name: "ACT_SWITCH_SAVE_SLOT",
+        wit: "acts.switch-save-slot",
+    },
+    WitOp {
+        abi: abi::ACT_DELETE_SAVE_SLOT,
+        name: "ACT_DELETE_SAVE_SLOT",
+        wit: "acts.delete-save-slot",
+    },
+    WitOp {
+        abi: abi::ACT_SET_LANGUAGE,
+        name: "ACT_SET_LANGUAGE",
+        wit: "acts.set-language",
+    },
 ];
 
 /// Every `abi::EVENT_*` verb and its WIT path.
@@ -1401,7 +1436,7 @@ pub const GUEST_TOOLCHAINS: &[GuestToolchain] = &[
         language: "Rust",
         toolchain: "rustc + wasm32-unknown-unknown std, wit-bindgen guest crate",
         build: "cargo build --target wasm32-unknown-unknown (cdylib) over the generated bindings",
-        notes: "Ships first: the prelude authors the same surface natively, so VM-equivalence tests hold line for line.",
+        notes: "Ships first as blockloom-script-guest: the frozen world hand-lowered to the core-module shape, so sandbox tests hold its effects against the fixture's line for line.",
     },
     GuestToolchain {
         language: "Python",
@@ -1549,5 +1584,71 @@ mod tests {
                 "toolchain entry is blank"
             );
         }
+    }
+
+    /// The WIT file the guest crate (and `wit-bindgen`) consumes is the frozen
+    /// world, byte for byte: the file starts at `package`, without the raw
+    /// string's leading newline.
+    #[test]
+    fn guest_world_file_matches_the_frozen_world() {
+        let file = include_str!("../../../blockloom-script-guest/wit/world.wit");
+        assert_eq!(file, WIT.strip_prefix('\n').unwrap_or(WIT));
+    }
+
+    /// Every `pub const` verb in the guest crate, by namespace.
+    fn guest_verbs(source: &str, prefix: &str) -> Vec<(String, u32)> {
+        let mut verbs = Vec::new();
+        for line in source.lines() {
+            let line = line.trim();
+            let head = format!("pub const {prefix}_");
+            let Some(rest) = line.strip_prefix(&head) else {
+                continue;
+            };
+            let Some((name, value)) = rest.split_once(": u32 = ") else {
+                continue;
+            };
+            let value: u32 = value
+                .trim()
+                .trim_end_matches(';')
+                .parse()
+                .expect("a numeric verb");
+            verbs.push((format!("{prefix}_{name}"), value));
+        }
+        verbs
+    }
+
+    /// The guest crate binds the whole frozen world: every ABI verb has a
+    /// constant with the same value there, and the versions agree. A new verb
+    /// without a binding fails here, not silently in a guest.
+    #[test]
+    fn guest_crate_covers_every_abi_verb() {
+        let guest = include_str!("../../../blockloom-script-guest/src/lib.rs");
+        let verbs = include_str!("../../../blockloom-script-guest/src/verbs.rs");
+        for prefix in ["READ", "TEXT", "ACT", "EVENT"] {
+            let mine = abi_verbs(prefix);
+            let theirs = guest_verbs(verbs, prefix);
+            assert_eq!(theirs.len(), mine.len(), "{prefix} guest drifted");
+            for (name, value) in &mine {
+                let found = theirs.iter().find(|(n, _)| n == name);
+                let Some((_, theirs)) = found else {
+                    panic!("{name} has no guest binding")
+                };
+                assert_eq!(*theirs, *value, "{name} moved");
+            }
+        }
+        let version = |source: &str, name: &str| -> u32 {
+            source
+                .lines()
+                .find_map(|line| {
+                    line.trim()
+                        .strip_prefix(&format!("pub const {name}: u32 = "))?
+                        .trim_end_matches(';')
+                        .parse()
+                        .ok()
+                })
+                .expect("a version constant")
+        };
+        assert_eq!(version(guest, "WIT_VERSION"), WIT_VERSION);
+        assert_eq!(version(guest, "ABI_VERSION"), abi::ABI_VERSION);
     }
 }

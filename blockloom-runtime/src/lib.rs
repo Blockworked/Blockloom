@@ -90,8 +90,7 @@ mod queries;
 mod ray_tracing;
 mod script;
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(dead_code)] // Not wired into Play yet - the editor build/load wiring is the next slice.
-mod script_wasm;
+pub(crate) mod script_wasm;
 mod shadows;
 mod simulation;
 mod sky;

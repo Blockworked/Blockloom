@@ -711,6 +711,11 @@ pub struct ProjectFile {
         skip_serializing_if = "crate::multiplayer::MultiplayerSettings::is_default"
     )]
     pub multiplayer: crate::multiplayer::MultiplayerSettings,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::locale::Localization::is_default"
+    )]
+    pub localization: crate::locale::Localization,
 }
 
 /// A scene asset file: its settings as components plus its actors. Older
@@ -957,6 +962,9 @@ pub struct Project {
     /// (and written absent) for a project that has none of that.
     pub physics: crate::physics::PhysicsSettings,
     pub multiplayer: crate::multiplayer::MultiplayerSettings,
+    /// Localized interface strings plus the language a fresh run speaks.
+    /// Absent (and written absent) for a project with no translations.
+    pub localization: crate::locale::Localization,
 }
 
 // ─── Scene-backed project ────────────────────────────────────────────────
@@ -977,7 +985,7 @@ impl DerefMut for Project {
 impl Serialize for Project {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let active = self.active_scene_ref();
-        let mut s = serializer.serialize_struct("Project", 13)?;
+        let mut s = serializer.serialize_struct("Project", 14)?;
         s.serialize_field("id", &self.id)?;
         s.serialize_field("name", &self.name)?;
         s.serialize_field("icon", &self.icon)?;
@@ -1000,6 +1008,9 @@ impl Serialize for Project {
         }
         if !self.multiplayer.is_default() {
             s.serialize_field("multiplayer", &self.multiplayer)?;
+        }
+        if !self.localization.is_default() {
+            s.serialize_field("localization", &self.localization)?;
         }
         s.end()
     }
@@ -1039,6 +1050,8 @@ impl<'de> Deserialize<'de> for Project {
             physics: crate::physics::PhysicsSettings,
             #[serde(default)]
             multiplayer: crate::multiplayer::MultiplayerSettings,
+            #[serde(default)]
+            localization: crate::locale::Localization,
         }
         let de = ProjectDe::deserialize(deserializer)?;
         de.physics
@@ -1082,6 +1095,7 @@ impl<'de> Deserialize<'de> for Project {
             plugin_resources: de.plugin_resources,
             physics: de.physics,
             multiplayer: de.multiplayer,
+            localization: de.localization,
         };
         project.ensure_scene_invariants();
         Ok(project)
@@ -1352,6 +1366,7 @@ impl Project {
             plugin_resources: Vec::new(),
             physics: crate::physics::PhysicsSettings::default(),
             multiplayer: Default::default(),
+            localization: Default::default(),
         }
     }
 
@@ -2495,6 +2510,7 @@ pub fn read_project_dir(dir: &Path) -> Result<Project, String> {
         plugin_resources: file.plugin_resources,
         physics: file.physics,
         multiplayer: file.multiplayer,
+        localization: file.localization,
     };
     project.normalize();
     project.resolve_lighting_assets(dir);
@@ -2526,6 +2542,7 @@ pub fn project_to_file(project: &Project) -> ProjectFile {
         plugin_resources: project.plugin_resources.clone(),
         physics: project.physics.clone(),
         multiplayer: project.multiplayer.clone(),
+        localization: project.localization.clone(),
     }
 }
 

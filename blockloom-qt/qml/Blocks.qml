@@ -166,7 +166,7 @@ QtObject {
         ShowLabel:"type", ShowButton:"square-mouse-pointer", ShowImage:"image", ShowInput:"text-cursor-input", ShowSlider:"sliders-horizontal",
         ShowWidget:"layout-grid", ShowToggle:"toggle-left", ShowList:"list-checks", SetUiTheme:"palette", BindUi:"list-checks", SetUiItems:"list-checks", ScrollUi:"list-checks", SetElementTheme:"list-checks", SetUiProp:"list-checks", HideElement:"eye", HideAllUi:"eye",
         DeleteElement:"trash-2", FocusElement:"text-select", ClearFocus:"text-select", PauseGame:"pause", ResumeGame:"play", SetVariable:"asterisk",
-        ChangeVariable:"trending-up", SaveVariable:"save", ClearSavedVariable:"trash-2", AddToList:"plus", DeleteOfList:"trash-2",
+        ChangeVariable:"trending-up", SaveVariable:"save", ClearSavedVariable:"trash-2", SwitchSaveSlot:"save", DeleteSaveSlot:"trash-2", SetLanguage:"languages", AddToList:"plus", DeleteOfList:"trash-2",
         DeleteAllOfList:"trash-2", ShiftList:"arrow-left", InsertIntoList:"plus", ReplaceItemOfList:"repeat", ReverseList:"rotate-cw",
         LoadJsonIntoList:"braces", SetDictValue:"book-plus", DeleteDictKey:"trash-2", DeleteAllOfDict:"trash-2", LoadJsonIntoDict:"braces",
         CallBlock:"blocks", Return:"corner-down-right", PluginBlock:"plug-zap", WhenPlugin:"plug-zap"
@@ -359,6 +359,9 @@ QtObject {
             ChangeVariable: row([lb("change"), varD(), lb("by"), slot("ChangeVariableValue", "value")]),
             SaveVariable: row([lb("save"), varD()]),
             ClearSavedVariable: row([lb("clear saved"), varD()]),
+            SwitchSaveSlot: row([lb("switch save slot to"), slot("SaveSlotName", "slot")]),
+            DeleteSaveSlot: row([lb("delete save slot"), slot("SaveSlotName", "slot")]),
+            SetLanguage: row([lb("set language to"), slot("LanguageName", "en")]),
             // Lists
             AddToList: row([lb("add"), slot("AddToListValue", "value"), lb("to"), listD()]),
             DeleteOfList: row([lb("delete item"), slot("DeleteOfListIndex", "index"), lb("of"), listD()]),
@@ -640,6 +643,8 @@ QtObject {
         case "SetElementTheme": return { element: txt("widget"), value: txt("Dark") };
         case "SetUiProp": return { prop: "Text", element: txt("score"), value: txt("") };
         case "SaveVariable": case "ClearSavedVariable": return { name: variableNames()[0] || "" };
+        case "SwitchSaveSlot": case "DeleteSaveSlot": return { slot: txt("slot 1") };
+        case "SetLanguage": return { language: txt("en") };
         case "AddToList": return { name: listNames()[0] || "", value: num(0) };
         case "DeleteOfList": return { name: listNames()[0] || "", index: num(1) };
         case "DeleteAllOfList": case "ReverseList": return { name: listNames()[0] || "" };
@@ -745,6 +750,10 @@ QtObject {
         ActiveVolumes: { prefix: "active volumes", result: "text", arity: 0 },
         CurrentScene: { prefix: "current scene", result: "text", arity: 0 },
         SceneNames: { prefix: "scene names", result: "text", arity: 0 },
+        SaveSlot: { prefix: "save slot", result: "text", arity: 0 },
+        SaveSlots: { prefix: "save slots", result: "text", arity: 0 },
+        Language: { prefix: "language", result: "text", arity: 0 },
+        LocalizedText: { prefix: "text for", result: "text", arity: 1, args: ["text"] },
         IsCutscenePlaying: { prefix: "is cutscene playing?", result: "bool", arity: 0 },
         CutsceneTime: { prefix: "cutscene time", result: "number", arity: 0 },
         TimeOfDay: { prefix: "time of day", result: "number", arity: 0 },
@@ -773,7 +782,7 @@ QtObject {
     })
     // Palette groups, the way the sidebar shows them.
     readonly property var operatorGroups: [
-        { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","CameraPosition","CameraDirection","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","QueryNumber","QueryText","ControllerNumber","ControllerText","MotorNumber","MotorText","JointNumber","ActorPosition","ActorLocalPosition","Velocity","AngularVelocity","Mass","IsGrounded","ComponentField","SoundPlaying","BusVolume","IsTweening","CurrentClip","CurrentFrame","AnimationPlaying","Atmosphere","TimeOfDay","SunElevation","CurrentWeather","FrameTime","DrawCalls","CurrentQuality","DlssAvailable","SceneLuminance","IsHdrDisplay","PeakBrightness","ActiveVolumes","CurrentScene","SceneNames","IsCutscenePlaying","CutsceneTime","CastsShadows","IsRayTracing","RayTracingAvailable","WaterHeight","Underwater","TileAt","RoomContaining","ParticleCount","ParticleEventCount","ParticleEventPosition"] },
+        { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","CameraPosition","CameraDirection","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","QueryNumber","QueryText","ControllerNumber","ControllerText","MotorNumber","MotorText","JointNumber","ActorPosition","ActorLocalPosition","Velocity","AngularVelocity","Mass","IsGrounded","ComponentField","SoundPlaying","BusVolume","IsTweening","CurrentClip","CurrentFrame","AnimationPlaying","Atmosphere","TimeOfDay","SunElevation","CurrentWeather","FrameTime","DrawCalls","CurrentQuality","DlssAvailable","SceneLuminance","IsHdrDisplay","PeakBrightness","ActiveVolumes","CurrentScene","SceneNames","SaveSlot","SaveSlots","Language","LocalizedText","IsCutscenePlaying","CutsceneTime","CastsShadows","IsRayTracing","RayTracingAvailable","WaterHeight","Underwater","TileAt","RoomContaining","ParticleCount","ParticleEventCount","ParticleEventPosition"] },
         { label: "Interface", kinds: ["UiSelectedIndex","UiValue","UiText","UiShown","UiExists","UiFocus","GamePaused"] },
         { label: "Actors", kinds: ["IsClone","MyParent","NewActor","ActorCount"] },
         { label: "Maths", kinds: ["Add","Sub","Mul","Div","Mod","Round","Math","Random"] },
@@ -794,7 +803,7 @@ QtObject {
         { label: "Control", types: ["Wait","WaitUntil","If","IfElse","Repeat","Forever","While","EscapeLoop","ContinueLoop","StopAll","SwitchScene","PlayCutscene","SkipCutscene","CameraShake","SetTimeScale","Hitstop","SetLetterbox","FadeScreen","SetMouseLocked"] },
         { label: "Input", types: ["RumbleGamepad","BindAction","ClearActionBindings"] }
     ]
-    readonly property var variableCommandTypes: ["SetVariable","ChangeVariable","SaveVariable","ClearSavedVariable"]
+    readonly property var variableCommandTypes: ["SetVariable","ChangeVariable","SaveVariable","ClearSavedVariable","SwitchSaveSlot","DeleteSaveSlot","SetLanguage"]
     readonly property var listCommandTypes: ["AddToList","DeleteOfList","DeleteAllOfList","ShiftList","InsertIntoList","ReplaceItemOfList","ReverseList","LoadJsonIntoList"]
     readonly property var dictCommandTypes: ["SetDictValue","DeleteDictKey","DeleteAllOfDict","LoadJsonIntoDict"]
 
@@ -851,7 +860,7 @@ QtObject {
         ShowWidget:"show a widget", ShowList:"show a scrollable list", SetUiTheme:"set the ui theme", BindUi:"bind widget to value", SetUiItems:"set items of widget to value", ScrollUi:"scroll widget to value", SetElementTheme:"set theme of widget to value", SetUiProp:"set an element property", HideElement:"hide an element",
         HideAllUi:"hide all ui", DeleteElement:"delete an element", FocusElement:"focus an input", ClearFocus:"clear the focus",
         PauseGame:"pause the game", ResumeGame:"resume the game", SetVariable:"set a variable", ChangeVariable:"change a variable",
-        SaveVariable:"save a variable", ClearSavedVariable:"clear a saved variable", AddToList:"add to a list", DeleteOfList:"delete a list item",
+        SaveVariable:"save a variable", ClearSavedVariable:"clear a saved variable", SwitchSaveSlot:"switch save slot", DeleteSaveSlot:"delete a save slot", SetLanguage:"set the language", AddToList:"add to a list", DeleteOfList:"delete a list item",
         DeleteAllOfList:"clear a list", ShiftList:"shift a list", InsertIntoList:"insert into a list", ReplaceItemOfList:"replace a list item",
         ReverseList:"reverse a list", LoadJsonIntoList:"load JSON into a list", SetDictValue:"set a dict value", DeleteDictKey:"delete a dict key",
         DeleteAllOfDict:"clear a dict", LoadJsonIntoDict:"load JSON into a dict", CallBlock:"my block", Return:"return", PluginBlock:"plugin block", WhenPlugin:"when a plugin event occurs", PluginRead:"plugin reporter"

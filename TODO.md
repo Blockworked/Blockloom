@@ -91,7 +91,17 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         `is shown?` kept) plus `selected index of _`. Fixed-tick sampling like
         other reporters so VM and codegen agree.
   Implementation and usage: [Interface guide](docs/interface.md).
-- [ ] Save slots/profiles plus localization: builds on save system we have.
+- [x] Save slots/profiles plus localization: builds on save system we have.
+  Done: named save slots (`switch save slot to`, `delete save slot`,
+  `save slot`/`save slots` reporters) over `save::slot_path` (the default
+  slot keeps the legacy file, the rest sit beside it; same shape on web
+  localStorage and Android), and a project string table (`set language
+  to`, `language`, `text for key` with default-language fallback; shell
+  `set-locale`/`remove-locale`/`remove-language`/`set-default-language`/
+  `list-locales`, `save-slots`/`delete-save-slot`). VM and compiled logic
+  held together in `tests/codegen.rs`; scripts drive both through ABI 47
+  (`switch_save_slot`, `save_slot`/`save_slots`, `set_language`,
+  `language`, `text_for`), and there is no settings UI or QML run here.
 - [x] Multiple scenes plus loading between scenes (menu, level 1, level 2):
   - [x] Document: `Project` holds a scene list (each with its own actors and
         `World` settings); one active scene; old single-scene docs migrate as

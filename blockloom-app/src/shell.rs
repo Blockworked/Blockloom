@@ -1157,6 +1157,87 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        name: "set-locale",
+        cmd: "set_locale",
+        aliases: &["set_locale"],
+        summary: "Write one localized string: the text a key reads in a language. A blank text removes the language's entry instead.",
+        args: &[
+            ArgSpec {
+                name: "key",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "language",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "text",
+                ty: "string",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "remove-locale",
+        cmd: "remove_locale",
+        aliases: &["remove_locale"],
+        summary: "Forget one localized text key in every language.",
+        args: &[ArgSpec {
+            name: "key",
+            ty: "string",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "remove-language",
+        cmd: "remove_language",
+        aliases: &["remove_language"],
+        summary: "Forget one language everywhere, plus as the default when it was.",
+        args: &[ArgSpec {
+            name: "language",
+            ty: "string",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-default-language",
+        cmd: "set_default_language",
+        aliases: &["set_default_language"],
+        summary: "Set the language a fresh run speaks. Empty reads as English.",
+        args: &[ArgSpec {
+            name: "language",
+            ty: "string",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "list-locales",
+        cmd: "list_locales",
+        aliases: &["list_locales"],
+        summary: "Every language with at least one string, plus the default first.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "save-slots",
+        cmd: "save_slots",
+        aliases: &["save_slots"],
+        summary: "Every save slot with a file on disk for the open project, default first. A slot name doubles as a profile name.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "delete-save-slot",
+        cmd: "delete_save_slot",
+        aliases: &["delete_save_slot"],
+        summary: "Delete one save slot's file for the open project without touching the live run.",
+        args: &[ArgSpec {
+            name: "slot",
+            ty: "string",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "set-vfx",
         cmd: "set_vfx",
         aliases: &["set_vfx"],

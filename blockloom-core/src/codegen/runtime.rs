@@ -583,6 +583,19 @@ pub enum Act {
         name: &'static str,
         clear: bool,
     },
+    /// Switches which save slot this run writes to, loading that slot.
+    /// Window-global: the actor only names who asked.
+    SwitchSaveSlot {
+        slot: String,
+    },
+    /// Deletes one save slot's file without touching the live run.
+    DeleteSaveSlot {
+        slot: String,
+    },
+    /// Speaks the run's language for the rest of the run. Window-global.
+    SetLanguage {
+        language: String,
+    },
     /// Appends a number/text value to a named list. A boolean value reports
     /// itself and is dropped, the way a bad slot is.
     AddToList {
@@ -1329,7 +1342,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 37;
+pub const LOGIC_ABI_VERSION: u32 = 38;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1567,6 +1580,12 @@ pub const ACT_PHYSICS_QUERY: u32 = 124;
 /// `a` = `move`, `simple move` or `set <property>`; numbers = the vector (the
 /// value first for a set).
 pub const ACT_CONTROLLER: u32 = 125;
+/// `a` = slot name. Window-global: the actor only names who asked.
+pub const ACT_SWITCH_SAVE_SLOT: u32 = 126;
+/// `a` = slot name. Window-global: the actor only names who asked.
+pub const ACT_DELETE_SAVE_SLOT: u32 = 127;
+/// `a` = language tag (`en`, `fr`, ...). Window-global.
+pub const ACT_SET_LANGUAGE: u32 = 128;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2533,6 +2552,15 @@ impl Host for AbiHost {
                 [if clear { 1.0 } else { 0.0 }, 0.0, 0.0],
                 &zero,
             ),
+            Act::SwitchSaveSlot { slot } => {
+                self.act_wire(actor, ACT_SWITCH_SAVE_SLOT, &slot, "", [0.0; 3], &zero)
+            }
+            Act::DeleteSaveSlot { slot } => {
+                self.act_wire(actor, ACT_DELETE_SAVE_SLOT, &slot, "", [0.0; 3], &zero)
+            }
+            Act::SetLanguage { language } => {
+                self.act_wire(actor, ACT_SET_LANGUAGE, &language, "", [0.0; 3], &zero)
+            }
             Act::AddToList { name, value } => {
                 self.act_wire(actor, ACT_LIST_ADD, name, "", [0.0; 3], &value)
             }

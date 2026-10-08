@@ -1,0 +1,122 @@
+package blockloom:script@0.1.0;
+
+/// Snapshot reads. Hot verbs have typed functions; the rest ride
+/// `read` under the kebab-case of their ABI name (see READS).
+interface sensors {
+    read: func(what: u32, a: string, b: string, arg: f64) -> result<f64, read-error>;
+    enum read-error { missing }
+}
+
+/// Text and binary reads, same shape as `sensors`.
+interface texts {
+    read-text: func(what: u32, a: string, b: string) -> result<string, read-error>;
+    enum read-error { missing, too-long }
+}
+
+/// World writes. Each becomes the same effect the blocks produce;
+/// read-after-write still reads old.
+interface acts {
+    act: func(what: u32, a: string, b: string, c: string, numbers: list<f64>);
+}
+
+/// Batched records and the event a hat block would start on.
+interface lifecycle {
+    record vec3 { x: f32, y: f32, z: f32 }
+    record pose { position: vec3, rotation: vec3, scale: f32 }
+    pose: func(target: string) -> result<pose, read-error>;
+    pose-bytes: func(target: string) -> result<list<u8>, read-error>;
+    variant event {
+        message(string), key(string), action(string), clicked, touched,
+        collision(tuple<string, string, contact-phase, bool, f64, f64>),
+        particles(tuple<string, f64, vec3>), animation-ended(string),
+        animation-marker(string), ui-clicked(string), ui-changed(tuple<string, string>),
+        ui-event(tuple<string, string>), entered-room(string), scene-started,
+        scene-ended, quality-dropped, weather(string), cutscene-signal(string),
+        cutscene-ended(string), plugin(tuple<string, string, list<string>>),
+        contact(tuple<string, string, contact-phase, bool, f64, f64>),
+    }
+    enum contact-phase { enter, stay, exit }
+    enum read-error { missing, too-long }
+    start: func();
+    tick: func(dt: f32);
+    frame: func(dt: f32);
+    ui: func(dt: f32);
+    stop: func();
+    destroy: func();
+    on-event: func(kind: u32, n0: f64, n1: f64, n2: f64, n3: f64);
+}
+
+/// Host-owned per-actor storage: immediate writes, per clone, cleared
+/// each run. Read-after-write sees the write.
+interface state {
+    get-number: func(key: string) -> result<f64, read-error>;
+    get-text: func(key: string) -> result<string, read-error>;
+    set-number: func(key: string, value: f64);
+    set-text: func(key: string, value: string);
+    clear: func(key: string);
+    enum read-error { missing }
+}
+
+/// Block variables shared with canvases: own value first, then shared.
+interface vars {
+    get-number: func(name: string) -> f64;
+    get-text: func(name: string) -> string;
+    set-number: func(name: string, value: f64);
+    set-text: func(name: string, value: string);
+}
+
+/// Block lists shared with canvases, 1-based like the blocks.
+interface lists {
+    len: func(name: string) -> u32;
+    get-number: func(name: string, index: u32) -> result<f64, read-error>;
+    get-text: func(name: string, index: u32) -> result<string, read-error>;
+    add-number: func(name: string, value: f64);
+    add-text: func(name: string, value: string);
+    insert-number: func(name: string, index: u32, value: f64);
+    insert-text: func(name: string, index: u32, value: string);
+    replace-number: func(name: string, index: u32, value: f64);
+    replace-text: func(name: string, index: u32, value: string);
+    delete: func(name: string, index: u32);
+    clear: func(name: string);
+    enum read-error { missing }
+}
+
+/// Queries, the character controller and one-step forces.
+interface physics {
+    query: func(kind: string, trigger-policy: string, layer-mask: u32, numbers: list<f64>);
+    query-number: func(field: string, hit: u32) -> f64;
+    query-text: func(field: string, hit: u32) -> result<string, read-error>;
+    controller-move: func(op: string, value: list<f64>);
+    controller-number: func(field: string, obstacle: u32) -> f64;
+    controller-text: func(field: string, obstacle: u32) -> result<string, read-error>;
+    add-force: func(mode: string, torque: bool, target: string, vector: vec3);
+    use lifecycle.{vec3};
+    enum read-error { missing }
+}
+
+/// Plugin reporters and block calls, answered only while the game runs.
+interface plugins {
+    read-number: func(plugin: string, block: string, slots: string) -> result<f64, read-error>;
+    read-text: func(plugin: string, block: string, slots: string) -> result<string, read-error>;
+    call: func(plugin: string, block: string, slots: string);
+    enum read-error { missing }
+}
+
+/// Hat events as a typed variant; `on-event` carries the numeric kind
+/// beside it until every guest binds the variant (see EVENTS).
+interface event {
+    use lifecycle.{event, contact-phase};
+}
+
+world script {
+    import sensors;
+    import texts;
+    import acts;
+    import lifecycle;
+    import state;
+    import vars;
+    import lists;
+    import physics;
+    import plugins;
+    import event;
+}

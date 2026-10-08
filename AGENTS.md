@@ -2989,7 +2989,13 @@ lands.
 
 - The interface has three global themes plus per-element overrides and
   scrollable UI lists. Variables persist only when a `save variable` block or
-  the matching script call writes them to per-player save data.
+  the matching script call writes them to per-player save data, in the run's
+  save slot (`switch save slot to`, `save slot`/`save slots`; one file per
+  slot, the default keeping the legacy file). Interface strings come from
+  the project's string table (`set language to`, `language`, `text for
+  key`), edited through `set-locale` and friends; scripts drive both through
+  ABI 47 (`switch_save_slot`, `save_slot`/`save_slots`, `set_language`,
+  `language`, `text_for`).
 - A text input is basic: no selection, no cursor, no IME. Backspace rubs out,
   Escape and Enter let go, and every other character key appends - subject to
   the input's own `allow` and `max length`, which is all the validation there

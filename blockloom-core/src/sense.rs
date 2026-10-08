@@ -202,6 +202,15 @@ pub struct Sensors {
     /// Every scene's name, in project order. What `scene names` reports as
     /// a JSON list, so `load json into list` takes it.
     pub scene_names: Vec<String>,
+    /// The save slot this run writes to, by name. What `save slot` reads;
+    /// sampled on the fixed tick so VM and compiled logic agree.
+    pub current_save_slot: String,
+    /// Every slot with a file on disk, default first. What `save slots`
+    /// reports as a JSON list, so `load json into list` takes it.
+    pub save_slots: Vec<String>,
+    /// The language a fresh run speaks, lowercased. What `language` reads
+    /// and `text for key` answers in; moved by `set language to`.
+    pub language: String,
     /// The cutscene playing right now, by name, or empty for none. What
     /// `is cutscene playing?` reads; sampled with the sensors each frame
     /// from the wall-clock player, so VM and compiled logic agree.
@@ -566,6 +575,12 @@ thread_local! {
     /// actor for the same reason: the operators are plain `fn`s with no
     /// context, and `timer` has to know which clock it is being asked for.
     static UI_STRAND: RefCell<bool> = const { RefCell::new(false) };
+
+    /// The project's string table this run reads `text for key` through.
+    /// Static per run like the project itself: the world installs it when
+    /// a run loads and clears it when the run ends, so a reporter answers
+    /// without the snapshot copying the whole table every tick.
+    static LOCALE: RefCell<crate::locale::Localization> = RefCell::new(crate::locale::Localization::default());
 }
 
 /// Actor ids of nested `with_script` calls, buffers reused across calls.
@@ -650,6 +665,38 @@ pub fn publish_ui(ui: HashMap<String, UiSense>, focus: String) {
 /// Samples the atmosphere at the head of each fixed tick.
 pub fn publish_atmosphere(atmosphere: AtmosphereSense) {
     SENSORS.with(|slot| slot.borrow_mut().atmosphere = atmosphere);
+}
+
+/// Samples which save slot this run writes to and which slots have files,
+/// beside the scene names. Refreshed on the fixed tick like the scenes, so
+/// the VM and compiled logic agree; the world refreshes the list when a
+/// slot is switched or deleted rather than listing the dir every tick.
+pub fn publish_saves(slot: &str, slots: &[String]) {
+    SENSORS.with(|snapshot| {
+        let mut s = snapshot.borrow_mut();
+        slot.clone_into(&mut s.current_save_slot);
+        slots.clone_into(&mut s.save_slots);
+    });
+}
+
+/// Samples the run's language. Moved by `set language to`, read by
+/// `language` and the `text for key` lookup.
+pub fn publish_language(language: &str) {
+    SENSORS.with(|snapshot| language.clone_into(&mut snapshot.borrow_mut().language));
+}
+
+/// Installs (or, with `None`, removes) this run's string table: what
+/// `text for key` answers through. The world sets it when a run loads.
+pub fn set_locale_table(table: Option<crate::locale::Localization>) {
+    LOCALE.with(|slot| *slot.borrow_mut() = table.unwrap_or_default());
+}
+
+/// The text for `key` in the published language: the language itself, then
+/// the table's default, then English, then the key. Never blank for a
+/// non-blank key.
+pub fn locale_text(key: &str) -> String {
+    let language = SENSORS.with(|slot| slot.borrow().language.clone());
+    LOCALE.with(|slot| slot.borrow().text(key, &language))
 }
 
 /// Samples the water at the head of each fixed tick, beside the atmosphere.

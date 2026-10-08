@@ -157,6 +157,9 @@ fn publish_world() {
     sensors.atmosphere.volumes = vec!["Cave".to_string()];
     sensors.current_scene = "Scene 1".to_string();
     sensors.scene_names = vec!["Scene 1".to_string(), "Scene 2".to_string()];
+    sensors.current_save_slot = "default".to_string();
+    sensors.save_slots = vec!["default".to_string()];
+    sensors.language = "en".to_string();
     sensors.cutscene_name = "Opener".to_string();
     sensors.cutscene_time = 4.25;
     blockloom_core::sense::publish(sensors);
@@ -454,6 +457,14 @@ impl Host for Recorder {
             "ActiveVolumes" => Ok(Val::Text("[\"Cave\"]".into())),
             "CurrentScene" => Ok(Val::Text("Scene 1".into())),
             "SceneNames" => Ok(Val::Text("[\"Scene 1\",\"Scene 2\"]".into())),
+            // The published snapshot the VM reads above answers the default
+            // slot, one slot on disk and English: reporters read the tick's
+            // snapshot on both sides, so a switch only shows from the next
+            // tick, once the host applies it.
+            "SaveSlot" => Ok(Val::Text("default".into())),
+            "SaveSlots" => Ok(Val::Text("[\"default\"]".into())),
+            "Language" => Ok(Val::Text("en".into())),
+            "LocalizedText" => Ok(Val::Text(args[0].as_text())),
             "Atmosphere" => match args[0].as_text().as_str() {
                 "wind speed" => Ok(Val::Num(3.0)),
                 "time of day" => Ok(Val::Num(6.5)),
@@ -1244,6 +1255,9 @@ fn line_of(act: &Act) -> String {
         Act::SetUiTheme { theme } => format!("SetUiTheme {theme}"),
         Act::SetPaused { paused } => format!("SetPaused {paused}"),
         Act::SaveVariable { name, clear } => format!("SaveVariable {name} {clear}"),
+        Act::SwitchSaveSlot { slot } => format!("SwitchSaveSlot {slot}"),
+        Act::DeleteSaveSlot { slot } => format!("DeleteSaveSlot {slot}"),
+        Act::SetLanguage { language } => format!("SetLanguage {language}"),
         // Buses travel as text on the wire, so both halves spell them the
         // same way: the enum's own name, which is what `SoundBus::name` is.
         Act::PlaySound {
@@ -1671,6 +1685,15 @@ fn line_of(effect: &Effect) -> Option<String> {
         Effect::SaveVariable { actor, name, clear } => {
             format!("{actor}|SaveVariable {name} {clear}")
         }
+        Effect::SwitchSaveSlot { actor, slot } => {
+            format!("{actor}|SwitchSaveSlot {slot}")
+        }
+        Effect::DeleteSaveSlot { actor, slot } => {
+            format!("{actor}|DeleteSaveSlot {slot}")
+        }
+        Effect::SetLanguage { actor, language } => {
+            format!("{actor}|SetLanguage {language}")
+        }
         other => panic!("this test has no line for {other:?}"),
     };
     Some(line)
@@ -1815,6 +1838,7 @@ fn project_with_headers(
         plugin_resources: Vec::new(),
         physics: Default::default(),
         multiplayer: Default::default(),
+        localization: Default::default(),
     }
 }
 
@@ -3278,6 +3302,40 @@ fn when_cutscene_markers_arrive_they_start_their_strands() {
                 }],
             ),
         ],
+    );
+}
+
+#[test]
+fn save_slots_and_language_ask_the_same_things_in_order() {
+    // Both halves read the slot first, trim it, and carry on (unlike
+    // `switch scene to`, nothing ends the strand) - so what follows runs on
+    // either side, in order.
+    assert_same_strands(
+        "save-slots-and-language",
+        vec![vec![
+            K::SwitchSaveSlot {
+                slot: Value::text("Slot 1"),
+            },
+            K::Say {
+                text: op("SaveSlot", vec![]),
+            },
+            K::DeleteSaveSlot {
+                slot: op("Join", vec![Value::text("old "), Value::text("slot")]),
+            },
+            K::Say {
+                text: op("SaveSlots", vec![]),
+            },
+            K::SetLanguage {
+                language: Value::text("fr"),
+            },
+            K::Say {
+                text: op("Language", vec![]),
+            },
+            K::Say {
+                text: op("LocalizedText", vec![Value::text("menu.play")]),
+            },
+        ]],
+        &[],
     );
 }
 

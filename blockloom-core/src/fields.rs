@@ -182,6 +182,8 @@ pub enum FieldId {
     ActionBinding,
     SceneName,
     SceneTransition,
+    SaveSlotName,
+    LanguageName,
     ReturnValue,
     CallArg(usize),
     PluginArg(usize),
@@ -230,6 +232,8 @@ impl FieldId {
                 | FieldId::ParallaxLayer
                 | FieldId::SceneName
                 | FieldId::SceneTransition
+                | FieldId::SaveSlotName
+                | FieldId::LanguageName
         )
     }
 
@@ -412,6 +416,8 @@ impl std::fmt::Display for FieldId {
             FieldId::ActionBinding => write!(f, "ActionBinding"),
             FieldId::SceneName => write!(f, "SceneName"),
             FieldId::SceneTransition => write!(f, "SceneTransition"),
+            FieldId::SaveSlotName => write!(f, "SaveSlotName"),
+            FieldId::LanguageName => write!(f, "LanguageName"),
             FieldId::ReturnValue => write!(f, "ReturnValue"),
             FieldId::CallArg(i) => write!(f, "CallArg:{i}"),
             FieldId::PluginArg(i) => write!(f, "PluginArg:{i}"),
@@ -600,6 +606,8 @@ impl FromStr for FieldId {
             "ActionBinding" => FieldId::ActionBinding,
             "SceneName" => FieldId::SceneName,
             "SceneTransition" => FieldId::SceneTransition,
+            "SaveSlotName" => FieldId::SaveSlotName,
+            "LanguageName" => FieldId::LanguageName,
             "ReturnValue" => FieldId::ReturnValue,
             _ => return Err(()),
         })
@@ -884,6 +892,9 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::RumbleGamepad { duration, .. }, F::RumbleDuration) => Some(duration),
         (K::SwitchScene { scene, .. }, F::SceneName) => Some(scene),
         (K::SwitchScene { transition, .. }, F::SceneTransition) => Some(transition),
+        (K::SwitchSaveSlot { slot }, F::SaveSlotName) => Some(slot),
+        (K::DeleteSaveSlot { slot }, F::SaveSlotName) => Some(slot),
+        (K::SetLanguage { language }, F::LanguageName) => Some(language),
         (K::BindAction { action, .. }, F::ActionName)
         | (K::ClearActionBindings { action }, F::ActionName) => Some(action),
         (K::BindAction { binding, .. }, F::ActionBinding) => Some(binding),

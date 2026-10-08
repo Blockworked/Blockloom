@@ -1590,6 +1590,149 @@ pub(crate) fn save_director_preset(
     Ok(name)
 }
 
+/// Writes one localized string: the text `key` reads in `language`. A blank
+/// text removes the language's entry instead. Answers whether the table
+/// changed; a refused edit leaves no undo step.
+pub(crate) fn set_locale(
+    state: &SharedState,
+    app: &AppHandle,
+    key: String,
+    language: String,
+    text: String,
+) -> Result<bool, String> {
+    // Preview on a copy first: a refused edit leaves no undo step.
+    let mut next = {
+        let s = lock(state)?;
+        s.project()
+            .ok_or_else(|| "No project is open".to_string())?
+            .localization
+            .clone()
+    };
+    if !next.set(&key, &language, &text) {
+        return Ok(false);
+    }
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    if let Some(project) = s.project_mut() {
+        project.localization = next;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(true)
+}
+
+/// Forgets one text key in every language. Answers whether one was there; a
+/// refused edit leaves no undo step.
+pub(crate) fn remove_locale(
+    state: &SharedState,
+    app: &AppHandle,
+    key: String,
+) -> Result<bool, String> {
+    let mut next = {
+        let s = lock(state)?;
+        s.project()
+            .ok_or_else(|| "No project is open".to_string())?
+            .localization
+            .clone()
+    };
+    if !next.remove_key(&key) {
+        return Ok(false);
+    }
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    if let Some(project) = s.project_mut() {
+        project.localization = next;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(true)
+}
+
+/// Forgets one language everywhere, plus as the default when it was.
+/// Answers how many keys changed.
+pub(crate) fn remove_language(
+    state: &SharedState,
+    app: &AppHandle,
+    language: String,
+) -> Result<usize, String> {
+    let mut next = {
+        let s = lock(state)?;
+        s.project()
+            .ok_or_else(|| "No project is open".to_string())?
+            .localization
+            .clone()
+    };
+    let changed = next.remove_language(&language);
+    if changed == 0 {
+        return Ok(0);
+    }
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    if let Some(project) = s.project_mut() {
+        project.localization = next;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(changed)
+}
+
+/// Sets the language a fresh run speaks. Empty reads as English. Answers
+/// the normalized tag.
+pub(crate) fn set_default_language(
+    state: &SharedState,
+    app: &AppHandle,
+    language: String,
+) -> Result<String, String> {
+    use blockloom_core::locale::{DEFAULT_LANGUAGE, Localization};
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    if let Some(project) = s.project_mut() {
+        let tag = Localization::normalize_language(&language);
+        project.localization.default_language = tag.clone();
+        auto_save(&s);
+        sync_runtime(&mut s);
+        emit(app, &s);
+        return Ok(if tag.is_empty() {
+            DEFAULT_LANGUAGE.to_string()
+        } else {
+            tag
+        });
+    }
+    Err("No project is open".to_string())
+}
+
+/// Every language with at least one string, plus the default first. What a
+/// language dropdown lists.
+pub(crate) fn list_locales(state: &SharedState) -> Result<Vec<String>, String> {
+    let s = lock(state)?;
+    s.project()
+        .map(|project| project.localization.languages())
+        .ok_or_else(|| "No project is open".to_string())
+}
+
+/// Every save slot with a file on disk for the open project, default first.
+/// A slot name doubles as a profile name.
+pub(crate) fn save_slots(state: &SharedState) -> Result<Vec<String>, String> {
+    let s = lock(state)?;
+    s.project()
+        .map(|project| blockloom_core::save::list_slots(&project.id))
+        .ok_or_else(|| "No project is open".to_string())
+}
+
+/// Deletes one save slot's file for the open project without touching the
+/// live run. Answers whether a file was there. Save files live outside the
+/// document, so this files no undo step.
+pub(crate) fn delete_save_slot(state: &SharedState, slot: String) -> Result<bool, String> {
+    let s = lock(state)?;
+    let Some(project) = s.project() else {
+        return Err("No project is open".to_string());
+    };
+    blockloom_core::save::delete_slot(&project.id, &slot)
+}
+
 /// Sets the project's particle budget and whether emitters stay on the CPU.
 pub(crate) fn set_vfx(
     state: &SharedState,
@@ -2673,6 +2816,14 @@ fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
     let linker = target
         .filter(|triple| android::is_android(triple))
         .and_then(android::ndk_linker_for);
+    // The sandbox loads the wasm build of each script, so Play builds it
+    // alongside the native library when this machine can. Best effort: a
+    // missing wasm target is ordinary (rust-lld ships with it, but std for
+    // it is a separate download), and a wasm-only failure must never fail
+    // Play when the native library the run actually loads is fine.
+    let wasm_target: Option<&str> = (target.is_none()
+        && script::target_installed(script::WEB_TARGET).is_ok())
+    .then_some(script::WEB_TARGET);
     for (actor, path) in scripts {
         let result = script::compile_for_with_linker(&dir, &path, target, linker.as_deref());
         if target.is_none() {
@@ -2692,6 +2843,16 @@ fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
                 actor,
                 &path,
                 format!("{path} didn't compile:\n{error}"),
+            ));
+            continue;
+        }
+        if let Some(wasm) = wasm_target
+            && let Err(error) = script::compile_for(&dir, &path, Some(wasm))
+        {
+            s.push_log(LogLine::script_error(
+                actor,
+                &path,
+                format!("{path} didn't compile for the script sandbox:\n{error}"),
             ));
         }
     }

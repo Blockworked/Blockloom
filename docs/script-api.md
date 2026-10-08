@@ -140,6 +140,31 @@ and writes nothing, exactly as the list blocks treat one. List indexes are
 1-based, like the blocks: inserts allow one past the end, and out-of-range
 reads and writes miss quietly. ABI 45.
 
+## Save slots and interface language
+
+```rust
+use blockloom::*;
+
+fn tick(me: &Actor, _dt: f32) {
+    me.switch_save_slot("Slot 2");
+    me.delete_save_slot("Slot 1");
+    me.say(&me.save_slot());
+    me.say(&me.save_slots());
+
+    me.set_language("fr");
+    me.say(&me.language());
+    me.say(&me.text_for("greeting"));
+}
+```
+
+Slot and language blocks have script spellings that produce the same
+effects: switching loads that slot's saved variables into the run (a name
+with no file yet starts fresh), deleting is quiet for a missing file, and
+`save slot` reads `"default"` until the first switch. `save slots` answers
+every slot with a file as a JSON list, so `load json into list` takes it.
+`text_for` answers the key in the run's language, falling back to the
+default language and then to the key itself, exactly like the blocks. ABI 47.
+
 ## Driving another actor
 
 ```rust
@@ -392,3 +417,21 @@ first `path:line` span. A line with a file offers `Open script`, which opens
 the actor running it on that line. The render profiler lists one `script/…`
 row per script file with its smoothed milliseconds per tick, so a heavy
 file stands out from a busy project.
+
+## Sandboxed scripts
+
+Play builds each script twice when this machine has the wasm target's std
+(`rustup target add wasm32-unknown-unknown`): the native library the run
+loads, plus the same wasm module a web build ships. The run prefers native
+for speed and falls back to the sandbox when the library is missing or won't
+load, so a wasm-only project still plays. `BLOCKLOOM_SCRIPT_BACKEND=wasm`
+prefers the sandbox instead, which is how to check a script behaves the same
+trapped behind fuel and a 64 MiB ceiling before trusting anyone else's.
+
+Rust guests bind the frozen world through `blockloom-script-guest`
+(`wit/world.wit` is `blockloom:script@0.1.0`, byte for byte): typed
+`lifecycle`, `state`, `vars`, `lists`, `physics` and `plugins` modules over
+the same three imports, with `export_script!` naming the entry points.
+`templates/minimal.rs` is the whole contract in one file;
+`cargo build --target wasm32-unknown-unknown` makes the module the sandbox
+loads.

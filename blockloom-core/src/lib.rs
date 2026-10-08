@@ -97,5 +97,6 @@ pub mod cinematic;
 pub mod cloud_layers;
 pub mod clouds;
 pub mod director;
+pub mod locale;
 
 pub mod multiplayer;

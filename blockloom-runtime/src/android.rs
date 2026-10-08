@@ -79,7 +79,20 @@ fn data_root() -> PathBuf {
 
 /// This game's save file. Same shape as `save::path`, rooted on device.
 pub fn save_path(project_id: &str) -> PathBuf {
-    data_root().join("saves").join(format!("{project_id}.json"))
+    save_slot_path(project_id, blockloom_core::save::DEFAULT_SLOT)
+}
+
+/// One named save slot's file. Same shape as `save::slot_path`, rooted on
+/// device; the default slot is the legacy path above.
+pub fn save_slot_path(project_id: &str, slot: &str) -> PathBuf {
+    let slot = blockloom_core::save::normalize_slot(slot);
+    if slot == blockloom_core::save::DEFAULT_SLOT {
+        data_root().join("saves").join(format!("{project_id}.json"))
+    } else {
+        data_root()
+            .join("saves")
+            .join(format!("{project_id}__{slot}.json"))
+    }
 }
 
 /// A cache file under the data dir, e.g. `surfaces/<key>.json`.

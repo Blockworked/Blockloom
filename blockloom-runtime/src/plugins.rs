@@ -459,10 +459,18 @@ fn host_services(engine: &Engine) -> blockloom_plugin_host::services::HostServic
     host.with_save_store(saves)
 }
 
-/// Where a project's plugin saves live, beside its variable saves.
+/// Where a project's plugin saves live, beside its variable saves. Always
+/// the project's own dir, never a save slot's: plugins keep one store.
 #[cfg(all(feature = "plugins", not(target_arch = "wasm32")))]
 fn save_dir_for(project_id: &str) -> std::path::PathBuf {
-    crate::world::save_path_for(project_id).with_extension("plugins")
+    #[cfg(target_os = "android")]
+    {
+        crate::android::save_path(project_id).with_extension("plugins")
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        blockloom_core::save::path(project_id).with_extension("plugins")
+    }
 }
 
 /// The run begins: open the modules and tell each its records.

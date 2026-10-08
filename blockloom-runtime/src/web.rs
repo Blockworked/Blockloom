@@ -282,8 +282,14 @@ pub(crate) fn console_error(message: &str) {
 /// native. Missing or corrupt entries read as empty rather than failing the
 /// run - a renamed project simply starts fresh.
 pub(crate) fn load_save(project_id: &str) -> SaveData {
+    load_save_slot(project_id, blockloom_core::save::DEFAULT_SLOT)
+}
+
+/// Reads one named save slot from localStorage. The default slot is the
+/// legacy key above, so an old browser save loads unchanged.
+pub(crate) fn load_save_slot(project_id: &str, slot: &str) -> SaveData {
     let text = storage()
-        .and_then(|store| store.get_item(&save_key(project_id)).ok())
+        .and_then(|store| store.get_item(&save_key_slot(project_id, slot)).ok())
         .flatten();
     match text {
         Some(text) => serde_json::from_str(&text).unwrap_or_default(),
@@ -295,11 +301,60 @@ pub(crate) fn load_save(project_id: &str) -> SaveData {
 /// native. Private browsing can refuse the write, which surfaces as a block
 /// error rather than a lost run.
 pub(crate) fn store_save(project_id: &str, data: &SaveData) -> Result<(), String> {
+    store_save_slot(project_id, blockloom_core::save::DEFAULT_SLOT, data)
+}
+
+/// Writes one named save slot to localStorage.
+pub(crate) fn store_save_slot(project_id: &str, slot: &str, data: &SaveData) -> Result<(), String> {
     let store = storage().ok_or_else(|| "this browser won't keep saves".to_string())?;
     let text = serde_json::to_string(data).map_err(|e| e.to_string())?;
     store
-        .set_item(&save_key(project_id), &text)
+        .set_item(&save_key_slot(project_id, slot), &text)
         .map_err(|_| "this browser won't keep saves".to_string())
+}
+
+/// Deletes one named save slot from localStorage. Quiet when nothing by
+/// that name was saved: removing a missing key is not an error.
+pub(crate) fn delete_save_slot(project_id: &str, slot: &str) -> Result<(), String> {
+    let store = storage().ok_or_else(|| "this browser won't keep saves".to_string())?;
+    store
+        .remove_item(&save_key_slot(project_id, slot))
+        .map_err(|_| "could not remove a save".to_string())
+}
+
+/// Every slot with an entry in localStorage, default first. A browser with
+/// no storage reads as none rather than failing the run.
+pub(crate) fn list_save_slots(project_id: &str) -> Vec<String> {
+    use blockloom_core::save::DEFAULT_SLOT;
+    let Some(store) = storage() else {
+        return Vec::new();
+    };
+    let plain = save_key(project_id);
+    let prefix = format!("{plain}__");
+    let Ok(len) = store.length() else {
+        return Vec::new();
+    };
+    let mut slots = Vec::new();
+    for i in 0..len {
+        let Ok(Some(key)) = store.key(i) else {
+            continue;
+        };
+        if key == plain {
+            slots.push(DEFAULT_SLOT.to_string());
+        } else if let Some(slot) = key.strip_prefix(&prefix)
+            && !slot.is_empty()
+            && slot == blockloom_core::save::normalize_slot(slot)
+        {
+            slots.push(slot.to_string());
+        }
+    }
+    slots.sort();
+    slots.dedup();
+    if let Some(at) = slots.iter().position(|s| s == DEFAULT_SLOT) {
+        let default = slots.remove(at);
+        slots.insert(0, default);
+    }
+    slots
 }
 
 /// localStorage as the plain table plugin saves are kept in.
@@ -345,6 +400,17 @@ pub(crate) fn plugin_save_prefix(project_id: &str) -> String {
 
 fn save_key(project_id: &str) -> String {
     format!("blockloom-save:{project_id}")
+}
+
+/// The localStorage key for one named save slot. The default slot is the
+/// legacy key above, so an old browser save loads unchanged.
+fn save_key_slot(project_id: &str, slot: &str) -> String {
+    let slot = blockloom_core::save::normalize_slot(slot);
+    if slot == blockloom_core::save::DEFAULT_SLOT {
+        save_key(project_id)
+    } else {
+        format!("blockloom-save:{project_id}__{slot}")
+    }
 }
 
 fn storage() -> Option<web_sys::Storage> {

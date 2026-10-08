@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 46;
+pub const ABI_VERSION: u32 = 47;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -228,6 +228,18 @@ pub const TEXT_VARIABLE: u32 = 26;
 /// when the list is unknown or the index is out of range. Numbers answer
 /// with their text.
 pub const TEXT_LIST_ITEM: u32 = 27;
+/// The save slot this run writes to, by name. What `save slot` reports;
+/// the default slot when the run never switched.
+pub const TEXT_SAVE_SLOT: u32 = 28;
+/// Every slot with a file on disk as a JSON list, default first. What
+/// `save slots` reports, so `load json into list` takes it.
+pub const TEXT_SAVE_SLOTS: u32 = 29;
+/// The language this run speaks, lowercased. What `language` reports; the
+/// default language when nothing moved it.
+pub const TEXT_LANGUAGE: u32 = 30;
+/// `a` = key. The text for it in the run's language, falling back to the
+/// default language and then to the key itself. What `text for` reports.
+pub const TEXT_LOCALE_TEXT: u32 = 31;
 
 /// Separates the parts a plugin call or event is spelled with in one string.
 pub const PLUGIN_SEP: char = '\u{1f}';
@@ -584,6 +596,16 @@ pub const ACT_LIST_REPLACE_TEXT: u32 = 131;
 pub const ACT_LIST_DELETE: u32 = 132;
 /// `a` = list name. Empties that list. Unknown names do nothing.
 pub const ACT_LIST_CLEAR: u32 = 133;
+/// `a` = slot name. Switches which save slot this run writes to and loads
+/// that slot's saved variables into the run; a name with no file yet starts
+/// fresh. The strand carries on, unlike `switch scene to`.
+pub const ACT_SWITCH_SAVE_SLOT: u32 = 134;
+/// `a` = slot name. Deletes that slot's file without touching the live run.
+/// Quiet when nothing by that name was saved.
+pub const ACT_DELETE_SAVE_SLOT: u32 = 135;
+/// `a` = language. Speaks the run's language for the rest of the run: what
+/// `text for` answers in. Empty reads as the project's default language.
+pub const ACT_SET_LANGUAGE: u32 = 136;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

@@ -383,6 +383,27 @@ impl Backend {
                 arg(&args, "name")?,
                 arg(&args, "from")?,
             )?),
+            "set_locale" => to_json(commands::set_locale(
+                state,
+                app,
+                arg(&args, "key")?,
+                arg(&args, "language")?,
+                arg(&args, "text")?,
+            )?),
+            "remove_locale" => to_json(commands::remove_locale(state, app, arg(&args, "key")?)?),
+            "remove_language" => to_json(commands::remove_language(
+                state,
+                app,
+                arg(&args, "language")?,
+            )?),
+            "set_default_language" => to_json(commands::set_default_language(
+                state,
+                app,
+                arg(&args, "language")?,
+            )?),
+            "list_locales" => to_json(commands::list_locales(state)?),
+            "save_slots" => to_json(commands::save_slots(state)?),
+            "delete_save_slot" => to_json(commands::delete_save_slot(state, arg(&args, "slot")?)?),
             "set_vfx" => {
                 let vfx: blockloom_core::vfx::VfxSettings = arg(&args, "vfx")?;
                 to_json(commands::set_vfx(state, app, vfx)?)

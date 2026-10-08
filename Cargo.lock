@@ -2711,6 +2711,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "blockloom-script-guest"
+version = "0.0.1"
+
+[[package]]
 name = "blockloom-voxel"
 version = "0.0.1"
 dependencies = [

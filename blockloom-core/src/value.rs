@@ -1274,6 +1274,63 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: "SaveSlot",
+        op: "SaveSlot",
+        arity: 0,
+        default_args: Vec::new,
+        // The save slot this run writes to, by name. Sampled on the fixed
+        // tick like `current scene`.
+        eval: |_| {
+            Ok(Evaluated::Text(sense::read(|s| {
+                if s.current_save_slot.is_empty() {
+                    crate::save::DEFAULT_SLOT.to_string()
+                } else {
+                    s.current_save_slot.clone()
+                }
+            })))
+        },
+    },
+    ExtOperator {
+        kind: "SaveSlots",
+        op: "SaveSlots",
+        arity: 0,
+        default_args: Vec::new,
+        // Every slot with a file on disk as a JSON list, so `load json
+        // into list` takes it. Sampled on the fixed tick.
+        eval: |_| {
+            let slots = sense::read(|s| s.save_slots.clone());
+            Ok(Evaluated::Text(
+                serde_json::to_string(&slots).unwrap_or_else(|_| "[]".to_string()),
+            ))
+        },
+    },
+    ExtOperator {
+        kind: "Language",
+        op: "Language",
+        arity: 0,
+        default_args: Vec::new,
+        // The language this run speaks, lowercased. Moved by `set
+        // language to`; the editor answers the default without a run.
+        eval: |_| {
+            Ok(Evaluated::Text(sense::read(|s| {
+                if s.language.is_empty() {
+                    crate::locale::DEFAULT_LANGUAGE.to_string()
+                } else {
+                    s.language.clone()
+                }
+            })))
+        },
+    },
+    ExtOperator {
+        kind: "LocalizedText",
+        op: "LocalizedText",
+        arity: 1,
+        default_args: || vec![text("message")],
+        // The text for a key in the run's language, falling back to the
+        // default language and then to the key itself.
+        eval: |args| Ok(Evaluated::Text(sense::locale_text(&args[0].as_text()))),
+    },
+    ExtOperator {
         kind: "CircleHit",
         op: "CircleHit",
         arity: 4,

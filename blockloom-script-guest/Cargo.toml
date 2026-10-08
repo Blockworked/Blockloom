@@ -1,0 +1,9 @@
+[package]
+name = "blockloom-script-guest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Typed Rust binding for the frozen script world blockloom:script@0.1.0, as a core wasm module the script sandbox runs."
+
+[lib]
+crate-type = ["cdylib", "rlib"]

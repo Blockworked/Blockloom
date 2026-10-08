@@ -48,6 +48,7 @@ fn project_with(strands: Vec<Strand>) -> Project {
         plugin_resources: Vec::new(),
         physics: Default::default(),
         multiplayer: Default::default(),
+        localization: Default::default(),
     }
 }
 
@@ -381,6 +382,119 @@ fn scene_reporters_read_the_published_snapshot() {
         names.eval(),
         Ok(Evaluated::Text("[\"Menu\",\"Level 1\"]".to_string()))
     );
+}
+
+#[test]
+fn save_slot_blocks_queue_their_effects_without_ending_the_strand() {
+    let project = project_with(vec![started(vec![
+        InstructionKind::SwitchSaveSlot {
+            slot: Value::text("  Slot 1 "),
+        },
+        InstructionKind::DeleteSaveSlot {
+            slot: Value::text("old"),
+        },
+        InstructionKind::SetLanguage {
+            language: Value::text("FR"),
+        },
+        say("kept going"),
+    ])]);
+    let mut vm = Harness::started(&project);
+    let effects = vm.run(1);
+    let switch = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::SwitchSaveSlot { slot, .. } => Some(slot.clone()),
+            _ => None,
+        })
+        .expect("a switch effect");
+    assert_eq!(switch, "Slot 1".to_string());
+    let delete = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::DeleteSaveSlot { slot, .. } => Some(slot.clone()),
+            _ => None,
+        })
+        .expect("a delete effect");
+    assert_eq!(delete, "old".to_string());
+    let language = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::SetLanguage { language, .. } => Some(language.clone()),
+            _ => None,
+        })
+        .expect("a language effect");
+    assert_eq!(language, "FR".to_string());
+    // Unlike `switch scene to`, the strand carries on.
+    assert_eq!(says(&effects), vec!["kept going".to_string()]);
+}
+
+#[test]
+fn save_and_language_reporters_read_the_published_snapshot() {
+    blockloom_core::init();
+    blockloom_core::sense::publish(Sensors {
+        current_save_slot: "slot-1".to_string(),
+        save_slots: vec!["default".to_string(), "slot-1".to_string()],
+        language: "fr".to_string(),
+        ..Default::default()
+    });
+    let slot = Value::op(Op::from_name("SaveSlot"), vec![]);
+    assert_eq!(slot.eval(), Ok(Evaluated::Text("slot-1".to_string())));
+    let slots = Value::op(Op::from_name("SaveSlots"), vec![]);
+    assert_eq!(
+        slots.eval(),
+        Ok(Evaluated::Text("[\"default\",\"slot-1\"]".to_string()))
+    );
+    let language = Value::op(Op::from_name("Language"), vec![]);
+    assert_eq!(language.eval(), Ok(Evaluated::Text("fr".to_string())));
+}
+
+#[test]
+fn save_and_language_reporters_answer_sensibly_with_no_run() {
+    blockloom_core::init();
+    blockloom_core::sense::publish(Sensors::default());
+    blockloom_core::sense::set_locale_table(None);
+    let slot = Value::op(Op::from_name("SaveSlot"), vec![]);
+    assert_eq!(slot.eval(), Ok(Evaluated::Text("default".to_string())));
+    let slots = Value::op(Op::from_name("SaveSlots"), vec![]);
+    assert_eq!(slots.eval(), Ok(Evaluated::Text("[]".to_string())));
+    let language = Value::op(Op::from_name("Language"), vec![]);
+    assert_eq!(language.eval(), Ok(Evaluated::Text("en".to_string())));
+    let text = Value::op(
+        Op::from_name("LocalizedText"),
+        vec![Value::text("menu.play")],
+    );
+    assert_eq!(text.eval(), Ok(Evaluated::Text("menu.play".to_string())));
+}
+
+#[test]
+fn localized_text_reads_the_run_language_then_falls_back() {
+    use blockloom_core::locale::Localization;
+    blockloom_core::init();
+    let mut table = Localization::default();
+    table.default_language = "fr".to_string();
+    table.set("menu.play", "en", "Play");
+    table.set("menu.play", "fr", "Jouer");
+    blockloom_core::sense::set_locale_table(Some(table));
+    blockloom_core::sense::publish(Sensors {
+        language: "fr".to_string(),
+        ..Default::default()
+    });
+    let text = Value::op(
+        Op::from_name("LocalizedText"),
+        vec![Value::text("menu.play")],
+    );
+    assert_eq!(text.eval(), Ok(Evaluated::Text("Jouer".to_string())));
+    blockloom_core::sense::publish(Sensors {
+        language: "de".to_string(),
+        ..Default::default()
+    });
+    assert_eq!(text.eval(), Ok(Evaluated::Text("Jouer".to_string())));
+    let missing = Value::op(
+        Op::from_name("LocalizedText"),
+        vec![Value::text("menu.quit")],
+    );
+    assert_eq!(missing.eval(), Ok(Evaluated::Text("menu.quit".to_string())));
+    blockloom_core::sense::set_locale_table(None);
 }
 
 #[test]
@@ -936,6 +1050,7 @@ fn project_with_two(first: Vec<Strand>, second: Vec<Strand>) -> Project {
         plugin_resources: Vec::new(),
         physics: Default::default(),
         multiplayer: Default::default(),
+        localization: Default::default(),
     }
 }
 

@@ -115,6 +115,8 @@ Three rules cover most of the table:
 | --- | --- |
 | `set (score) to`, `(score)`, `change (score) by` | `me.set_variable("score", v)`, `me.variable("score")`, `me.change_variable("score", 1.0)` |
 | `save (score)` / `clear saved (score)` | `me.save_variable("score")` / `me.clear_saved_variable("score")` |
+| `switch save slot to (Slot 2)`, `delete save slot`, `save slot`, `save slots` | `me.switch_save_slot("Slot 2")`, `me.delete_save_slot("Slot 1")`, `me.save_slot()`, `me.save_slots()` |
+| `set language to (fr)`, `language`, `text for (greeting)` | `me.set_language("fr")`, `me.language()`, `me.text_for("greeting")` |
 | `add (x) to [log]`, `[log] length`, `item (1) of [log]` | `me.list_add("log", 1.0)`, `me.list_len("log")`, `me.list_number("log", 1)` |
 | `insert/text/replace/delete/clear list` | `me.list_insert[_text]`, `me.list_add_text`, `me.list_replace[_text]`, `me.list_delete`, `me.list_clear` |
 | dict blocks (`set a dict value`, ...) | Blocks only: scripts share variables and lists, not dicts |

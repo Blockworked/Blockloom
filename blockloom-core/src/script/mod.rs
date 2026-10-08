@@ -62,6 +62,10 @@ pub fn is_script_entry(relative: &str) -> bool {
 /// so it reads as the build output it is.
 pub const BUILD_DIR: &str = ".blockloom/build";
 
+/// The target triple whose build output the script sandbox loads: the same
+/// wasm module a web build ships, so one artifact serves both.
+pub const WEB_TARGET: &str = "wasm32-unknown-unknown";
+
 /// The edition a script is compiled as, which is the one the workspace uses.
 const EDITION: &str = "2024";
 
@@ -217,8 +221,10 @@ fn stamp_path(project_dir: &Path, relative: &str, target: Option<&str>) -> PathB
     build_dir_for(project_dir, target).join(format!("{}.stamp", crate_name(relative)))
 }
 
-/// Uses the workspace toolchain even when the editor starts elsewhere.
-pub(crate) fn rustc_command() -> Command {
+/// Uses the workspace toolchain even when the editor starts elsewhere. Public
+/// so out-of-tree guest builds (and their tests) pin the same toolchain Play
+/// does.
+pub fn rustc_command() -> Command {
     let mut command = Command::new("rustc");
     if std::env::var_os("RUSTUP_TOOLCHAIN").is_none()
         && let Some(root) = crate::android::workspace_root()
@@ -736,5 +742,26 @@ mod tests {
         assert!(of(Some("wasm32-unknown-unknown")).ends_with("wasm32-unknown-unknown/player.wasm"));
         // This machine's own build stays where Play and the runtime look.
         assert!(!of(None).contains("x86_64"));
+    }
+
+    #[test]
+    fn script_default_names_match_core() {
+        // The prelude and the guest crate spell the defaults literally (both
+        // are standalone sources, not core dependents), so pin the literals
+        // against the real constants.
+        for (name, value) in [
+            ("DEFAULT_SAVE_SLOT", crate::save::DEFAULT_SLOT),
+            ("DEFAULT_LANGUAGE", crate::locale::DEFAULT_LANGUAGE),
+        ] {
+            let line = format!(r#"pub const {name}: &str = "{value}";"#);
+            assert!(
+                PRELUDE_SOURCE.contains(&line),
+                "prelude {name} drifted from core"
+            );
+            assert!(
+                include_str!("../../../blockloom-script-guest/src/lib.rs").contains(&line),
+                "guest {name} drifted from core"
+            );
+        }
     }
 }

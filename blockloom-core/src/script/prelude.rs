@@ -23,6 +23,13 @@ impl Axis {
     }
 }
 
+/// The slot a run writes to before any switch. Mirrors
+/// `save::DEFAULT_SLOT`; a core test refuses drift between the two.
+pub const DEFAULT_SAVE_SLOT: &str = "default";
+/// The language a run speaks before any switch. Mirrors
+/// `locale::DEFAULT_LANGUAGE`; a core test refuses drift between the two.
+pub const DEFAULT_LANGUAGE: &str = "en";
+
 /// An actor's world transform from one snapshot read.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Pose {
@@ -335,13 +342,8 @@ impl Actor {
     /// Another actor's velocity on an axis, by name or id. An empty name
     /// refers to this actor. Zero for a missing actor or one with no body.
     pub fn velocity_of(&self, actor: &str, axis: Axis) -> f32 {
-        self.number(
-            READ_VELOCITY,
-            Str::borrow(actor),
-            Str::EMPTY,
-            axis.index(),
-        )
-        .unwrap_or(0.0) as f32
+        self.number(READ_VELOCITY, Str::borrow(actor), Str::EMPTY, axis.index())
+            .unwrap_or(0.0) as f32
     }
 
     /// Spin in radians a second about `axis`. A 2D body turns about z only.
@@ -602,13 +604,8 @@ impl Actor {
     /// The 1-based item `index` as a number. Out of range, unknown lists and
     /// text that does not read as a number all answer 0.
     pub fn list_number(&self, name: &str, index: usize) -> f64 {
-        self.number(
-            READ_LIST_ITEM,
-            Str::borrow(name),
-            Str::EMPTY,
-            index as f64,
-        )
-        .unwrap_or(0.0)
+        self.number(READ_LIST_ITEM, Str::borrow(name), Str::EMPTY, index as f64)
+            .unwrap_or(0.0)
     }
 
     /// The 1-based item `index` as text. Numbers answer with their text;
@@ -972,7 +969,11 @@ impl Actor {
             collider: self.hit_text(index, "collider"),
             part: n("part") as u32,
             point: (n("x") as f32, n("y") as f32, n("z") as f32),
-            normal: (n("normal x") as f32, n("normal y") as f32, n("normal z") as f32),
+            normal: (
+                n("normal x") as f32,
+                n("normal y") as f32,
+                n("normal z") as f32,
+            ),
             distance: n("distance") as f32,
             fraction: n("fraction") as f32,
             started_inside: n("started inside") != 0.0,
@@ -1365,8 +1366,12 @@ impl Actor {
     pub fn set_render_setting(&self, setting: &str, value: &str) {
         self.act(
             ACT_SET_RENDER_SETTING,
-            Str::borrow(setting), Str::borrow(value), Str::EMPTY,
-            0.0, 0.0, 0.0,
+            Str::borrow(setting),
+            Str::borrow(value),
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
         );
     }
     pub fn set_quality(&self, quality: &str) {
@@ -2223,7 +2228,11 @@ impl Actor {
         Some(WaterSample {
             height: read("height")?,
             normal: (read("normal x")?, read("normal y")?, read("normal z")?),
-            velocity: (read("velocity x")?, read("velocity y")?, read("velocity z")?),
+            velocity: (
+                read("velocity x")?,
+                read("velocity y")?,
+                read("velocity z")?,
+            ),
             foam: read("foam")?,
         })
     }
@@ -2417,7 +2426,11 @@ impl Actor {
             above: n("above") != 0.0,
             below: n("below") != 0.0,
             grounded: n("grounded") != 0.0,
-            moved: (n("moved x") as f32, n("moved y") as f32, n("moved z") as f32),
+            moved: (
+                n("moved x") as f32,
+                n("moved y") as f32,
+                n("moved z") as f32,
+            ),
             hits: n("hit count") as usize,
         }
     }
@@ -2428,8 +2441,13 @@ impl Actor {
     /// and, for the `index`th (from 1) obstacle, `hit x/y/z`, `normal x/y/z`
     /// and `hit length`. Zero when there is none.
     pub fn controller_number(&self, field: &str, index: usize) -> f64 {
-        self.number(READ_CONTROLLER, Str::borrow(field), Str::EMPTY, index as f64)
-            .unwrap_or(0.0)
+        self.number(
+            READ_CONTROLLER,
+            Str::borrow(field),
+            Str::EMPTY,
+            index as f64,
+        )
+        .unwrap_or(0.0)
     }
 
     /// Words from the last controller move: the `index`th obstacle's `actor`,
@@ -2712,14 +2730,18 @@ impl Actor {
 
     /// Smoothed frame work time in milliseconds.
     pub fn frame_time(&self) -> f64 {
-        self.number(READ_FRAME_TIME, Str::EMPTY, Str::EMPTY, 0.0).unwrap_or(0.0)
+        self.number(READ_FRAME_TIME, Str::EMPTY, Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
     }
     /// Estimated visible mesh draws, excluding shadows and post-processing.
     pub fn draw_calls(&self) -> u32 {
-        self.number(READ_DRAW_CALLS, Str::EMPTY, Str::EMPTY, 0.0).unwrap_or(0.0) as u32
+        self.number(READ_DRAW_CALLS, Str::EMPTY, Str::EMPTY, 0.0)
+            .unwrap_or(0.0) as u32
     }
     pub fn dlss_available(&self) -> bool {
-        self.number(READ_DLSS_AVAILABLE, Str::EMPTY, Str::EMPTY, 0.0).unwrap_or(0.0) != 0.0
+        self.number(READ_DLSS_AVAILABLE, Str::EMPTY, Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            != 0.0
     }
     pub fn current_quality(&self) -> Option<String> {
         self.text(TEXT_CURRENT_QUALITY, Str::EMPTY, Str::EMPTY)
@@ -2949,11 +2971,21 @@ impl Actor {
 
     /// A slider's number, or a toggle as `1.0`/`0.0`. Zero for an id nothing
     /// answers to.
-    pub fn bind_ui(&self, id: &str, bindings_json: &str) { self.set_ui_text(id, "Bind", bindings_json); }
-    pub fn set_ui_items(&self, id: &str, items_json: &str) { self.set_ui_text(id, "Items", items_json); }
-    pub fn scroll_ui_to(&self, id: &str, offset: f64) { self.set_ui(id, "Scroll", offset); }
-    pub fn ui_selected_index(&self, id: &str) -> f64 { self.ui_value(id) }
-    pub fn set_widget_theme(&self, id: &str, theme: &str) { self.set_ui_text(id, "Theme", theme); }
+    pub fn bind_ui(&self, id: &str, bindings_json: &str) {
+        self.set_ui_text(id, "Bind", bindings_json);
+    }
+    pub fn set_ui_items(&self, id: &str, items_json: &str) {
+        self.set_ui_text(id, "Items", items_json);
+    }
+    pub fn scroll_ui_to(&self, id: &str, offset: f64) {
+        self.set_ui(id, "Scroll", offset);
+    }
+    pub fn ui_selected_index(&self, id: &str) -> f64 {
+        self.ui_value(id)
+    }
+    pub fn set_widget_theme(&self, id: &str, theme: &str) {
+        self.set_ui_text(id, "Theme", theme);
+    }
 
     pub fn ui_value(&self, id: &str) -> f64 {
         self.number(READ_UI_VALUE, Str::borrow(id), Str::EMPTY, 0.0)
@@ -3050,6 +3082,75 @@ impl Actor {
             Str::EMPTY,
             Str::EMPTY,
             1.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// The save slot this run writes to, by name. What `save slot` reports.
+    pub fn save_slot(&self) -> String {
+        self.text(TEXT_SAVE_SLOT, Str::EMPTY, Str::EMPTY)
+            .unwrap_or_else(|| DEFAULT_SAVE_SLOT.to_string())
+    }
+
+    /// Every slot with a file on disk as a JSON list, default first. What
+    /// `save slots` reports, so `load json into list` takes it.
+    pub fn save_slots(&self) -> String {
+        self.text(TEXT_SAVE_SLOTS, Str::EMPTY, Str::EMPTY)
+            .unwrap_or_else(|| "[]".to_string())
+    }
+
+    /// Switches which save slot this run writes to and loads that slot's
+    /// saved variables into the run; a name with no file yet starts fresh.
+    /// The strand carries on, unlike `switch scene to`.
+    pub fn switch_save_slot(&self, slot: &str) {
+        self.act(
+            ACT_SWITCH_SAVE_SLOT,
+            Str::borrow(slot),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Deletes one save slot's file without touching the live run. Quiet
+    /// when nothing by that name was saved.
+    pub fn delete_save_slot(&self, slot: &str) {
+        self.act(
+            ACT_DELETE_SAVE_SLOT,
+            Str::borrow(slot),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// The language this run speaks, lowercased. What `language` reports.
+    pub fn language(&self) -> String {
+        self.text(TEXT_LANGUAGE, Str::EMPTY, Str::EMPTY)
+            .unwrap_or_else(|| DEFAULT_LANGUAGE.to_string())
+    }
+
+    /// The text for `key` in the run's language, falling back to the
+    /// default language and then to the key itself. What `text for` reports.
+    pub fn text_for(&self, key: &str) -> String {
+        self.text(TEXT_LOCALE_TEXT, Str::borrow(key), Str::EMPTY)
+            .unwrap_or_else(|| key.to_string())
+    }
+
+    /// Speaks the run's language for the rest of the run: what `text for`
+    /// answers in. Empty reads as the project's default language.
+    pub fn set_language(&self, language: &str) {
+        self.act(
+            ACT_SET_LANGUAGE,
+            Str::borrow(language),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
             0.0,
             0.0,
         );
@@ -3207,7 +3308,9 @@ impl ActorRef {
 
     /// Its Euler rotation in degrees, read through its pose. Zero missing.
     pub fn rotation(&self, axis: Axis) -> f32 {
-        self.pose().map(|pose| pose.rotation[axis as usize]).unwrap_or(0.0)
+        self.pose()
+            .map(|pose| pose.rotation[axis as usize])
+            .unwrap_or(0.0)
     }
 
     /// Its uniform scale, read through its pose. Missing reads as 1.
@@ -3275,12 +3378,7 @@ impl ActorRef {
 
     /// Places it at a world position. Pixels in 2D, metres in 3D.
     pub fn go_to(&self, x: f32, y: f32, z: f32) {
-        self.act_other(
-            ACT_GO_TO_OTHER,
-            "",
-            "",
-            &[x as f64, y as f64, z as f64],
-        );
+        self.act_other(ACT_GO_TO_OTHER, "", "", &[x as f64, y as f64, z as f64]);
     }
 
     pub fn change_position(&self, axis: Axis, by: f32) {
@@ -3298,12 +3396,7 @@ impl ActorRef {
     }
 
     pub fn turn(&self, axis: Axis, degrees: f32) {
-        self.act_other(
-            ACT_TURN_OTHER,
-            "",
-            "",
-            &[axis.index(), degrees as f64, 0.0],
-        );
+        self.act_other(ACT_TURN_OTHER, "", "", &[axis.index(), degrees as f64, 0.0]);
     }
 
     pub fn set_rotation(&self, axis: Axis, degrees: f32) {
@@ -3430,7 +3523,6 @@ pub enum UiKind {
     Scrollbar = 20,
     RichText = 21,
     Tooltip = 22,
-
 }
 
 #[repr(u32)]
@@ -3576,7 +3668,8 @@ fn parse_names(json: &str) -> Vec<String> {
                     Some('t') => name.push('\t'),
                     Some('u') => {
                         let hex: String = chars.by_ref().take(4).collect();
-                        if let Some(c) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                        if let Some(c) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32)
+                        {
                             name.push(c);
                         }
                     }
@@ -3909,9 +4002,7 @@ fn plugin_args_json(args: &[PluginArg]) -> String {
                         '\n' => out.push_str("\\n"),
                         '\r' => out.push_str("\\r"),
                         '\t' => out.push_str("\\t"),
-                        ch if (ch as u32) < 0x20 => {
-                            out.push_str(&format!("\\u{:04x}", ch as u32))
-                        }
+                        ch if (ch as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", ch as u32)),
                         ch => out.push(ch),
                     }
                 }

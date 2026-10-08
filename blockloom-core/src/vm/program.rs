@@ -423,6 +423,12 @@ pub enum Action {
         name: String,
         clear: bool,
     },
+    /// Switches which save slot this run writes to, loading that slot.
+    SwitchSaveSlot(Value),
+    /// Deletes one save slot's file without touching the live run.
+    DeleteSaveSlot(Value),
+    /// Speaks the run's language for the rest of the run.
+    SetLanguage(Value),
     SetVariable {
         name: String,
         value: Value,
@@ -918,6 +924,9 @@ fn action_values(action: &Action) -> Vec<&Value> {
         Action::PluginCall { args, .. } => args.iter().collect(),
         Action::BindAction { action, binding } => vec![action, binding],
         Action::SwitchScene { scene, transition } => vec![scene, transition],
+        Action::SwitchSaveSlot(slot) | Action::DeleteSaveSlot(slot) | Action::SetLanguage(slot) => {
+            vec![slot]
+        }
         Action::SetVariable { value, .. } | Action::ChangeVariable { value, .. } => vec![value],
         Action::AddToList { value, .. } => vec![value],
         Action::DeleteOfList { index, .. } => vec![index],
@@ -1399,6 +1408,9 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
             scene: lift_one(scene, ctx),
             transition: lift_one(transition, ctx),
         },
+        Action::SwitchSaveSlot(slot) => Action::SwitchSaveSlot(lift_one(slot, ctx)),
+        Action::DeleteSaveSlot(slot) => Action::DeleteSaveSlot(lift_one(slot, ctx)),
+        Action::SetLanguage(language) => Action::SetLanguage(lift_one(language, ctx)),
         Action::ShowElement(mut spec) => {
             spec.id = lift_one(std::mem::replace(&mut spec.id, Value::Bool), ctx);
             spec.content = lift_one(std::mem::replace(&mut spec.content, Value::Bool), ctx);
@@ -2408,6 +2420,15 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             name: name.clone(),
             clear: true,
         })),
+        K::SwitchSaveSlot { slot } => {
+            steps.push(Step::Action(Action::SwitchSaveSlot(slot.clone())))
+        }
+        K::DeleteSaveSlot { slot } => {
+            steps.push(Step::Action(Action::DeleteSaveSlot(slot.clone())))
+        }
+        K::SetLanguage { language } => {
+            steps.push(Step::Action(Action::SetLanguage(language.clone())))
+        }
         K::SetVariable { name, value } => steps.push(Step::Action(Action::SetVariable {
             name: name.clone(),
             value: value.clone(),

@@ -1385,6 +1385,22 @@ pub(crate) fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<Strin
             .filter(|text| !text.is_empty()),
         abi::TEXT_VARIABLE => Some(script_variable_text(actor, a)),
         abi::TEXT_LIST_ITEM => script_list_text(actor, a, b),
+        abi::TEXT_SAVE_SLOT => Some(sense::read(|sensors| {
+            if sensors.current_save_slot.is_empty() {
+                blockloom_core::save::DEFAULT_SLOT.to_string()
+            } else {
+                sensors.current_save_slot.clone()
+            }
+        })),
+        abi::TEXT_SAVE_SLOTS => serde_json::to_string(&sense::read(|s| s.save_slots.clone())).ok(),
+        abi::TEXT_LANGUAGE => Some(sense::read(|sensors| {
+            if sensors.language.is_empty() {
+                blockloom_core::locale::DEFAULT_LANGUAGE.to_string()
+            } else {
+                sensors.language.clone()
+            }
+        })),
+        abi::TEXT_LOCALE_TEXT => Some(blockloom_core::sense::locale_text(a)),
         abi::TEXT_SCENE_NAMES => {
             serde_json::to_string(&sense::read(|s| s.scene_names.clone())).ok()
         }
@@ -1954,6 +1970,18 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
             actor,
             scene: a.trim().to_string(),
             transition: normalize_scene_transition(b),
+        },
+        abi::ACT_SWITCH_SAVE_SLOT => Effect::SwitchSaveSlot {
+            actor,
+            slot: a.trim().to_string(),
+        },
+        abi::ACT_DELETE_SAVE_SLOT => Effect::DeleteSaveSlot {
+            actor,
+            slot: a.trim().to_string(),
+        },
+        abi::ACT_SET_LANGUAGE => Effect::SetLanguage {
+            actor,
+            language: a.trim().to_string(),
         },
         abi::ACT_SET_WATER => match blockloom_core::water::WaterProperty::parse(a) {
             Some(property) => Effect::SetWater {
@@ -3704,6 +3732,116 @@ blockloom::export!(start = start, tick = tick);
             variables.read("a1", "mode"),
             Evaluated::Text("hot".to_string())
         );
+    }
+
+    #[test]
+    fn slot_and_language_reads_default_without_a_run() {
+        publish_one("a1");
+        assert_eq!(
+            text_for("a1", abi::TEXT_SAVE_SLOT, "", ""),
+            Some("default".to_string())
+        );
+        assert_eq!(
+            text_for("a1", abi::TEXT_SAVE_SLOTS, "", ""),
+            Some("[]".to_string())
+        );
+        assert_eq!(
+            text_for("a1", abi::TEXT_LANGUAGE, "", ""),
+            Some("en".to_string())
+        );
+        assert_eq!(
+            text_for("a1", abi::TEXT_LOCALE_TEXT, "greeting", ""),
+            Some("greeting".to_string())
+        );
+    }
+
+    #[test]
+    fn a_compiled_script_drives_save_slots_and_language_like_blocks() {
+        let project = TempProject::new("slots");
+        let Some(script) = project.build(
+            r#"
+use blockloom::*;
+
+fn tick(me: &Actor, _dt: f32) {
+    me.switch_save_slot("Slot 2");
+    me.delete_save_slot("Slot 1");
+    me.set_language("fr");
+    me.say(&me.save_slot());
+    me.say(&me.save_slots());
+    me.say(&me.language());
+    me.say(&me.text_for("greeting"));
+}
+
+blockloom::export!(tick = tick);
+"#,
+        ) else {
+            return;
+        };
+        publish_one("a1");
+        blockloom_core::sense::publish_saves(
+            "Slot 2",
+            &["default".to_string(), "Slot 2".to_string()],
+        );
+        blockloom_core::sense::publish_language("fr");
+        blockloom_core::sense::set_locale_table(Some(blockloom_core::locale::Localization {
+            default_language: "en".to_string(),
+            strings: HashMap::from([(
+                "greeting".to_string(),
+                HashMap::from([
+                    ("en".to_string(), "Hello".to_string()),
+                    ("fr".to_string(), "Bonjour".to_string()),
+                ]),
+            )]),
+        }));
+        let mut asked = Asked::default();
+        script.tick("a1", &mut asked, 0.5);
+        let said: Vec<_> = asked
+            .effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::Say { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            asked.effects.iter().any(|effect| matches!(
+                effect,
+                Effect::SwitchSaveSlot { actor, slot }
+                if actor == "a1" && slot == "Slot 2"
+            )),
+            "{:?}",
+            asked.effects
+        );
+        assert!(
+            asked.effects.iter().any(|effect| matches!(
+                effect,
+                Effect::DeleteSaveSlot { actor, slot }
+                if actor == "a1" && slot == "Slot 1"
+            )),
+            "{:?}",
+            asked.effects
+        );
+        assert!(
+            asked.effects.iter().any(|effect| matches!(
+                effect,
+                Effect::SetLanguage { actor, language }
+                if actor == "a1" && language == "fr"
+            )),
+            "{:?}",
+            asked.effects
+        );
+        assert_eq!(
+            said,
+            vec!["Slot 2", "[\"default\",\"Slot 2\"]", "fr", "Bonjour"]
+        );
+        assert!(
+            asked
+                .effects
+                .iter()
+                .all(|effect| !matches!(effect, Effect::Error { .. }))
+        );
+        blockloom_core::sense::set_locale_table(None);
+        publish_one("a1");
     }
 
     #[test]

@@ -26,7 +26,135 @@ pub struct ActorId(pub String);
 /// runs its scripts in list order: `start`, then `event`, then `tick`.
 pub struct ActorScript {
     pub path: String,
-    pub script: crate::script::LoadedScript,
+    pub script: ScriptBackend,
+}
+
+/// Which code runs a script: the native library Play builds, or the
+/// sandboxed wasm module beside it. Native is preferred for speed; wasm is
+/// the fallback (and the opt-in sandbox via `BLOCKLOOM_SCRIPT_BACKEND=wasm`),
+/// so a project with only web-built scripts still plays on desktop and any
+/// language targeting the three host imports runs untrusted.
+#[cfg(not(target_arch = "wasm32"))]
+pub enum ScriptBackend {
+    Native(crate::script::LoadedScript),
+    Wasm(Box<crate::script_wasm::WasmScript>),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ScriptBackend {
+    /// Whether the sandbox is preferred over native speed for this run.
+    fn prefers_wasm() -> bool {
+        std::env::var("BLOCKLOOM_SCRIPT_BACKEND").is_ok_and(|value| value == "wasm")
+    }
+
+    /// Whether Play can run `relative` without rebuilding: either artifact
+    /// counts. On Android only the native library beside the runtime does.
+    pub fn is_built(project_dir: &std::path::Path, relative: &str) -> bool {
+        #[cfg(target_os = "android")]
+        {
+            crate::script::LoadedScript::is_built(project_dir, relative)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            crate::script::LoadedScript::is_built(project_dir, relative)
+                || blockloom_core::script::library_path_for(
+                    project_dir,
+                    relative,
+                    Some(blockloom_core::script::WEB_TARGET),
+                )
+                .is_file()
+        }
+    }
+
+    /// Opens `relative`'s script, native first (or wasm first under
+    /// `BLOCKLOOM_SCRIPT_BACKEND=wasm`), falling back to whichever built
+    /// artifact loads. When both fail the primary error is reported, so a
+    /// broken native build doesn't surface as a confusing wasm complaint.
+    pub fn load(project_dir: &std::path::Path, relative: &str) -> Result<ScriptBackend, String> {
+        #[cfg(target_os = "android")]
+        {
+            return crate::script::LoadedScript::load(project_dir, relative)
+                .map(ScriptBackend::Native);
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            if Self::prefers_wasm() {
+                match crate::script_wasm::WasmScript::load_file(project_dir, relative) {
+                    Ok(script) => Ok(ScriptBackend::Wasm(Box::new(script))),
+                    Err(wasm_error) => {
+                        match crate::script::LoadedScript::load(project_dir, relative) {
+                            Ok(script) => Ok(ScriptBackend::Native(script)),
+                            Err(_) => Err(wasm_error),
+                        }
+                    }
+                }
+            } else {
+                match crate::script::LoadedScript::load(project_dir, relative) {
+                    Ok(script) => Ok(ScriptBackend::Native(script)),
+                    Err(native_error) => {
+                        match crate::script_wasm::WasmScript::load_file(project_dir, relative) {
+                            Ok(script) => Ok(ScriptBackend::Wasm(Box::new(script))),
+                            Err(_) => Err(native_error),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn start(&self, actor: &str, asked: &mut crate::script::Asked) {
+        match self {
+            ScriptBackend::Native(script) => script.start(actor, asked),
+            ScriptBackend::Wasm(script) => script.start(actor, asked),
+        }
+    }
+
+    pub fn tick(&self, actor: &str, asked: &mut crate::script::Asked, dt: f32) {
+        match self {
+            ScriptBackend::Native(script) => script.tick(actor, asked, dt),
+            ScriptBackend::Wasm(script) => script.tick(actor, asked, dt),
+        }
+    }
+
+    pub fn frame(&self, actor: &str, asked: &mut crate::script::Asked, dt: f32) {
+        match self {
+            ScriptBackend::Native(script) => script.frame(actor, asked, dt),
+            ScriptBackend::Wasm(script) => script.frame(actor, asked, dt),
+        }
+    }
+
+    pub fn ui(&self, actor: &str, asked: &mut crate::script::Asked, dt: f32) {
+        match self {
+            ScriptBackend::Native(script) => script.ui(actor, asked, dt),
+            ScriptBackend::Wasm(script) => script.ui(actor, asked, dt),
+        }
+    }
+
+    pub fn stop(&self, actor: &str, asked: &mut crate::script::Asked) {
+        match self {
+            ScriptBackend::Native(script) => script.stop(actor, asked),
+            ScriptBackend::Wasm(script) => script.stop(actor, asked),
+        }
+    }
+
+    pub fn destroy(&self, actor: &str, asked: &mut crate::script::Asked) {
+        match self {
+            ScriptBackend::Native(script) => script.destroy(actor, asked),
+            ScriptBackend::Wasm(script) => script.destroy(actor, asked),
+        }
+    }
+
+    pub fn event(
+        &self,
+        actor: &str,
+        asked: &mut crate::script::Asked,
+        event: &crate::script::ScriptEvent,
+    ) {
+        match self {
+            ScriptBackend::Native(script) => script.event(actor, asked, event),
+            ScriptBackend::Wasm(script) => script.event(actor, asked, event),
+        }
+    }
 }
 
 /// The actor's custom components, live. Authored values seed it on every
@@ -153,6 +281,16 @@ pub struct Engine {
     /// Per-player values for this project's explicitly saved variables.
     pub save_data: SaveData,
     pub save_path: PathBuf,
+    /// Which save slot this run writes to, by normalized name. A slot name
+    /// doubles as a profile name, so "Slot 1" and a player name are the
+    /// same file either way.
+    pub save_slot: String,
+    /// Every slot with a file on disk, refreshed when a slot is switched
+    /// or deleted rather than listed every tick.
+    pub save_slots: Vec<String>,
+    /// The language this run speaks, lowercased. What `text for key`
+    /// answers in; moved by `set language to`.
+    pub language: String,
     /// A built game's native block program. Editor Play keeps using the VM so
     /// what is being edited always runs immediately.
     pub logic: Option<crate::logic::LoadedLogic>,
@@ -368,6 +506,9 @@ impl Engine {
             dicts,
             save_data: SaveData::default(),
             save_path: PathBuf::new(),
+            save_slot: blockloom_core::save::DEFAULT_SLOT.to_string(),
+            save_slots: Vec::new(),
+            language: blockloom_core::locale::DEFAULT_LANGUAGE.to_string(),
             logic: None,
             plugins: Default::default(),
             made: 0,
@@ -635,6 +776,68 @@ mod tests {
 
         engine.note_say("player", "");
         assert!(!engine.speech.contains_key("player"));
+    }
+
+    /// A runnable wasm artifact with no behavior: the imports, memory and
+    /// entry points are the contract, not what the module does.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn quiet_wasm() -> Vec<u8> {
+        let abi = blockloom_core::script::abi::ABI_VERSION;
+        wat::parse_str(&format!(
+            r#"(module
+  (import "blockloom" "read_number" (func (param i32 i32 i32) (result i32)))
+  (import "blockloom" "read_text" (func (param i32 i32 i32) (result i32)))
+  (import "blockloom" "act" (func (param i32 i32 i32) (result i32)))
+  (memory (export "memory") 1)
+  (func (export "blockloom_script_abi") (result i32) i32.const {abi})
+  (func (export "blockloom_script_start") (param i32 i32))
+  (func (export "blockloom_script_tick") (param i32 i32 f32))
+  (func (export "blockloom_script_event") (param i32 i32 i32 f64 f64 f64 f64))
+)"#
+        ))
+        .expect("the fixture is valid")
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn script_backend_falls_back_to_wasm_when_native_is_missing() {
+        let dir =
+            std::env::temp_dir().join(format!("blockloom-script-backend-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let relative = "assets/scripts/player.rs";
+        assert!(!ScriptBackend::is_built(&dir, relative));
+        assert!(
+            ScriptBackend::load(&dir, relative)
+                .err()
+                .expect("missing scripts fail to load")
+                .contains("hasn't been built")
+        );
+        // Only the web-built artifact exists: that counts as built, and
+        // loading falls back to the sandbox instead of failing.
+        let path = blockloom_core::script::library_path_for(
+            &dir,
+            relative,
+            Some(blockloom_core::script::WEB_TARGET),
+        );
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, quiet_wasm()).unwrap();
+        assert!(ScriptBackend::is_built(&dir, relative));
+        assert!(matches!(
+            ScriptBackend::load(&dir, relative),
+            Ok(ScriptBackend::Wasm(_))
+        ));
+        // The opt-in sandbox order loads the same artifact first.
+        let previous = std::env::var("BLOCKLOOM_SCRIPT_BACKEND").ok();
+        unsafe { std::env::set_var("BLOCKLOOM_SCRIPT_BACKEND", "wasm") };
+        let loaded = ScriptBackend::load(&dir, relative);
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("BLOCKLOOM_SCRIPT_BACKEND", value),
+                None => std::env::remove_var("BLOCKLOOM_SCRIPT_BACKEND"),
+            }
+        }
+        assert!(matches!(loaded, Ok(ScriptBackend::Wasm(_))));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

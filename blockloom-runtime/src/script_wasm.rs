@@ -4,20 +4,18 @@
 //! only the same three host calls a web script imports
 //! (`blockloom.read_number/read_text/act` over [`abi::WasmCall`]) and
 //! exporting its memory plus the `blockloom_script_*` entry points. Any
-//! language that can emit that shape - Rust through the existing
-//! `compile_for(..., "wasm32-unknown-unknown")`, or a TinyGo/componentize
-//! toolchain over the frozen [`blockloom_core::script::wit`] world - runs
-//! here sandboxed: its own linear memory with a ceiling, no imports but the
-//! three calls, and a fuel budget per entry point. A call that runs out of
-//! fuel or traps stops the script for the rest of the run, exactly like a
-//! trapped web script, while native scripts keep their speed.
+//! language that can emit that shape - Rust through
+//! `compile_for(..., WEB_TARGET)`, or a TinyGo/componentize toolchain over
+//! the frozen [`blockloom_core::script::wit`] world - runs here sandboxed:
+//! its own linear memory with a ceiling, no imports but the three calls, and
+//! a fuel budget per entry point. A call that runs out of fuel or traps stops
+//! the script for the rest of the run, exactly like a trapped web script,
+//! while native scripts keep their speed.
 //!
-//! This is Phase 5's first slice: prove sandboxing and language reach on the
-//! core-module shape the web already ships, measure per-tick overhead against
-//! `cdylib`s, and let that number decide whether the host converges on the
-//! component model (`wasmtime`) or stays here. Play still loads native
-//! libraries; wiring the editor to prefer or fall back to wasm is the next
-//! slice (see [`WasmScript::load_file`]).
+//! Play builds the wasm beside the native library when this machine has the
+//! wasm target installed, and the engine loads native first with wasm as the
+//! fallback (`ScriptBackend`), or wasm first under
+//! `BLOCKLOOM_SCRIPT_BACKEND=wasm`.
 
 use super::script::{Asked, ScriptEvent};
 use blockloom_core::script::abi;
@@ -291,11 +289,14 @@ impl WasmScript {
     }
 
     /// Loads the wasm build of `relative` the editor produced with
-    /// `compile_for(..., "wasm32-unknown-unknown")`. Play doesn't build it
-    /// yet - this is the seam the editor wiring will use.
+    /// `compile_for(..., WEB_TARGET)`. Play builds it alongside the native
+    /// library; this is the seam that wiring reads through.
     pub fn load_file(project_dir: &std::path::Path, relative: &str) -> Result<WasmScript, String> {
-        const WEB: &str = "wasm32-unknown-unknown";
-        let path = blockloom_core::script::library_path_for(project_dir, relative, Some(WEB));
+        let path = blockloom_core::script::library_path_for(
+            project_dir,
+            relative,
+            Some(blockloom_core::script::WEB_TARGET),
+        );
         let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         Self::load_bytes(&bytes, relative)
     }
@@ -609,7 +610,7 @@ mod tests {
         let path = blockloom_core::script::library_path_for(
             &dir,
             relative,
-            Some("wasm32-unknown-unknown"),
+            Some(blockloom_core::script::WEB_TARGET),
         );
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, wat::parse_str(&fixture_wat()).unwrap()).unwrap();
@@ -642,9 +643,11 @@ mod tests {
                 .contains("isn't a WebAssembly")
         );
         // No entry points, no script.
-        let bare =
-            wat::parse_str(r#"(module (memory (export "memory") 1) (func (export "blockloom_script_abi") (result i32) i32.const 46))"#)
-                .unwrap();
+        let bare = wat::parse_str(&format!(
+            r#"(module (memory (export "memory") 1) (func (export "blockloom_script_abi") (result i32) i32.const {}))"#,
+            abi::ABI_VERSION
+        ))
+        .unwrap();
         assert!(
             WasmScript::load_bytes(&bare, "bare.wasm")
                 .err()
@@ -666,18 +669,19 @@ mod tests {
 
     #[test]
     fn wasm_runaway_is_stopped_with_a_budget_error() {
-        let spinning = wat::parse_str(
+        let spinning = wat::parse_str(&format!(
             r#"(module
   (import "blockloom" "read_number" (func $rn (param i32 i32 i32) (result i32)))
   (import "blockloom" "read_text" (func $rt (param i32 i32 i32) (result i32)))
   (import "blockloom" "act" (func $act (param i32 i32 i32) (result i32)))
   (memory (export "memory") 1)
-  (func (export "blockloom_script_abi") (result i32) i32.const 46)
+  (func (export "blockloom_script_abi") (result i32) i32.const {})
   (func (export "blockloom_script_start") (param i32 i32))
   (func (export "blockloom_script_tick") (param i32 i32 f32) (loop $s (br $s)))
   (func (export "blockloom_script_event") (param i32 i32 i32 f64 f64 f64 f64))
 )"#,
-        )
+            abi::ABI_VERSION
+        ))
         .unwrap();
         publish_one("a1");
         let script = WasmScript::load_bytes(&spinning, "spin.wasm").expect("loads");
@@ -698,6 +702,131 @@ mod tests {
         let mut asked = Asked::default();
         script.tick("a1", &mut asked, 1.0 / 60.0);
         assert!(asked.effects.is_empty());
+    }
+
+    /// The guest crate's template as a sandboxed module: two `rustc` runs (the
+    /// guest `rlib` for the wasm target, then the template as a `cdylib` over
+    /// it - the documented `cargo build --target wasm32-unknown-unknown`
+    /// without the cargo), then the same start/tick/event assertions the
+    /// hand-written fixture holds. Skipped without a toolchain and target.
+    #[test]
+    fn guest_crate_script_runs_in_sandbox() {
+        use blockloom_core::script::{
+            WEB_TARGET, rustc_command, target_installed, toolchain_version,
+        };
+        if toolchain_version().is_err() || target_installed(WEB_TARGET).is_err() {
+            return;
+        }
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let guest = manifest.join("../blockloom-script-guest");
+        let dir = std::env::temp_dir().join(format!("blockloom-guest-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let rlib = dir.join("libblockloom_script_guest.rlib");
+        let status = rustc_command()
+            .arg("--edition")
+            .arg("2024")
+            .arg("--crate-type")
+            .arg("rlib")
+            .arg("--crate-name")
+            .arg("blockloom_script_guest")
+            .arg("--target")
+            .arg(WEB_TARGET)
+            .arg("-C")
+            .arg("opt-level=2")
+            .arg("-o")
+            .arg(&rlib)
+            .arg(guest.join("src/lib.rs"))
+            .status()
+            .expect("rustc runs");
+        assert!(status.success(), "the guest crate builds for {WEB_TARGET}");
+        let module = dir.join("minimal.wasm");
+        let output = rustc_command()
+            .arg("--edition")
+            .arg("2024")
+            .arg("--crate-type")
+            .arg("cdylib")
+            .arg("--crate-name")
+            .arg("minimal")
+            .arg("--target")
+            .arg(WEB_TARGET)
+            .arg("--extern")
+            .arg(format!("blockloom_script_guest={}", rlib.display()))
+            .arg("-C")
+            .arg("opt-level=2")
+            .arg("-o")
+            .arg(&module)
+            .arg(guest.join("templates/minimal.rs"))
+            .output()
+            .expect("rustc runs");
+        assert!(
+            output.status.success(),
+            "the guest template builds: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let bytes = std::fs::read(&module).unwrap();
+        let script = WasmScript::load_bytes(&bytes, "minimal.wasm").expect("loads");
+        publish_one("a1");
+        let variables = blockloom_core::vm::Variables::default();
+        let lists = blockloom_core::vm::Lists::default();
+        crate::script::with_script_stores(&variables, &lists, || {
+            let mut asked = Asked::default();
+            script.start("a1", &mut asked);
+            assert!(
+                asked.effects.iter().any(|effect| matches!(
+                    effect,
+                    Effect::Say { actor, text }
+                    if actor == "a1" && text == "hello from wasm"
+                )),
+                "{:?}",
+                asked.effects
+            );
+            assert!(
+                asked.effects.iter().any(|effect| matches!(
+                    effect,
+                    Effect::SwitchSaveSlot { actor, slot }
+                    if actor == "a1" && slot == "Slot 2"
+                )),
+                "{:?}",
+                asked.effects
+            );
+            assert!(
+                asked.effects.iter().any(|effect| matches!(
+                    effect,
+                    Effect::SetLanguage { actor, language }
+                    if actor == "a1" && language == "fr"
+                )),
+                "{:?}",
+                asked.effects
+            );
+            let mut asked = Asked::default();
+            script.tick("a1", &mut asked, 1.0 / 60.0);
+            assert!(
+                asked.effects.iter().any(|effect| matches!(
+                    effect,
+                    Effect::ChangePosition { actor, axis: Axis::X, by }
+                    if actor == "a1" && (*by - 1.0).abs() < f32::EPSILON
+                )),
+                "{:?}",
+                asked.effects
+            );
+            let mut asked = Asked::default();
+            script.event(
+                "a1",
+                &mut asked,
+                &ScriptEvent::new(abi::EVENT_MESSAGE, "hi"),
+            );
+            assert!(
+                asked.effects.iter().any(|effect| matches!(
+                    effect,
+                    Effect::Say { text, .. } if text == "event heard"
+                )),
+                "{:?}",
+                asked.effects
+            );
+            assert!(!script.is_stopped());
+        });
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `cargo test -p blockloom-runtime --lib script_wasm -- --ignored --nocapture wasm_tick_cost`

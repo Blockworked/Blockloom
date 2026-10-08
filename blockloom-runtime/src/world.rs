@@ -578,7 +578,7 @@ fn apply_stop_save(engine: &mut Engine, actor: &str, name: &str, clear: bool) {
     if changed {
         #[cfg(target_arch = "wasm32")]
         {
-            crate::web::store_save(&engine.project.id, &engine.save_data)
+            crate::web::store_save_slot(&engine.project.id, &engine.save_slot, &engine.save_data)
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -602,6 +602,7 @@ pub fn end_run(engine: &mut Engine, manager: &mut crate::ui::UiManager) {
     engine.speech.clear();
     engine.pending_scene = None;
     engine.veil.reset();
+    blockloom_core::sense::set_locale_table(None);
     manager.clear();
     engine.running = false;
     engine.starting = false;
@@ -626,28 +627,136 @@ pub fn begin_run(engine: &mut Engine, now: f64, real_now: f64) {
 /// Where this run's saves live. Desktop uses the data dir; an APK's assets
 /// are read-only, so Android uses the app's internal data dir instead.
 #[cfg(target_os = "android")]
-pub(crate) fn save_path_for(project_id: &str) -> std::path::PathBuf {
-    crate::android::save_path(project_id)
+pub(crate) fn save_path_for(project_id: &str, slot: &str) -> std::path::PathBuf {
+    crate::android::save_slot_path(project_id, slot)
 }
 
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
-pub(crate) fn save_path_for(project_id: &str) -> std::path::PathBuf {
-    blockloom_core::save::path(project_id)
+pub(crate) fn save_path_for(project_id: &str, slot: &str) -> std::path::PathBuf {
+    blockloom_core::save::slot_path(project_id, slot)
+}
+
+/// Switches which save slot this run writes to and loads that slot's saved
+/// variables into the run. A name with no file yet starts fresh; future
+/// `save variable` blocks write to the new file.
+fn apply_save_slot_switch(engine: &mut Engine, actor: &str, slot: &str) {
+    use blockloom_core::save;
+    let slot = save::normalize_slot(slot);
+    if slot == engine.save_slot {
+        return;
+    }
+    engine.save_slot = slot.clone();
+    #[cfg(target_arch = "wasm32")]
+    {
+        engine.save_path = std::path::PathBuf::new();
+        let data = crate::web::load_save_slot(&engine.project.id, &slot);
+        data.apply(&engine.project, &engine.variables);
+        engine.save_data = data;
+        engine.save_slots = crate::web::list_save_slots(&engine.project.id);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        engine.save_path = save_path_for(&engine.project.id, &slot);
+        match save::read(&engine.save_path) {
+            Ok(data) => {
+                data.apply(&engine.project, &engine.variables);
+                engine.save_data = data;
+            }
+            Err(message) => {
+                engine.save_data = Default::default();
+                bridge::send(&RuntimeMessage::Error {
+                    actor: actor.to_string(),
+                    message: format!("couldn't load save slot \"{slot}\": {message}"),
+                });
+            }
+        }
+        engine.save_slots = save::list_slots(&engine.project.id);
+    }
+    // The file may be new: make sure the slot lists even before anything
+    // in it is saved.
+    if !engine.save_slots.contains(&slot) {
+        engine.save_slots.push(slot.clone());
+        engine.save_slots.sort();
+    }
+    blockloom_core::sense::publish_saves(&engine.save_slot, &engine.save_slots);
+}
+
+/// Deletes one save slot's file without touching the live run. Quiet when
+/// nothing by that name was saved.
+fn apply_save_slot_delete(engine: &mut Engine, actor: &str, slot: &str) {
+    use blockloom_core::save;
+    let slot = save::normalize_slot(slot);
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Err(message) = crate::web::delete_save_slot(&engine.project.id, &slot) {
+            bridge::send(&RuntimeMessage::Error {
+                actor: actor.to_string(),
+                message: format!("couldn't delete save slot \"{slot}\": {message}"),
+            });
+        }
+        engine.save_slots = crate::web::list_save_slots(&engine.project.id);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        match save::delete_slot(&engine.project.id, &slot) {
+            Ok(_) => {}
+            Err(message) => {
+                bridge::send(&RuntimeMessage::Error {
+                    actor: actor.to_string(),
+                    message: format!("couldn't delete save slot \"{slot}\": {message}"),
+                });
+                return;
+            }
+        }
+        engine.save_slots = save::list_slots(&engine.project.id);
+    }
+    blockloom_core::sense::publish_saves(&engine.save_slot, &engine.save_slots);
+}
+
+/// Speaks the run's language for the rest of the run. Empty reads as the
+/// project's default language.
+fn apply_set_language(engine: &mut Engine, language: &str) {
+    use blockloom_core::locale::Localization;
+    let language = Localization::normalize_language(language);
+    engine.language = if language.is_empty() {
+        Localization::normalize_language(engine.project.localization.language_or_default())
+    } else {
+        language
+    };
+    if engine.language.is_empty() {
+        engine.language = blockloom_core::locale::DEFAULT_LANGUAGE.to_string();
+    }
+    blockloom_core::sense::publish_language(&engine.language);
 }
 
 fn load_saved_data(engine: &mut Engine) {
+    use blockloom_core::locale::{DEFAULT_LANGUAGE, Localization};
+    use blockloom_core::save;
+    // A fresh run opens the default slot speaking the project's language.
+    // A slot name doubles as a profile name, so "Slot 1" and a player name
+    // are the same file either way.
+    engine.save_slot = save::DEFAULT_SLOT.to_string();
+    let language =
+        Localization::normalize_language(engine.project.localization.language_or_default());
+    engine.language = if language.is_empty() {
+        DEFAULT_LANGUAGE.to_string()
+    } else {
+        language
+    };
+    blockloom_core::sense::set_locale_table(Some(engine.project.localization.clone()));
     // The browser has no files: saves live in localStorage under the pack's
     // id instead (see `web`).
     #[cfg(target_arch = "wasm32")]
     {
         engine.save_path = std::path::PathBuf::new();
-        let data = crate::web::load_save(&engine.project.id);
+        let data = crate::web::load_save_slot(&engine.project.id, &engine.save_slot);
         data.apply(&engine.project, &engine.variables);
         engine.save_data = data;
+        engine.save_slots = crate::web::list_save_slots(&engine.project.id);
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        engine.save_path = save_path_for(&engine.project.id);
+        engine.save_path = save_path_for(&engine.project.id, &engine.save_slot);
         match blockloom_core::save::read(&engine.save_path) {
             Ok(data) => {
                 data.apply(&engine.project, &engine.variables);
@@ -661,7 +770,10 @@ fn load_saved_data(engine: &mut Engine) {
                 });
             }
         }
+        engine.save_slots = save::list_slots(&engine.project.id);
     }
+    blockloom_core::sense::publish_saves(&engine.save_slot, &engine.save_slots);
+    blockloom_core::sense::publish_language(&engine.language);
 }
 
 /// Persists the variable slots named by this step's save-data effects. This
@@ -699,7 +811,11 @@ pub fn apply_saved_data(effects: Res<PendingEffects>, mut engine: NonSendMut<Eng
             && let Err(message) = {
                 #[cfg(target_arch = "wasm32")]
                 {
-                    crate::web::store_save(&engine.project.id, &engine.save_data)
+                    crate::web::store_save_slot(
+                        &engine.project.id,
+                        &engine.save_slot,
+                        &engine.save_data,
+                    )
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -1118,7 +1234,7 @@ fn open_scripts(engine: &mut Engine, project: &blockloom_core::project::Project)
     };
     for actor in project.actors.iter().chain(engine.spawned.values()) {
         for path in actor.components.scripts() {
-            if !crate::script::LoadedScript::is_built(&dir, path) {
+            if !crate::engine::ScriptBackend::is_built(&dir, path) {
                 bridge::send(&RuntimeMessage::ScriptLoaded {
                     actor: actor.id.clone(),
                     path: path.to_string(),
@@ -1129,7 +1245,7 @@ fn open_scripts(engine: &mut Engine, project: &blockloom_core::project::Project)
                 });
                 continue;
             }
-            match crate::script::LoadedScript::load(&dir, path) {
+            match crate::engine::ScriptBackend::load(&dir, path) {
                 Ok(script) => {
                     engine.scripts.entry(actor.id.clone()).or_default().push(
                         crate::engine::ActorScript {
@@ -2003,6 +2119,11 @@ pub fn publish_sensors(
             .iter()
             .map(|s| s.name.clone())
             .collect(),
+        // The last fixed tick's saves and language, not fresh ones: a frame
+        // between ticks reads what the schedulers read.
+        current_save_slot: blockloom_core::sense::read(|s| s.current_save_slot.clone()),
+        save_slots: blockloom_core::sense::read(|s| s.save_slots.clone()),
+        language: blockloom_core::sense::read(|s| s.language.clone()),
         cutscene_name: engine.cine_name.clone(),
         cutscene_time: engine.cine_time,
         names: Default::default(),
@@ -2633,6 +2754,11 @@ pub fn step_vm(
         &engine.project.active_scene().name,
         &scenes,
     );
+    // Which slot this run writes to and which slots have files, plus the
+    // run's language: sampled with the scenes so the VM, compiled logic
+    // and reporters agree on the same tick.
+    blockloom_core::sense::publish_saves(&engine.save_slot, &engine.save_slots);
+    blockloom_core::sense::publish_language(&engine.language);
     let mut produced = Vec::new();
     let mut messages = Vec::new();
     let tick = engine.contact_ticks;
@@ -2696,6 +2822,15 @@ pub fn step_vm(
                 transition,
             } if switch_request.is_none() && engine.pending_scene.is_none() => {
                 switch_request = Some((actor.clone(), scene.clone(), transition.clone()));
+            }
+            Effect::SwitchSaveSlot { actor, slot } => {
+                apply_save_slot_switch(&mut engine, actor, slot);
+            }
+            Effect::DeleteSaveSlot { actor, slot } => {
+                apply_save_slot_delete(&mut engine, actor, slot);
+            }
+            Effect::SetLanguage { language, .. } => {
+                apply_set_language(&mut engine, language);
             }
             _ => {}
         }
@@ -4146,7 +4281,7 @@ fn open_script_for(engine: &mut Engine, actor: &Actor) {
         return;
     };
     for path in actor.components.scripts() {
-        if !crate::script::LoadedScript::is_built(&dir, path) {
+        if !crate::engine::ScriptBackend::is_built(&dir, path) {
             bridge::send(&RuntimeMessage::ScriptLoaded {
                 actor: actor.id.clone(),
                 path: path.to_string(),
@@ -4157,7 +4292,7 @@ fn open_script_for(engine: &mut Engine, actor: &Actor) {
             });
             continue;
         }
-        match crate::script::LoadedScript::load(&dir, path) {
+        match crate::engine::ScriptBackend::load(&dir, path) {
             Ok(script) => {
                 engine.scripts.entry(actor.id.clone()).or_default().push(
                     crate::engine::ActorScript {
@@ -5186,7 +5321,12 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::CreateClone { .. }
         | Effect::CreateActor { .. }
         | Effect::DeleteActor { .. }
-        | Effect::SwitchScene { .. } => None,
+        | Effect::SwitchScene { .. }
+        // Window-global: the actor is only who to blame, so no transform
+        // applies them here.
+        | Effect::SwitchSaveSlot { .. }
+        | Effect::DeleteSaveSlot { .. }
+        | Effect::SetLanguage { .. } => None,
     }
 }
 

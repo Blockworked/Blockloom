@@ -591,6 +591,22 @@ pub enum Effect {
         name: String,
         clear: bool,
     },
+    /// Switches which save slot this run writes to, loading that slot's
+    /// saved variables. Window-global: the actor is only who to blame.
+    SwitchSaveSlot {
+        actor: String,
+        slot: String,
+    },
+    /// Deletes one save slot's file without touching the live run.
+    DeleteSaveSlot {
+        actor: String,
+        slot: String,
+    },
+    /// Speaks the run's language for the rest of the run. Window-global.
+    SetLanguage {
+        actor: String,
+        language: String,
+    },
     /// A block couldn't be evaluated. The script carries on with a zero, and
     /// the editor shows this in its log.
     Error {

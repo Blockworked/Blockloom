@@ -987,6 +987,23 @@ pub enum InstructionKind {
     ClearSavedVariable {
         name: String,
     },
+    /// Switches which save slot this run writes to and loads that slot's
+    /// saved variables into the run, so a slots menu can offer "Slot 1" or
+    /// a player name. A name with no file yet starts fresh; the strand
+    /// carries on, unlike `switch scene to`.
+    SwitchSaveSlot {
+        slot: Value,
+    },
+    /// Deletes one save slot's file without touching the live run. Quiet
+    /// when nothing by that name was saved.
+    DeleteSaveSlot {
+        slot: Value,
+    },
+    /// Speaks the run's language for the rest of the run: what `text for
+    /// key` answers in. Empty reads as the project's default language.
+    SetLanguage {
+        language: Value,
+    },
 
     // ─── Control ────────────────────────────────────────────────────────────
     /// Loads another scene by name and continues the run there: the current
@@ -1256,6 +1273,9 @@ impl BlockKind for InstructionKind {
             | K::DeleteActor { target: v }
             | K::StopSound { sound: v }
             | K::SetBusVolume { volume: v, .. }
+            | K::SwitchSaveSlot { slot: v }
+            | K::DeleteSaveSlot { slot: v }
+            | K::SetLanguage { language: v }
             | K::Repeat { count: v, .. } => f(v, InputValueType::Any),
             K::GoTo { x, y, z }
             | K::StrikeLightning { x, y, z }

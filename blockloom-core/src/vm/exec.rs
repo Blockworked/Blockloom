@@ -2266,6 +2266,27 @@ impl Vm {
                 name: name.clone(),
                 clear: *clear,
             }),
+            Action::SwitchSaveSlot(slot) => {
+                let slot = self.eval(slot, actor, params, temps, out).as_text();
+                out.push(Effect::SwitchSaveSlot {
+                    actor: actor.to_string(),
+                    slot: slot.trim().to_string(),
+                });
+            }
+            Action::DeleteSaveSlot(slot) => {
+                let slot = self.eval(slot, actor, params, temps, out).as_text();
+                out.push(Effect::DeleteSaveSlot {
+                    actor: actor.to_string(),
+                    slot: slot.trim().to_string(),
+                });
+            }
+            Action::SetLanguage(language) => {
+                let language = self.eval(language, actor, params, temps, out).as_text();
+                out.push(Effect::SetLanguage {
+                    actor: actor.to_string(),
+                    language: language.trim().to_string(),
+                });
+            }
             Action::SetMouseLocked(locked) => out.push(Effect::SetMouseLocked { locked: *locked }),
             Action::PluginCall {
                 plugin,
