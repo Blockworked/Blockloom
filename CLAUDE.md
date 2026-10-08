@@ -805,7 +805,9 @@ There is no Cargo, so a script gets `std` and nothing else.
 The editor compiles scripts on Play (`commands::build_scripts`) so rustc's
 errors land in the run log against the script's own line numbers; the runtime
 only ever loads what it finds. **Scripts therefore need `rustc` on the machine
-that presses Play.** The boundary is three calls, not one per verb, so adding
+that presses Play** - a packaged install carries one in `tools/rust` beside the
+editor (`script::bundled_rustc`, or `BLOCKLOOM_RUSTC`), which wins over PATH; a
+linker is still the machine's own. The boundary is three calls, not one per verb, so adding
 something a script can do is a new constant in `abi.rs` rather than a new
 field in `HostApi` - which would break every script already built.
 
@@ -847,7 +849,10 @@ freestanding C binding (`c/blockloom.h`, `templates/minimal.c`, built with
 `c_header_covers_every_abi_verb`) and a Python component
 (`templates/minimal.py`, componentize-py), a JavaScript component
 (`templates/minimal.mjs`, jco; TypeScript compiles to it first) and a Go one
-(`templates/minimal.go`, TinyGo wasm-unknown + wasm-tools). Runtime tests build the Rust and C
+(`templates/minimal.go`, TinyGo wasm-unknown + wasm-tools), a C# one (`csharp/`, Mono on wasi-wasm,
+`templates/minimal.cs`) and a Kotlin one (`kotlin/`, Kotlin/Wasm WASI with a hand-written
+canonical-ABI binding, `templates/minimal.kt`; the host engine enables WasmGC and exceptions for
+it). Each has a `build.sh`. Runtime tests build the Rust and C
 templates and hold their effects to the WAT fixture's.
 
 Component-model guests (Python, TypeScript, Go, ...) emit wasm components,

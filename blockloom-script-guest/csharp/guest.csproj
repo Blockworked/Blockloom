@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>wasi-wasm</RuntimeIdentifier>
+    <OutputType>Library</OutputType>
+    <UsingMicrosoftNETSdkWebAssembly>true</UsingMicrosoftNETSdkWebAssembly>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <PublishTrimmed>true</PublishTrimmed>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <WasmBuildNative>true</WasmBuildNative>
+    <WasmSingleFileBundle>true</WasmSingleFileBundle>
+    <WasmMainAssemblyFileName>guest.dll</WasmMainAssemblyFileName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Blockloom.cs" />
+    <Compile Include="$(GuestSource)" />
+    <TrimmerRootAssembly Include="guest" RootMode="All" />
+    <NativeFileReference Include="shim.c" />
+    <NativeFileReference Include="gen/script.c" />
+    <NativeFileReference Include="gen/script_component_type.o" />
+  </ItemGroup>
+  <!-- shim.c is compiled on the link line, which gets no include paths of its own -->
+  <Target Name="ShimIncludes" BeforeTargets="_WasiWriteRspForLinking">
+    <ItemGroup>
+      <LinkerArg Include="-I&quot;$(MicrosoftNetCoreAppRuntimePackRidNativeDir)include/mono-2.0&quot;" />
+      <LinkerArg Include="-I&quot;$(MicrosoftNetCoreAppRuntimePackRidNativeDir)include/wasm&quot;" />
+      <LinkerArg Include="-mexec-model=reactor" />
+    </ItemGroup>
+  </Target>
+  <!-- P/Invokes into shim.c need its module name in the pinvoke table -->
+  <Target Name="ShimPInvoke" BeforeTargets="_GenerateManagedToNative">
+    <ItemGroup>
+      <_WasmPInvokeModules Include="shim" />
+    </ItemGroup>
+  </Target>
+  <!-- A library has no entry point to root, so root the whole assembly instead. -->
+  <Target Name="RootGuestLibrary" AfterTargets="PrepareForILLink">
+    <ItemGroup>
+      <TrimmerRootAssembly Remove="@(TrimmerRootAssembly)" Condition="'%(RootMode)' == 'EntryPoint'" />
+    </ItemGroup>
+  </Target>
+</Project>
