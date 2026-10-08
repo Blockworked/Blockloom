@@ -26,7 +26,14 @@ Item {
     }
     // Editor-only state: never saved and never sent to the runtime.
     property var lockedIds: ({})
+    property var hiddenIds: ({})
     property var collapsedIds: ({})
+    function toggleHidden(id) {
+        const next = Object.assign({}, hiddenIds); if (next[id]) delete next[id]; else next[id] = true;
+        hiddenIds = next; cancelEdit(); ++revision; frameLayout = null; if (designing) previewDelay.restart();
+    }
+    // Only IDs that still exist: the runtime refuses a request naming a missing widget.
+    readonly property var hiddenList: document.widgets.map(w => w.element.id).filter(id => !!hiddenIds[id])
     property string search: ""
     function isLocked(id) { return !!lockedIds[id]; }
     function toggleLock(id) { const next = Object.assign({}, lockedIds); if (next[id]) delete next[id]; else next[id] = true; lockedIds = next; if (gesture && gesture.id === id) cancelEdit(); }
@@ -349,7 +356,7 @@ Item {
         ++revision;
         frameLayout = null;
         app.invoke("preview_interface", {design: {revision: revision, generation: generation,
-            viewport: [previewWidth, previewHeight], screen: screenId || null, document: copy(document)}},
+            viewport: [previewWidth, previewHeight], screen: screenId || null, hidden: hiddenList, document: copy(document)}},
             function() { root.error = ""; }, function(e) { root.error = String(e); });
     }
     function updateSession() {
@@ -531,7 +538,14 @@ Item {
                             enabled: modelData.kids > 0
                             onClicked: root.toggleCollapsed(modelData.id)
                         }
-                        Label { Layout.fillWidth: true; elide: Text.ElideRight; text: modelData.id; opacity: root.isLocked(modelData.id) ? 0.6 : 1 }
+                        Label { Layout.fillWidth: true; elide: Text.ElideRight; text: modelData.id; opacity: root.hiddenIds[modelData.id] ? 0.4 : (root.isLocked(modelData.id) ? 0.6 : 1) }
+                        ToolButton {
+                            objectName: "interfaceHide"
+                            Layout.preferredWidth: 26; Layout.preferredHeight: 24
+                            text: root.hiddenIds[modelData.id] ? "\u25CB" : "\u25CF"
+                            ToolTip.visible: hovered; ToolTip.text: root.hiddenIds[modelData.id] ? "Show in preview (editor only)" : "Hide in preview (editor only)"
+                            onClicked: root.toggleHidden(modelData.id)
+                        }
                         ToolButton {
                             objectName: "interfaceLock"
                             Layout.preferredWidth: 26; Layout.preferredHeight: 24

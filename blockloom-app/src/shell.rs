@@ -933,7 +933,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "preview-interface",
         cmd: "preview_interface",
         aliases: &["preview_interface"],
-        summary: "Preview a temporary {revision, generation, document, viewport?, screen?} without saving or starting gameplay. Screen names a top-level widget tree. Omit design to close it.",
+        summary: "Preview a temporary {revision, generation, document, viewport?, screen?, hidden?} without saving or starting gameplay. Screen names a top-level widget tree; hidden lists widget ids to hide (with their subtrees) in the preview only. Omit design to close it.",
         args: &[ArgSpec {
             name: "design",
             ty: "object",

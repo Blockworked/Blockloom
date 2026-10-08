@@ -232,6 +232,9 @@ pub enum UiScale {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiDocument {
+    /// Schema version; 0 is a document saved before versions existed.
+    #[serde(default = "legacy_version")]
+    pub version: u32,
     pub widgets: Vec<UiWidget>,
     pub theme: UiTheme,
     pub styles: BTreeMap<String, UiStyles>,
@@ -241,9 +244,17 @@ pub struct UiDocument {
     pub safe_area: [f32; 4],
     pub prefabs: BTreeMap<String, Vec<UiWidget>>,
 }
+/// The schema version this build writes.
+pub const UI_SCHEMA_VERSION: u32 = 1;
+
+fn legacy_version() -> u32 {
+    0
+}
+
 impl Default for UiDocument {
     fn default() -> Self {
         Self {
+            version: UI_SCHEMA_VERSION,
             widgets: vec![],
             theme: UiTheme::default(),
             styles: BTreeMap::new(),
@@ -522,6 +533,16 @@ impl UiDocument {
 }
 
 impl UiDocument {
+    /// Brings an older document up to the current schema. Each step is
+    /// deterministic and keeps widget IDs, order and geometry. Version 1 only
+    /// stamps the version: version 0 documents already have its shape. A
+    /// newer document is left alone and refused by `validate`.
+    pub fn migrate(&mut self) {
+        if self.version < UI_SCHEMA_VERSION {
+            self.version = UI_SCHEMA_VERSION;
+        }
+    }
+
     fn find(&self, id: &str) -> Option<usize> {
         self.widgets.iter().position(|w| w.element.id == id)
     }
@@ -647,6 +668,12 @@ impl UiDocument {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if self.version > UI_SCHEMA_VERSION {
+            return Err(format!(
+                "This interface uses schema version {} but this Blockloom understands up to {UI_SCHEMA_VERSION}; update Blockloom to edit it",
+                self.version
+            ));
+        }
         if self
             .reference_size
             .iter()
@@ -900,6 +927,27 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["canvas", "flow", "child", "grandchild"]
         );
+    }
+
+    #[test]
+    fn schema_versions_migrate_forward_and_refuse_newer_documents() {
+        let mut legacy: UiDocument =
+            serde_json::from_value(serde_json::json!({"widgets": [{"element": {"id": "a"}}]}))
+                .unwrap();
+        assert_eq!(legacy.version, 0);
+        let before = legacy.widgets.clone();
+        legacy.migrate();
+        assert_eq!(legacy.version, UI_SCHEMA_VERSION);
+        assert_eq!(legacy.widgets, before);
+        let again = legacy.clone();
+        legacy.migrate();
+        assert_eq!(legacy, again);
+        assert_eq!(UiDocument::default().version, UI_SCHEMA_VERSION);
+        let newer: UiDocument = serde_json::from_value(serde_json::json!({"version": 99})).unwrap();
+        assert!(newer.validate().unwrap_err().contains("schema version 99"));
+        let mut kept = newer.clone();
+        kept.migrate();
+        assert_eq!(kept.version, 99);
     }
 
     #[test]

@@ -3080,7 +3080,7 @@ appends a widget (a Canvas parent forces it free, any other parent flow),
 copies the subtree after the original as `new_id` and `new_id.<old id>`,
 remapping parents and `scroll_target`s inside the copy only. Blocks and
 scripts that name the original ids are not rewritten. `set_interface` stays
-the whole-document import path. The hierarchy is a tree built in QML from sibling order (`treeRows`) with search and fold state; Lock (`lockedIds`) is editor-only and never saved. A new edit shape needs the `update-interface-edit`
+the whole-document import path. The hierarchy is a tree built in QML from sibling order (`treeRows`) with search and fold state; Lock (`lockedIds`) is editor-only and never saved. `UiDocument.version` (`UI_SCHEMA_VERSION`) is stamped by `migrate()` on load and in `set_interface`; a newer document is refused by `validate`, not rewritten. Editor hide travels as `InterfaceDesign.hidden` and only affects the design preview. A new edit shape needs the `update-interface-edit`
 summary in `shell.rs` and a case in `tst_InterfaceViewport.qml`'s mock backend.
 
 ### Android devices and the emulator

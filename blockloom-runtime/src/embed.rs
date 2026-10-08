@@ -1869,6 +1869,7 @@ mod tests {
                 vec![EditorMessage::InterfaceDesign {
                     design: Some(blockloom_protocol::InterfaceDesign {
                         screen: None,
+                        hidden: vec![],
                         revision: 1,
                         generation: 1,
                         viewport: None,

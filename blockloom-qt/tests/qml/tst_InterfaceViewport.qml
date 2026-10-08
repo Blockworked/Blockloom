@@ -354,6 +354,17 @@ TestCase {
         panel.toggleCollapsed("menu");
         compare(panel.treeRows.length, 4);
     }
+    function test_editor_hide_is_sent_with_the_preview_and_never_saved() {
+        calls = [];
+        panel.toggleHidden("front");
+        tryVerify(() => calls.some(c => c.command === "preview_interface" && !!c.args.design));
+        const design = calls.filter(c => c.command === "preview_interface").pop().args.design;
+        compare(design.hidden, ["front"]);
+        compare(design.document.widgets.map(w => w.element.id), ["back", "front"]);
+        panel.toggleHidden("front");
+        compare(panel.hiddenList, []);
+        verify(!calls.some(c => c.command === "set_interface"));
+    }
     function test_locked_widgets_are_not_picked_or_edited_but_nothing_is_saved() {
         panel.selectedId = "back";
         verify(panel.editable(panel.widget));

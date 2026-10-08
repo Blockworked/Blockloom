@@ -5861,8 +5861,9 @@ pub(crate) fn cancel_interface_edit(state: &SharedState, token: String) -> Resul
 pub(crate) fn set_interface(
     state: &SharedState,
     app: &AppHandle,
-    document: blockloom_core::ui::UiDocument,
+    mut document: blockloom_core::ui::UiDocument,
 ) -> Result<(), String> {
+    document.migrate();
     document.validate()?;
     let mut s = lock(state)?;
     if s.project().is_none() {

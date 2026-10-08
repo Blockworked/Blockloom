@@ -234,9 +234,15 @@ Master since the seventh increment (Phase 6 2D work, script guests, bundled rust
 
 - The hierarchy is a real tree in sibling order: indentation by depth, fold arrows, and a search box matching ID or content (matches keep their ancestors and ignore folds). It follows screen isolation.
 - Per-widget Lock is editor-only state (never saved, never sent to the runtime): locked widgets are skipped by viewport picking and lose move/resize/nudge handles, but stay selectable from the tree and editable in the inspector.
-- Editor-side hide is not done: hiding must reach the runtime preview (like screen isolation does) so it needs a protocol field; it stays open for the next phase 2 increment, together with marquee selection.
+- Editor hide is a per-row toggle. `InterfaceDesign` gained `hidden` (protocol 36): the design session hides those widgets and their subtrees in its temporary manager, like screen isolation, so the document, game visibility and saves are untouched. Unknown IDs reject the request atomically. Hidden widgets stay in the reported geometry with effective visibility false, so they cannot be picked.
 
-The next increment is editor hide (protocol), then schema versioning and property metadata (phase 1). Schema versioning, complete property metadata and the broader phase 1 contracts remain open. Committed edits still use the existing world synchronization path; avoiding a world reload on commit remains open. The current preview still shows the idle scene behind the interface.
+### Schema versioning (tenth increment)
+
+- `UiDocument` has a `version` (`UI_SCHEMA_VERSION` = 1). A document with no version loads as 0 and `migrate()` stamps it as 1 without touching IDs, order or geometry; migration is idempotent. It runs in `Project::normalize` (per scene) and `set_interface`.
+- A document newer than this build is not rewritten: `validate()` refuses it with an upgrade message, so edits, previews and `set_interface` fail instead of silently dropping fields. Opening still works. Run-time loading is unaffected.
+- Later steps (style inheritance, component instances) add a version and a `migrate` arm each; the stored shape stays serde-defaulted so older builds keep ignoring nothing they cannot read.
+
+The next increment is property metadata (phase 1), marquee/multiselection (phase 3), then the world-reload-free commit path. Schema versioning and property metadata (phase 1). Schema versioning, complete property metadata and the broader phase 1 contracts remain open. Committed edits still use the existing world synchronization path; avoiding a world reload on commit remains open. The current preview still shows the idle scene behind the interface.
 
 Open phase 0 checks: embedded/process rendering and teardown on actual platforms; native presentation timing and process screenshot metadata on actual platforms; viewport resize/DPI/safe-area matrices; real image/font asset loading; screenshot baselines and gameplay input isolation with held inputs. Rotation, text editing/IME, nine-slice and animation capabilities remain unproven. The fixture image node currently has no asset.
 
