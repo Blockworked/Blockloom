@@ -1,6 +1,6 @@
 # Interface editor overhaul
 
-Status: implementation started (eight increments). Phase 0 has a runtime design session, frame-matched selection and screen isolation. Interface supports typed move/resize, property, reparent and reorder transactions, snapping, eight resize handles and keyboard nudging; the preview gate is still open.
+Status: implementation started (nine increments). Phase 0 has a runtime design session, frame-matched selection and screen isolation. Interface supports typed move/resize, property, reparent and reorder transactions, snapping, eight resize handles and keyboard nudging; the preview gate is still open.
 
 ## Goal
 
@@ -230,7 +230,13 @@ Master since the seventh increment (Phase 6 2D work, script guests, bundled rust
 - Scripts gained more guest languages and ABI 47 slots (save slots, locale). Phase 5's binding and event wiring should use the script ABI as it stands and add verbs only through `abi.rs`.
 - The remaining order is unchanged: finish phase 0/1 (schema versioning, property metadata, no world reload on commit), then the phase 2 hierarchy overhaul, then marquee/multiselection and alignment tools.
 
-The next increment is a real hierarchy tree with search and editor hide/lock (phase 2), then schema versioning and property metadata (phase 1). Schema versioning, complete property metadata and the broader phase 1 contracts remain open. Committed edits still use the existing world synchronization path; avoiding a world reload on commit remains open. The current preview still shows the idle scene behind the interface.
+### Hierarchy tree, search and lock (ninth increment)
+
+- The hierarchy is a real tree in sibling order: indentation by depth, fold arrows, and a search box matching ID or content (matches keep their ancestors and ignore folds). It follows screen isolation.
+- Per-widget Lock is editor-only state (never saved, never sent to the runtime): locked widgets are skipped by viewport picking and lose move/resize/nudge handles, but stay selectable from the tree and editable in the inspector.
+- Editor-side hide is not done: hiding must reach the runtime preview (like screen isolation does) so it needs a protocol field; it stays open for the next phase 2 increment, together with marquee selection.
+
+The next increment is editor hide (protocol), then schema versioning and property metadata (phase 1). Schema versioning, complete property metadata and the broader phase 1 contracts remain open. Committed edits still use the existing world synchronization path; avoiding a world reload on commit remains open. The current preview still shows the idle scene behind the interface.
 
 Open phase 0 checks: embedded/process rendering and teardown on actual platforms; native presentation timing and process screenshot metadata on actual platforms; viewport resize/DPI/safe-area matrices; real image/font asset loading; screenshot baselines and gameplay input isolation with held inputs. Rotation, text editing/IME, nine-slice and animation capabilities remain unproven. The fixture image node currently has no asset.
 

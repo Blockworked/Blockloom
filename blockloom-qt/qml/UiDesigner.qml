@@ -24,6 +24,41 @@ Item {
         }
         return false;
     }
+    // Editor-only state: never saved and never sent to the runtime.
+    property var lockedIds: ({})
+    property var collapsedIds: ({})
+    property string search: ""
+    function isLocked(id) { return !!lockedIds[id]; }
+    function toggleLock(id) { const next = Object.assign({}, lockedIds); if (next[id]) delete next[id]; else next[id] = true; lockedIds = next; if (gesture && gesture.id === id) cancelEdit(); }
+    function toggleCollapsed(id) { const next = Object.assign({}, collapsedIds); if (next[id]) delete next[id]; else next[id] = true; collapsedIds = next; }
+    readonly property var treeRows: {
+        const widgets = screenWidgets, children = {}, byId = {};
+        widgets.forEach(w => { byId[w.element.id] = w; });
+        widgets.forEach(w => {
+            const parent = byId[w.element.parent] ? w.element.parent : "";
+            (children[parent] = children[parent] || []).push(w);
+        });
+        const needle = search.trim().toLowerCase();
+        const matches = w => w.element.id.toLowerCase().indexOf(needle) >= 0 || (w.element.content || "").toLowerCase().indexOf(needle) >= 0;
+        const keep = {};
+        if (needle) {
+            widgets.filter(matches).forEach(w => {
+                let current = w;
+                while (current && !keep[current.element.id]) { keep[current.element.id] = true; current = byId[current.element.parent]; }
+            });
+        }
+        const rows = [];
+        const visit = (parent, depth) => (children[parent] || []).forEach(w => {
+            const id = w.element.id;
+            if (needle && !keep[id]) return;
+            const kids = (children[id] || []).length;
+            rows.push({id: id, depth: depth, kids: kids, kind: w.element.kind, collapsed: !needle && !!collapsedIds[id]});
+            if (needle || !collapsedIds[id]) visit(id, depth + 1);
+        });
+        visit("", 0);
+        return rows;
+    }
+    readonly property var pickable: bounds.filter(b => !isLocked(b.id))
     onScreenIdChanged: {
         cancelEdit();
         ++revision;
@@ -74,7 +109,7 @@ Item {
         }).filter(line => line !== null);
     }
     function editable(w) {
-        if (!w || w.world_actor) return false;
+        if (!w || w.world_actor || isLocked(w.element.id)) return false;
         const parent = document.widgets.find(p => p.element.id === w.element.parent);
         return !w.element.parent || (w.layout && w.layout.absolute) || (parent && parent.element.kind === "Canvas");
     }
@@ -470,16 +505,41 @@ Item {
                 }
             }
             Label { text: "Hierarchy"; font.bold: true; padding: 8 }
+            TextField {
+                objectName: "interfaceSearch"
+                Layout.fillWidth: true; Layout.leftMargin: 6; Layout.rightMargin: 6
+                placeholderText: "Search widgets"
+                text: root.search
+                onTextEdited: root.search = text
+            }
             ListView {
+                objectName: "interfaceTree"
                 Layout.fillWidth: true; Layout.fillHeight: true; clip: true
-                model: root.screenWidgets
+                model: root.treeRows
                 delegate: ItemDelegate {
                     required property var modelData
-                    required property int index
                     width: ListView.view.width; height: 30
-                    text: (modelData.element.parent ? "    " : "")+modelData.element.id
-                    highlighted: root.selectedId === modelData.element.id
-                    onClicked: { root.selectedId=modelData.element.id; root.forceActiveFocus(); }
+                    highlighted: root.selectedId === modelData.id
+                    onClicked: { root.selectedId = modelData.id; root.forceActiveFocus(); }
+                    contentItem: RowLayout {
+                        spacing: 2
+                        Item { Layout.preferredWidth: 10 + modelData.depth * 14 }
+                        ToolButton {
+                            objectName: "interfaceFold"
+                            Layout.preferredWidth: 22; Layout.preferredHeight: 24
+                            text: modelData.kids ? (modelData.collapsed ? "\u25B8" : "\u25BE") : ""
+                            enabled: modelData.kids > 0
+                            onClicked: root.toggleCollapsed(modelData.id)
+                        }
+                        Label { Layout.fillWidth: true; elide: Text.ElideRight; text: modelData.id; opacity: root.isLocked(modelData.id) ? 0.6 : 1 }
+                        ToolButton {
+                            objectName: "interfaceLock"
+                            Layout.preferredWidth: 26; Layout.preferredHeight: 24
+                            text: root.isLocked(modelData.id) ? "\uD83D\uDD12" : "\u00B7"
+                            ToolTip.visible: hovered; ToolTip.text: root.isLocked(modelData.id) ? "Unlock (editor only)" : "Lock in the viewport (editor only)"
+                            onClicked: root.toggleLock(modelData.id)
+                        }
+                    }
                 }
             }
             RowLayout {
@@ -575,12 +635,12 @@ Item {
                                 if (!root.gesture && Math.hypot(mouse.x-pressX, mouse.y-pressY) > 3/Math.max(0.05,root.zoom)) root.startEdit("Move", pressX, pressY);
                                 root.dragEdit(mouse.x, mouse.y, mouse.modifiers);
                             }
-                            else root.hoveredId = geometry.pick(root.bounds, mouse.x, mouse.y);
+                            else root.hoveredId = geometry.pick(root.pickable, mouse.x, mouse.y);
                         }
                         onExited: root.hoveredId = ""
                         onPressed: mouse => {
                             root.forceActiveFocus();
-                            root.selectedId = geometry.pick(root.bounds, mouse.x, mouse.y);
+                            root.selectedId = geometry.pick(root.pickable, mouse.x, mouse.y);
                             pressX = mouse.x; pressY = mouse.y;
                         }
                         onReleased: root.finishEdit()

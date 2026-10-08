@@ -3080,7 +3080,7 @@ appends a widget (a Canvas parent forces it free, any other parent flow),
 copies the subtree after the original as `new_id` and `new_id.<old id>`,
 remapping parents and `scroll_target`s inside the copy only. Blocks and
 scripts that name the original ids are not rewritten. `set_interface` stays
-the whole-document import path. A new edit shape needs the `update-interface-edit`
+the whole-document import path. The hierarchy is a tree built in QML from sibling order (`treeRows`) with search and fold state; Lock (`lockedIds`) is editor-only and never saved. A new edit shape needs the `update-interface-edit`
 summary in `shell.rs` and a case in `tst_InterfaceViewport.qml`'s mock backend.
 
 ### Android devices and the emulator

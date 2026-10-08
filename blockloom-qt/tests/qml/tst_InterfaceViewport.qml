@@ -342,6 +342,29 @@ TestCase {
         compare(calls.filter(c=>c.command === "commit_interface_edit").length, 3);
         verify(!calls.some(c=>c.command === "set_interface"));
     }
+    function test_hierarchy_is_a_searchable_collapsible_tree() {
+        const d = {widgets:[{element:{id:"menu"}}, {element:{id:"title",parent:"menu",content:"Hello"}}, {element:{id:"play",parent:"menu"}}, {element:{id:"hud"}}]};
+        panel.document = d;
+        compare(panel.treeRows.map(r=>r.id+":"+r.depth), ["menu:0","title:1","play:1","hud:0"]);
+        panel.toggleCollapsed("menu");
+        compare(panel.treeRows.map(r=>r.id), ["menu","hud"]);
+        panel.search = "hello";
+        compare(panel.treeRows.map(r=>r.id), ["menu","title"]);
+        panel.search = "";
+        panel.toggleCollapsed("menu");
+        compare(panel.treeRows.length, 4);
+    }
+    function test_locked_widgets_are_not_picked_or_edited_but_nothing_is_saved() {
+        panel.selectedId = "back";
+        verify(panel.editable(panel.widget));
+        panel.toggleLock("back");
+        verify(!panel.editable(panel.widget));
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision, panel.generation)));
+        compare(panel.pickable.map(b=>b.id), ["front"]);
+        panel.toggleLock("back");
+        verify(panel.editable(panel.widget));
+        verify(!calls.some(c=>c.command === "set_interface" || c.command === "begin_interface_edit"));
+    }
     function test_flow_sibling_reorder_keeps_other_tree_slots() {
         const d = {widgets:[{element:{id:"root",kind:"VerticalBox"}}, {element:{id:"a",parent:"root"}}, {element:{id:"other"}}, {element:{id:"b",parent:"root"}}]};
         panel.document = d; backend.appState.project.world.interface = d; panel.selectedId = "a";
