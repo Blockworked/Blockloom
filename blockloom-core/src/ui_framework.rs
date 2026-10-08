@@ -329,6 +329,22 @@ pub enum UiEdit {
         parent: String,
         placement: UiPlacement,
     },
+    /// Appends a new widget; a Canvas parent makes it free, any other parent flow.
+    Create {
+        widget: Box<UiWidget>,
+    },
+    /// Removes a widget and its descendants.
+    Delete {
+        id: String,
+    },
+    /// Copies a subtree after the original under fresh ids (`new_id` for the
+    /// root, `new_id.old` below it). `offset` moves a free-placed root.
+    Duplicate {
+        id: String,
+        new_id: String,
+        #[serde(default)]
+        offset: Option<[f32; 2]>,
+    },
     Move {
         id: String,
         offset: [f32; 2],
@@ -350,12 +366,23 @@ impl UiDocument {
     }
 
     fn apply_edit_inner(&mut self, edit: &UiEdit) -> Result<(), String> {
+        match edit {
+            UiEdit::Create { widget } => return self.create_widget(widget),
+            UiEdit::Delete { id } => return self.delete_subtree(id),
+            UiEdit::Duplicate { id, new_id, offset } => {
+                return self.duplicate_subtree(id, new_id, *offset);
+            }
+            _ => {}
+        }
         let id = match edit {
             UiEdit::Move { id, .. }
             | UiEdit::Resize { id, .. }
             | UiEdit::SetProperty { id, .. }
             | UiEdit::Reparent { id, .. }
             | UiEdit::Reorder { id, .. } => id,
+            UiEdit::Create { .. } | UiEdit::Delete { .. } | UiEdit::Duplicate { .. } => {
+                unreachable!()
+            }
         };
         let index = self
             .widgets
@@ -495,6 +522,130 @@ impl UiDocument {
 }
 
 impl UiDocument {
+    fn find(&self, id: &str) -> Option<usize> {
+        self.widgets.iter().position(|w| w.element.id == id)
+    }
+
+    /// Indices of `id` and everything below it, in document order.
+    fn subtree(&self, id: &str) -> Vec<usize> {
+        let mut ids = vec![id.to_string()];
+        let mut i = 0;
+        while i < ids.len() {
+            let parent = ids[i].clone();
+            for w in &self.widgets {
+                if w.element.parent == parent && !ids.contains(&w.element.id) {
+                    ids.push(w.element.id.clone());
+                }
+            }
+            i += 1;
+        }
+        (0..self.widgets.len())
+            .filter(|i| ids.contains(&self.widgets[*i].element.id))
+            .collect()
+    }
+
+    fn create_widget(&mut self, widget: &UiWidget) -> Result<(), String> {
+        if !widget.world_actor.is_empty() {
+            return Err("Projected widgets cannot be created in the editor".into());
+        }
+        let mut widget = widget.clone();
+        let parent = widget.element.parent.clone();
+        if !parent.is_empty() {
+            let target = self
+                .find(&parent)
+                .map(|i| &self.widgets[i])
+                .ok_or_else(|| format!("Unknown parent: {parent}"))?;
+            if !target.world_actor.is_empty() {
+                return Err("Cannot create inside a projected widget".into());
+            }
+            let free = target.element.kind == UiKind::Canvas;
+            if free {
+                widget.layout.get_or_insert_with(UiLayout::default).absolute = true;
+            } else if let Some(layout) = &mut widget.layout {
+                layout.absolute = false;
+            }
+        }
+        if let Some(layout) = &widget.layout {
+            layout.validate_edit()?;
+        }
+        self.widgets.push(widget);
+        Ok(())
+    }
+
+    fn delete_subtree(&mut self, id: &str) -> Result<(), String> {
+        if self.find(id).is_none() {
+            return Err(format!("Unknown widget: {id}"));
+        }
+        let gone = self.subtree(id);
+        let removed: HashSet<String> = gone
+            .iter()
+            .map(|i| self.widgets[*i].element.id.clone())
+            .collect();
+        let mut slot = 0;
+        self.widgets.retain(|_| {
+            slot += 1;
+            !gone.contains(&(slot - 1))
+        });
+        for w in &mut self.widgets {
+            if removed.contains(&w.scroll_target) {
+                w.scroll_target.clear();
+            }
+        }
+        Ok(())
+    }
+
+    fn duplicate_subtree(
+        &mut self,
+        id: &str,
+        new_id: &str,
+        offset: Option<[f32; 2]>,
+    ) -> Result<(), String> {
+        let root = self
+            .find(id)
+            .ok_or_else(|| format!("Unknown widget: {id}"))?;
+        if !self.widgets[root].world_actor.is_empty() {
+            return Err("Projected widgets cannot be duplicated".into());
+        }
+        let members = self.subtree(id);
+        let rename = |old: &str| {
+            if old == id {
+                new_id.to_string()
+            } else {
+                format!("{new_id}.{old}")
+            }
+        };
+        let old_ids: HashSet<String> = members
+            .iter()
+            .map(|i| self.widgets[*i].element.id.clone())
+            .collect();
+        let mut copies: Vec<UiWidget> = members.iter().map(|i| self.widgets[*i].clone()).collect();
+        for w in &mut copies {
+            if old_ids.contains(&w.element.parent) {
+                w.element.parent = rename(&w.element.parent);
+            }
+            if old_ids.contains(&w.scroll_target) {
+                w.scroll_target = rename(&w.scroll_target);
+            }
+            w.element.id = rename(&w.element.id);
+        }
+        if let Some(offset) = offset {
+            let root_copy = copies.iter_mut().find(|w| w.element.id == new_id).unwrap();
+            let parent = &root_copy.element.parent;
+            let free = parent.is_empty()
+                || root_copy.layout.as_ref().is_some_and(|l| l.absolute)
+                || self
+                    .find(parent)
+                    .is_some_and(|i| self.widgets[i].element.kind == UiKind::Canvas);
+            if !free {
+                return Err("This widget is positioned by its parent layout".into());
+            }
+            root_copy.element.offset = offset;
+        }
+        let at = members.iter().max().copied().unwrap_or(root) + 1;
+        self.widgets.splice(at..at, copies);
+        Ok(())
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self
             .reference_size
@@ -748,6 +899,84 @@ mod tests {
                 .map(|w| w.element.id.as_str())
                 .collect::<Vec<_>>(),
             ["canvas", "flow", "child", "grandchild"]
+        );
+    }
+
+    #[test]
+    fn create_delete_and_duplicate_keep_ids_and_references_consistent() {
+        let mut doc: UiDocument = serde_json::from_value(serde_json::json!({"widgets": [
+            {"element": {"id": "canvas", "kind": "Canvas"}},
+            {"element": {"id": "flow", "kind": "VerticalBox"}},
+            {"element": {"id": "menu", "parent": "canvas", "offset": [5, 6]}, "layout": {"absolute": true}},
+            {"element": {"id": "list", "parent": "menu"}, "scroll_target": "bar"},
+            {"element": {"id": "bar", "parent": "menu"}, "scroll_target": "outside"},
+            {"element": {"id": "outside"}}
+        ]}))
+        .unwrap();
+        let ids = |d: &UiDocument| {
+            d.widgets
+                .iter()
+                .map(|w| w.element.id.clone())
+                .collect::<Vec<_>>()
+        };
+        let parse = |value| serde_json::from_value::<UiEdit>(value).unwrap();
+        doc.apply_edit(&parse(serde_json::json!({"kind": "Create", "widget": {"element": {"id": "a", "parent": "canvas"}}}))).unwrap();
+        assert!(doc.widgets[6].layout.as_ref().unwrap().absolute);
+        doc.apply_edit(&parse(serde_json::json!({"kind": "Create", "widget": {"element": {"id": "b", "parent": "flow"}, "layout": {"absolute": true}}}))).unwrap();
+        assert!(!doc.widgets[7].layout.as_ref().unwrap().absolute);
+        for value in [
+            serde_json::json!({"kind": "Create", "widget": {"element": {"id": "a"}}}),
+            serde_json::json!({"kind": "Create", "widget": {"element": {"id": ""}}}),
+            serde_json::json!({"kind": "Create", "widget": {"element": {"id": "c", "parent": "nope"}}}),
+            serde_json::json!({"kind": "Create", "widget": {"element": {"id": "c"}, "world_actor": "x"}}),
+            serde_json::json!({"kind": "Delete", "id": "nope"}),
+            serde_json::json!({"kind": "Duplicate", "id": "menu", "new_id": "a"}),
+            serde_json::json!({"kind": "Duplicate", "id": "b", "new_id": "b2", "offset": [1, 1]}),
+        ] {
+            let before = doc.clone();
+            assert!(doc.apply_edit(&parse(value)).is_err());
+            assert_eq!(doc, before);
+        }
+        doc.apply_edit(&parse(serde_json::json!({"kind": "Duplicate", "id": "menu", "new_id": "menu2", "offset": [21, 22]}))).unwrap();
+        assert_eq!(
+            ids(&doc),
+            [
+                "canvas",
+                "flow",
+                "menu",
+                "list",
+                "bar",
+                "menu2",
+                "menu2.list",
+                "menu2.bar",
+                "outside",
+                "a",
+                "b"
+            ]
+        );
+        assert_eq!(doc.widgets[5].element.offset, [21., 22.]);
+        assert_eq!(doc.widgets[2].element.offset, [5., 6.]);
+        assert_eq!(doc.widgets[6].element.parent, "menu2");
+        assert_eq!(doc.widgets[6].scroll_target, "menu2.bar");
+        assert_eq!(doc.widgets[7].scroll_target, "outside");
+        assert_eq!(doc.widgets[3].scroll_target, "bar");
+        doc.apply_edit(&parse(serde_json::json!({"kind": "Delete", "id": "bar"})))
+            .unwrap();
+        assert_eq!(doc.widgets[3].scroll_target, "");
+        doc.apply_edit(&parse(serde_json::json!({"kind": "Delete", "id": "menu"})))
+            .unwrap();
+        assert_eq!(
+            ids(&doc),
+            [
+                "canvas",
+                "flow",
+                "menu2",
+                "menu2.list",
+                "menu2.bar",
+                "outside",
+                "a",
+                "b"
+            ]
         );
     }
 

@@ -131,6 +131,7 @@ Item {
                 g.busy = false;
                 if (g.canceled || root.gesture !== g) return;
                 root.document = next;
+                if (g.select !== undefined) root.selectedId = g.select;
                 root.flushEdit(g);
             }, function(e) { root.failEdit(g, e); });
         } else if (g.released) {
@@ -401,21 +402,46 @@ Item {
         style[styleState.currentText][field] = value;
         extra("style", style);
     }
+    function structuralEdit(edit, select) {
+        if (!designing || gesture) return false;
+        const g = {kind: edit.kind, id: "", original: copy(document), token: null, bound: null, committing: false,
+            edit: edit, sent: null, busy: false, released: true, canceled: false, select: select};
+        gesture = g;
+        forceActiveFocus();
+        const backend = app;
+        app.invoke("begin_interface_edit", {revision: savedRevision}, function(token) {
+            g.token = token;
+            if (g.canceled) backend.invoke("cancel_interface_edit", {token: token});
+            else root.flushEdit(g);
+        }, function(e) { root.failEdit(g, e); });
+        return true;
+    }
+    function uniqueId(base) {
+        let n = 1;
+        while (document.widgets.some(w => w.element.id === base + n)) ++n;
+        return base + n;
+    }
+    readonly property var containerKinds: ["Canvas","VerticalBox","HorizontalBox","Grid","WrapBox"]
     function add(kind, x, y) {
-        const next = copy(document);
-        let id = kind.toLowerCase(), n = 1;
-        while (next.widgets.some(w => w.element.id === id + n)) ++n;
-        next.widgets.push({element: {id: id+n, kind: kind, content: ["Label","Button","RichText","Toggle"].indexOf(kind) >= 0 ? kind : "", anchor: "TopLeft", offset: [Math.round(x),Math.round(y)], size: [180, kind === "Panel" || kind === "ListView" ? 180 : 40], parent: "", modal: false, range: [0,100], value: {Number: 0}}, style: {}, bindings: [], items: []});
+        const id = uniqueId(kind.toLowerCase());
+        const parent = widget && !widget.world_actor && containerKinds.indexOf(widget.element.kind) >= 0 && x === 20 && y === 20 ? widget : null;
+        const free = !parent || parent.element.kind === "Canvas";
         // Values use the core's tagged representation; default values can be omitted.
-        delete next.widgets[next.widgets.length-1].element.value;
-        screenId = "";
-        selectedId = id+n; save(next);
+        const created = {element: {id: id, kind: kind, content: ["Label","Button","RichText","Toggle"].indexOf(kind) >= 0 ? kind : "", anchor: "TopLeft", offset: free ? [Math.round(x),Math.round(y)] : [0,0], size: [180, kind === "Panel" || kind === "ListView" ? 180 : 40], parent: parent ? parent.element.id : "", modal: false, range: [0,100]}, style: {}, bindings: [], items: []};
+        if (structuralEdit({kind: "Create", widget: created}, id)) screenId = "";
+    }
+    function duplicateSelected() {
+        if (!widget || widget.world_actor) return;
+        const id = widget.element.id, base = id + "-copy";
+        let name = base, n = 1;
+        while (document.widgets.some(w => w.element.id === name)) name = base + (++n);
+        const edit = {kind: "Duplicate", id: id, new_id: name};
+        if (editable(widget)) { const o = widget.element.offset || [0,0]; edit.offset = [o[0]+16, o[1]+16]; }
+        structuralEdit(edit, name);
     }
     function removeSelected() {
         if (!widget) return;
-        const next = copy(document); let gone = [widget.element.id];
-        for (let i=0;i<gone.length;++i) next.widgets.forEach(w => { if(w.element.parent === gone[i] && gone.indexOf(w.element.id)<0) gone.push(w.element.id); });
-        next.widgets = next.widgets.filter(w => gone.indexOf(w.element.id)<0); selectedId = ""; save(next);
+        structuralEdit({kind: "Delete", id: widget.element.id}, "");
     }
     RowLayout {
         anchors.fill: parent; spacing: 0
@@ -461,7 +487,10 @@ Item {
                 Button { objectName: "interfaceLater"; text: "Later"; enabled: root.designing && !root.gesture && root.siblingIndex >= 0 && root.siblingIndex+1 < root.siblings.length; onClicked: root.reorderSibling(1) }
             }
             Label { Layout.fillWidth: true; wrapMode: Text.Wrap; text: "Sibling order controls flow layout and draw order." }
-            Button { text: "Delete widget"; enabled: !!root.widget; onClicked: root.removeSelected() }
+            RowLayout {
+                Button { objectName: "interfaceDuplicate"; text: "Duplicate"; enabled: root.designing && !root.gesture && !!root.widget && !root.widget.world_actor; onClicked: root.duplicateSelected() }
+                Button { objectName: "interfaceDelete"; text: "Delete"; enabled: root.designing && !root.gesture && !!root.widget; onClicked: root.removeSelected() }
+            }
         }
         ColumnLayout {
             Layout.fillWidth: true; Layout.fillHeight: true

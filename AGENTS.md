@@ -3060,6 +3060,29 @@ close. In the Game view the editor holds it on the world's behalf (see Game
 view above). The one safety net is that showing a modal while the pointer is locked
 logs a warning, since a locked hidden cursor can't press anything.
 
+### Interface editor
+
+Plan and progress: `docs/interface-editor-plan.md`. The Interface workspace
+(`UiDesigner.qml`) draws no layout of its own: `preview_interface` runs the
+document through the player's retained widget renderer in an idle design
+session and the reply carries each widget's computed transform, size, clips,
+visibility and paint order, tagged with a document revision and viewport
+generation. QML picks and draws handles from that geometry only.
+
+Edits are `blockloom_core::ui_framework::UiEdit` (`apply_edit` validates and
+swaps atomically): `Move`, `Resize`, `SetProperty` (canonical paths),
+`Reparent` (free or flow), `Reorder`, `Create`, `Delete` and `Duplicate`. A
+gesture is `begin_interface_edit` -> `update_interface_edit` (replaces the
+draft, never saves) -> `commit_interface_edit` (one undo step) or
+`cancel_interface_edit`; the same commands serve shell and MCP. `Create`
+appends a widget (a Canvas parent forces it free, any other parent flow),
+`Delete` removes the subtree and clears `scroll_target`s into it, `Duplicate`
+copies the subtree after the original as `new_id` and `new_id.<old id>`,
+remapping parents and `scroll_target`s inside the copy only. Blocks and
+scripts that name the original ids are not rewritten. `set_interface` stays
+the whole-document import path. A new edit shape needs the `update-interface-edit`
+summary in `shell.rs` and a case in `tst_InterfaceViewport.qml`'s mock backend.
+
 ### Android devices and the emulator
 
 The Devices tab (`DevicesPanel.qml`, `DevicePanel.qml`) lists what adb sees,

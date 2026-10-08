@@ -962,7 +962,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "update-interface-edit",
         cmd: "update_interface_edit",
         aliases: &["update_interface_edit"],
-        summary: "Replace the draft with Move, Resize, SetProperty {id, property: {path, value}}, Reorder {id, index: zero-based sibling position} or Reparent {id, parent, placement: {mode: Free, offset, size} or {mode: Flow}}. Property paths: element.kind/content/anchor/modal, layout (object or null). Does not save.",
+        summary: "Replace the draft with Move, Resize, SetProperty {id, property: {path, value}}, Reorder {id, index: zero-based sibling position}, Create {widget: full widget; a Canvas parent makes it free, other parents flow}, Delete {id} (removes descendants), Duplicate {id, new_id, offset?} (copies the subtree as new_id and new_id.<old id>) or Reparent {id, parent, placement: {mode: Free, offset, size} or {mode: Flow}}. Property paths: element.kind/content/anchor/modal, layout (object or null). Does not save.",
         args: &[
             ArgSpec {
                 name: "token",

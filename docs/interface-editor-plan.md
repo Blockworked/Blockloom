@@ -1,6 +1,6 @@
 # Interface editor overhaul
 
-Status: implementation started. Phase 0 has a runtime design session, frame-matched selection and screen isolation. Interface supports typed move/resize, property, reparent and reorder transactions, snapping, eight resize handles and keyboard nudging; the preview gate is still open.
+Status: implementation started (eight increments). Phase 0 has a runtime design session, frame-matched selection and screen isolation. Interface supports typed move/resize, property, reparent and reorder transactions, snapping, eight resize handles and keyboard nudging; the preview gate is still open.
 
 ## Goal
 
@@ -214,7 +214,23 @@ This is a major subsystem project. Do not claim engine-level parity after a cosm
 - Added Earlier/Later hierarchy controls for both free and flow widgets. Boundary controls disable, selection follows the ID and the UI explains that sibling order controls flow layout and drawing. The hierarchy still needs the full tree/search overhaul in phase 2.
 - Runtime spawning now walks parents before children, preserving sibling order even when a root reorder leaves a child earlier in the serialized array than its parent. Real Bevy checks cover flow placement, paint order and root reordering across child slots.
 
-The next increment is typed creation, subtree deletion and duplication with reference remapping. Schema versioning, complete property metadata and the broader phase 1 contracts remain open. Committed edits still use the existing world synchronization path; avoiding a world reload on commit remains open. The current preview still shows the idle scene behind the interface.
+### Creation, deletion and duplication (eighth increment)
+
+- Added typed `Create {widget}`, `Delete {id}` and `Duplicate {id,new_id,offset?}` edits. Create appends and normalizes placement from the parent (Canvas means free, anything else flow) and rejects projected widgets, unknown parents and duplicate or empty IDs. Delete removes the whole subtree and clears `scroll_target`s that pointed into it. Duplicate copies the subtree directly after the original under `new_id` and `new_id.<old id>`, remapping `parent` and `scroll_target` inside the copy only; an optional `offset` moves a free-placed root and a flow child rejects it.
+- The Interface palette, Duplicate and Delete buttons now use the transaction commands (no `set_interface`), select the created or copied widget and clear selection on delete. A palette click adds inside the selected container; a drag still adds to the root.
+- Block and script references to the original IDs are deliberately not rewritten; duplicated widgets are new names.
+
+### Review against recent changes (2026-10-08)
+
+Master since the seventh increment (Phase 6 2D work, script guests, bundled rustc, clippy/let-chain cleanups) left the interface pipeline intact: the only UI-file changes were formatting-level edits and the wall-clock pause fix in `overlay.rs`. Adjustments to the plan:
+
+- Protocol version is 35 (the screen isolation note's 23 was stale). Any phase 1 message change bumps from there.
+- 2D now has screen feedback (`screenfx.rs`: cover z 52, flash z 54, floaters) and lighting (`unlit_above`) drawn around the interface. The design session must stay free of both, and phase 2's "Interact" preview should show cover/flash z-order rather than ignore it.
+- Interface strings now come from the project's string table (`text for key`, `set language`). Phase 4 text editing and phase 6 localization samples should preview through the table instead of adding a second mechanism.
+- Scripts gained more guest languages and ABI 47 slots (save slots, locale). Phase 5's binding and event wiring should use the script ABI as it stands and add verbs only through `abi.rs`.
+- The remaining order is unchanged: finish phase 0/1 (schema versioning, property metadata, no world reload on commit), then the phase 2 hierarchy overhaul, then marquee/multiselection and alignment tools.
+
+The next increment is a real hierarchy tree with search and editor hide/lock (phase 2), then schema versioning and property metadata (phase 1). Schema versioning, complete property metadata and the broader phase 1 contracts remain open. Committed edits still use the existing world synchronization path; avoiding a world reload on commit remains open. The current preview still shows the idle scene behind the interface.
 
 Open phase 0 checks: embedded/process rendering and teardown on actual platforms; native presentation timing and process screenshot metadata on actual platforms; viewport resize/DPI/safe-area matrices; real image/font asset loading; screenshot baselines and gameplay input isolation with held inputs. Rotation, text editing/IME, nine-slice and animation capabilities remain unproven. The fixture image node currently has no asset.
 

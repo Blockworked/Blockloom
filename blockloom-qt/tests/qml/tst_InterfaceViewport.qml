@@ -31,6 +31,14 @@ TestCase {
             } else if (command === "update_interface_edit") {
                 const next = JSON.parse(JSON.stringify(test.draft));
                 const w = next.widgets.find(w => w.element.id === args.edit.id);
+                if (args.edit.kind === "Create") next.widgets.push(args.edit.widget);
+                if (args.edit.kind === "Delete") next.widgets = next.widgets.filter(item => item.element.id !== args.edit.id);
+                if (args.edit.kind === "Duplicate") {
+                    const copy = JSON.parse(JSON.stringify(w));
+                    copy.element.id = args.edit.new_id;
+                    if (args.edit.offset) copy.element.offset = args.edit.offset;
+                    next.widgets.push(copy);
+                }
                 if (args.edit.kind === "Move" || args.edit.kind === "Resize") w.element.offset = args.edit.offset;
                 if (args.edit.kind === "Resize") w.element.size = args.edit.size;
                 if (args.edit.kind === "SetProperty") {
@@ -315,6 +323,24 @@ TestCase {
         compare(calls.filter(c=>c.command === "commit_interface_edit").length,0);
         keyRelease(Qt.Key_Right);
         compare(calls.filter(c=>c.command === "commit_interface_edit").length,1);
+    }
+    function test_create_duplicate_and_delete_use_typed_transactions_and_select_the_result() {
+        panel.add("Button", 20, 20);
+        let edit = calls.find(c=>c.command === "update_interface_edit").args.edit;
+        compare(edit.kind, "Create");
+        compare(edit.widget.element.id, "button1");
+        compare(panel.selectedId, "button1");
+        compare(panel.document.widgets.length, 3);
+        panel.selectedId = "back";
+        panel.duplicateSelected();
+        edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit, {kind:"Duplicate", id:"back", new_id:"back-copy", offset:[216,216]});
+        compare(panel.selectedId, "back-copy");
+        panel.removeSelected();
+        compare(panel.selectedId, "");
+        compare(panel.document.widgets.map(w=>w.element.id), ["back","front","button1"]);
+        compare(calls.filter(c=>c.command === "commit_interface_edit").length, 3);
+        verify(!calls.some(c=>c.command === "set_interface"));
     }
     function test_flow_sibling_reorder_keeps_other_tree_slots() {
         const d = {widgets:[{element:{id:"root",kind:"VerticalBox"}}, {element:{id:"a",parent:"root"}}, {element:{id:"other"}}, {element:{id:"b",parent:"root"}}]};
