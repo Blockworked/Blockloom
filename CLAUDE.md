@@ -1761,6 +1761,13 @@ The sprite atlas bakes at a per-target size (`build::DESKTOP_ATLAS`, `WEB_ATLAS`
 `ANDROID_ATLAS`), and each `TargetStatus` carries a `look2d_note` the Build
 dialog shows.
 
+The scene view's 2D aids ride `TileDebug` (`PROTOCOL_VERSION` 34): `pixel_grid`
+(one-pixel cells once the view is 8 screen pixels a cell), `light_radius`
+(each `Light2d`'s range and spot cone), `camera_bounds` and `parallax_ruler`
+(a cross per layer, cool when slow and warm when fast), drawn by `edit.rs`
+(`draw_level_aids`, `draw_actor_aids`). The 2D inspector has an All/Sprite/Anim/
+Tiles/Light/Camera tab bar that filters the component cards.
+
 ### 2D post
 
 `blockloom-core/src/post2d.rs` (`World.post2d`) holds pixelation, per-channel

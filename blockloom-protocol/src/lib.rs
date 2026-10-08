@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 33;
+pub const PROTOCOL_VERSION: u32 = 34;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -517,6 +517,14 @@ pub struct TileDebug {
     /// Parallax layers scroll against the scene view's camera, as they
     /// will against the game's.
     pub parallax: bool,
+    /// One-pixel grid, once the view is zoomed in far enough to see it.
+    pub pixel_grid: bool,
+    /// Each 2D light's reach and cone.
+    pub light_radius: bool,
+    /// The 2D camera's bounds rectangle.
+    pub camera_bounds: bool,
+    /// Parallax layers marked, tinted by how fast they scroll.
+    pub parallax_ruler: bool,
 }
 
 impl Default for TileDebug {
@@ -526,6 +534,10 @@ impl Default for TileDebug {
             regions: true,
             rooms: true,
             parallax: true,
+            pixel_grid: false,
+            light_radius: false,
+            camera_bounds: false,
+            parallax_ruler: false,
         }
     }
 }

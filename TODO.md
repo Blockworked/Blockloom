@@ -1246,7 +1246,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [ ] 2D inspector tabs: Sprite/Anim/Tiles/Light/Camera, live aspect preview
         thumbnail, flipbook strip viewer (scrub frames, see hitboxes), parallax
         layer stack view.
-  - [ ] Viewport: pixel grid plus onion-skin ghosts for animation, tile collision
+  - [ ] Viewport (pixel grid, light radius, camera bounds, parallax marks done; onion skin open): pixel grid plus onion-skin ghosts for animation, tile collision
         overlay, light radius gizmos, camera bounds plus deadzone rect, parallax
         depth ruler.
   - [ ] Quality: per-platform sprite atlas budget, particle and decal pool caps

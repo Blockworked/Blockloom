@@ -22,6 +22,20 @@ Rectangle {
     onProjectPathChanged: { app.inspectScene = false; app.inspectedScene = ""; app.inspectedLighting = ""; }
     readonly property string mode: appState.project ? appState.project.world.mode : "TwoD"
     readonly property bool is3d: mode === "ThreeD"
+    // The 2D inspector's tab: which components the cards below show.
+    property string tab2d: "All"
+    readonly property var tabs2d: ({
+        Sprite: ["Place", "Parent", "Look", "Render", "Sprite", "Material"],
+        Anim: ["Animation", "Emitter", "Trail"],
+        Tiles: ["Look", "Parallax", "Room", "Conveyor", "Hazard"],
+        Light: ["Light2d", "Volume"],
+        Camera: ["Camera", "PlayerCamera"]
+    })
+    function tabShows(component) {
+        if (is3d || tab2d === "All") return true;
+        const list = tabs2d[tab2d];
+        return !!list && list.indexOf(component) >= 0;
+    }
     // Where the actor is right now, while a run is going.
     readonly property var live: actor && app.status ? (app.status.actors.find(a => a.id === actor.id) || null) : null
     color: Theme.panel
@@ -485,6 +499,21 @@ Rectangle {
                         app: root.app; actorId: root.actor ? root.actor.id : ""; is3d: root.is3d
                         isPlayer: !!root.actor && root.actor.components.some(c => c.component === "CharacterController")
                     }
+                    Flow {
+                        visible: !root.is3d; Layout.fillWidth: true; spacing: 4
+                        Repeater {
+                            model: ["All", "Sprite", "Anim", "Tiles", "Light", "Camera"]
+                            delegate: Rectangle {
+                                required property string modelData
+                                readonly property bool on: root.tab2d === modelData
+                                implicitWidth: tabLabel.implicitWidth + 16; implicitHeight: 24; radius: 4
+                                color: on ? Theme.accent : "transparent"
+                                border.color: Theme.borderSoft
+                                Text { id: tabLabel; anchors.centerIn: parent; text: parent.modelData; font.pixelSize: 12; color: parent.on ? Theme.text : Theme.textDim }
+                                MouseArea { anchors.fill: parent; onClicked: root.tab2d = parent.modelData }
+                            }
+                        }
+                    }
                     // A count rather than the array: a new snapshot with the same
                     // components updates the cards in place instead of rebuilding them.
                     Repeater {
@@ -495,6 +524,7 @@ Rectangle {
                             readonly property var c: root.actor && root.actor.components[index] ? root.actor.components[index] : ({ component: "" })
                             Layout.fillWidth: true; spacing: 6
                             heading: root.componentTitle(card.c)
+                            visible: root.tabShows(card.c.component)
                             removable: card.c.component !== "Place"
                             onRemoveRequested: root.removeComponent(card.c)
                             Loader {

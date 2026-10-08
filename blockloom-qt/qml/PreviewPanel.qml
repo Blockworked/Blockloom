@@ -73,6 +73,10 @@ Rectangle {
         property bool tileRegions: true
         property bool tileRooms: true
         property bool tileParallax: true
+        property bool pixelGrid: false
+        property bool lightRadius: false
+        property bool cameraBounds: false
+        property bool parallaxRuler: false
         // The plugin scene tool ("plugin-id/tool") and each tool's options as JSON text.
         property string pluginTool: ""
         property string pluginOptions: "{}"
@@ -100,7 +104,7 @@ Rectangle {
                       density: scene.tileDensity, jitter: scene.tileJitter, seed: scene.tileSeed },
         plugin_tool: root.pluginToolView,
         plugin_overlays: root.overlayView,
-        tiles: { collision: scene.tileCollision, regions: scene.tileRegions, rooms: scene.tileRooms, parallax: scene.tileParallax }
+        tiles: { collision: scene.tileCollision, regions: scene.tileRegions, rooms: scene.tileRooms, parallax: scene.tileParallax, pixel_grid: scene.pixelGrid, light_radius: scene.lightRadius, camera_bounds: scene.cameraBounds, parallax_ruler: scene.parallaxRuler }
     })
     // The scene tools installed plugins add, as [{key, plugin, pluginName, tool}].
     readonly property var pluginTools: {
@@ -504,6 +508,10 @@ Rectangle {
                             onCommitted: n => scene.angle = Math.max(0.1, Number(n))
                         }
                         ToolToggle { visible: scene.enabled; icon: "hash"; tip: "Show the grid (G)"; checked: scene.showGrid; onClicked: scene.showGrid = !scene.showGrid }
+                        ToolToggle { visible: scene.enabled && !root.is3d; icon: "layout-grid"; tip: "Show the pixel grid when zoomed in"; checked: scene.pixelGrid; onClicked: scene.pixelGrid = !scene.pixelGrid }
+                        ToolToggle { visible: scene.enabled && !root.is3d; icon: "sun"; tip: "Show each 2D light's reach and cone"; checked: scene.lightRadius; onClicked: scene.lightRadius = !scene.lightRadius }
+                        ToolToggle { visible: scene.enabled && !root.is3d; icon: "scale"; tip: "Show the camera's bounds"; checked: scene.cameraBounds; onClicked: scene.cameraBounds = !scene.cameraBounds }
+                        ToolToggle { visible: scene.enabled && !root.is3d; icon: "layers"; tip: "Mark parallax layers, tinted by scroll speed"; checked: scene.parallaxRuler; onClicked: scene.parallaxRuler = !scene.parallaxRuler }
                         ToolToggle { visible: scene.enabled; icon: "crosshair"; tip: "Frame the selected actor (F)"; onClicked: root.report("frame_selected") }
                         ToolToggle {
                             visible: scene.enabled; icon: "info"
