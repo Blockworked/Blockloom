@@ -85,6 +85,16 @@ pub enum Look2dDial {
     LockY,
     /// 1 snaps the camera to whole pixels.
     PixelSnap,
+    /// Flashes the screen for this many seconds, fading out.
+    Flash,
+    FlashColor,
+    /// Covers the screen up to this fraction (0 clear, 1 opaque).
+    Cover,
+    /// `fade`, `wipe` or `circle`.
+    CoverKind,
+    CoverColor,
+    /// Seconds a cover takes from clear to opaque.
+    CoverTime,
 }
 
 impl Look2dDial {
@@ -117,6 +127,12 @@ impl Look2dDial {
             "lockx" => Some(Look2dDial::LockX),
             "locky" => Some(Look2dDial::LockY),
             "pixelsnap" => Some(Look2dDial::PixelSnap),
+            "flash" => Some(Look2dDial::Flash),
+            "flashcolor" | "flashcolour" => Some(Look2dDial::FlashColor),
+            "cover" => Some(Look2dDial::Cover),
+            "coverkind" => Some(Look2dDial::CoverKind),
+            "covercolor" | "covercolour" => Some(Look2dDial::CoverColor),
+            "covertime" => Some(Look2dDial::CoverTime),
             _ => None,
         }
     }

@@ -1018,6 +1018,22 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |_| Ok(Evaluated::Bool(sense::read(|s| s.camera2d.at_bounds))),
     },
     ExtOperator {
+        kind: "IsScreenShaking",
+        op: "IsScreenShaking",
+        arity: 0,
+        default_args: Vec::new,
+        // Whether camera trauma is still shaking the 2D view.
+        eval: |_| Ok(Evaluated::Bool(sense::read(|s| s.camera2d.shaking))),
+    },
+    ExtOperator {
+        kind: "ScreenCover",
+        op: "ScreenCover",
+        arity: 0,
+        default_args: Vec::new,
+        // How much of the screen a cover hides, 0 clear to 1 opaque.
+        eval: |_| Ok(Evaluated::Number(sense::read(|s| s.camera2d.cover) as f64)),
+    },
+    ExtOperator {
         kind: "IsNight",
         op: "IsNight",
         arity: 0,

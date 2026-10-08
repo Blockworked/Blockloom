@@ -1809,6 +1809,20 @@ WhenMotor` is the `when I jump/land/leave the ground/hit my head/change
 stance` hat (`Trigger::Motor`, `Event::Motor`, codegen kind `Motor`, no script
 ABI yet); `drive_motors` fires each event the motor reports.
 
+### 2D screen feedback
+
+`blockloom-runtime/src/screenfx.rs`: `SetLook2d` dials `Flash` (seconds, fades
+out), `FlashColor`, `Cover` (0-1 target), `CoverKind` (`fade`, `wipe`,
+`circle`), `CoverColor` and `CoverTime` (seconds clear to opaque). They queue
+on `engine.look2d.fx` and `drive_screenfx` folds them into `ScreenFx`, steps
+it on `Time<Real>` (so a pause or hitstop never freezes it) and draws Bevy UI
+nodes over the interface (z 52 cover, 54 flash), separate from the scene
+switch veil in `transition.rs` (which it borrows `normalize_kind` and the iris
+size from). `screen cover` and `is screen shaking?` read `Camera2dSense`.
+Slow-mo, hitstop, fade-to-black and shake blocks already exist from the
+cinematic work. Not done: squash-and-stretch `pop`, floating damage text,
+an iris that opens a hole (the circle only grows a disc), a script ABI.
+
 ### 2D animation and sprites
 
 `blockloom-core/src/animation.rs` is the one animation player, both

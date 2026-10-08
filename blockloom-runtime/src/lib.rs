@@ -92,6 +92,7 @@ mod probes;
 mod quality;
 mod queries;
 mod ray_tracing;
+mod screenfx;
 mod script;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod script_wasm;
@@ -464,6 +465,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // The veil and the audio scale follow the live scene, not the launch
     // mode, so they run once outside the gated dimension blocks.
     app.add_systems(Update, transition::drive_veil);
+    screenfx::register(app);
     app.add_systems(Update, world::sync_audio_scale.after(world::rebuild_world));
     // Both dimensions register always for live cross-dimension switches;
     // each side's chains run only while its Dimension is live.

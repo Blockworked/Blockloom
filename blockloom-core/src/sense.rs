@@ -125,6 +125,10 @@ pub struct Camera2dSense {
     pub rotation: f32,
     /// The bounds are holding the view back.
     pub at_bounds: bool,
+    /// Camera trauma is still shaking the view.
+    pub shaking: bool,
+    /// How much of the screen a cover hides (0-1).
+    pub cover: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

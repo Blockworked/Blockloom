@@ -1494,7 +1494,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "SetLook2d",
         category: "Looks",
-        purpose: "Sets a 2D look dial for the rest of the run: ambient light (0 is pitch black, 1 is the unlit picture, needs 2D lighting on), ambient color, or a post effect (pixelation block size, color levels, dither, outline, scanlines, curvature, vignette; 0 is off), or the camera: zoom (pixels per unit), view height, rotation, shake (adds 0-1 trauma), hitstop (seconds the world freezes), bounds edges, axis locks and pixel snap.",
+        purpose: "Sets a 2D look dial for the rest of the run: ambient light (0 is pitch black, 1 is the unlit picture, needs 2D lighting on), ambient color, or a post effect (pixelation block size, color levels, dither, outline, scanlines, curvature, vignette; 0 is off), or the camera: zoom (pixels per unit), view height, rotation, shake (adds 0-1 trauma), hitstop (seconds the world freezes), bounds edges, axis locks and pixel snap; or screen feedback: flash (seconds, with flash color) and cover (0-1 of the screen, with kind fade/wipe/circle, color and seconds to cover).",
         header: false,
         three_d: false,
         slots: &[Slot {
@@ -1526,6 +1526,12 @@ pub const BLOCKS: &[BlockSpec] = &[
                 "LockX",
                 "LockY",
                 "PixelSnap",
+                "Flash",
+                "FlashColor",
+                "Cover",
+                "CoverKind",
+                "CoverColor",
+                "CoverTime",
             ],
         }],
         strings: NO_STRINGS,

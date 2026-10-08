@@ -76,7 +76,7 @@ fn remove_shake(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn apply_camera(
+pub(crate) fn apply_camera(
     mut engine: NonSendMut<Engine>,
     mut state: ResMut<Camera2dState>,
     time: Res<Time>,
@@ -189,6 +189,8 @@ fn apply_camera(
         zoom: 1.0 / scale,
         rotation: settings.rotation + angle,
         at_bounds,
+        shaking: state.trauma > 0.01,
+        cover: 0.0,
     });
 }
 

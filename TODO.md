@@ -1223,17 +1223,25 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [ ] Particles in 2D: sprite-sheet flipbook particles, spawn burst/rate shapes
         (point/line/box/circle), velocity plus drag plus gravity scale, color and
         size over life curves, soft-edge fade near tile collision.
+        (Phase 5 VFX already gives 2D CPU particles with shapes, curves and
+        flipbooks; left open: soft-edge fade near tile collision.)
   - [ ] Trails and feedback: ribbon trails behind fast actors, ghost afterimages
         with lifetime (reuse the existing ghost path), floating damage text,
         squash-and-stretch scale pops on land/hit.
-  - [ ] Screen transitions: fade/wipe/circle wipes between rooms, flash frames,
+        (Trail and ghost exist from Phase 5; open: damage text and pop.)
+  - [x] Screen transitions: fade/wipe/circle wipes between rooms, flash frames,
         slow-mo timeScale curve plus hitstop (same clock rule as cinematics: wall
         clock when paused, fixed tick when running).
+        (Flash and cover dials are new; slow-mo, hitstop and the scene veil
+        already existed. Open: an iris that opens a hole.)
   - [ ] Weather lite in 2D: rain/snow/leaf particle presets tied to the weather
         director coverage value, splash rings on ground hit, wind push from the
         global wind asset.
+        (Open: not started; 2D has no rain/snow presets.)
   - [ ] Blocks and scripts: `burst particles _ at`, `trail _ on/off`, `flash
         screen _`, `pop _`, reporters `particle count`, `is screen shaking?`.
+        (Done: flash, `screen cover`, `is screen shaking?`; burst and trail
+        blocks exist. Open: `pop _`.)
 - [ ] Editor, preview and scaling for 2D:
   - [ ] 2D inspector tabs: Sprite/Anim/Tiles/Light/Camera, live aspect preview
         thumbnail, flipbook strip viewer (scrub frames, see hitboxes), parallax

@@ -57,6 +57,8 @@ pub struct Look2d {
     pub shake: f32,
     /// Seconds of hitstop asked for since the camera system last looked.
     pub hitstop: f32,
+    /// Screen flash and cover dials not yet taken by `screenfx`, in order.
+    pub fx: Vec<(blockloom_core::blocks::Look2dDial, String)>,
 }
 
 /// `set [look] to` blocks, applied on the fixed tick.
@@ -95,6 +97,9 @@ impl Look2d {
                 if let Some(n) = number {
                     self.hitstop = self.hitstop.max(n.clamp(0.0, 5.0));
                 }
+            }
+            D::Flash | D::FlashColor | D::Cover | D::CoverKind | D::CoverColor | D::CoverTime => {
+                self.fx.push((dial, value.to_string()));
             }
             _ => match self.post.iter_mut().find(|(d, _)| *d == dial) {
                 Some(entry) => entry.1 = value.to_string(),
