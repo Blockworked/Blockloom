@@ -351,6 +351,10 @@ impl Backend {
                 let lighting: blockloom_core::light2d::Lighting2d = arg(&args, "lighting")?;
                 to_json(commands::set_lighting_2d(state, app, lighting)?)
             }
+            "set_post_2d" => {
+                let post: blockloom_core::post2d::Post2d = arg(&args, "post")?;
+                to_json(commands::set_post_2d(state, app, post)?)
+            }
             "set_cloud_layers" => {
                 let layers: Vec<blockloom_core::cloud_layers::CloudLayer> = arg(&args, "layers")?;
                 to_json(commands::set_cloud_layers(state, app, layers)?)

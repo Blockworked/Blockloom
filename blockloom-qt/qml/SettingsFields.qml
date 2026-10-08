@@ -318,6 +318,37 @@ Item {
                 Note { text: "Darkens the world by the ambient level and adds each 2D light on top. Layers above Unlit above (the HUD, foreground) are not darkened. Add a 2D light component to an actor to light the scene." }
             }
             Section {
+                id: post2d
+                heading: "2D post"; available: !!root.world && !root.is3d
+                readonly property var p: root.world && root.world.post2d ? root.world.post2d : ({ pixelation: 0, levels: 0, palette: [], dither: 0, outline: { strength: 0, color: "#000000", threshold: 0.2 }, crt: { scanlines: 0, curvature: 0, vignette: 0, mask: 0 }, split: 0 })
+                function write(next) { root.invoke("set_post_2d", { post: Object.assign(JSON.parse(JSON.stringify(root.world.post2d || {})), next) }); }
+                function writeOutline(next) { write({ outline: Object.assign({}, p.outline, next) }); }
+                function writeCrt(next) { write({ crt: Object.assign({}, p.crt, next) }); }
+                InspectorRow { label: "Pixel size"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: post2d.p.pixelation; fallback: 0; onCommitted: n => post2d.write({ pixelation: Math.max(0, Math.round(n)) }) } }
+                InspectorRow { label: "Color levels"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: post2d.p.levels; fallback: 0; onCommitted: n => post2d.write({ levels: Math.max(0, Math.round(n)) }) } }
+                InspectorRow { label: "Palette"; labelWidth: 110; Layout.fillWidth: true
+                    TextField { Layout.fillWidth: true; text: post2d.p.palette.join(" "); placeholderText: "#000000 #ffffff ..."
+                        onEditingFinished: post2d.write({ palette: text.split(/[ ,]+/).filter(c => c.length > 0) }) } }
+                InspectorRow { label: "Dither"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: post2d.p.dither; fallback: 0; onCommitted: n => post2d.write({ dither: Math.min(Math.max(n, 0), 1) }) } }
+                InspectorRow { label: "Outline"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: post2d.p.outline.strength; fallback: 0; onCommitted: n => post2d.writeOutline({ strength: Math.min(Math.max(n, 0), 1) }) }
+                    NumberField { value: post2d.p.outline.threshold; fallback: 0.2; onCommitted: n => post2d.writeOutline({ threshold: Math.min(Math.max(n, 0.01), 1) }) }
+                    ColorField { value: post2d.p.outline.color; onPicked: c => post2d.writeOutline({ color: c }) } }
+                InspectorRow { label: "Scanlines"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: post2d.p.crt.scanlines; fallback: 0; onCommitted: n => post2d.writeCrt({ scanlines: Math.min(Math.max(n, 0), 1) }) } }
+                InspectorRow { label: "Curve, corners"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: post2d.p.crt.curvature; fallback: 0; onCommitted: n => post2d.writeCrt({ curvature: Math.min(Math.max(n, 0), 1) }) }
+                    NumberField { value: post2d.p.crt.vignette; fallback: 0; onCommitted: n => post2d.writeCrt({ vignette: Math.min(Math.max(n, 0), 1) }) } }
+                InspectorRow { label: "Phosphor mask"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: post2d.p.crt.mask; fallback: 0; onCommitted: n => post2d.writeCrt({ mask: Math.min(Math.max(n, 0), 1) }) } }
+                InspectorRow { label: "Split"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: post2d.p.split; fallback: 0; onCommitted: n => post2d.write({ split: Math.min(Math.max(n, 0), 1) }) } }
+                Note { text: "Finishes the picture with pixel-art and retro looks. Pixel size groups screen pixels into blocks; a palette snaps colors to the list (hex, space separated), else color levels does it per channel. Split shows the look on the left part of the frame only, to compare it with the plain picture. The interface is not affected." }
+            }
+            Section {
                 heading: "Physics"; available: !!root.world
                 InspectorRow { label: "Gravity"; labelWidth: 110; Layout.fillWidth: true
                     Repeater { model: root.is3d ? 3 : 2; delegate: NumberField { required property int index; value: root.world.gravity[index]; onCommitted: n => root.invoke("set_gravity", { gravity: root.withIndex(root.world.gravity, index, n) }) } } }

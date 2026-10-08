@@ -5494,6 +5494,14 @@ fn look2d_dials_compiled_logic() {
                 dial: Look2dDial::AmbientColor,
                 value: Value::text("#334466"),
             },
+            K::SetLook2d {
+                dial: Look2dDial::Pixelation,
+                value: number(4.0),
+            },
+            K::SetLook2d {
+                dial: Look2dDial::Scanlines,
+                value: number(0.5),
+            },
         ],
         &[],
     );

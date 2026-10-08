@@ -1749,6 +1749,22 @@ by a fingerprint of the light and its occluders. The shader and
 `set ambient color to` (`SetLook2d`) land in `engine.look2d` for the run.
 Not done: per-sorting-layer lighting and normal-map lit sprites.
 
+### 2D post
+
+`blockloom-core/src/post2d.rs` (`World.post2d`) holds pixelation, per-channel
+levels or a palette (up to `MAX_PALETTE` hex colours), an ordered 4x4 dither,
+an edge outline and a CRT preset (scanlines, curvature, vignette, phosphor
+mask), plus a `split` that limits the look to the left part of the frame for
+comparing. `blockloom-runtime/src/post2d.rs` puts one `Post2dPass` fullscreen
+material (`shaders/post2d.wesl`) on the 2D world camera while any effect is
+on: after the tonemapper and `PostLdrPass`, before the UI pass so the HUD
+stays crisp. The look works on display values (the shader converts from the
+linear texture), and the CPU functions in core are the reference the shader
+copies: change them together. `set [look] to` (`SetLook2d`) also takes
+`Pixelation`, `Levels`, `Dither`, `Outline`, `Scanlines`, `Curvature` and
+`Vignette` dials, laid over the project's values for the run
+(`engine.look2d.post`).
+
 ### 2D animation and sprites
 
 `blockloom-core/src/animation.rs` is the one animation player, both

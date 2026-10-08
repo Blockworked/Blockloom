@@ -1175,16 +1175,18 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [x] Day/night and glow: ambient tint ramp tied to the time-of-day director
         (`Lighting2d.ramp`, sunrise/sunset), sprite `glow` (0-64) that passes 1.0
         into bloom, seeded light flicker. Unverified on a GPU.
-  - [ ] 2D post: pixelation (fixed pixel size), palette quantize, outline/edge
-        detect, CRT scanline/vignette preset, dither toggle. Order fixed after
-        tonemap; debug splits per effect.
+  - [x] 2D post: pixelation (block size), palette or per-channel quantize,
+        ordered dither, outline/edge detect, CRT preset (scanlines, curvature,
+        vignette, mask), a split to compare per frame. One fullscreen pass after
+        the tonemapper, before the UI. Open: per-effect debug toggles beyond
+        setting a dial to 0; GPU path unverified (shader passes naga only).
   - [ ] Normal-map authoring: height-to-normal bake on import, strength dial,
         preview thumbnail with a movable light dot.
   - [ ] Blocks and scripts: `set ambient light to` / `set ambient color to`
         (`SetLook2d`, VM and compiled logic, logic ABI 39), `set my light to`
         (existing block, now also works in 2D), reporters `light level at x y`,
-        `is night?` done. Open: `set pixelation to` (with 2D post), and the
-        script ABI side (`set_look_2d`, `light_level`), left to the script work.
+        `is night?` done. Open: pixelation, palette levels, dither, outline and CRT dials on the same
+        block are done. Open: the script ABI side (`set_look_2d`, `light_level`), left to the script work.
 - [ ] 2D camera (pixel-correct, deterministic):
   - [ ] Follow: target actor, deadzone rect, lookahead by velocity, smoothing time,
         axis locks. One camera per project like 3D, attached through the existing

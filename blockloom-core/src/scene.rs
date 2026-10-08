@@ -1478,6 +1478,9 @@ pub struct World {
     /// stops at. Off by default.
     #[serde(default)]
     pub lighting2d: crate::light2d::Lighting2d,
+    /// 2D post: pixelation, palette, outline and CRT looks.
+    #[serde(default)]
+    pub post2d: crate::post2d::Post2d,
     /// The wind everything that moves with the air reads, and the clouds'
     /// drift on it.
     #[serde(default)]
@@ -1535,6 +1538,7 @@ impl Default for World {
             cloud_layers: Vec::new(),
             lightning: crate::lightning::Lightning::default(),
             lighting2d: crate::light2d::Lighting2d::default(),
+            post2d: crate::post2d::Post2d::default(),
             wind: crate::wind::Wind::default(),
             director: crate::director::Director::default(),
             surface: crate::material::SurfaceWeather::default(),

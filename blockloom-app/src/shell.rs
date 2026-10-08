@@ -1065,6 +1065,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "set-post-2d",
+        cmd: "set_post_2d",
+        aliases: &["set_post_2d"],
+        summary: "Set the 2D post look: pixelation, color levels or a palette, dither, outline and the CRT preset (scanlines, curvature, vignette, mask), with an optional split for comparing.",
+        args: &[ArgSpec {
+            name: "post",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "set-cloud-layers",
         cmd: "set_cloud_layers",
         aliases: &["set_cloud_layers"],

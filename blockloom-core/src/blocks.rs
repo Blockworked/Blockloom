@@ -52,6 +52,20 @@ pub enum Look2dDial {
     AmbientLight,
     /// A colour that replaces the ambient colour; empty puts it back.
     AmbientColor,
+    /// Pixels per block of the picture (0 or 1 is off).
+    Pixelation,
+    /// Colour levels per channel (0 is off).
+    Levels,
+    /// 0-1 ordered dither across the quantize step.
+    Dither,
+    /// 0-1 edge outline strength.
+    Outline,
+    /// 0-1 CRT scanline depth.
+    Scanlines,
+    /// 0-1 CRT screen bow.
+    Curvature,
+    /// 0-1 CRT darkened corners.
+    Vignette,
 }
 
 impl Look2dDial {
@@ -65,6 +79,13 @@ impl Look2dDial {
         {
             "ambientlight" | "ambient" => Some(Look2dDial::AmbientLight),
             "ambientcolor" | "ambientcolour" => Some(Look2dDial::AmbientColor),
+            "pixelation" | "pixelate" => Some(Look2dDial::Pixelation),
+            "levels" => Some(Look2dDial::Levels),
+            "dither" => Some(Look2dDial::Dither),
+            "outline" => Some(Look2dDial::Outline),
+            "scanlines" => Some(Look2dDial::Scanlines),
+            "curvature" => Some(Look2dDial::Curvature),
+            "vignette" => Some(Look2dDial::Vignette),
             _ => None,
         }
     }

@@ -51,6 +51,8 @@ pub struct Look2d {
     pub ambient: Option<f32>,
     /// A colour that replaces the project's ambient colour.
     pub ambient_color: Option<String>,
+    /// 2D post dials set this run, one per dial in the order first set.
+    pub post: Vec<(blockloom_core::blocks::Look2dDial, String)>,
 }
 
 /// `set [look] to` blocks, applied on the fixed tick.
@@ -80,6 +82,10 @@ impl Look2d {
                 let color = value.trim();
                 self.ambient_color = (!color.is_empty()).then(|| color.to_string());
             }
+            _ => match self.post.iter_mut().find(|(d, _)| *d == dial) {
+                Some(entry) => entry.1 = value.to_string(),
+                None => self.post.push((dial, value.to_string())),
+            },
         }
     }
 }

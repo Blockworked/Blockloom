@@ -61,6 +61,7 @@ pub mod physics;
 pub mod physics_query;
 pub mod pipeline;
 pub mod player_camera;
+pub mod post2d;
 pub mod probe;
 pub mod process;
 pub mod project;

@@ -1988,6 +1988,7 @@ impl Project {
             crate::cloud_layers::normalize(&mut world.cloud_layers);
             world.lightning.normalize();
             world.lighting2d.normalize();
+            world.post2d.normalize();
             world.wind.normalize();
             world.director.normalize();
             for cutscene in &mut world.cutscenes {

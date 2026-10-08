@@ -1479,7 +1479,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "SetLook2d",
         category: "Looks",
-        purpose: "Sets the 2D lit look for the rest of the run: ambient light (0 is pitch black, 1 is the unlit picture) or ambient color. Needs 2D lighting turned on in Project Settings.",
+        purpose: "Sets a 2D look dial for the rest of the run: ambient light (0 is pitch black, 1 is the unlit picture, needs 2D lighting on), ambient color, or a post effect (pixelation block size, color levels, dither, outline, scanlines, curvature, vignette; 0 is off).",
         header: false,
         three_d: false,
         slots: &[Slot {
@@ -1489,7 +1489,17 @@ pub const BLOCKS: &[BlockSpec] = &[
         }],
         dropdowns: &[Dropdown {
             field: "dial",
-            options: &["AmbientLight", "AmbientColor"],
+            options: &[
+                "AmbientLight",
+                "AmbientColor",
+                "Pixelation",
+                "Levels",
+                "Dither",
+                "Outline",
+                "Scanlines",
+                "Curvature",
+                "Vignette",
+            ],
         }],
         strings: NO_STRINGS,
         bools: NO_BOOLS,

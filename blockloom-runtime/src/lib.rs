@@ -65,6 +65,7 @@ mod materials;
 mod model;
 mod motor;
 mod player_camera;
+mod post2d;
 mod wind;
 // Plumbing the Phase 5 passes build on; nothing reads most of it yet.
 mod overlay;
@@ -346,6 +347,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // unconditionally; an unused plugin costs nothing at runtime.
     materials::register(app);
     light2d::register(app);
+    post2d::register(app);
     sprites::register(app);
     app.init_resource::<anim2d::RigCache>()
         .init_resource::<plugin_meshes::PluginMeshes>()
