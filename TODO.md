@@ -1237,7 +1237,7 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [x] Weather lite in 2D: rain/snow/leaf particle presets tied to the weather
         director coverage value, splash rings on ground hit, wind push from the
         global wind asset.
-        (Rain and snow motes follow the blend's precipitation and snow, with splash rings; leaf presets are not done.)
+        (Rain, snow and wind-driven leaf motes, with splash rings.)
   - [ ] Blocks and scripts: `burst particles _ at`, `trail _ on/off`, `flash
         screen _`, `pop _`, reporters `particle count`, `is screen shaking?`.
         (Done: flash, `screen cover`, `is screen shaking?`; burst and trail

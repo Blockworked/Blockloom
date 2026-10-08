@@ -1755,7 +1755,7 @@ Not done: per-sorting-layer lighting and normal-map lit sprites.
 function of the clock (`mote(kind, i, time, wind_x)`), so a replay matches.
 `blockloom-runtime/src/weather2d.rs` draws a pool of UI nodes (z 5) from the
 weather blend's `precipitation` and `snow`, slanted by the global wind. Rain
-ends in a splash ring. Not done: leaf presets.
+ends in a splash ring; leaves blow in once the wind passes 4 m/s (`leaf_intensity`).
 
 The sprite atlas bakes at a per-target size (`build::DESKTOP_ATLAS`, `WEB_ATLAS`,
 `ANDROID_ATLAS`), and each `TargetStatus` carries a `look2d_note` the Build

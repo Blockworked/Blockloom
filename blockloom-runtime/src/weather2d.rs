@@ -4,7 +4,7 @@
 use crate::engine::{Dimension, Engine};
 use crate::wind::WindField;
 use bevy::prelude::*;
-use blockloom_core::weather2d::{MAX_MOTES, MoteKind, count, mote};
+use blockloom_core::weather2d::{MAX_MOTES, MoteKind, count, leaf_intensity, mote};
 
 #[derive(Component)]
 struct Speck {
@@ -40,15 +40,18 @@ fn draw_weather(
     engine: NonSend<Engine>,
     real: Res<Time<Real>>,
     wind: Res<WindField>,
-    mut have: Local<[bool; 2]>,
+    mut have: Local<[bool; 3]>,
     mut specks: Query<(&Speck, &mut Node, &mut BackgroundColor, &mut UiTransform)>,
 ) {
     let now = engine.weather.sampled();
     let wind_x = wind.at(Vec3::ZERO).x;
     let time = real.elapsed_secs();
+    // Leaves only blow in the rain-free air.
+    let leaf = leaf_intensity(now.wind_speed) * (1.0 - now.precipitation.clamp(0.0, 1.0));
     for (slot, kind, intensity) in [
         (0, MoteKind::Rain, now.precipitation),
         (1, MoteKind::Snow, now.snow),
+        (2, MoteKind::Leaf, leaf),
     ] {
         if !have[slot] && count(intensity) > 0 {
             have[slot] = true;
@@ -59,6 +62,7 @@ fn draw_weather(
         let intensity = match speck.kind {
             MoteKind::Rain => now.precipitation,
             MoteKind::Snow => now.snow,
+            MoteKind::Leaf => leaf,
         };
         if speck.index >= count(intensity) {
             node.display = Display::None;
@@ -83,6 +87,13 @@ fn draw_weather(
                 node.border_radius = BorderRadius::ZERO;
                 transform.rotation = Rot2::radians(-(wind_x * 0.1).clamp(-0.6, 0.6));
                 color.0 = Color::srgba(0.75, 0.85, 1.0, m.alpha);
+            }
+            (MoteKind::Leaf, None) => {
+                node.width = Val::Px(m.size);
+                node.height = Val::Px(m.size * 0.6);
+                node.border_radius = BorderRadius::MAX;
+                transform.rotation = Rot2::radians(time * 2.0 + speck.index as f32);
+                color.0 = Color::srgba(0.85, 0.5, 0.15, m.alpha);
             }
             (MoteKind::Snow, None) => {
                 node.width = Val::Px(m.size);

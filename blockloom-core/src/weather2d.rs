@@ -16,6 +16,8 @@ const LAND_AT: f32 = 0.85;
 pub enum MoteKind {
     Rain,
     Snow,
+    /// Tumbling leaves that come with a stiff wind.
+    Leaf,
 }
 
 /// One mote for one frame. `x`/`y` are screen fractions from the top left.
@@ -28,6 +30,14 @@ pub struct Mote {
     pub size: f32,
     /// How far through a splash ring it is, when it is one.
     pub splash: Option<f32>,
+}
+
+/// Leaves per wind speed: none under a breeze, all of them in a gale.
+pub fn leaf_intensity(wind_speed: f32) -> f32 {
+    if !wind_speed.is_finite() {
+        return 0.0;
+    }
+    ((wind_speed - 4.0) / 12.0).clamp(0.0, 1.0)
 }
 
 /// How many motes a 0-1 intensity shows.
@@ -52,6 +62,7 @@ pub fn mote(kind: MoteKind, i: usize, time: f32, wind_x: f32) -> Mote {
     let (period, size) = match kind {
         MoteKind::Rain => (0.55 + 0.35 * hash(i, 1), 10.0 + 8.0 * hash(i, 2)),
         MoteKind::Snow => (4.0 + 4.0 * hash(i, 1), 2.0 + 2.5 * hash(i, 2)),
+        MoteKind::Leaf => (3.0 + 3.0 * hash(i, 1), 5.0 + 3.0 * hash(i, 2)),
     };
     let t = time.max(0.0) + period * hash(i, 3);
     let cycle = (t / period).floor();
@@ -82,6 +93,17 @@ pub fn mote(kind: MoteKind, i: usize, time: f32, wind_x: f32) -> Mote {
                 }
             }
         }
+        MoteKind::Leaf => {
+            let sway = (seconds * 2.6 + hash(i, 6) * std::f32::consts::TAU).sin() * 0.03;
+            let x = (x0 + drift * seconds * 2.0 + sway).rem_euclid(1.0);
+            Mote {
+                x,
+                y: -0.05 + 1.1 * p,
+                alpha: 0.9,
+                size,
+                splash: None,
+            }
+        }
         MoteKind::Snow => {
             let sway = (seconds * 1.7 + hash(i, 6) * std::f32::consts::TAU).sin() * 0.012;
             let x = (x0 + drift * seconds + sway).rem_euclid(1.0);
@@ -101,6 +123,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn leaves_need_a_stiff_wind() {
+        assert_eq!(leaf_intensity(2.0), 0.0);
+        assert_eq!(leaf_intensity(10.0), 0.5);
+        assert_eq!(leaf_intensity(40.0), 1.0);
+        assert_eq!(leaf_intensity(f32::NAN), 0.0);
+    }
+
+    #[test]
     fn count_scales_and_clamps() {
         assert_eq!(count(0.0), 0);
         assert_eq!(count(f32::NAN), 0);
@@ -111,7 +141,7 @@ mod tests {
 
     #[test]
     fn motes_are_deterministic_and_on_screen() {
-        for kind in [MoteKind::Rain, MoteKind::Snow] {
+        for kind in [MoteKind::Rain, MoteKind::Snow, MoteKind::Leaf] {
             for i in 0..MAX_MOTES {
                 for step in 0..40 {
                     let t = step as f32 * 0.137;
