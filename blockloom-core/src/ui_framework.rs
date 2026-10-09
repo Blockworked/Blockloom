@@ -280,6 +280,24 @@ pub enum UiPropertyEdit {
     Modal(bool),
     #[serde(rename = "layout")]
     Layout(#[serde(deserialize_with = "deserialize_edit_layout")] Option<UiLayout>),
+    #[serde(rename = "element.range")]
+    Range([f32; 2]),
+    #[serde(rename = "style")]
+    Style(Box<UiStyles>),
+    #[serde(rename = "class")]
+    Class(String),
+    #[serde(rename = "bindings")]
+    Bindings(Vec<UiBinding>),
+    #[serde(rename = "items")]
+    Items(Vec<String>),
+    #[serde(rename = "tooltip")]
+    Tooltip(String),
+    #[serde(rename = "scroll_target")]
+    ScrollTarget(String),
+    #[serde(rename = "tab_index")]
+    TabIndex(Option<usize>),
+    #[serde(rename = "transition")]
+    Transition(f32),
 }
 
 /// How the inspector should draw a property path.
@@ -304,6 +322,15 @@ impl UiPropertyEdit {
             UiPropertyEdit::Anchor(_) => "element.anchor",
             UiPropertyEdit::Modal(_) => "element.modal",
             UiPropertyEdit::Layout(_) => "layout",
+            UiPropertyEdit::Range(_) => "element.range",
+            UiPropertyEdit::Style(_) => "style",
+            UiPropertyEdit::Class(_) => "class",
+            UiPropertyEdit::Bindings(_) => "bindings",
+            UiPropertyEdit::Items(_) => "items",
+            UiPropertyEdit::Tooltip(_) => "tooltip",
+            UiPropertyEdit::ScrollTarget(_) => "scroll_target",
+            UiPropertyEdit::TabIndex(_) => "tab_index",
+            UiPropertyEdit::Transition(_) => "transition",
         }
     }
 }
@@ -398,6 +425,57 @@ pub fn property_metadata() -> Vec<UiPropertyInfo> {
             vec!["Panel"],
         ),
         info("layout", "Layout", "Layout", "layout", vec![], vec![]),
+        info(
+            "element.range",
+            "Range",
+            "Content",
+            "range",
+            vec![],
+            vec!["Slider", "Progress", "RadialProgress", "Scrollbar"],
+        ),
+        info("style", "Style", "Appearance", "style", vec![], vec![]),
+        info("class", "Style class", "Appearance", "text", vec![], vec![]),
+        info(
+            "bindings",
+            "Bindings",
+            "Bindings",
+            "bindings",
+            vec![],
+            vec![],
+        ),
+        info(
+            "items",
+            "Items",
+            "Content",
+            "lines",
+            vec![],
+            vec!["List", "ListView", "Select", "Tabs"],
+        ),
+        info("tooltip", "Tooltip", "Interaction", "text", vec![], vec![]),
+        info(
+            "scroll_target",
+            "Scroll target",
+            "Interaction",
+            "widget",
+            vec![],
+            vec!["Scrollbar"],
+        ),
+        info(
+            "tab_index",
+            "Tab page",
+            "Interaction",
+            "int",
+            vec![],
+            vec![],
+        ),
+        info(
+            "transition",
+            "Transition seconds",
+            "Appearance",
+            "number",
+            vec![],
+            vec![],
+        ),
     ]
 }
 
@@ -463,6 +541,18 @@ pub enum UiEdit {
     Batch {
         edits: Vec<UiEdit>,
     },
+    /// Sets document-wide options; omitted fields stay as they are.
+    SetDocument {
+        #[serde(default)]
+        theme: Option<UiTheme>,
+        #[serde(default)]
+        scale: Option<UiScale>,
+    },
+    /// Defines or (with null) removes a shared named style.
+    SetClass {
+        name: String,
+        styles: Option<Box<UiStyles>>,
+    },
     /// Appends a new widget; a Canvas parent makes it free, any other parent flow.
     Create {
         widget: Box<UiWidget>,
@@ -510,6 +600,29 @@ impl UiDocument {
                 }
                 return Ok(());
             }
+            UiEdit::SetDocument { theme, scale } => {
+                if let Some(theme) = theme {
+                    self.theme = *theme;
+                }
+                if let Some(scale) = scale {
+                    self.scale = *scale;
+                }
+                return Ok(());
+            }
+            UiEdit::SetClass { name, styles } => {
+                if name.trim().is_empty() {
+                    return Err("A style class needs a name".into());
+                }
+                match styles {
+                    Some(styles) => {
+                        self.styles.insert(name.clone(), (**styles).clone());
+                    }
+                    None => {
+                        self.styles.remove(name);
+                    }
+                }
+                return Ok(());
+            }
             UiEdit::Create { widget } => return self.create_widget(widget),
             UiEdit::Delete { id } => return self.delete_subtree(id),
             UiEdit::Duplicate { id, new_id, offset } => {
@@ -524,6 +637,8 @@ impl UiDocument {
             | UiEdit::Reparent { id, .. }
             | UiEdit::Reorder { id, .. } => id,
             UiEdit::Batch { .. }
+            | UiEdit::SetDocument { .. }
+            | UiEdit::SetClass { .. }
             | UiEdit::Create { .. }
             | UiEdit::Delete { .. }
             | UiEdit::Duplicate { .. } => unreachable!(),
@@ -558,6 +673,7 @@ impl UiDocument {
             return Ok(());
         }
         if let UiEdit::SetProperty { property, .. } = edit {
+            let ids: HashSet<String> = self.widgets.iter().map(|w| w.element.id.clone()).collect();
             let w = &mut self.widgets[index];
             match property {
                 UiPropertyEdit::Kind(value) => w.element.kind = *value,
@@ -569,6 +685,49 @@ impl UiDocument {
                         layout.validate_edit()?;
                     }
                     w.layout = value.clone();
+                }
+                UiPropertyEdit::Range(value) => {
+                    if value.iter().any(|n| !n.is_finite()) || value[0] >= value[1] {
+                        return Err("Range must be finite with min below max".into());
+                    }
+                    w.element.range = *value;
+                }
+                UiPropertyEdit::Style(value) => {
+                    let bad = [
+                        &value.normal,
+                        &value.hover,
+                        &value.pressed,
+                        &value.disabled,
+                        &value.focused,
+                    ]
+                    .into_iter()
+                    .any(|p| {
+                        [p.text_size, p.border_width, p.radius]
+                            .into_iter()
+                            .flatten()
+                            .any(|n| !n.is_finite() || n < 0.)
+                    });
+                    if bad {
+                        return Err("Style sizes must be finite and not negative".into());
+                    }
+                    w.style = (**value).clone();
+                }
+                UiPropertyEdit::Class(value) => w.class = value.clone(),
+                UiPropertyEdit::Bindings(value) => w.bindings = value.clone(),
+                UiPropertyEdit::Items(value) => w.items = value.clone(),
+                UiPropertyEdit::Tooltip(value) => w.tooltip = value.clone(),
+                UiPropertyEdit::ScrollTarget(value) => {
+                    if !value.is_empty() && !ids.contains(value.as_str()) {
+                        return Err(format!("Unknown scroll target: {value}"));
+                    }
+                    w.scroll_target = value.clone();
+                }
+                UiPropertyEdit::TabIndex(value) => w.tab_index = *value,
+                UiPropertyEdit::Transition(value) => {
+                    if !value.is_finite() || *value < 0. {
+                        return Err("Transition must be finite and not negative".into());
+                    }
+                    w.transition = *value;
                 }
             }
             return Ok(());
@@ -1070,6 +1229,15 @@ mod tests {
             UiPropertyEdit::Anchor(UiAnchor::Top),
             UiPropertyEdit::Modal(true),
             UiPropertyEdit::Layout(None),
+            UiPropertyEdit::Range([0., 1.]),
+            UiPropertyEdit::Style(Box::default()),
+            UiPropertyEdit::Class(String::new()),
+            UiPropertyEdit::Bindings(vec![]),
+            UiPropertyEdit::Items(vec![]),
+            UiPropertyEdit::Tooltip(String::new()),
+            UiPropertyEdit::ScrollTarget(String::new()),
+            UiPropertyEdit::TabIndex(None),
+            UiPropertyEdit::Transition(0.),
         ];
         let metadata = property_metadata();
         assert_eq!(metadata.len(), samples.len());
@@ -1101,6 +1269,84 @@ mod tests {
             assert!(doc.apply_edit(&parse(value)).is_err());
             assert_eq!(doc, before);
         }
+    }
+
+    #[test]
+    fn content_style_and_document_edits_validate_and_apply() {
+        let mut doc: UiDocument = serde_json::from_value(serde_json::json!({"widgets": [
+            {"element": {"id": "bar", "kind": "Scrollbar"}},
+            {"element": {"id": "list", "kind": "List"}}
+        ]}))
+        .unwrap();
+        let parse = |value| serde_json::from_value::<UiEdit>(value).unwrap();
+        let prop = |id: &str, path: &str, value: serde_json::Value| {
+            parse(
+                serde_json::json!({"kind": "SetProperty", "id": id, "property": {"path": path, "value": value}}),
+            )
+        };
+        doc.apply_edit(&prop("bar", "scroll_target", "list".into()))
+            .unwrap();
+        doc.apply_edit(&prop("list", "items", serde_json::json!(["a", "b"])))
+            .unwrap();
+        doc.apply_edit(&prop(
+            "list",
+            "style",
+            serde_json::json!({"normal": {"background": "#102030", "radius": 4.0}}),
+        ))
+        .unwrap();
+        doc.apply_edit(&prop(
+            "list",
+            "bindings",
+            serde_json::json!([{"property": "Visible", "source": {"Variable": {"name": "shown"}}}]),
+        ))
+        .unwrap();
+        doc.apply_edit(&prop("list", "tab_index", serde_json::json!(2)))
+            .unwrap();
+        doc.apply_edit(&prop("list", "element.range", serde_json::json!([0, 10])))
+            .unwrap();
+        assert_eq!(doc.widgets[0].scroll_target, "list");
+        assert_eq!(doc.widgets[1].items, ["a", "b"]);
+        assert_eq!(doc.widgets[1].style.normal.radius, Some(4.));
+        assert_eq!(doc.widgets[1].bindings.len(), 1);
+        assert_eq!(doc.widgets[1].tab_index, Some(2));
+        let before = doc.clone();
+        for edit in [
+            prop("bar", "scroll_target", "missing".into()),
+            prop("list", "element.range", serde_json::json!([5, 5])),
+            prop("list", "transition", serde_json::json!(-1)),
+            prop(
+                "list",
+                "style",
+                serde_json::json!({"normal": {"radius": -2.0}}),
+            ),
+            prop(
+                "list",
+                "bindings",
+                serde_json::json!([{"property": "Value", "source": {"Variable": {"name": "x"}}}, {"property": "Tooltip", "source": {"Variable": {"name": "x"}}}]),
+            ),
+        ] {
+            assert!(doc.apply_edit(&edit).is_err());
+            assert_eq!(doc, before);
+        }
+        doc.apply_edit(&parse(
+            serde_json::json!({"kind": "SetDocument", "theme": "Light", "scale": "ScaleWithSize"}),
+        ))
+        .unwrap();
+        assert_eq!(doc.theme, UiTheme::Light);
+        assert_eq!(doc.scale, UiScale::ScaleWithSize);
+        doc.apply_edit(&parse(serde_json::json!({"kind": "SetClass", "name": "title", "styles": {"normal": {"text_size": 24.0}}}))).unwrap();
+        assert_eq!(doc.styles["title"].normal.text_size, Some(24.));
+        doc.apply_edit(&parse(
+            serde_json::json!({"kind": "SetClass", "name": "title", "styles": null}),
+        ))
+        .unwrap();
+        assert!(doc.styles.is_empty());
+        assert!(
+            doc.apply_edit(&parse(
+                serde_json::json!({"kind": "SetClass", "name": " ", "styles": null})
+            ))
+            .is_err()
+        );
     }
 
     #[test]

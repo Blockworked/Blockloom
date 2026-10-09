@@ -5842,7 +5842,11 @@ pub(crate) fn commit_interface_edit(
     push_undo(&mut s);
     s.project_mut().unwrap().world.interface = draft.document;
     auto_save(&s);
-    sync_runtime(&mut s);
+    // The design session already shows this document, and Play loads the whole
+    // project, so an open session needs no world reload.
+    if s.interface_design.is_none() || s.runtime.is_none() {
+        sync_runtime(&mut s);
+    }
     emit(app, &s);
     Ok(())
 }

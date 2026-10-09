@@ -472,8 +472,10 @@ Item {
         if (!widget) return;
         propertyEdit("element." + field, value);
     }
+    readonly property var typedFields: ["layout","style","class","bindings","items","tooltip","scroll_target","tab_index","transition"]
     function extra(field, value) {
         if (!widget) return;
+        if (typedFields.indexOf(field) >= 0) { propertyEdit(field, value); return; }
         const next = copy(document); next.widgets[selected][field] = value; save(next);
     }
     function paint(field, value) {
@@ -684,8 +686,8 @@ Item {
                     onActivated: root.screenId = currentIndex > 0 ? root.screens[currentIndex - 1] : ""
                 }
                 ComboBox { model: ["960 × 720","1280 × 720","1920 × 1080","720 × 1280"]; onActivated: { const sizes=[[960,720],[1280,720],[1920,1080],[720,1280]]; root.previewWidth=sizes[currentIndex][0]; root.previewHeight=sizes[currentIndex][1]; } }
-                ComboBox { model: ["Dark","Light","HighContrast"]; currentIndex: model.indexOf(root.document.theme || "Dark"); onActivated: { const d=root.copy(root.document); d.theme=currentText; root.save(d); } }
-                ComboBox { model: ["ConstantPixel","ScaleWithSize"]; currentIndex: model.indexOf(root.document.scale || "ConstantPixel"); onActivated: { const d=root.copy(root.document); d.scale=currentText; root.save(d); } }
+                ComboBox { model: ["Dark","Light","HighContrast"]; currentIndex: model.indexOf(root.document.theme || "Dark"); onActivated: root.structuralEdit({kind: "SetDocument", theme: currentText}, root.selectedId, root.extraIds.slice()) }
+                ComboBox { model: ["ConstantPixel","ScaleWithSize"]; currentIndex: model.indexOf(root.document.scale || "ConstantPixel"); onActivated: root.structuralEdit({kind: "SetDocument", scale: currentText}, root.selectedId, root.extraIds.slice()) }
                 Item { Layout.fillWidth: true }
             }
             RowLayout {

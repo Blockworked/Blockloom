@@ -417,6 +417,18 @@ TestCase {
         compare(edit.kind, "Move");
         compare(edit.id, "b"); compare(edit.offset[0], 150);
     }
+    function test_content_style_and_document_options_use_typed_transactions() {
+        panel.selectedId = "front";
+        panel.extra("tooltip", "Hi");
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit, {kind:"SetProperty", id:"front", property:{path:"tooltip", value:"Hi"}});
+        panel.extra("bindings", []);
+        panel.structuralEdit({kind:"SetDocument", theme:"Light"}, panel.selectedId, []);
+        edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.kind, "SetDocument");
+        compare(panel.selectedId, "front");
+        verify(!calls.some(c=>c.command === "set_interface"));
+    }
     function test_locked_widgets_are_not_picked_or_edited_but_nothing_is_saved() {
         panel.selectedId = "back";
         verify(panel.editable(panel.widget));
