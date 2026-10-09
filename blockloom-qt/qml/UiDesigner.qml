@@ -485,6 +485,24 @@ Item {
         style[styleState.currentText][field] = value;
         extra("style", style);
     }
+    // The class's value for this state when the widget sets none of its own.
+    function inheritedPaint(field) {
+        if (!widget || !widget.class || !document.styles) return null;
+        const sheet = document.styles[widget.class];
+        const paint = sheet ? sheet[styleState.currentText] : null;
+        return paint && paint[field] !== undefined && paint[field] !== null ? paint[field] : null;
+    }
+    function saveClass(name) {
+        if (!widget) return;
+        const edits = [{kind: "SetClass", name: name, styles: copy(widget.style || {})},
+            {kind: "SetProperty", id: widget.element.id, property: {path: "class", value: name}}];
+        structuralEdit({kind: "Batch", edits: edits}, selectedId, extraIds.slice());
+    }
+    function deleteClass(name) {
+        const edits = [{kind: "SetClass", name: name, styles: null}].concat(
+            document.widgets.filter(w => w.class === name).map(w => ({kind: "SetProperty", id: w.element.id, property: {path: "class", value: ""}})));
+        structuralEdit({kind: "Batch", edits: edits}, selectedId, extraIds.slice());
+    }
     function structuralEdit(edit, select, more) {
         if (!designing || gesture) return false;
         const g = {kind: edit.kind, id: "", original: copy(document), token: null, bound: null, committing: false,
@@ -853,14 +871,48 @@ Item {
                 TextArea { Layout.fillWidth: true; Layout.preferredHeight: 70; text: root.widget ? (root.widget.items || []).join("\n") : ""; onActiveFocusChanged: if(!activeFocus && root.widget) root.extra("items",text ? text.split("\n") : []) }
                 Label { text: "Style"; font.bold: true }
                 ComboBox { id: styleState; Layout.fillWidth: true; model: ["normal","hover","pressed","disabled","focused"] }
+                RowLayout {
+                    Label { text: "Class"; Layout.preferredWidth: 100 }
+                    ComboBox {
+                        objectName: "interfaceClass"
+                        Layout.fillWidth: true
+                        model: [""].concat(Object.keys(root.document.styles || {}))
+                        currentIndex: root.widget ? Math.max(0, model.indexOf(root.widget.class || "")) : 0
+                        enabled: !!root.widget && !root.gesture
+                        onActivated: root.extra("class", currentText)
+                    }
+                }
+                RowLayout {
+                    TextField { id: className; objectName: "interfaceClassName"; Layout.fillWidth: true; placeholderText: "New class name" }
+                    Button { objectName: "interfaceSaveClass"; text: "Save style as class"; enabled: !!root.widget && !!className.text.trim() && !root.gesture; onClicked: root.saveClass(className.text.trim()) }
+                }
+                Button { objectName: "interfaceDeleteClass"; text: "Delete class"; enabled: !!root.widget && !!root.widget.class && !root.gesture; onClicked: root.deleteClass(root.widget.class) }
                 Repeater {
                     model: ["background","text_color","border_color","shadow"]
-                    delegate: TextField {
+                    delegate: RowLayout {
                         required property string modelData
-                        Layout.fillWidth: true
-                        placeholderText: modelData.replace(/_/g," ") + " (#RRGGBB)"
-                        text: root.widget ? ((root.widget.style || {})[styleState.currentText] || {})[modelData] || "" : ""
-                        onEditingFinished: root.paint(modelData,text || null)
+                        readonly property string own: root.widget ? ((root.widget.style || {})[styleState.currentText] || {})[modelData] || "" : ""
+                        readonly property string inherited: root.inheritedPaint(modelData) || ""
+                        ColorField {
+                            value: /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(own || inherited) ? (own || inherited) : "#FFFFFF"
+                            opacity: own ? 1 : 0.5
+                            onPicked: c => root.paint(modelData, c)
+                        }
+                        TextField {
+                            Layout.fillWidth: true
+                            placeholderText: modelData.replace(/_/g," ") + (inherited ? " (class: " + inherited + ")" : " (#RRGGBB)")
+                            text: own
+                            onEditingFinished: root.paint(modelData,text || null)
+                        }
+                    }
+                }
+                Label { text: "Fonts (first available wins)" }
+                RowLayout {
+                    AssetField {
+                        Layout.fillWidth: true; app: root.app; accept: ["font"]
+                        value: root.widget ? (((root.widget.style || {})[styleState.currentText] || {}).fonts || [])[0] || "" : ""
+                        placeholderText: "Drag a font here"
+                        onCommitted: p => root.paint("fonts", p ? [p] : [])
                     }
                 }
                 Repeater {

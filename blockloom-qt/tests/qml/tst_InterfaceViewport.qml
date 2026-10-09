@@ -429,6 +429,21 @@ TestCase {
         compare(panel.selectedId, "front");
         verify(!calls.some(c=>c.command === "set_interface"));
     }
+    function test_style_classes_are_saved_and_deleted_as_one_batch() {
+        const d = {styles: {}, widgets: [{element: {id: "a"}, style: {normal: {background: "#102030"}}}, {element: {id: "b"}, class: "title"}]};
+        panel.document = d; backend.appState.project.world.interface = d;
+        panel.selectedId = "a";
+        panel.saveClass("title");
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.kind, "Batch");
+        compare(edit.edits[0], {kind:"SetClass", name:"title", styles:{normal:{background:"#102030"}}});
+        compare(edit.edits[1].property, {path:"class", value:"title"});
+        panel.deleteClass("title");
+        edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.edits.map(e=>e.kind), ["SetClass", "SetProperty"]);
+        compare(edit.edits[1].id, "b");
+        verify(!calls.some(c=>c.command === "set_interface"));
+    }
     function test_locked_widgets_are_not_picked_or_edited_but_nothing_is_saved() {
         panel.selectedId = "back";
         verify(panel.editable(panel.widget));
