@@ -440,6 +440,19 @@ Item {
     readonly property double savedRevision: app.appState.sync ? app.appState.sync.revision : 0
     onSavedRevisionChanged: { if (gesture && !gesture.committing) cancelEdit(); frameLayout = null; if (designing) previewDelay.restart(); }
     readonly property var widget: selected >= 0 && selected < document.widgets.length ? document.widgets[selected] : null
+    // Kinds each property applies to, from the backend's metadata; empty until loaded.
+    property var propertyKinds: ({})
+    function applies(path) {
+        const ks = propertyKinds[path];
+        return !ks || ks.length === 0 || !widget || ks.indexOf(widget.element.kind) >= 0;
+    }
+    function loadPropertyKinds() {
+        app.invoke("interface_properties", {}, function(list) {
+            const m = {};
+            for (const p of (list || [])) m[p.path] = p.kinds || [];
+            root.propertyKinds = m;
+        });
+    }
     readonly property var kinds: ["Panel","Label","Button","Image","Input","Slider","Toggle","List","VerticalBox","HorizontalBox","Grid","Canvas","WrapBox","SizeBox","Spacer","Progress","RadialProgress","ListView","Tabs","Select","Scrollbar","RichText","Tooltip"]
     property int previewWidth: 960
     property int previewHeight: 720
@@ -462,7 +475,7 @@ Item {
             if (g.token && !g.committing) app.invoke("cancel_interface_edit", {token: g.token});
         }
     }
-    Component.onCompleted: { refresh(); if (designing) updateSession(); }
+    Component.onCompleted: { loadPropertyKinds(); refresh(); if (designing) updateSession(); }
     Connections {
         target: root.app
         function onAppStateChanged() { root.refresh(); }
@@ -881,13 +894,13 @@ Item {
                     layoutValue: root.widget ? root.widget.layout || null : null
                     onEdited: value => root.propertyEdit("layout", value)
                 }
-                CheckBox { text: "Modal"; checked: root.widget ? root.widget.element.modal === true : false; onToggled: root.change("modal",checked) }
+                CheckBox { visible: root.applies("element.modal"); text: "Modal"; checked: root.widget ? root.widget.element.modal === true : false; onToggled: root.change("modal",checked) }
                 TextField { Layout.fillWidth: true; placeholderText: "Tooltip"; text: root.widget ? root.widget.tooltip || "" : ""; onEditingFinished: root.extra("tooltip",text) }
                 TextField { Layout.fillWidth: true; placeholderText: "World actor id"; text: root.widget ? root.widget.world_actor || "" : ""; onEditingFinished: root.extra("world_actor",text) }
-                TextField { Layout.fillWidth: true; placeholderText: "Scrollbar target widget id"; text: root.widget ? root.widget.scroll_target || "" : ""; onEditingFinished: root.extra("scroll_target",text) }
+                TextField { visible: root.applies("scroll_target"); Layout.fillWidth: true; placeholderText: "Scrollbar target widget id"; text: root.widget ? root.widget.scroll_target || "" : ""; onEditingFinished: root.extra("scroll_target",text) }
                 TextField { Layout.fillWidth: true; placeholderText: "Tab page number (1-based)"; validator: IntValidator { bottom: 1 } text: root.widget ? root.widget.tab_index ?? "" : ""; onEditingFinished: root.extra("tab_index",text ? Number(text) : null) }
-                Label { text: "Items (one per line)" }
-                TextArea { Layout.fillWidth: true; Layout.preferredHeight: 70; text: root.widget ? (root.widget.items || []).join("\n") : ""; onActiveFocusChanged: if(!activeFocus && root.widget) root.extra("items",text ? text.split("\n") : []) }
+                Label { visible: root.applies("items"); text: "Items (one per line)" }
+                TextArea { visible: root.applies("items"); Layout.fillWidth: true; Layout.preferredHeight: 70; text: root.widget ? (root.widget.items || []).join("\n") : ""; onActiveFocusChanged: if(!activeFocus && root.widget) root.extra("items",text ? text.split("\n") : []) }
                 Label { text: "Style"; font.bold: true }
                 ComboBox { id: styleState; Layout.fillWidth: true; model: ["normal","hover","pressed","disabled","focused"] }
                 RowLayout {

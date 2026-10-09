@@ -24,7 +24,9 @@ TestCase {
         property string previewLayout: ""
         function invoke(command, args, done, failed) {
             test.calls.push({command: command, args: args});
-            if (command === "begin_interface_edit") {
+            if (command === "interface_properties") {
+                if (done) done([{path: "element.modal", kinds: ["Panel"]}, {path: "items", kinds: ["List", "Select"]}]);
+            } else if (command === "begin_interface_edit") {
                 test.draft = JSON.parse(JSON.stringify(appState.project.world.interface));
                 if (test.deferBegin) test.pendingBegin = done;
                 else if (done) done("draft-token");
@@ -701,6 +703,21 @@ TestCase {
         compare(panel.gesture,null);
         verify(calls.some(c => c.command === "cancel_interface_edit" && c.args.token === "late-token"));
         compare(calls.filter(c => c.command === "commit_interface_edit").length,1);
+    }
+
+    function test_inspector_rows_follow_property_metadata() {
+        panel.loadPropertyKinds();
+        const next = panel.copy(panel.document);
+        next.widgets[0].element.kind = "Label";
+        panel.document = next;
+        panel.selectedId = "back";
+        verify(!panel.applies("element.modal"));
+        verify(!panel.applies("items"));
+        verify(panel.applies("tooltip"));
+        const again = panel.copy(panel.document);
+        again.widgets[0].element.kind = "Panel";
+        panel.document = again;
+        verify(panel.applies("element.modal"));
     }
 
     function test_moves_use_canvas_scale_and_parent_transform() {
