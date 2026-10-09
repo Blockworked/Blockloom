@@ -10,6 +10,8 @@ use crate::engine::{ActorId, Dimension, Engine, PendingEffects};
 use crate::ui::{UiElementText, UiManager, UiRoot, UiSliderFill, UiToggleLamp};
 use crate::world::{self, WorldCamera};
 use bevy::prelude::*;
+use bevy::sprite::{BorderRect, TextureSlicer};
+use bevy::ui::widget::NodeImageMode;
 
 use blockloom_core::ui::{UiKind, UiPaint, UiTheme};
 use blockloom_core::vm::Effect;
@@ -505,12 +507,13 @@ pub fn draw_ui(
             commands.entity(element.entity).insert(transform);
         }
         if element.kind == UiKind::Image && !element.spec.content.trim().is_empty() {
-            commands
-                .entity(element.entity)
-                .insert(ImageNode::new(assets.load(world::asset_path(
+            commands.entity(element.entity).insert(image_node(
+                assets.load(world::asset_path(
                     dir.as_deref(),
                     element.spec.content.trim(),
-                ))));
+                )),
+                &paint,
+            ));
         }
         let wanted = crate::ui::text_of(element);
         for (text_entity, owner, mut text, mut font, mut color) in &mut labels {
@@ -688,7 +691,10 @@ fn spawn_element(
         UiKind::Image => {
             let path = node.spec.content.trim();
             if !path.is_empty() {
-                entity.insert(ImageNode::new(assets.load(world::asset_path(dir, path))));
+                entity.insert(image_node(
+                    assets.load(world::asset_path(dir, path)),
+                    &node.styles.normal,
+                ));
             }
         }
         UiKind::Slider | UiKind::Progress | UiKind::Scrollbar => {
@@ -797,4 +803,29 @@ fn spawn_element(
         }
     }
     entity.id()
+}
+
+/// An image widget's node with the fit its style asks for.
+fn image_node(image: Handle<Image>, paint: &UiPaint) -> ImageNode {
+    use blockloom_core::ui::UiImageFit;
+    let mut node = ImageNode::new(image);
+    node.image_mode = match paint.image_fit {
+        None => NodeImageMode::Auto,
+        Some(UiImageFit::Stretch) => NodeImageMode::Stretch,
+        Some(UiImageFit::Tiled) => NodeImageMode::Tiled {
+            tile_x: true,
+            tile_y: true,
+            stretch_value: 1.0,
+        },
+        Some(UiImageFit::Sliced {
+            border: [l, r, t, b],
+        }) => NodeImageMode::Sliced(TextureSlicer {
+            border: BorderRect {
+                min_inset: Vec2::new(l, t),
+                max_inset: Vec2::new(r, b),
+            },
+            ..default()
+        }),
+    };
+    node
 }

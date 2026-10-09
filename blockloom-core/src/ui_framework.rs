@@ -99,6 +99,28 @@ pub struct UiPaint {
     pub radius: Option<f32>,
     pub shadow: Option<String>,
     pub fonts: Vec<String>,
+    /// How an Image widget fills its box; unset keeps the image's own size.
+    pub image_fit: Option<UiImageFit>,
+}
+
+/// How an image fills its widget. `Sliced` borders are `[left, right, top, bottom]`
+/// in image pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum UiImageFit {
+    Stretch,
+    Sliced { border: [f32; 4] },
+    Tiled,
+}
+
+impl UiImageFit {
+    pub fn validate(&self) -> Result<(), String> {
+        if let UiImageFit::Sliced { border } = self
+            && border.iter().any(|v| !v.is_finite() || *v < 0.)
+        {
+            return Err("Nine-slice borders must be zero or more".into());
+        }
+        Ok(())
+    }
 }
 impl UiPaint {
     pub fn over(&self, base: &Self) -> Self {
@@ -115,6 +137,7 @@ impl UiPaint {
             } else {
                 self.fonts.clone()
             },
+            image_fit: self.image_fit.or(base.image_fit),
         }
     }
 }
@@ -221,6 +244,9 @@ pub struct UiWidget {
     pub scroll_target: String,
     pub tab_index: Option<usize>,
     pub transition: f32,
+    /// On the root of a prefab instance: the prefab it came from.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub instance_of: String,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum UiScale {
@@ -578,6 +604,30 @@ pub enum UiEdit {
         size: [f32; 2],
         offset: [f32; 2],
     },
+    /// Stores the subtree at `root` as the prefab `name` (replacing one of that
+    /// name). With `update_instances`, every instance is rebuilt from the new
+    /// version; widgets an instance changed from the old version are kept.
+    SavePrefab {
+        name: String,
+        root: String,
+        #[serde(default)]
+        update_instances: bool,
+    },
+    /// Forgets a prefab; its instances stay as plain widgets.
+    DeletePrefab {
+        name: String,
+    },
+    /// Adds a prefab's widgets under `parent`, every id prefixed by `prefix`.
+    InstantiatePrefab {
+        name: String,
+        prefix: String,
+        #[serde(default)]
+        parent: String,
+    },
+    /// Turns an instance back into plain widgets.
+    DetachInstance {
+        id: String,
+    },
 }
 
 impl UiDocument {
@@ -628,6 +678,39 @@ impl UiDocument {
             UiEdit::Duplicate { id, new_id, offset } => {
                 return self.duplicate_subtree(id, new_id, *offset);
             }
+            UiEdit::SavePrefab {
+                name,
+                root,
+                update_instances,
+            } => return self.save_prefab(name, root, *update_instances),
+            UiEdit::DeletePrefab { name } => {
+                if self.prefabs.remove(name).is_none() {
+                    return Err(format!("No UI prefab named {name}"));
+                }
+                for w in &mut self.widgets {
+                    if &w.instance_of == name {
+                        w.instance_of.clear();
+                    }
+                }
+                return Ok(());
+            }
+            UiEdit::InstantiatePrefab {
+                name,
+                prefix,
+                parent,
+            } => {
+                for widget in self.instantiate(name, prefix, parent)? {
+                    self.create_widget(&widget)?;
+                }
+                return Ok(());
+            }
+            UiEdit::DetachInstance { id } => {
+                let i = self
+                    .find(id)
+                    .ok_or_else(|| format!("Unknown widget: {id}"))?;
+                self.widgets[i].instance_of.clear();
+                return Ok(());
+            }
             _ => {}
         }
         let id = match edit {
@@ -641,7 +724,11 @@ impl UiDocument {
             | UiEdit::SetClass { .. }
             | UiEdit::Create { .. }
             | UiEdit::Delete { .. }
-            | UiEdit::Duplicate { .. } => unreachable!(),
+            | UiEdit::Duplicate { .. }
+            | UiEdit::SavePrefab { .. }
+            | UiEdit::DeletePrefab { .. }
+            | UiEdit::InstantiatePrefab { .. }
+            | UiEdit::DetachInstance { .. } => unreachable!(),
         };
         let index = self
             .widgets
@@ -709,6 +796,17 @@ impl UiDocument {
                     });
                     if bad {
                         return Err("Style sizes must be finite and not negative".into());
+                    }
+                    for p in [
+                        &value.normal,
+                        &value.hover,
+                        &value.pressed,
+                        &value.disabled,
+                        &value.focused,
+                    ] {
+                        if let Some(fit) = &p.image_fit {
+                            fit.validate()?;
+                        }
                     }
                     w.style = (**value).clone();
                 }
@@ -959,6 +1057,85 @@ impl UiDocument {
         Ok(())
     }
 
+    fn save_prefab(&mut self, name: &str, root: &str, update: bool) -> Result<(), String> {
+        if name.trim().is_empty() {
+            return Err("A prefab needs a name".into());
+        }
+        let root_index = self
+            .find(root)
+            .ok_or_else(|| format!("Unknown widget: {root}"))?;
+        let members = self.subtree(root);
+        if members
+            .iter()
+            .any(|i| !self.widgets[*i].world_actor.is_empty())
+        {
+            return Err("Projected widgets cannot be saved as a prefab".into());
+        }
+        let mut copies: Vec<UiWidget> = members.iter().map(|i| self.widgets[*i].clone()).collect();
+        copies[0].element.parent.clear();
+        for w in &mut copies {
+            w.instance_of.clear();
+        }
+        // The source stays as it is; only instances elsewhere are rebuilt.
+        let old = self.prefabs.insert(name.to_string(), copies);
+        let _ = root_index;
+        if !update {
+            return Ok(());
+        }
+        let Some(old) = old else { return Ok(()) };
+        let old_root = old
+            .iter()
+            .find(|w| w.element.parent.is_empty())
+            .map(|w| w.element.id.clone())
+            .ok_or("The old prefab has no root")?;
+        let roots: Vec<String> = self
+            .widgets
+            .iter()
+            .filter(|w| w.instance_of == name)
+            .map(|w| w.element.id.clone())
+            .collect();
+        let mut old_doc = self.clone();
+        old_doc.prefabs.insert(name.to_string(), old);
+        for instance in roots {
+            let Some(at) = self.find(&instance) else {
+                continue;
+            };
+            let prefix = instance
+                .strip_suffix(&old_root)
+                .ok_or_else(|| format!("Instance {instance} does not follow its prefab's naming"))?
+                .to_string();
+            let parent = self.widgets[at].element.parent.clone();
+            let members = self.subtree(&instance);
+            let expected = old_doc.instantiate(name, &prefix, &parent)?;
+            let fresh = self.instantiate(name, &prefix, &parent)?;
+            let current: Vec<UiWidget> = members.iter().map(|i| self.widgets[*i].clone()).collect();
+            let mut rebuilt: Vec<UiWidget> = Vec::new();
+            for w in fresh {
+                let kept = current.iter().find(|c| c.element.id == w.element.id);
+                let was = expected.iter().find(|e| e.element.id == w.element.id);
+                match (kept, was) {
+                    (Some(c), Some(e)) if c != e => rebuilt.push(c.clone()),
+                    _ => rebuilt.push(w),
+                }
+            }
+            for c in &current {
+                let known = expected.iter().find(|e| e.element.id == c.element.id);
+                let placed = rebuilt.iter().any(|r| r.element.id == c.element.id);
+                if !placed && known.is_none_or(|e| e != c) {
+                    rebuilt.push(c.clone());
+                }
+            }
+            let first = members[0];
+            let mut slot = 0;
+            self.widgets.retain(|_| {
+                slot += 1;
+                !members.contains(&(slot - 1))
+            });
+            self.widgets.splice(first..first, rebuilt);
+        }
+        Ok(())
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.version > UI_SCHEMA_VERSION {
             return Err(format!(
@@ -988,6 +1165,9 @@ impl UiDocument {
                 || !ids.insert(id)
             {
                 return Err(format!("Duplicate or empty widget id: {id}"));
+            }
+            if !widget.instance_of.is_empty() && !self.prefabs.contains_key(&widget.instance_of) {
+                return Err(format!("{id} is an instance of a missing prefab"));
             }
             if widget.bindings.iter().any(|b| {
                 !matches!(
@@ -1065,6 +1245,7 @@ impl UiDocument {
             }
             w.element.id = format!("{prefix}{}", w.element.id);
             w.element.parent = if w.element.parent.is_empty() {
+                w.instance_of = name.into();
                 parent.into()
             } else {
                 format!("{prefix}{}", w.element.parent)
@@ -1541,6 +1722,97 @@ mod tests {
         d.widgets[0].element.parent.clear();
         assert!(d.validate().is_ok());
     }
+    fn row(id: &str, parent: &str, content: &str) -> UiWidget {
+        let mut w = UiWidget::default();
+        w.element.id = id.into();
+        w.element.parent = parent.into();
+        w.element.content = content.into();
+        w
+    }
+
+    #[test]
+    fn image_fit_round_trips_inherits_and_rejects_bad_borders() {
+        let mut doc = UiDocument::default();
+        doc.widgets = vec![row("pic", "", "a.png")];
+        let mut styles = UiStyles::default();
+        styles.normal.image_fit = Some(UiImageFit::Sliced {
+            border: [4., 4., 6., 6.],
+        });
+        doc.apply_edit(&UiEdit::SetProperty {
+            id: "pic".into(),
+            property: UiPropertyEdit::Style(Box::new(styles.clone())),
+        })
+        .unwrap();
+        let json = serde_json::to_string(&doc).unwrap();
+        let back: UiDocument = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.widgets[0].style, styles);
+        let over = UiPaint::default().over(&styles.normal);
+        assert_eq!(over.image_fit, styles.normal.image_fit);
+        styles.normal.image_fit = Some(UiImageFit::Sliced {
+            border: [-1., 0., 0., 0.],
+        });
+        assert!(
+            doc.apply_edit(&UiEdit::SetProperty {
+                id: "pic".into(),
+                property: UiPropertyEdit::Style(Box::new(styles)),
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn prefab_instances_follow_the_source_and_keep_overrides() {
+        let mut doc = UiDocument::default();
+        doc.widgets = vec![
+            row("row", "", "Row"),
+            row("label", "row", "Volume"),
+            row("hint", "row", "Hint"),
+        ];
+        doc.apply_edit(&UiEdit::SavePrefab {
+            name: "setting".into(),
+            root: "row".into(),
+            update_instances: false,
+        })
+        .unwrap();
+        for prefix in ["a.", "b."] {
+            doc.apply_edit(&UiEdit::InstantiatePrefab {
+                name: "setting".into(),
+                prefix: prefix.into(),
+                parent: String::new(),
+            })
+            .unwrap();
+        }
+        let a = doc.find("a.row").unwrap();
+        assert_eq!(doc.widgets[a].instance_of, "setting");
+        // Override one widget in instance a.
+        let label = doc.find("a.label").unwrap();
+        doc.widgets[label].element.content = "Music".into();
+        // Change the source and push the update.
+        let src = doc.find("label").unwrap();
+        doc.widgets[src].element.content = "Sound".into();
+        let hint = doc.find("hint").unwrap();
+        doc.widgets.remove(hint);
+        doc.apply_edit(&UiEdit::SavePrefab {
+            name: "setting".into(),
+            root: "row".into(),
+            update_instances: true,
+        })
+        .unwrap();
+        let content =
+            |d: &UiDocument, id: &str| d.widgets[d.find(id).unwrap()].element.content.clone();
+        assert_eq!(content(&doc, "a.label"), "Music");
+        assert_eq!(content(&doc, "b.label"), "Sound");
+        assert!(doc.find("a.hint").is_none() && doc.find("b.hint").is_none());
+        // Deleting the prefab detaches instances; a dangling tag is refused.
+        doc.apply_edit(&UiEdit::DeletePrefab {
+            name: "setting".into(),
+        })
+        .unwrap();
+        assert!(doc.widgets.iter().all(|w| w.instance_of.is_empty()));
+        doc.widgets[0].instance_of = "gone".into();
+        assert!(doc.validate().is_err());
+    }
+
     #[test]
     fn prefabs_repoint_internal_scroll_targets_and_roundtrip() {
         let mut document = UiDocument::default();

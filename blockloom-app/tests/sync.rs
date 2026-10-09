@@ -700,6 +700,10 @@ fn interface_property_and_parent_transactions_round_trip_and_undo() {
         json!({"kind": "Reorder", "id": "canvas", "index": 1}),
         json!({"kind": "Create", "widget": {"element": {"id": "fresh", "parent": "canvas"}}}),
         json!({"kind": "Duplicate", "id": "canvas", "new_id": "canvas2"}),
+        json!({"kind": "SavePrefab", "name": "pad", "root": "canvas2", "update_instances": true}),
+        json!({"kind": "InstantiatePrefab", "name": "pad", "prefix": "p.", "parent": ""}),
+        json!({"kind": "DetachInstance", "id": "p.canvas2"}),
+        json!({"kind": "DeletePrefab", "name": "pad"}),
         json!({"kind": "Delete", "id": "canvas"}),
         json!({"kind": "Batch", "edits": [
             {"kind": "SetProperty", "id": "child", "property": {"path": "element.content", "value": "b"}},

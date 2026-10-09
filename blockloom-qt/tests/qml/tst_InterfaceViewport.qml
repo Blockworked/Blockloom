@@ -720,6 +720,25 @@ TestCase {
         verify(panel.applies("element.modal"));
     }
 
+    function test_components_send_prefab_edits() {
+        panel.selectedId = "back";
+        const before = test.calls.length;
+        panel.saveComponent("pad", true);
+        const sent = test.calls.slice(before).filter(c => c.command === "update_interface_edit").map(c => c.args.edit.kind);
+        verify(sent.indexOf("SavePrefab") >= 0);
+    }
+
+    function test_image_fit_encodes_serde_shapes() {
+        panel.selectedId = "back";
+        const before = test.calls.length;
+        panel.setImageFit("sliced", [1,2,3,4]);
+        panel.setImageFit("tiled");
+        const kinds = test.calls.slice(before).filter(c => c.command === "update_interface_edit");
+        verify(kinds.length >= 1);
+        const fit = kinds[0].args.edit.property.value.normal.image_fit;
+        compare(JSON.stringify(fit), JSON.stringify({Sliced: {border: [1,2,3,4]}}));
+    }
+
     function test_moves_use_canvas_scale_and_parent_transform() {
         const next = panel.copy(panel.document);
         next.scale = "ScaleWithSize"; next.reference_size = [480,360];

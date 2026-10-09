@@ -297,3 +297,10 @@ Verification for keyboard nudging and sibling order: the final full workspace bu
 ### Increment sixteen: metadata-driven inspector rows
 
 `UiDesigner.qml` loads `interface_properties` once and hides the Modal, scroll target and Items rows for kinds the metadata does not list (`applies(path)`). The rest of the inspector is still hand-built; drawing every row from the metadata remains open.
+
+### Increment seventeen: components and image fit
+
+- **Components (phase 5, first slice).** `UiEdit::{SavePrefab, InstantiatePrefab, DeletePrefab, DetachInstance}` build on the existing `prefabs` map. An instance root carries `instance_of`; `SavePrefab { update_instances: true }` rebuilds every instance from the new source and keeps any widget the instance changed from the old version (override at widget granularity). A dangling `instance_of` fails validation; deleting a component detaches its instances. The inspector has a Component section (save, insert with a unique `iN.` prefix, detach, delete).
+- **Image fit (phase 4).** `UiPaint.image_fit` is `Stretch`, `Sliced { border: [l, r, t, b] }` or `Tiled`; unset keeps the image's own size. The runtime maps it to Bevy's `NodeImageMode`; the inspector has an Image fit dropdown with four border fields.
+
+Still open: per-field (not per-widget) instance overrides, exposed properties and named slots, visual binding/event editors, text-input caret/selection/IME, rulers and guides, animation timeline, responsive variants, platform checks.

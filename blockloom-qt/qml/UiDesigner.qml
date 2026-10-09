@@ -503,6 +503,20 @@ Item {
         style[styleState.currentText][field] = value;
         extra("style", style);
     }
+    // Image fit as the inspector sees it: auto, stretch, sliced or tiled.
+    function imageFit() {
+        const fit = widget ? ((widget.style || {})[styleState.currentText] || {}).image_fit : null;
+        if (!fit) return {mode: "auto", border: [0,0,0,0]};
+        if (fit === "Stretch") return {mode: "stretch", border: [0,0,0,0]};
+        if (fit === "Tiled") return {mode: "tiled", border: [0,0,0,0]};
+        return {mode: "sliced", border: (fit.Sliced && fit.Sliced.border) || [0,0,0,0]};
+    }
+    function setImageFit(mode, border) {
+        if (mode === "auto") paint("image_fit", null);
+        else if (mode === "stretch") paint("image_fit", "Stretch");
+        else if (mode === "tiled") paint("image_fit", "Tiled");
+        else paint("image_fit", {Sliced: {border: border || [0,0,0,0]}});
+    }
     // The class's value for this state when the widget sets none of its own.
     function inheritedPaint(field) {
         if (!widget || !widget.class || !document.styles) return null;
@@ -567,6 +581,26 @@ Item {
         });
         if (!edits.length) return;
         structuralEdit(edits.length === 1 ? edits[0] : {kind: "Batch", edits: edits}, edits[0].new_id, edits.slice(1).map(e => e.new_id));
+    }
+    // Reusable components: prefabs saved from a subtree, instanced under a unique prefix.
+    function saveComponent(name, update) {
+        if (!widget || widget.world_actor || !name) return;
+        structuralEdit({kind: "SavePrefab", name: name, root: widget.element.id, update_instances: update}, widget.element.id, []);
+    }
+    function insertComponent(name) {
+        const prefabs = document.prefabs || {};
+        const root = (prefabs[name] || []).find(w => !w.element.parent);
+        if (!root) return;
+        const taken = {};
+        document.widgets.forEach(w => { taken[w.element.id] = true; });
+        let n = 1;
+        while (taken["i" + n + "." + root.element.id]) n++;
+        const prefix = "i" + n + ".";
+        const parent = widget && !widget.world_actor ? widget.element.id : "";
+        structuralEdit({kind: "InstantiatePrefab", name: name, prefix: prefix, parent: parent}, prefix + root.element.id, []);
+    }
+    function detachInstance() {
+        if (widget && widget.instance_of) structuralEdit({kind: "DetachInstance", id: widget.element.id}, widget.element.id, []);
     }
     // Align or distribute the selection inside its shared parent, as one Batch of Moves.
     function arrange(op) {
@@ -938,6 +972,29 @@ Item {
                         }
                     }
                 }
+                Label { visible: imageFitMode.visible; text: "Image fit" }
+                ComboBox {
+                    id: imageFitMode; objectName: "interfaceImageFit"; Layout.fillWidth: true
+                    visible: !!root.widget && root.widget.element.kind === "Image"
+                    model: ["auto","stretch","sliced","tiled"]
+                    currentIndex: model.indexOf(root.imageFit().mode)
+                    onActivated: root.setImageFit(currentText, root.imageFit().border)
+                }
+                RowLayout {
+                    visible: imageFitMode.visible && imageFitMode.currentText === "sliced"
+                    Repeater {
+                        model: ["left","right","top","bottom"]
+                        delegate: TextField {
+                            required property string modelData
+                            required property int index
+                            objectName: "interfaceSlice" + modelData
+                            Layout.fillWidth: true; Layout.preferredWidth: 40; placeholderText: modelData[0].toUpperCase()
+                            validator: DoubleValidator { bottom: 0 }
+                            text: root.imageFit().border[index]
+                            onEditingFinished: { const b = root.imageFit().border.slice(); b[index] = Number(text) || 0; root.setImageFit("sliced", b); }
+                        }
+                    }
+                }
                 Label { text: "Fonts (first available wins)" }
                 RowLayout {
                     AssetField {
@@ -964,6 +1021,18 @@ Item {
                     TextField { Layout.fillWidth: true; validator: DoubleValidator { bottom: 0 }
                         text: root.widget ? root.widget.transition || 0 : 0
                         onEditingFinished: root.extra("transition",Number(text)) }
+                }
+                Label { text: "Component"; font.bold: true }
+                Label { visible: !!(root.widget && root.widget.instance_of); text: root.widget ? "Instance of " + root.widget.instance_of : ""; color: Theme.textDim }
+                RowLayout {
+                    TextField { id: componentName; objectName: "interfaceComponentName"; Layout.fillWidth: true; placeholderText: "Component name" }
+                    Button { objectName: "interfaceSaveComponent"; text: "Save"; enabled: !!root.widget && !root.widget.world_actor && !!componentName.text.trim() && !root.gesture; onClicked: root.saveComponent(componentName.text.trim(), true) }
+                }
+                ComboBox { id: componentPick; objectName: "interfaceComponentPick"; Layout.fillWidth: true; model: Object.keys(root.document.prefabs || {}) }
+                RowLayout {
+                    Button { objectName: "interfaceInsertComponent"; text: "Insert"; enabled: componentPick.currentIndex >= 0 && !root.gesture; onClicked: root.insertComponent(componentPick.currentText) }
+                    Button { objectName: "interfaceDetachInstance"; text: "Detach"; enabled: !!(root.widget && root.widget.instance_of) && !root.gesture; onClicked: root.detachInstance() }
+                    Button { objectName: "interfaceDeleteComponent"; text: "Delete"; enabled: componentPick.currentIndex >= 0 && !root.gesture; onClicked: root.structuralEdit({kind: "DeletePrefab", name: componentPick.currentText}, root.selectedId, []) }
                 }
                 Label { text: "Variable binding"; font.bold: true }
                 ComboBox { id: bindingProperty; Layout.fillWidth: true; model: ["Text","Value","Visible","SelectedIndex"] }

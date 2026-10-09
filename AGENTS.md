@@ -3085,6 +3085,8 @@ summary in `shell.rs` and a case in `tst_InterfaceViewport.qml`'s mock backend.
 
 The designer loads `interface_properties` on start and `applies(path)` hides inspector rows that do not suit the selected widget kind (Modal, scroll target, Items).
 
+Components: `UiEdit::SavePrefab/InstantiatePrefab/DeletePrefab/DetachInstance` over `UiDocument.prefabs`; an instance root has `instance_of`, updating rebuilds instances but keeps widgets changed from the old source, and a missing prefab fails validation. Image widgets take `UiPaint.image_fit` (`Stretch`, `Sliced{border}`, `Tiled`), applied in `overlay.rs::image_node`.
+
 ### Android devices and the emulator
 
 The Devices tab (`DevicesPanel.qml`, `DevicePanel.qml`) lists what adb sees,
