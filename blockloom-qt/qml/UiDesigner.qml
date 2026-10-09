@@ -27,6 +27,11 @@ Item {
     // Editor-only state: never saved and never sent to the runtime.
     property var lockedIds: ({})
     // Further selected widgets beside selectedId (Shift-click, Ctrl-click in the tree, marquee).
+    property bool showSafeArea: false
+    property bool showReference: false
+    onShowSafeAreaChanged: overlay.requestPaint()
+    onShowReferenceChanged: overlay.requestPaint()
+    onSafeChanged: overlay.requestPaint()
     property var extraIds: []
     readonly property var selectionIds: {
         if (!selectedId) return [];
@@ -703,7 +708,7 @@ Item {
                     currentIndex: root.screenId ? root.screens.indexOf(root.screenId) + 1 : 0
                     onActivated: root.screenId = currentIndex > 0 ? root.screens[currentIndex - 1] : ""
                 }
-                ComboBox { model: ["960 × 720","1280 × 720","1920 × 1080","720 × 1280"]; onActivated: { const sizes=[[960,720],[1280,720],[1920,1080],[720,1280]]; root.previewWidth=sizes[currentIndex][0]; root.previewHeight=sizes[currentIndex][1]; } }
+                ComboBox { model: ["960 × 720","1280 × 720","1920 × 1080","720 × 1280","1170 × 2532","2560 × 1440"]; onActivated: { const sizes=[[960,720],[1280,720],[1920,1080],[720,1280],[1170,2532],[2560,1440]]; root.previewWidth=sizes[currentIndex][0]; root.previewHeight=sizes[currentIndex][1]; } }
                 ComboBox { model: ["Dark","Light","HighContrast"]; currentIndex: model.indexOf(root.document.theme || "Dark"); onActivated: root.structuralEdit({kind: "SetDocument", theme: currentText}, root.selectedId, root.extraIds.slice()) }
                 ComboBox { model: ["ConstantPixel","ScaleWithSize"]; currentIndex: model.indexOf(root.document.scale || "ConstantPixel"); onActivated: root.structuralEdit({kind: "SetDocument", scale: currentText}, root.selectedId, root.extraIds.slice()) }
                 Item { Layout.fillWidth: true }
@@ -712,6 +717,8 @@ Item {
                 CheckBox { text: "Grid"; checked: root.snapGrid; onToggled: root.snapGrid = checked }
                 SpinBox { from: 1; to: 256; value: root.snapStep; editable: true; onValueModified: root.snapStep = value }
                 Label { text: "px" }
+                CheckBox { objectName: "interfaceSafeArea"; text: "Safe area"; checked: root.showSafeArea; onToggled: root.showSafeArea = checked }
+                CheckBox { objectName: "interfaceReference"; text: "Reference size"; checked: root.showReference; onToggled: root.showReference = checked }
                 CheckBox { text: "Align edges/centers"; checked: root.snapAlign; onToggled: root.snapAlign = checked }
                 Label { text: "Hold Shift to bypass snapping" }
             }
@@ -758,6 +765,18 @@ Item {
                                 ctx.lineWidth = 2/Math.max(0.05, root.zoom); ctx.stroke();
                             }
                             if (root.hoveredId !== root.selectedId) outline(root.hoveredId, "#b9dfff");
+                            const inset = {x: root.safe[0], y: root.safe[1], w: root.previewWidth-root.safe[0]-root.safe[2], h: root.previewHeight-root.safe[1]-root.safe[3]};
+                            if (root.showSafeArea) {
+                                ctx.save(); ctx.setLineDash([6/Math.max(0.05,root.zoom), 4/Math.max(0.05,root.zoom)]);
+                                ctx.strokeStyle = "#ffb454"; ctx.lineWidth = 1/Math.max(0.05,root.zoom);
+                                ctx.strokeRect(inset.x, inset.y, inset.w, inset.h); ctx.restore();
+                            }
+                            if (root.showReference) {
+                                const ref = root.document.reference_size || [960,720];
+                                ctx.save(); ctx.setLineDash([2/Math.max(0.05,root.zoom), 3/Math.max(0.05,root.zoom)]);
+                                ctx.strokeStyle = "#c792ea"; ctx.lineWidth = 1/Math.max(0.05,root.zoom);
+                                ctx.strokeRect(inset.x, inset.y, ref[0]*root.designScale, ref[1]*root.designScale); ctx.restore();
+                            }
                             root.selectionIds.slice(1).forEach(id => outline(id, "#8fd0a0"));
                             outline(root.selectedId, "#70baff");
                             const m = root.marquee;

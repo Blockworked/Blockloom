@@ -444,6 +444,13 @@ TestCase {
         compare(edit.edits[1].id, "b");
         verify(!calls.some(c=>c.command === "set_interface"));
     }
+    function test_safe_area_and_reference_overlays_are_editor_only_toggles() {
+        verify(!panel.showSafeArea && !panel.showReference);
+        findChild(panel, "interfaceSafeArea").toggle();
+        verify(panel.showSafeArea);
+        panel.showReference = true;
+        verify(!calls.some(c => c.command === "set_interface" || c.command === "begin_interface_edit"));
+    }
     function test_locked_widgets_are_not_picked_or_edited_but_nothing_is_saved() {
         panel.selectedId = "back";
         verify(panel.editable(panel.widget));

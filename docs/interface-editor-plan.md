@@ -262,6 +262,10 @@ Master since the seventh increment (Phase 6 2D work, script guests, bundled rust
 
 - The Style section has colour swatches (`ColorField`) beside the hex fields, a font picker (`AssetField` for fonts, written to `fonts`), a Class dropdown over the document's named styles, Save style as class and Delete class. A class that a state does not override shows as a dimmed swatch and a `(class: value)` hint, so inherited values are visible. Saving and deleting a class are one `Batch` (`SetClass` plus the `class` property on affected widgets), so they undo together.
 
+### Viewport overlays (fifteenth increment)
+
+- Safe area and Reference size toggles draw dashed frames over the viewport from the document's `safe_area` and `reference_size` (scaled like the runtime does), as editor-only overlays. Two phone/desktop presets (1170 x 2532, 2560 x 1440) join the preview sizes. Rulers, draggable guides and zoom/pan polish remain open.
+
 Remaining plan work, in order: draw the inspector from `interface-properties`, image pickers and nine-slice/fit modes, text-input caret/selection/IME, rulers/guides/safe-area overlay and zoom/pan polish (phase 2), reusable components with instances and overrides (phase 5), visual binding/event editors, animation timeline and responsive variants (phase 6), and the platform/DPI checks listed under phase 0. These are each a large increment of their own.
 
 The next increment is moving the inspector onto the metadata, then the world-reload-free commit path. Schema versioning and property metadata (phase 1). Schema versioning, complete property metadata and the broader phase 1 contracts remain open. Committed edits still use the existing world synchronization path; avoiding a world reload on commit remains open. The current preview still shows the idle scene behind the interface.
