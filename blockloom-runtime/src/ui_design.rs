@@ -59,6 +59,13 @@ impl DesignSession {
                 }
             }
         }
+        for id in &request.hidden {
+            manager.set(
+                id,
+                blockloom_core::ui::UiProp::Visible,
+                &blockloom_core::value::Evaluated::Bool(false),
+            );
+        }
         self.request = Some(request);
         self.last = None;
         Ok(())
@@ -172,6 +179,7 @@ mod tests {
     fn fixture(revision: u64) -> InterfaceDesign {
         InterfaceDesign {
             screen: None,
+            hidden: vec![],
             viewport: Some([960, 720]),
             revision,
             generation: 1,
@@ -258,6 +266,20 @@ mod tests {
         assert_eq!(manager.document, document);
         assert!(manager.shown(manager.get("image").unwrap()));
         assert!(manager.shown(manager.get("other").unwrap()));
+        let mut hide = session.request.clone().unwrap();
+        hide.revision = 3;
+        hide.hidden = vec!["missing".into()];
+        assert!(
+            session
+                .apply(Some(hide.clone()), &engine, &mut manager)
+                .is_err()
+        );
+        assert!(manager.shown(manager.get("image").unwrap()));
+        hide.hidden = vec!["image".into()];
+        session.apply(Some(hide), &engine, &mut manager).unwrap();
+        assert!(!manager.shown(manager.get("image").unwrap()));
+        assert!(manager.shown(manager.get("other").unwrap()));
+        assert_eq!(manager.document, document);
     }
 
     #[test]

@@ -5761,6 +5761,10 @@ pub(crate) fn preview_interface(
     Ok(())
 }
 
+pub(crate) fn interface_properties() -> Vec<blockloom_core::ui::UiPropertyInfo> {
+    blockloom_core::ui::property_metadata()
+}
+
 pub(crate) fn interface_layout(
     state: &SharedState,
 ) -> Result<Option<blockloom_protocol::InterfaceLayout>, String> {
@@ -5838,7 +5842,11 @@ pub(crate) fn commit_interface_edit(
     push_undo(&mut s);
     s.project_mut().unwrap().world.interface = draft.document;
     auto_save(&s);
-    sync_runtime(&mut s);
+    // The design session already shows this document, and Play loads the whole
+    // project, so an open session needs no world reload.
+    if s.interface_design.is_none() || s.runtime.is_none() {
+        sync_runtime(&mut s);
+    }
     emit(app, &s);
     Ok(())
 }
@@ -5861,8 +5869,9 @@ pub(crate) fn cancel_interface_edit(state: &SharedState, token: String) -> Resul
 pub(crate) fn set_interface(
     state: &SharedState,
     app: &AppHandle,
-    document: blockloom_core::ui::UiDocument,
+    mut document: blockloom_core::ui::UiDocument,
 ) -> Result<(), String> {
+    document.migrate();
     document.validate()?;
     let mut s = lock(state)?;
     if s.project().is_none() {

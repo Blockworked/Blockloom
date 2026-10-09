@@ -1,6 +1,6 @@
 # Interface editor overhaul
 
-Status: implementation started. Phase 0 has a runtime design session, frame-matched selection and screen isolation. Interface supports typed move/resize, property, reparent and reorder transactions, snapping, eight resize handles and keyboard nudging; the preview gate is still open.
+Status: implementation started (nine increments). Phase 0 has a runtime design session, frame-matched selection and screen isolation. Interface supports typed move/resize, property, reparent and reorder transactions, snapping, eight resize handles and keyboard nudging; the preview gate is still open.
 
 ## Goal
 
@@ -214,7 +214,61 @@ This is a major subsystem project. Do not claim engine-level parity after a cosm
 - Added Earlier/Later hierarchy controls for both free and flow widgets. Boundary controls disable, selection follows the ID and the UI explains that sibling order controls flow layout and drawing. The hierarchy still needs the full tree/search overhaul in phase 2.
 - Runtime spawning now walks parents before children, preserving sibling order even when a root reorder leaves a child earlier in the serialized array than its parent. Real Bevy checks cover flow placement, paint order and root reordering across child slots.
 
-The next increment is typed creation, subtree deletion and duplication with reference remapping. Schema versioning, complete property metadata and the broader phase 1 contracts remain open. Committed edits still use the existing world synchronization path; avoiding a world reload on commit remains open. The current preview still shows the idle scene behind the interface.
+### Creation, deletion and duplication (eighth increment)
+
+- Added typed `Create {widget}`, `Delete {id}` and `Duplicate {id,new_id,offset?}` edits. Create appends and normalizes placement from the parent (Canvas means free, anything else flow) and rejects projected widgets, unknown parents and duplicate or empty IDs. Delete removes the whole subtree and clears `scroll_target`s that pointed into it. Duplicate copies the subtree directly after the original under `new_id` and `new_id.<old id>`, remapping `parent` and `scroll_target` inside the copy only; an optional `offset` moves a free-placed root and a flow child rejects it.
+- The Interface palette, Duplicate and Delete buttons now use the transaction commands (no `set_interface`), select the created or copied widget and clear selection on delete. A palette click adds inside the selected container; a drag still adds to the root.
+- Block and script references to the original IDs are deliberately not rewritten; duplicated widgets are new names.
+
+### Review against recent changes (2026-10-08)
+
+Master since the seventh increment (Phase 6 2D work, script guests, bundled rustc, clippy/let-chain cleanups) left the interface pipeline intact: the only UI-file changes were formatting-level edits and the wall-clock pause fix in `overlay.rs`. Adjustments to the plan:
+
+- Protocol version is 35 (the screen isolation note's 23 was stale). Any phase 1 message change bumps from there.
+- 2D now has screen feedback (`screenfx.rs`: cover z 52, flash z 54, floaters) and lighting (`unlit_above`) drawn around the interface. The design session must stay free of both, and phase 2's "Interact" preview should show cover/flash z-order rather than ignore it.
+- Interface strings now come from the project's string table (`text for key`, `set language`). Phase 4 text editing and phase 6 localization samples should preview through the table instead of adding a second mechanism.
+- Scripts gained more guest languages and ABI 47 slots (save slots, locale). Phase 5's binding and event wiring should use the script ABI as it stands and add verbs only through `abi.rs`.
+- The remaining order is unchanged: finish phase 0/1 (schema versioning, property metadata, no world reload on commit), then the phase 2 hierarchy overhaul, then marquee/multiselection and alignment tools.
+
+### Hierarchy tree, search and lock (ninth increment)
+
+- The hierarchy is a real tree in sibling order: indentation by depth, fold arrows, and a search box matching ID or content (matches keep their ancestors and ignore folds). It follows screen isolation.
+- Per-widget Lock is editor-only state (never saved, never sent to the runtime): locked widgets are skipped by viewport picking and lose move/resize/nudge handles, but stay selectable from the tree and editable in the inspector.
+- Editor hide is a per-row toggle. `InterfaceDesign` gained `hidden` (protocol 36): the design session hides those widgets and their subtrees in its temporary manager, like screen isolation, so the document, game visibility and saves are untouched. Unknown IDs reject the request atomically. Hidden widgets stay in the reported geometry with effective visibility false, so they cannot be picked.
+
+### Schema versioning (tenth increment)
+
+- `UiDocument` has a `version` (`UI_SCHEMA_VERSION` = 1). A document with no version loads as 0 and `migrate()` stamps it as 1 without touching IDs, order or geometry; migration is idempotent. It runs in `Project::normalize` (per scene) and `set_interface`.
+- A document newer than this build is not rewritten: `validate()` refuses it with an upgrade message, so edits, previews and `set_interface` fail instead of silently dropping fields. Opening still works. Run-time loading is unaffected.
+- Later steps (style inheritance, component instances) add a version and a `migrate` arm each; the stored shape stays serde-defaulted so older builds keep ignoring nothing they cannot read.
+
+### Property metadata and multiselection (eleventh increment)
+
+- `ui::property_metadata()` lists every `SetProperty` path with its label, group, type, choices and the widget kinds it applies to; a test keeps it in step with `UiPropertyEdit` (`path()` is an exhaustive match). It is exposed as `interface-properties` in dispatch, shell and MCP so inspectors and agents read one source. The inspector still draws its own controls from QML; moving it onto this table is the next step, together with the remaining styling paths.
+- Added `Batch {edits}`: edits applied in order as one, all or nothing, one undo step. It cannot nest and holds at most 1000 edits.
+- The viewport supports Shift-click and a marquee (drag on empty canvas; widgets whose centres fall inside, skipping locked and projected ones). The tree supports Ctrl/Shift-click. Delete (button or key) and Duplicate act on the whole selection as one Batch, skipping widgets whose ancestor is also selected. Dragging, handles and nudging still act on the primary widget only; group move and alignment/distribution are next.
+
+### Group move, align and distribute (twelfth increment)
+
+- Dragging a widget that belongs to a multiselection moves the whole selection when every member is free-placed under the same parent: the draft is one `Batch` of `Move`s sharing the primary's snapped delta. Mixed selections drag only the primary widget. Handles and keyboard nudging remain primary-only.
+- Align (left, middle, right, top, middle, bottom) and Space H/V (equal gaps between the outer widgets) are QML computations over the runtime geometry, in the shared parent's frame, committed as one `Batch` of `Move`s. They require free-placed, unrotated widgets with one parent and report why otherwise. They write exact authored offsets, so no new backend command is needed.
+
+### Reload-free commit and typed content/style edits (thirteenth increment)
+
+- Committing an edit while a design session is open no longer reloads the world: the session already shows the committed document and Play sends the whole project. Without a session (or a runtime) the old sync still runs. A backend test asserts one `Load` across a preview and a commit.
+- `SetProperty` now also covers `element.range`, `style` (all five states, sizes validated), `class`, `bindings` (validated binding properties), `items`, `tooltip`, `scroll_target` (must name a widget), `tab_index` and `transition`, all listed by `interface-properties`. New `SetDocument {theme?, scale?}` and `SetClass {name, styles|null}` cover document options and shared named styles. The inspector's tooltip, scroll target, tab page, items, transition, bindings, style and advanced JSON fields, and the theme/scale pickers, send these edits instead of `set_interface`. `world_actor`, prefab save/load and whole-document import still use it.
+
+### Visual style editing (fourteenth increment)
+
+- The Style section has colour swatches (`ColorField`) beside the hex fields, a font picker (`AssetField` for fonts, written to `fonts`), a Class dropdown over the document's named styles, Save style as class and Delete class. A class that a state does not override shows as a dimmed swatch and a `(class: value)` hint, so inherited values are visible. Saving and deleting a class are one `Batch` (`SetClass` plus the `class` property on affected widgets), so they undo together.
+
+### Viewport overlays (fifteenth increment)
+
+- Safe area and Reference size toggles draw dashed frames over the viewport from the document's `safe_area` and `reference_size` (scaled like the runtime does), as editor-only overlays. Two phone/desktop presets (1170 x 2532, 2560 x 1440) join the preview sizes. Rulers, draggable guides and zoom/pan polish remain open.
+
+Remaining plan work, in order: draw the inspector from `interface-properties`, image pickers and nine-slice/fit modes, text-input caret/selection/IME, rulers/guides/safe-area overlay and zoom/pan polish (phase 2), reusable components with instances and overrides (phase 5), visual binding/event editors, animation timeline and responsive variants (phase 6), and the platform/DPI checks listed under phase 0. These are each a large increment of their own.
+
+The next increment is moving the inspector onto the metadata, then the world-reload-free commit path. Schema versioning and property metadata (phase 1). Schema versioning, complete property metadata and the broader phase 1 contracts remain open. Committed edits still use the existing world synchronization path; avoiding a world reload on commit remains open. The current preview still shows the idle scene behind the interface.
 
 Open phase 0 checks: embedded/process rendering and teardown on actual platforms; native presentation timing and process screenshot metadata on actual platforms; viewport resize/DPI/safe-area matrices; real image/font asset loading; screenshot baselines and gameplay input isolation with held inputs. Rotation, text editing/IME, nine-slice and animation capabilities remain unproven. The fixture image node currently has no asset.
 
@@ -239,3 +293,14 @@ Verification for snapping and resize handles: the final full workspace build pas
 For sibling order, use `update-interface-edit token="<token>" edit={"kind":"Reorder","id":"settings-row","index":0}` to move that widget to the first position among its siblings. The index is the final position, including the moved widget. Reordering does not reparent; use `Reparent` for that. Same-position commits do not create a save or undo entry.
 
 Verification for keyboard nudging and sibling order: the final full workspace build passed; backend/protocol suites passed (61 tests), including reorder draft isolation, save/reload and undo/redo; core interface tests passed (19 tests); runtime interface tests passed (23 tests) and all four design-session tests passed, including flow/paint order after reordering a root across its child slots. Qt Quick suite passed (81 tests), including keyboard batching, delayed replies, Escape/focus cancellation, inspector focus isolation and typed flow/root order controls. MCP suite passed (7 tests). QML lint completed with existing QQuickItem/GameView import warnings; formatting and diff checks passed. Backend/MCP integration tests used local IPC outside the sandbox. Actual platform presentation, full input/DPI matrices and commit synchronization without a world reload remain open.
+
+### Increment sixteen: metadata-driven inspector rows
+
+`UiDesigner.qml` loads `interface_properties` once and hides the Modal, scroll target and Items rows for kinds the metadata does not list (`applies(path)`). The rest of the inspector is still hand-built; drawing every row from the metadata remains open.
+
+### Increment seventeen: components and image fit
+
+- **Components (phase 5, first slice).** `UiEdit::{SavePrefab, InstantiatePrefab, DeletePrefab, DetachInstance}` build on the existing `prefabs` map. An instance root carries `instance_of`; `SavePrefab { update_instances: true }` rebuilds every instance from the new source and keeps any widget the instance changed from the old version (override at widget granularity). A dangling `instance_of` fails validation; deleting a component detaches its instances. The inspector has a Component section (save, insert with a unique `iN.` prefix, detach, delete).
+- **Image fit (phase 4).** `UiPaint.image_fit` is `Stretch`, `Sliced { border: [l, r, t, b] }` or `Tiled`; unset keeps the image's own size. The runtime maps it to Bevy's `NodeImageMode`; the inspector has an Image fit dropdown with four border fields.
+
+Still open: per-field (not per-widget) instance overrides, exposed properties and named slots, visual binding/event editors, text-input caret/selection/IME, rulers and guides, animation timeline, responsive variants, platform checks.

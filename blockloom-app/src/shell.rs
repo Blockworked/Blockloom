@@ -933,7 +933,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "preview-interface",
         cmd: "preview_interface",
         aliases: &["preview_interface"],
-        summary: "Preview a temporary {revision, generation, document, viewport?, screen?} without saving or starting gameplay. Screen names a top-level widget tree. Omit design to close it.",
+        summary: "Preview a temporary {revision, generation, document, viewport?, screen?, hidden?} without saving or starting gameplay. Screen names a top-level widget tree; hidden lists widget ids to hide (with their subtrees) in the preview only. Omit design to close it.",
         args: &[ArgSpec {
             name: "design",
             ty: "object",
@@ -945,6 +945,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         cmd: "interface_layout",
         aliases: &["interface_layout"],
         summary: "Read the latest design geometry in physical viewport pixels, tagged by revision and generation.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "interface-properties",
+        cmd: "interface_properties",
+        aliases: &["interface_properties"],
+        summary: "List every property path SetProperty accepts with its label, group, type, choices and the widget kinds it applies to.",
         args: &[],
     },
     CommandSpec {
@@ -962,7 +969,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "update-interface-edit",
         cmd: "update_interface_edit",
         aliases: &["update_interface_edit"],
-        summary: "Replace the draft with Move, Resize, SetProperty {id, property: {path, value}}, Reorder {id, index: zero-based sibling position} or Reparent {id, parent, placement: {mode: Free, offset, size} or {mode: Flow}}. Property paths: element.kind/content/anchor/modal, layout (object or null). Does not save.",
+        summary: "Replace the draft with Move, Resize, SetProperty {id, property: {path, value}}, Reorder {id, index: zero-based sibling position}, Batch {edits: [..]} (applied in order as one, all or nothing), Create {widget: full widget; a Canvas parent makes it free, other parents flow}, Delete {id} (removes descendants), Duplicate {id, new_id, offset?} (copies the subtree as new_id and new_id.<old id>) or Reparent {id, parent, placement: {mode: Free, offset, size} or {mode: Flow}}. SetDocument {theme?, scale?}, SetClass {name, styles|null}, SavePrefab {name, root, update_instances?} (store the subtree as a component; true rebuilds its instances and keeps widgets they changed), InstantiatePrefab {name, prefix, parent?}, DeletePrefab {name}, DetachInstance {id}. Property paths (see interface-properties): element.kind/content/anchor/modal/range, layout (object or null), style, class, bindings, items, tooltip, scroll_target, tab_index, transition. Does not save.",
         args: &[
             ArgSpec {
                 name: "token",
