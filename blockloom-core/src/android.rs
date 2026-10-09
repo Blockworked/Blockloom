@@ -4307,16 +4307,31 @@ mod tests {
         let root = temp_root("boot");
         let bin = root.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
+        // A sibling test forking while a stub is being written can make its
+        // first exec fail with ETXTBSY, so give the expected answer a few tries.
+        let settles = |adb: &Path, want: bool| {
+            (0..50).any(|_| {
+                let got = booted_with_adb(adb, "emulator-5554");
+                if got != want {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                got == want
+            })
+        };
         let booted = stub_tool(&bin, "adb-on", "#!/bin/sh\necho '1'\n");
-        assert!(booted_with_adb(&booted, "emulator-5554"));
+        assert!(settles(&booted, true));
         let booting = stub_tool(&bin, "adb-off", "#!/bin/sh\necho '0'\n");
-        assert!(!booted_with_adb(&booting, "emulator-5554"));
+        assert!(settles(&booting, false));
         // `emu avd name` answers the name above the trailing OK.
         let named = stub_tool(&bin, "adb-name", "#!/bin/sh\necho 'blockloom'\necho 'OK'\n");
-        assert_eq!(
-            avd_name_with_adb(&named, "emulator-5554").as_deref(),
-            Some("blockloom")
-        );
+        let name = (0..50).find_map(|_| {
+            let name = avd_name_with_adb(&named, "emulator-5554");
+            if name.is_none() {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            name
+        });
+        assert_eq!(name.as_deref(), Some("blockloom"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
