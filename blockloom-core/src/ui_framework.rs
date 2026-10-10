@@ -628,6 +628,10 @@ pub enum UiEdit {
     DetachInstance {
         id: String,
     },
+    /// Throws away every change an instance made and rebuilds it from its prefab.
+    ResetInstance {
+        id: String,
+    },
 }
 
 impl UiDocument {
@@ -711,6 +715,7 @@ impl UiDocument {
                 self.widgets[i].instance_of.clear();
                 return Ok(());
             }
+            UiEdit::ResetInstance { id } => return self.reset_instance(id),
             _ => {}
         }
         let id = match edit {
@@ -728,7 +733,8 @@ impl UiDocument {
             | UiEdit::SavePrefab { .. }
             | UiEdit::DeletePrefab { .. }
             | UiEdit::InstantiatePrefab { .. }
-            | UiEdit::DetachInstance { .. } => unreachable!(),
+            | UiEdit::DetachInstance { .. }
+            | UiEdit::ResetInstance { .. } => unreachable!(),
         };
         let index = self
             .widgets
@@ -1114,7 +1120,7 @@ impl UiDocument {
                 let kept = current.iter().find(|c| c.element.id == w.element.id);
                 let was = expected.iter().find(|e| e.element.id == w.element.id);
                 match (kept, was) {
-                    (Some(c), Some(e)) if c != e => rebuilt.push(c.clone()),
+                    (Some(c), Some(e)) if c != e => rebuilt.push(merge_widget(e, &w, c)?),
                     _ => rebuilt.push(w),
                 }
             }
@@ -1134,6 +1140,76 @@ impl UiDocument {
             self.widgets.splice(first..first, rebuilt);
         }
         Ok(())
+    }
+
+    /// Rebuilds the instance rooted at `id` exactly as its prefab says.
+    fn reset_instance(&mut self, id: &str) -> Result<(), String> {
+        let at = self
+            .find(id)
+            .ok_or_else(|| format!("Unknown widget: {id}"))?;
+        let name = self.widgets[at].instance_of.clone();
+        if name.is_empty() {
+            return Err(format!("{id} is not the root of a component instance"));
+        }
+        let old_root = self
+            .prefabs
+            .get(&name)
+            .and_then(|p| p.iter().find(|w| w.element.parent.is_empty()))
+            .map(|w| w.element.id.clone())
+            .ok_or_else(|| format!("No UI prefab named {name}"))?;
+        let prefix = id
+            .strip_suffix(&old_root)
+            .ok_or_else(|| format!("Instance {id} does not follow its prefab's naming"))?
+            .to_string();
+        let parent = self.widgets[at].element.parent.clone();
+        let members = self.subtree(id);
+        let fresh = self.instantiate(&name, &prefix, &parent)?;
+        let first = members[0];
+        let mut slot = 0;
+        self.widgets.retain(|_| {
+            slot += 1;
+            !members.contains(&(slot - 1))
+        });
+        self.widgets.splice(first..first, fresh);
+        Ok(())
+    }
+
+    /// The fields an instance changed from its prefab, as `widget id: path`.
+    pub fn instance_overrides(&self, id: &str) -> Result<Vec<String>, String> {
+        let at = self
+            .find(id)
+            .ok_or_else(|| format!("Unknown widget: {id}"))?;
+        let name = &self.widgets[at].instance_of;
+        let old_root = self
+            .prefabs
+            .get(name)
+            .and_then(|p| p.iter().find(|w| w.element.parent.is_empty()))
+            .map(|w| w.element.id.clone())
+            .ok_or_else(|| format!("{id} is not the root of a component instance"))?;
+        let prefix = id
+            .strip_suffix(&old_root)
+            .ok_or_else(|| format!("Instance {id} does not follow its prefab's naming"))?;
+        let parent = &self.widgets[at].element.parent;
+        let fresh = self.instantiate(name, prefix, parent)?;
+        let mut out = Vec::new();
+        for member in self.subtree(id) {
+            let current = &self.widgets[member];
+            match fresh.iter().find(|w| w.element.id == current.element.id) {
+                Some(base) => {
+                    let (a, b) = (to_json(base)?, to_json(current)?);
+                    changed_paths(&a, &b, "", &mut |path| {
+                        out.push(format!("{}: {path}", current.element.id))
+                    });
+                }
+                None => out.push(format!("{}: added", current.element.id)),
+            }
+        }
+        for w in &fresh {
+            if self.find(&w.element.id).is_none() {
+                out.push(format!("{}: removed", w.element.id));
+            }
+        }
+        Ok(out)
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -1252,6 +1328,80 @@ impl UiDocument {
             };
         }
         Ok(widgets)
+    }
+}
+
+fn to_json(widget: &UiWidget) -> Result<serde_json::Value, String> {
+    serde_json::to_value(widget).map_err(|e| e.to_string())
+}
+
+/// Field-level three-way merge: a field the instance changed from `old` keeps
+/// its value, every other field takes the prefab's `new` one.
+fn merge_json(
+    old: &serde_json::Value,
+    new: &serde_json::Value,
+    cur: &serde_json::Value,
+) -> serde_json::Value {
+    use serde_json::Value;
+    if cur == old {
+        return new.clone();
+    }
+    match (old, new, cur) {
+        (Value::Object(o), Value::Object(n), Value::Object(c)) => {
+            let mut out = serde_json::Map::new();
+            for key in n.keys().chain(c.keys()) {
+                if out.contains_key(key) {
+                    continue;
+                }
+                let blank = Value::Null;
+                let merged = match (o.get(key), n.get(key), c.get(key)) {
+                    (o, n, Some(c)) => merge_json(o.unwrap_or(&blank), n.unwrap_or(&blank), c),
+                    (_, Some(n), None) => n.clone(),
+                    _ => continue,
+                };
+                out.insert(key.clone(), merged);
+            }
+            Value::Object(out)
+        }
+        _ => cur.clone(),
+    }
+}
+
+fn merge_widget(old: &UiWidget, new: &UiWidget, cur: &UiWidget) -> Result<UiWidget, String> {
+    let merged = merge_json(&to_json(old)?, &to_json(new)?, &to_json(cur)?);
+    let mut widget: UiWidget = serde_json::from_value(merged).map_err(|e| e.to_string())?;
+    // Identity and place in the tree always follow the rebuilt instance.
+    widget.element.id = new.element.id.clone();
+    widget.element.parent = new.element.parent.clone();
+    widget.instance_of = new.instance_of.clone();
+    Ok(widget)
+}
+
+fn changed_paths(a: &serde_json::Value, b: &serde_json::Value, at: &str, f: &mut dyn FnMut(&str)) {
+    use serde_json::Value;
+    if a == b {
+        return;
+    }
+    match (a, b) {
+        (Value::Object(x), Value::Object(y)) => {
+            let mut keys: Vec<&String> = x.keys().chain(y.keys()).collect();
+            keys.sort();
+            keys.dedup();
+            for key in keys {
+                let path = if at.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{at}.{key}")
+                };
+                changed_paths(
+                    x.get(key).unwrap_or(&Value::Null),
+                    y.get(key).unwrap_or(&Value::Null),
+                    &path,
+                    f,
+                );
+            }
+        }
+        _ => f(at),
     }
 }
 
@@ -1811,6 +1961,61 @@ mod tests {
         assert!(doc.widgets.iter().all(|w| w.instance_of.is_empty()));
         doc.widgets[0].instance_of = "gone".into();
         assert!(doc.validate().is_err());
+    }
+
+    #[test]
+    fn overrides_merge_per_field_and_can_be_listed_and_reset() {
+        let mut doc = UiDocument::default();
+        doc.widgets = vec![row("row", "", "Row"), row("label", "row", "Volume")];
+        doc.widgets[1].tooltip = "Old tip".into();
+        doc.apply_edit(&UiEdit::SavePrefab {
+            name: "setting".into(),
+            root: "row".into(),
+            update_instances: false,
+        })
+        .unwrap();
+        doc.apply_edit(&UiEdit::InstantiatePrefab {
+            name: "setting".into(),
+            prefix: "a.".into(),
+            parent: String::new(),
+        })
+        .unwrap();
+        assert!(doc.instance_overrides("a.row").unwrap().is_empty());
+        // The instance changes the caption only.
+        let label = doc.find("a.label").unwrap();
+        doc.widgets[label].element.content = "Music".into();
+        assert_eq!(
+            doc.instance_overrides("a.row").unwrap(),
+            vec!["a.label: element.content".to_string()]
+        );
+        // The prefab changes the tooltip and the caption; the tooltip flows in,
+        // the instance's caption stays.
+        let src = doc.find("label").unwrap();
+        doc.widgets[src].tooltip = "New tip".into();
+        doc.widgets[src].element.content = "Sound".into();
+        doc.apply_edit(&UiEdit::SavePrefab {
+            name: "setting".into(),
+            root: "row".into(),
+            update_instances: true,
+        })
+        .unwrap();
+        let label = &doc.widgets[doc.find("a.label").unwrap()];
+        assert_eq!(label.element.content, "Music");
+        assert_eq!(label.tooltip, "New tip");
+        // Resetting brings the prefab's caption back.
+        doc.apply_edit(&UiEdit::ResetInstance { id: "a.row".into() })
+            .unwrap();
+        assert_eq!(
+            doc.widgets[doc.find("a.label").unwrap()].element.content,
+            "Sound"
+        );
+        assert!(doc.instance_overrides("a.row").unwrap().is_empty());
+        assert!(
+            doc.apply_edit(&UiEdit::ResetInstance {
+                id: "a.label".into()
+            })
+            .is_err()
+        );
     }
 
     #[test]

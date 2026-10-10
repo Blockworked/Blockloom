@@ -599,6 +599,9 @@ Item {
         const parent = widget && !widget.world_actor ? widget.element.id : "";
         structuralEdit({kind: "InstantiatePrefab", name: name, prefix: prefix, parent: parent}, prefix + root.element.id, []);
     }
+    function resetInstance() {
+        if (widget && widget.instance_of) structuralEdit({kind: "ResetInstance", id: widget.element.id}, widget.element.id, []);
+    }
     function detachInstance() {
         if (widget && widget.instance_of) structuralEdit({kind: "DetachInstance", id: widget.element.id}, widget.element.id, []);
     }
@@ -1031,6 +1034,7 @@ Item {
                 ComboBox { id: componentPick; objectName: "interfaceComponentPick"; Layout.fillWidth: true; model: Object.keys(root.document.prefabs || {}) }
                 RowLayout {
                     Button { objectName: "interfaceInsertComponent"; text: "Insert"; enabled: componentPick.currentIndex >= 0 && !root.gesture; onClicked: root.insertComponent(componentPick.currentText) }
+                    Button { objectName: "interfaceResetInstance"; text: "Reset"; enabled: !!(root.widget && root.widget.instance_of) && !root.gesture; onClicked: root.resetInstance() }
                     Button { objectName: "interfaceDetachInstance"; text: "Detach"; enabled: !!(root.widget && root.widget.instance_of) && !root.gesture; onClicked: root.detachInstance() }
                     Button { objectName: "interfaceDeleteComponent"; text: "Delete"; enabled: componentPick.currentIndex >= 0 && !root.gesture; onClicked: root.structuralEdit({kind: "DeletePrefab", name: componentPick.currentText}, root.selectedId, []) }
                 }
