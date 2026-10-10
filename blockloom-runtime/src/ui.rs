@@ -122,6 +122,8 @@ pub struct UiNode {
     pub caret: TextCaret,
     /// An IME composition not yet committed, drawn at the caret.
     pub preedit: String,
+    /// The responsive variant of its widget in force, by index.
+    pub variant: Option<usize>,
 }
 
 impl UiNode {
@@ -180,6 +182,37 @@ impl UiManager {
             self.show_widget(widget.clone());
         }
     }
+    /// Puts each authored widget's responsive variant for a viewport this
+    /// size in force, redrawing only those whose variant changed. Visibility
+    /// is written only by a variant that sets it, and given back when one
+    /// that did stops applying.
+    pub fn apply_variants(&mut self, width: f32, height: f32) {
+        for widget in &self.document.widgets {
+            if widget.variants.is_empty() {
+                continue;
+            }
+            let Some(node) = self.nodes.get_mut(&widget.element.id) else {
+                continue;
+            };
+            let pick = widget.variant_for(width, height);
+            if node.variant == pick {
+                continue;
+            }
+            let (old, new) = (
+                node.variant.and_then(|i| widget.variants[i].visible),
+                pick.and_then(|i| widget.variants[i].visible),
+            );
+            node.layout = pick
+                .and_then(|i| widget.variants[i].layout.clone())
+                .or_else(|| widget.layout.clone());
+            if old.is_some() || new.is_some() {
+                node.visible = new.unwrap_or(true);
+            }
+            node.variant = pick;
+            node.dirty = true;
+        }
+    }
+
     pub fn show_widget(&mut self, mut widget: UiWidget) {
         widget.element.value = UiElement::initial_value(widget.element.kind, &widget.element.value);
         let id = widget.element.id.clone();
@@ -372,6 +405,7 @@ impl UiManager {
                         expanded: false,
                         caret: TextCaret::default(),
                         preedit: String::new(),
+                        variant: None,
                     },
                 );
                 self.pending.push(id);
@@ -1520,5 +1554,40 @@ mod tests {
         assert_eq!(text_of(manager.get("name").unwrap()), "your name");
         manager.changed("name", Evaluated::Text("Ada".to_string()));
         assert_eq!(text_of(manager.get("name").unwrap()), "Ada");
+    }
+    #[test]
+    fn a_viewport_picks_a_widgets_variant_and_gives_it_back() {
+        let document: UiDocument = serde_json::from_value(serde_json::json!({"widgets": [{
+            "element": {"id": "menu", "kind": "Panel"},
+            "layout": {"width": {"Px": 300.0}},
+            "variants": [
+                {"when": {"max_width": 600.0}, "layout": {"width": {"Percent": 100.0}}},
+                {"when": {"min_width": 1200.0}, "visible": false}
+            ]
+        }]}))
+        .unwrap();
+        let mut manager = UiManager::default();
+        manager.load(&document);
+        let width = |m: &UiManager| m.get("menu").unwrap().layout.as_ref().map(|l| l.width);
+        manager.apply_variants(400., 800.);
+        assert_eq!(
+            width(&manager),
+            Some(blockloom_core::ui::UiLength::Percent(100.))
+        );
+        manager.apply_variants(900., 800.);
+        assert_eq!(
+            width(&manager),
+            Some(blockloom_core::ui::UiLength::Px(300.))
+        );
+        assert!(manager.get("menu").unwrap().visible);
+        manager.apply_variants(1600., 800.);
+        assert!(!manager.get("menu").unwrap().visible);
+        // Leaving the variant that hid it brings it back.
+        manager.apply_variants(900., 800.);
+        assert!(manager.get("menu").unwrap().visible);
+        // Nothing changes while the same variant stays in force.
+        manager.get_mut("menu").unwrap().dirty = false;
+        manager.apply_variants(950., 800.);
+        assert!(!manager.get("menu").unwrap().dirty);
     }
 }

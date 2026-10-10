@@ -230,6 +230,63 @@ pub struct UiBinding {
     pub two_way: bool,
 }
 
+/// A viewport size range; every bound is optional and inclusive, in canvas
+/// pixels (after the safe area and scale are taken off).
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiBreakpoint {
+    pub min_width: Option<f32>,
+    pub max_width: Option<f32>,
+    pub min_height: Option<f32>,
+    pub max_height: Option<f32>,
+}
+
+impl UiBreakpoint {
+    pub fn matches(&self, width: f32, height: f32) -> bool {
+        self.min_width.is_none_or(|v| width >= v)
+            && self.max_width.is_none_or(|v| width <= v)
+            && self.min_height.is_none_or(|v| height >= v)
+            && self.max_height.is_none_or(|v| height <= v)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        let bounds = [
+            self.min_width,
+            self.max_width,
+            self.min_height,
+            self.max_height,
+        ];
+        if bounds.iter().flatten().any(|v| !v.is_finite() || *v < 0.) {
+            return Err("Breakpoint sizes must be finite and not negative".into());
+        }
+        let ordered = |lo: Option<f32>, hi: Option<f32>| lo.zip(hi).is_none_or(|(lo, hi)| lo <= hi);
+        if !ordered(self.min_width, self.max_width) || !ordered(self.min_height, self.max_height) {
+            return Err("A breakpoint's minimum cannot exceed its maximum".into());
+        }
+        Ok(())
+    }
+}
+
+/// How a widget differs while the viewport is inside `when`. The first
+/// matching variant wins; what it leaves unset follows the base widget.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiVariant {
+    pub when: UiBreakpoint,
+    #[serde(default)]
+    pub layout: Option<UiLayout>,
+    #[serde(default)]
+    pub visible: Option<bool>,
+}
+
+impl UiWidget {
+    /// Index of the first variant that fits a viewport of this size.
+    pub fn variant_for(&self, width: f32, height: f32) -> Option<usize> {
+        self.variants
+            .iter()
+            .position(|v| v.when.matches(width, height))
+    }
+}
+
 /// What a widget reports to the game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UiEventKind {
@@ -269,6 +326,9 @@ pub struct UiWidget {
     /// Event handlers authored on the widget, run by the player without blocks.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<UiAction>,
+    /// Layout and visibility changes for other viewport sizes.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub variants: Vec<UiVariant>,
     pub items: Vec<String>,
     pub tooltip: String,
     pub world_actor: String,
@@ -365,6 +425,8 @@ pub enum UiPropertyEdit {
     Bindings(Vec<UiBinding>),
     #[serde(rename = "actions")]
     Actions(Vec<UiAction>),
+    #[serde(rename = "variants")]
+    Variants(Vec<UiVariant>),
     #[serde(rename = "items")]
     Items(Vec<String>),
     #[serde(rename = "tooltip")]
@@ -404,6 +466,7 @@ impl UiPropertyEdit {
             UiPropertyEdit::Class(_) => "class",
             UiPropertyEdit::Bindings(_) => "bindings",
             UiPropertyEdit::Actions(_) => "actions",
+            UiPropertyEdit::Variants(_) => "variants",
             UiPropertyEdit::Items(_) => "items",
             UiPropertyEdit::Tooltip(_) => "tooltip",
             UiPropertyEdit::ScrollTarget(_) => "scroll_target",
@@ -522,6 +585,14 @@ pub fn property_metadata() -> Vec<UiPropertyInfo> {
             vec![],
         ),
         info("actions", "Events", "Bindings", "actions", vec![], vec![]),
+        info(
+            "variants",
+            "Responsive variants",
+            "Layout",
+            "variants",
+            vec![],
+            vec![],
+        ),
         info(
             "items",
             "Items",
@@ -980,6 +1051,10 @@ impl UiDocument {
                 }
                 UiPropertyEdit::Class(value) => w.class = value.clone(),
                 UiPropertyEdit::Bindings(value) => w.bindings = value.clone(),
+                UiPropertyEdit::Variants(value) => {
+                    check_variants(value)?;
+                    w.variants = value.clone();
+                }
                 UiPropertyEdit::Actions(value) => {
                     check_actions(value)?;
                     w.actions = value.clone();
@@ -1527,6 +1602,7 @@ impl UiDocument {
                 return Err(format!("Unsupported binding property on {id}"));
             }
             check_actions(&widget.actions).map_err(|e| format!("{id}: {e}"))?;
+            check_variants(&widget.variants).map_err(|e| format!("{id}: {e}"))?;
             if let Some(layout) = &widget.layout
                 && (layout.columns == 0
                     || !layout.row_height.is_finite()
@@ -1603,6 +1679,18 @@ impl UiDocument {
         }
         Ok(widgets)
     }
+}
+
+fn check_variants(variants: &[UiVariant]) -> Result<(), String> {
+    for variant in variants {
+        variant.when.validate()?;
+        if let Some(layout) = &variant.layout
+            && (layout.columns == 0 || !layout.row_height.is_finite() || layout.row_height <= 0.)
+        {
+            return Err("A variant's layout is invalid".into());
+        }
+    }
+    Ok(())
 }
 
 fn check_actions(actions: &[UiAction]) -> Result<(), String> {
@@ -1854,6 +1942,7 @@ mod tests {
             UiPropertyEdit::Class(String::new()),
             UiPropertyEdit::Bindings(vec![]),
             UiPropertyEdit::Actions(vec![]),
+            UiPropertyEdit::Variants(vec![]),
             UiPropertyEdit::Items(vec![]),
             UiPropertyEdit::Tooltip(String::new()),
             UiPropertyEdit::ScrollTarget(String::new()),
@@ -2320,6 +2409,42 @@ mod tests {
         .unwrap();
         assert!(doc.exports.is_empty());
         assert!(doc.validate().is_ok());
+    }
+
+    #[test]
+    fn variants_pick_the_first_matching_breakpoint_and_validate() {
+        let mut doc = UiDocument::default();
+        doc.widgets = vec![row("menu", "", "Menu")];
+        let value = serde_json::json!([
+            {"when": {"max_width": 600.0}, "layout": {"width": {"Percent": 100.0}}, "visible": true},
+            {"when": {"min_width": 601.0, "max_width": 1200.0}, "visible": false}
+        ]);
+        let edit = |value: serde_json::Value| UiEdit::SetProperty {
+            id: "menu".into(),
+            property: serde_json::from_value(
+                serde_json::json!({"path": "variants", "value": value}),
+            )
+            .unwrap(),
+        };
+        doc.apply_edit(&edit(value)).unwrap();
+        let w = &doc.widgets[0];
+        assert_eq!(w.variant_for(400., 800.), Some(0));
+        assert_eq!(w.variant_for(900., 800.), Some(1));
+        assert_eq!(w.variant_for(1920., 1080.), None);
+        let back: UiDocument = serde_json::from_str(&serde_json::to_string(&doc).unwrap()).unwrap();
+        assert_eq!(back.widgets[0].variants, w.variants);
+        let before = doc.clone();
+        assert!(
+            doc.apply_edit(&edit(
+                serde_json::json!([{"when": {"min_width": 900.0, "max_width": 300.0}}])
+            ))
+            .is_err()
+        );
+        assert!(
+            doc.apply_edit(&edit(serde_json::json!([{"when": {"min_height": -1.0}}])))
+                .is_err()
+        );
+        assert_eq!(doc, before);
     }
 
     #[test]

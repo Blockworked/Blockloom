@@ -529,6 +529,7 @@ pub fn canvas(
     manager.canvas_scale = scale * ui_scale.0.max(0.01);
     manager.canvas_origin = Vec2::new(left, top) * ui_scale.0.max(0.01);
     let logical = available / scale;
+    manager.apply_variants(logical.x, logical.y);
     for (mut node, mut transform) in &mut roots {
         let wanted = Node {
             position_type: PositionType::Absolute,

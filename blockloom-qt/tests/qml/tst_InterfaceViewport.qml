@@ -488,6 +488,16 @@ TestCase {
         fuzzyCompare(panel.zoom, fit, 0.0001);
         verify(!calls.some(c => c.command === "set_interface" || c.command === "begin_interface_edit"));
     }
+    function test_variants_edit_through_typed_properties() {
+        panel.selectedId = "front";
+        panel.addVariant({min_width: null, max_width: 600, min_height: null, max_height: null}, false, false);
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.property.path, "variants");
+        compare(edit.property.value[0].visible, false);
+        compare(panel.describeVariant({when:{max_width:600}, visible:false}), "w <= 600: hidden");
+        compare(panel.describeVariant({when:{}, layout:{}}), "any size: own layout");
+        verify(!calls.some(c=>c.command === "set_interface"));
+    }
     function test_guides_are_editor_only_and_snap_targets_follow_the_frame() {
         compare(panel.guides.length, 0);
         const a = panel.addGuide(0, 100);

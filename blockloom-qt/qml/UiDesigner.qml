@@ -522,7 +522,7 @@ Item {
         if (!widget) return;
         propertyEdit("element." + field, value);
     }
-    readonly property var typedFields: ["layout","style","class","bindings","actions","items","tooltip","scroll_target","tab_index","transition"]
+    readonly property var typedFields: ["layout","style","class","bindings","actions","variants","items","tooltip","scroll_target","tab_index","transition"]
     function extra(field, value) {
         if (!widget) return;
         if (typedFields.indexOf(field) >= 0) { propertyEdit(field, value); return; }
@@ -648,6 +648,30 @@ Item {
     function removeAction(index) {
         if (!widget) return;
         propertyEdit("actions", (widget.actions || []).filter((a, i) => i !== index));
+    }
+    function describeVariant(v) {
+        const w = v.when || {};
+        const parts = [];
+        if (w.min_width != null) parts.push("w >= " + w.min_width);
+        if (w.max_width != null) parts.push("w <= " + w.max_width);
+        if (w.min_height != null) parts.push("h >= " + w.min_height);
+        if (w.max_height != null) parts.push("h <= " + w.max_height);
+        const does = [];
+        if (v.layout) does.push("own layout");
+        if (v.visible === true) does.push("shown");
+        if (v.visible === false) does.push("hidden");
+        return (parts.join(", ") || "any size") + ": " + (does.join(", ") || "no change");
+    }
+    function addVariant(when, useLayout, visible) {
+        if (!widget) return;
+        const v = {when: when};
+        if (useLayout && widget.layout) v.layout = copy(widget.layout);
+        if (visible === true || visible === false) v.visible = visible;
+        propertyEdit("variants", (widget.variants || []).concat([v]));
+    }
+    function removeVariant(index) {
+        if (!widget) return;
+        propertyEdit("variants", (widget.variants || []).filter((v, i) => i !== index));
     }
     function removeBinding(index) {
         if (!widget) return;
@@ -1290,6 +1314,37 @@ Item {
                         root.addAction({on: actionOn.currentText, run: actionKind.currentIndex === 0
                             ? {Broadcast: {message: actionMessage.text.trim()}}
                             : {SetVariable: {actor: actionActor.text.trim(), name: actionVariable.text.trim(), value: actionValue.text}}});
+                    }
+                }
+                Label { text: "Responsive variants"; font.bold: true }
+                Repeater {
+                    model: root.widget ? root.widget.variants || [] : []
+                    delegate: RowLayout {
+                        required property var modelData
+                        required property int index
+                        Layout.fillWidth: true
+                        Label { Layout.fillWidth: true; elide: Text.ElideRight; text: root.describeVariant(modelData); color: Theme.textDim }
+                        Button { objectName: "interfaceRemoveVariant" + index; text: "Remove"; enabled: !root.gesture; onClicked: root.removeVariant(index) }
+                    }
+                }
+                GridLayout {
+                    columns: 4
+                    TextField { id: varMinW; objectName: "interfaceVariantMinWidth"; Layout.fillWidth: true; placeholderText: "min w"; validator: DoubleValidator { bottom: 0 } }
+                    TextField { id: varMaxW; objectName: "interfaceVariantMaxWidth"; Layout.fillWidth: true; placeholderText: "max w"; validator: DoubleValidator { bottom: 0 } }
+                    TextField { id: varMinH; objectName: "interfaceVariantMinHeight"; Layout.fillWidth: true; placeholderText: "min h"; validator: DoubleValidator { bottom: 0 } }
+                    TextField { id: varMaxH; objectName: "interfaceVariantMaxHeight"; Layout.fillWidth: true; placeholderText: "max h"; validator: DoubleValidator { bottom: 0 } }
+                }
+                RowLayout {
+                    ComboBox { id: varVisible; objectName: "interfaceVariantVisible"; model: ["Visibility unchanged","Shown","Hidden"] }
+                    CheckBox { id: varLayout; objectName: "interfaceVariantLayout"; text: "Use current layout"; enabled: !!(root.widget && root.widget.layout) }
+                }
+                Button {
+                    objectName: "interfaceAddVariant"; text: "Add variant"
+                    enabled: !!root.widget && !root.gesture
+                    onClicked: {
+                        const num = f => f.text.trim() === "" ? null : Number(f.text);
+                        const when = {min_width: num(varMinW), max_width: num(varMaxW), min_height: num(varMinH), max_height: num(varMaxH)};
+                        root.addVariant(when, varLayout.checked, [undefined, true, false][varVisible.currentIndex]);
                     }
                 }
                 Label { text: "Advanced properties"; font.bold: true }
