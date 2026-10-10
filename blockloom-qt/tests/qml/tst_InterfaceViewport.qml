@@ -474,6 +474,20 @@ TestCase {
         compare(edit, {kind:"SetExposed", instance:"a.card", name:"title", value:"Bye"});
         verify(!calls.some(c=>c.command === "set_interface"));
     }
+    function test_zoom_keeps_the_point_under_the_pointer_and_fit_restores_the_view() {
+        panel.fitView();
+        const fit = panel.zoom;
+        const before = panel.stageToCanvas(0, 200);
+        panel.zoomAt(200, 150, 2);
+        fuzzyCompare(panel.zoom, Math.min(8, fit * 2), 0.0001);
+        fuzzyCompare(panel.stageToCanvas(0, 200), before, 0.001);
+        panel.actualSize();
+        compare(panel.zoom, 1);
+        compare(panel.panX, 0);
+        panel.fitView();
+        fuzzyCompare(panel.zoom, fit, 0.0001);
+        verify(!calls.some(c => c.command === "set_interface" || c.command === "begin_interface_edit"));
+    }
     function test_guides_are_editor_only_and_snap_targets_follow_the_frame() {
         compare(panel.guides.length, 0);
         const a = panel.addGuide(0, 100);

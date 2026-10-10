@@ -37,8 +37,8 @@ Item {
     function moveGuide(index, pos) { guides = guides.map((g, i) => i === index ? {axis: g.axis, pos: pos} : g); }
     function removeGuide(index) { guides = guides.filter((g, i) => i !== index); }
     // Axis 0 is x, 1 is y; stage pixels are the viewport, canvas pixels the preview.
-    function stageToCanvas(axis, s) { return (axis === 0 ? previewWidth : previewHeight) / 2 + (s - (axis === 0 ? stage.width : stage.height) / 2) / Math.max(0.05, zoom); }
-    function canvasToStage(axis, c) { return (axis === 0 ? stage.width : stage.height) / 2 + (c - (axis === 0 ? previewWidth : previewHeight) / 2) * Math.max(0.05, zoom); }
+    function stageToCanvas(axis, s) { return (axis === 0 ? previewWidth : previewHeight) / 2 + (s - (axis === 0 ? stage.width : stage.height) / 2 - (axis === 0 ? panX : panY)) / Math.max(0.05, zoom); }
+    function canvasToStage(axis, c) { return (axis === 0 ? stage.width : stage.height) / 2 + (axis === 0 ? panX : panY) + (c - (axis === 0 ? previewWidth : previewHeight) / 2) * Math.max(0.05, zoom); }
     function guideTargets(frame, axis) {
         // Guides only snap in axis-aligned frames, in the frame's own units.
         if (Math.abs(frame[1]) > 1e-6 || Math.abs(frame[2]) > 1e-6) return [];
@@ -474,7 +474,23 @@ Item {
     property int previewHeight: 720
     readonly property var safe: document.safe_area || [0,0,0,0]
     readonly property real designScale: document.scale === "ScaleWithSize" ? Math.max(0.01, Math.min((previewWidth-safe[0]-safe[2])/(document.reference_size || [960,720])[0], (previewHeight-safe[1]-safe[3])/(document.reference_size || [960,720])[1])) : 1
-    property real zoom: Math.min((stage.width - 32) / previewWidth, (stage.height - 32) / previewHeight)
+    readonly property real fitZoom: Math.min((stage.width - 32) / previewWidth, (stage.height - 32) / previewHeight)
+    // Zoom follows the fit until the user sets one; panning is the canvas offset from centre.
+    property real zoom: fitZoom
+    property real panX: 0
+    property real panY: 0
+    function fitView() { zoom = Qt.binding(() => fitZoom); panX = 0; panY = 0; }
+    function actualSize() { zoom = 1; panX = 0; panY = 0; }
+    // Zooms by `factor` keeping the preview point under the stage position (sx, sy) where it is.
+    function zoomAt(sx, sy, factor) {
+        const old = Math.max(0.05, zoom);
+        const next = Math.max(0.1, Math.min(8, old * factor));
+        const cx = previewWidth / 2 + (sx - stage.width / 2 - panX) / old;
+        const cy = previewHeight / 2 + (sy - stage.height / 2 - panY) / old;
+        zoom = next;
+        panX = sx - stage.width / 2 - (cx - previewWidth / 2) * next;
+        panY = sy - stage.height / 2 - (cy - previewHeight / 2) * next;
+    }
     function copy(v) { return JSON.parse(JSON.stringify(v)); }
     function refresh() {
         if (gesture) return;
@@ -841,6 +857,9 @@ Item {
                 Label { text: "px" }
                 CheckBox { objectName: "interfaceSafeArea"; text: "Safe area"; checked: root.showSafeArea; onToggled: root.showSafeArea = checked }
                 CheckBox { objectName: "interfaceReference"; text: "Reference size"; checked: root.showReference; onToggled: root.showReference = checked }
+                Button { objectName: "interfaceFit"; text: "Fit"; onClicked: root.fitView() }
+                Button { objectName: "interfaceActualSize"; text: "100%"; onClicked: root.actualSize() }
+                Label { objectName: "interfaceZoomLabel"; text: Math.round(root.zoom * 100) + "%" }
                 CheckBox { objectName: "interfaceRulers"; text: "Rulers"; checked: root.showRulers; onToggled: root.showRulers = checked }
                 Button { objectName: "interfaceClearGuides"; text: "Clear guides"; enabled: root.guides.length > 0; onClicked: root.guides = [] }
                 CheckBox { text: "Align edges/centers"; checked: root.snapAlign; onToggled: root.snapAlign = checked }
@@ -848,6 +867,26 @@ Item {
             }
             Rectangle {
                 id: stage; Layout.fillWidth: true; Layout.fillHeight: true; color: "#171a21"; clip: true
+                // Ctrl+wheel zooms at the pointer; the wheel pans (Shift for sideways); middle-drag pans.
+                WheelHandler {
+                    objectName: "interfaceWheel"
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    onWheel: event => {
+                        const dy = event.angleDelta.y, dx = event.angleDelta.x;
+                        if (event.modifiers & Qt.ControlModifier) root.zoomAt(point.position.x, point.position.y, Math.pow(1.0015, dy));
+                        else if (event.modifiers & Qt.ShiftModifier) root.panX += (dy || dx) / 2;
+                        else { root.panX += dx / 2; root.panY += dy / 2; }
+                    }
+                }
+                DragHandler {
+                    objectName: "interfacePan"
+                    acceptedButtons: Qt.MiddleButton
+                    target: null
+                    property real lastX: 0
+                    property real lastY: 0
+                    onActiveChanged: { lastX = 0; lastY = 0; }
+                    onTranslationChanged: { root.panX += translation.x - lastX; root.panY += translation.y - lastY; lastX = translation.x; lastY = translation.y; }
+                }
                 // Rulers: drag out of one for a guide, and drag a guide back onto it to remove it.
                 Repeater {
                     model: root.showRulers ? [0, 1] : []
@@ -904,6 +943,7 @@ Item {
                 }
                 Rectangle {
                     id: canvas; objectName: "interfaceCanvas"; anchors.centerIn: parent
+                    anchors.horizontalCenterOffset: root.panX; anchors.verticalCenterOffset: root.panY
                     width: root.previewWidth; height: root.previewHeight
                     scale: Math.max(0.05,root.zoom); color: root.document.theme === "Light" ? "#d9dfe8" : "#252d3a"
                     Loader {
