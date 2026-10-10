@@ -2439,10 +2439,11 @@ lands.
   key`), edited through `set-locale` and friends; scripts drive both through
   ABI 47 (`switch_save_slot`, `save_slot`/`save_slots`, `set_language`,
   `language`, `text_for`).
-- A text input is basic: no selection, no cursor, no IME. Backspace rubs out,
-  Escape and Enter let go, and every other character key appends - subject to
-  the input's own `allow` and `max length`, which is all the validation there
-  is. Backspace ignores both, so a rule written after the typing doesn't trap
+- A text input has a caret (`ui::TextCaret`): arrows, Home, End, Delete,
+  Shift-select, Ctrl/Cmd+A and IME composition, all through the input's own
+  `allow` and `max length`. The caret shows as `|` and a selection as `[..]`
+  in the text; there is no pointer placement or drawn selection yet. Backspace
+  and Delete ignore the rules, so a rule written after the typing doesn't trap
   what is already in the field.
 - A clone copies the template as the editor authored it, standing where the
   template stands now. What `attach`/`detach` did to the template since Play
