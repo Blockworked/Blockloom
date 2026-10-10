@@ -805,7 +805,7 @@ impl UiDocument {
                 widget,
                 path,
             } => {
-                if !property_metadata().iter().any(|m| &m.path == path) {
+                if !property_metadata().iter().any(|m| m.path == path.as_str()) {
                     return Err(format!("Unknown property path: {path}"));
                 }
                 return self.expose(prefab, name, widget, path, false);
