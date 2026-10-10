@@ -463,6 +463,17 @@ TestCase {
         panel.removeBinding(0);
         verify(!calls.some(c=>c.command === "set_interface"));
     }
+    function test_exposed_properties_and_slots_read_and_write_through_typed_edits() {
+        const d = {widgets:[{element:{id:"a.card",content:"Card"}, instance_of:"card"}, {element:{id:"a.title",parent:"a.card",content:"Hello"}}],
+            prefabs:{card:[{element:{id:"card"}}, {element:{id:"title",parent:"card"}}]},
+            exports:{card:[{name:"title",widget:"title",path:"element.content",slot:false},{name:"body",widget:"card",path:"",slot:true}]}};
+        panel.document = d; backend.appState.project.world.interface = d; panel.selectedId = "a.card";
+        compare(panel.exposedRows().map(r => r.name + ":" + r.slot + ":" + r.value), ["title:false:Hello", "body:true:"]);
+        panel.setExposed("title", "Bye");
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit, {kind:"SetExposed", instance:"a.card", name:"title", value:"Bye"});
+        verify(!calls.some(c=>c.command === "set_interface"));
+    }
     function test_guides_are_editor_only_and_snap_targets_follow_the_frame() {
         compare(panel.guides.length, 0);
         const a = panel.addGuide(0, 100);

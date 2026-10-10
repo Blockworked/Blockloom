@@ -637,6 +637,40 @@ Item {
         if (!widget) return;
         propertyEdit("bindings", (widget.bindings || []).filter((b, i) => i !== index));
     }
+    // Exposed properties of the selected instance: [{name, value}] read from its widgets.
+    function exposedRows() {
+        if (!widget || !widget.instance_of) return [];
+        const prefab = (document.prefabs || {})[widget.instance_of] || [];
+        const rootId = (prefab.find(w => !w.element.parent) || {element: {id: ""}}).element.id;
+        const id = widget.element.id;
+        if (!rootId || id.slice(id.length - rootId.length) !== rootId) return [];
+        const prefix = id.slice(0, id.length - rootId.length);
+        return ((document.exports || {})[widget.instance_of] || []).map(e => {
+            const target = document.widgets.find(w => w.element.id === prefix + e.widget);
+            let value = target;
+            (e.path ? e.path.split(".") : []).forEach(step => { value = value === undefined || value === null ? undefined : value[step]; });
+            return {name: e.name, slot: !!e.slot, value: e.slot ? "" : (value === undefined || value === null ? "" : value)};
+        });
+    }
+    function setExposed(name, text) {
+        if (!widget) return;
+        let value = text;
+        const current = exposedRows().find(r => r.name === name);
+        if (current && typeof current.value !== "string") { try { value = JSON.parse(text); } catch (e) { error = String(e); return; } }
+        structuralEdit({kind: "SetExposed", instance: widget.element.id, name: name, value: value}, widget.element.id, []);
+    }
+    function fillSlot(slot, widgetId) {
+        if (!widget || !widgetId) return;
+        structuralEdit({kind: "FillSlot", instance: widget.element.id, slot: slot, widget: widgetId}, widgetId, []);
+    }
+    function exposeProperty(prefab, name, path) {
+        if (!widget) return;
+        structuralEdit({kind: "ExposeProperty", prefab: prefab, name: name, widget: widget.element.id, path: path}, widget.element.id, []);
+    }
+    function exposeSlot(prefab, name) {
+        if (!widget) return;
+        structuralEdit({kind: "ExposeSlot", prefab: prefab, name: name, widget: widget.element.id}, widget.element.id, []);
+    }
     function resetInstance() {
         if (widget && widget.instance_of) structuralEdit({kind: "ResetInstance", id: widget.element.id}, widget.element.id, []);
     }
@@ -1138,6 +1172,37 @@ Item {
                     Button { objectName: "interfaceResetInstance"; text: "Reset"; enabled: !!(root.widget && root.widget.instance_of) && !root.gesture; onClicked: root.resetInstance() }
                     Button { objectName: "interfaceDetachInstance"; text: "Detach"; enabled: !!(root.widget && root.widget.instance_of) && !root.gesture; onClicked: root.detachInstance() }
                     Button { objectName: "interfaceDeleteComponent"; text: "Delete"; enabled: componentPick.currentIndex >= 0 && !root.gesture; onClicked: root.structuralEdit({kind: "DeletePrefab", name: componentPick.currentText}, root.selectedId, []) }
+                }
+                Repeater {
+                    model: root.exposedRows()
+                    delegate: RowLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        Label { text: modelData.name; color: Theme.textDim }
+                        TextField {
+                            objectName: "interfaceExposed_" + modelData.name
+                            Layout.fillWidth: true; visible: !modelData.slot
+                            text: typeof modelData.value === "string" ? modelData.value : JSON.stringify(modelData.value)
+                            onEditingFinished: if (text !== (typeof modelData.value === "string" ? modelData.value : JSON.stringify(modelData.value))) root.setExposed(modelData.name, text)
+                        }
+                        Button {
+                            objectName: "interfaceFillSlot_" + modelData.name
+                            visible: modelData.slot; text: "Place selection here"
+                            enabled: !root.gesture && root.extraIds.length > 0
+                            onClicked: root.extraIds.forEach(id => root.fillSlot(modelData.name, id))
+                        }
+                    }
+                }
+                Label { text: "Expose from the selected widget"; font.bold: true; visible: componentPick.currentIndex >= 0 }
+                RowLayout {
+                    visible: componentPick.currentIndex >= 0
+                    TextField { id: exposeName; objectName: "interfaceExposeName"; Layout.fillWidth: true; placeholderText: "Name" }
+                    ComboBox { id: exposePath; objectName: "interfaceExposePath"; model: Object.keys(root.propertyKinds).filter(p => root.applies(p)) }
+                }
+                RowLayout {
+                    visible: componentPick.currentIndex >= 0
+                    Button { objectName: "interfaceExposeProperty"; text: "Expose property"; enabled: !!root.widget && !!exposeName.text.trim() && !root.gesture; onClicked: root.exposeProperty(componentPick.currentText, exposeName.text.trim(), exposePath.currentText) }
+                    Button { objectName: "interfaceExposeSlot"; text: "Expose as slot"; enabled: !!root.widget && !!exposeName.text.trim() && !root.gesture; onClicked: root.exposeSlot(componentPick.currentText, exposeName.text.trim()) }
                 }
                 Label { text: "Variable binding"; font.bold: true }
                 ComboBox { id: bindingProperty; Layout.fillWidth: true; model: ["Text","Value","Visible","SelectedIndex"] }

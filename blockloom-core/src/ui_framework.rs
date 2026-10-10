@@ -300,6 +300,23 @@ pub struct UiDocument {
     pub reference_size: [f32; 2],
     pub safe_area: [f32; 4],
     pub prefabs: BTreeMap<String, Vec<UiWidget>>,
+    /// What each prefab lets an instance set by name: properties and slots.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub exports: BTreeMap<String, Vec<UiExport>>,
+}
+
+/// A named handle on a prefab: one property of one widget inside it, or a
+/// container widget other widgets can be placed into.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiExport {
+    pub name: String,
+    /// The widget's id inside the prefab.
+    pub widget: String,
+    /// A property path (see `property_metadata`); empty for a slot.
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub slot: bool,
 }
 /// The schema version this build writes.
 pub const UI_SCHEMA_VERSION: u32 = 1;
@@ -320,6 +337,7 @@ impl Default for UiDocument {
             reference_size: [960., 720.],
             safe_area: [0.; 4],
             prefabs: BTreeMap::new(),
+            exports: BTreeMap::new(),
         }
     }
 }
@@ -667,6 +685,35 @@ pub enum UiEdit {
     ResetInstance {
         id: String,
     },
+    /// Lets instances of `prefab` set `path` of its widget `widget` as `name`.
+    ExposeProperty {
+        prefab: String,
+        name: String,
+        widget: String,
+        path: String,
+    },
+    /// Lets instances of `prefab` take widgets inside its container `widget`.
+    ExposeSlot {
+        prefab: String,
+        name: String,
+        widget: String,
+    },
+    Unexpose {
+        prefab: String,
+        name: String,
+    },
+    /// Sets an exposed property on the instance rooted at `instance`.
+    SetExposed {
+        instance: String,
+        name: String,
+        value: serde_json::Value,
+    },
+    /// Moves `widget` into the instance's slot `slot`.
+    FillSlot {
+        instance: String,
+        slot: String,
+        widget: String,
+    },
 }
 
 impl UiDocument {
@@ -726,6 +773,7 @@ impl UiDocument {
                 if self.prefabs.remove(name).is_none() {
                     return Err(format!("No UI prefab named {name}"));
                 }
+                self.exports.remove(name);
                 for w in &mut self.widgets {
                     if &w.instance_of == name {
                         w.instance_of.clear();
@@ -751,6 +799,80 @@ impl UiDocument {
                 return Ok(());
             }
             UiEdit::ResetInstance { id } => return self.reset_instance(id),
+            UiEdit::ExposeProperty {
+                prefab,
+                name,
+                widget,
+                path,
+            } => {
+                if !property_metadata().iter().any(|m| &m.path == path) {
+                    return Err(format!("Unknown property path: {path}"));
+                }
+                return self.expose(prefab, name, widget, path, false);
+            }
+            UiEdit::ExposeSlot {
+                prefab,
+                name,
+                widget,
+            } => return self.expose(prefab, name, widget, "", true),
+            UiEdit::Unexpose { prefab, name } => {
+                let list = self.exports.get_mut(prefab);
+                let before = list.as_ref().map_or(0, |l| l.len());
+                if let Some(list) = list {
+                    list.retain(|e| &e.name != name);
+                    if list.is_empty() {
+                        self.exports.remove(prefab);
+                    }
+                }
+                let after = self.exports.get(prefab).map_or(0, |l| l.len());
+                return if before == after {
+                    Err(format!("{prefab} exposes nothing called {name}"))
+                } else {
+                    Ok(())
+                };
+            }
+            UiEdit::SetExposed {
+                instance,
+                name,
+                value,
+            } => {
+                let (export, prefix) = self.exported(instance, name, false)?;
+                let property = serde_json::from_value(
+                    serde_json::json!({"path": export.path, "value": value}),
+                )
+                .map_err(|e| format!("{name}: {e}"))?;
+                return self.apply_edit(&UiEdit::SetProperty {
+                    id: format!("{prefix}{}", export.widget),
+                    property,
+                });
+            }
+            UiEdit::FillSlot {
+                instance,
+                slot,
+                widget,
+            } => {
+                let (export, prefix) = self.exported(instance, slot, true)?;
+                let parent = format!("{prefix}{}", export.widget);
+                let canvas = self
+                    .find(&parent)
+                    .is_some_and(|i| self.widgets[i].element.kind == UiKind::Canvas);
+                let placement = if canvas {
+                    let size = self
+                        .find(widget)
+                        .map_or([100., 40.], |i| self.widgets[i].element.size);
+                    UiPlacement::Free {
+                        offset: [0.; 2],
+                        size: [size[0].max(1.), size[1].max(1.)],
+                    }
+                } else {
+                    UiPlacement::Flow
+                };
+                return self.apply_edit(&UiEdit::Reparent {
+                    id: widget.clone(),
+                    parent,
+                    placement,
+                });
+            }
             _ => {}
         }
         let id = match edit {
@@ -769,7 +891,12 @@ impl UiDocument {
             | UiEdit::DeletePrefab { .. }
             | UiEdit::InstantiatePrefab { .. }
             | UiEdit::DetachInstance { .. }
-            | UiEdit::ResetInstance { .. } => unreachable!(),
+            | UiEdit::ResetInstance { .. }
+            | UiEdit::ExposeProperty { .. }
+            | UiEdit::ExposeSlot { .. }
+            | UiEdit::Unexpose { .. }
+            | UiEdit::SetExposed { .. }
+            | UiEdit::FillSlot { .. } => unreachable!(),
         };
         let index = self
             .widgets
@@ -1181,6 +1308,102 @@ impl UiDocument {
         Ok(())
     }
 
+    fn expose(
+        &mut self,
+        prefab: &str,
+        name: &str,
+        widget: &str,
+        path: &str,
+        slot: bool,
+    ) -> Result<(), String> {
+        if name.trim().is_empty() {
+            return Err("An exposed name cannot be empty".into());
+        }
+        let members = self
+            .prefabs
+            .get(prefab)
+            .ok_or_else(|| format!("No UI prefab named {prefab}"))?;
+        if !members.iter().any(|w| w.element.id == widget) {
+            return Err(format!("{prefab} has no widget {widget}"));
+        }
+        let list = self.exports.entry(prefab.to_string()).or_default();
+        if list.iter().any(|e| e.name == name) {
+            return Err(format!("{prefab} already exposes {name}"));
+        }
+        list.push(UiExport {
+            name: name.to_string(),
+            widget: widget.to_string(),
+            path: path.to_string(),
+            slot,
+        });
+        Ok(())
+    }
+
+    /// The prefab export `name` of the instance at `instance`, and the id
+    /// prefix its widgets carry.
+    fn exported(
+        &self,
+        instance: &str,
+        name: &str,
+        slot: bool,
+    ) -> Result<(UiExport, String), String> {
+        let at = self
+            .find(instance)
+            .ok_or_else(|| format!("Unknown widget: {instance}"))?;
+        let prefab = self.widgets[at].instance_of.clone();
+        let root = self
+            .prefabs
+            .get(&prefab)
+            .and_then(|p| p.iter().find(|w| w.element.parent.is_empty()))
+            .map(|w| w.element.id.clone())
+            .ok_or_else(|| format!("{instance} is not the root of a component instance"))?;
+        let prefix = instance
+            .strip_suffix(&root)
+            .ok_or_else(|| format!("Instance {instance} does not follow its prefab's naming"))?
+            .to_string();
+        let export = self
+            .exports
+            .get(&prefab)
+            .and_then(|l| l.iter().find(|e| e.name == name && e.slot == slot))
+            .ok_or_else(|| {
+                format!(
+                    "{prefab} exposes no {} called {name}",
+                    if slot { "slot" } else { "property" }
+                )
+            })?;
+        Ok((export.clone(), prefix))
+    }
+
+    /// What an instance's exposed properties currently hold, by name.
+    pub fn exposed_values(
+        &self,
+        instance: &str,
+    ) -> Result<Vec<(String, serde_json::Value)>, String> {
+        let at = self
+            .find(instance)
+            .ok_or_else(|| format!("Unknown widget: {instance}"))?;
+        let prefab = &self.widgets[at].instance_of;
+        let mut out = Vec::new();
+        for export in self
+            .exports
+            .get(prefab)
+            .into_iter()
+            .flatten()
+            .filter(|e| !e.slot)
+        {
+            let (_, prefix) = self.exported(instance, &export.name, false)?;
+            let Some(i) = self.find(&format!("{prefix}{}", export.widget)) else {
+                continue;
+            };
+            let mut value = to_json(&self.widgets[i])?;
+            for step in export.path.split('.') {
+                value = value.get(step).cloned().unwrap_or(serde_json::Value::Null);
+            }
+            out.push((export.name.clone(), value));
+        }
+        Ok(out)
+    }
+
     /// Rebuilds the instance rooted at `id` exactly as its prefab says.
     fn reset_instance(&mut self, id: &str) -> Result<(), String> {
         let at = self
@@ -1271,6 +1494,17 @@ impl UiDocument {
             return Err("An interface supports at most 10000 widgets".into());
         }
         let mut ids = HashSet::new();
+        for (prefab, list) in &self.exports {
+            let members = self
+                .prefabs
+                .get(prefab)
+                .ok_or_else(|| format!("Exports for a missing prefab: {prefab}"))?;
+            if list.iter().any(|e| {
+                e.name.trim().is_empty() || !members.iter().any(|w| w.element.id == e.widget)
+            }) {
+                return Err(format!("{prefab} exposes something that is not in it"));
+            }
+        }
         for widget in &self.widgets {
             let id = &widget.element.id;
             if id.is_empty()
@@ -2017,6 +2251,75 @@ mod tests {
         assert!(doc.widgets.iter().all(|w| w.instance_of.is_empty()));
         doc.widgets[0].instance_of = "gone".into();
         assert!(doc.validate().is_err());
+    }
+
+    #[test]
+    fn instances_set_exposed_properties_and_fill_slots() {
+        let mut doc = UiDocument::default();
+        let mut body = row("body", "card", "");
+        body.element.kind = UiKind::VerticalBox;
+        doc.widgets = vec![row("card", "", "Card"), row("title", "card", "Title"), body];
+        doc.apply_edit(&UiEdit::SavePrefab {
+            name: "card".into(),
+            root: "card".into(),
+            update_instances: false,
+        })
+        .unwrap();
+        let expose = |doc: &mut UiDocument, edit: serde_json::Value| {
+            doc.apply_edit(&serde_json::from_value(edit).unwrap())
+        };
+        expose(&mut doc, serde_json::json!({"kind": "ExposeProperty", "prefab": "card", "name": "title", "widget": "title", "path": "element.content"})).unwrap();
+        expose(&mut doc, serde_json::json!({"kind": "ExposeSlot", "prefab": "card", "name": "body", "widget": "body"})).unwrap();
+        // Bad exposures are refused.
+        assert!(expose(&mut doc, serde_json::json!({"kind": "ExposeProperty", "prefab": "card", "name": "x", "widget": "nope", "path": "tooltip"})).is_err());
+        assert!(expose(&mut doc, serde_json::json!({"kind": "ExposeProperty", "prefab": "card", "name": "x", "widget": "title", "path": "bogus"})).is_err());
+        assert!(expose(&mut doc, serde_json::json!({"kind": "ExposeProperty", "prefab": "card", "name": "title", "widget": "title", "path": "tooltip"})).is_err());
+        doc.apply_edit(&UiEdit::InstantiatePrefab {
+            name: "card".into(),
+            prefix: "a.".into(),
+            parent: String::new(),
+        })
+        .unwrap();
+        expose(&mut doc, serde_json::json!({"kind": "SetExposed", "instance": "a.card", "name": "title", "value": "Hello"})).unwrap();
+        assert_eq!(
+            doc.widgets[doc.find("a.title").unwrap()].element.content,
+            "Hello"
+        );
+        assert_eq!(
+            doc.exposed_values("a.card").unwrap(),
+            vec![("title".to_string(), serde_json::json!("Hello"))]
+        );
+        // The wrong type, an unknown name and a slot used as a property fail.
+        assert!(expose(&mut doc, serde_json::json!({"kind": "SetExposed", "instance": "a.card", "name": "title", "value": 5})).is_err());
+        assert!(expose(&mut doc, serde_json::json!({"kind": "SetExposed", "instance": "a.card", "name": "body", "value": "x"})).is_err());
+        // A loose widget moves into the slot.
+        doc.widgets.push(row("extra", "", "Extra"));
+        expose(&mut doc, serde_json::json!({"kind": "FillSlot", "instance": "a.card", "slot": "body", "widget": "extra"})).unwrap();
+        assert_eq!(
+            doc.widgets[doc.find("extra").unwrap()].element.parent,
+            "a.body"
+        );
+        assert!(doc.validate().is_ok());
+        // Unexposing and deleting the prefab clean up.
+        expose(
+            &mut doc,
+            serde_json::json!({"kind": "Unexpose", "prefab": "card", "name": "title"}),
+        )
+        .unwrap();
+        assert!(
+            expose(
+                &mut doc,
+                serde_json::json!({"kind": "Unexpose", "prefab": "card", "name": "title"})
+            )
+            .is_err()
+        );
+        expose(
+            &mut doc,
+            serde_json::json!({"kind": "DeletePrefab", "name": "card"}),
+        )
+        .unwrap();
+        assert!(doc.exports.is_empty());
+        assert!(doc.validate().is_ok());
     }
 
     #[test]
