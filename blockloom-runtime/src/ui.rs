@@ -14,8 +14,8 @@
 use bevy::prelude::*;
 use blockloom_core::sense::UiSense;
 use blockloom_core::ui::{
-    UiAllow, UiAnchor, UiBinding, UiDocument, UiElement, UiKind, UiLayout, UiPaint, UiProp,
-    UiStyles, UiTheme, UiWidget,
+    TextCaret, UiAllow, UiAnchor, UiBinding, UiDocument, UiElement, UiKind, UiLayout, UiPaint,
+    UiProp, UiStyles, UiTheme, UiWidget,
 };
 use blockloom_core::value::Evaluated;
 use std::collections::HashMap;
@@ -118,6 +118,10 @@ pub struct UiNode {
     pub collection_range: Option<(usize, usize)>,
     pub collection_dirty: bool,
     pub expanded: bool,
+    /// Where typing lands while this input holds the keyboard.
+    pub caret: TextCaret,
+    /// An IME composition not yet committed, drawn at the caret.
+    pub preedit: String,
 }
 
 impl UiNode {
@@ -366,6 +370,8 @@ impl UiManager {
                         collection_range: None,
                         collection_dirty: true,
                         expanded: false,
+                        caret: TextCaret::default(),
+                        preedit: String::new(),
                     },
                 );
                 self.pending.push(id);
@@ -703,6 +709,11 @@ impl UiManager {
         for id in [self.focus.clone(), next.clone()].into_iter().flatten() {
             self.mark_dirty(&id);
         }
+        // A fresh focus starts typing at the end, with no composition held.
+        if let Some(node) = next.as_ref().and_then(|id| self.nodes.get_mut(id)) {
+            node.caret = TextCaret::end_of(&node.value.as_text());
+            node.preedit.clear();
+        }
         self.focus = next;
     }
 
@@ -1031,6 +1042,15 @@ pub fn text_of(node: &UiNode) -> String {
         UiKind::Slider => String::new(),
         _ => written.unwrap_or_else(|| node.spec.content.clone()),
     }
+}
+
+/// What an element draws as its text: an input that holds the keyboard shows
+/// its caret, selection and composition, everything else its `text_of`.
+pub fn display_text(node: &UiNode, focused: bool) -> String {
+    if focused && node.kind == UiKind::Input {
+        return node.caret.shown(&node.value.as_text(), &node.preedit);
+    }
+    text_of(node)
 }
 
 pub fn layout_node(element: &UiNode, canvas: bool) -> Node {

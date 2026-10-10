@@ -3184,7 +3184,7 @@ lands.
   key`), edited through `set-locale` and friends; scripts drive both through
   ABI 47 (`switch_save_slot`, `save_slot`/`save_slots`, `set_language`,
   `language`, `text_for`).
-- A text input is basic: no selection, no cursor, no IME. Backspace rubs out,
+- A text input has a caret, shift-selection and IME composition (no pointer placement or drawn selection yet). Backspace rubs out,
   Escape and Enter let go, and every other character key appends - subject to
   the input's own `allow` and `max length`, which is all the validation there
   is. Backspace ignores both, so a rule written after the typing doesn't trap

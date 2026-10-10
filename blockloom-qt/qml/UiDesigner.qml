@@ -506,7 +506,7 @@ Item {
         if (!widget) return;
         propertyEdit("element." + field, value);
     }
-    readonly property var typedFields: ["layout","style","class","bindings","items","tooltip","scroll_target","tab_index","transition"]
+    readonly property var typedFields: ["layout","style","class","bindings","actions","items","tooltip","scroll_target","tab_index","transition"]
     function extra(field, value) {
         if (!widget) return;
         if (typedFields.indexOf(field) >= 0) { propertyEdit(field, value); return; }
@@ -614,6 +614,28 @@ Item {
         const prefix = "i" + n + ".";
         const parent = widget && !widget.world_actor ? widget.element.id : "";
         structuralEdit({kind: "InstantiatePrefab", name: name, prefix: prefix, parent: parent}, prefix + root.element.id, []);
+    }
+    function describeAction(a) {
+        const run = a.run || {};
+        if (run.Broadcast) return a.on + ": broadcast " + run.Broadcast.message;
+        const v = run.SetVariable || {};
+        return a.on + ": set " + (v.actor ? v.actor + "." : "") + v.name + " to " + v.value;
+    }
+    function describeBinding(b) {
+        const v = b.source && b.source.Variable;
+        return b.property + (b.two_way ? " <-> " : " <- ") + (v ? (v.actor ? v.actor + "." : "") + v.name : "component field");
+    }
+    function addAction(action) {
+        if (!widget) return;
+        propertyEdit("actions", (widget.actions || []).concat([action]));
+    }
+    function removeAction(index) {
+        if (!widget) return;
+        propertyEdit("actions", (widget.actions || []).filter((a, i) => i !== index));
+    }
+    function removeBinding(index) {
+        if (!widget) return;
+        propertyEdit("bindings", (widget.bindings || []).filter((b, i) => i !== index));
     }
     function resetInstance() {
         if (widget && widget.instance_of) structuralEdit({kind: "ResetInstance", id: widget.element.id}, widget.element.id, []);
@@ -1127,6 +1149,44 @@ Item {
                     bindings.push({property:bindingProperty.currentText,source:{Variable:{actor:bindingActor.text,name:bindingName.text}},two_way:bindingWrite.checked});
                     root.extra("bindings",bindings);
                 } }
+                Repeater {
+                    model: root.widget ? root.widget.bindings || [] : []
+                    delegate: RowLayout {
+                        required property var modelData
+                        required property int index
+                        Layout.fillWidth: true
+                        Label { Layout.fillWidth: true; elide: Text.ElideRight; text: root.describeBinding(modelData); color: Theme.textDim }
+                        Button { objectName: "interfaceRemoveBinding" + index; text: "Remove"; enabled: !root.gesture; onClicked: root.removeBinding(index) }
+                    }
+                }
+                Label { text: "Events"; font.bold: true }
+                Repeater {
+                    model: root.widget ? root.widget.actions || [] : []
+                    delegate: RowLayout {
+                        required property var modelData
+                        required property int index
+                        Layout.fillWidth: true
+                        Label { Layout.fillWidth: true; elide: Text.ElideRight; text: root.describeAction(modelData); color: Theme.textDim }
+                        Button { objectName: "interfaceRemoveAction" + index; text: "Remove"; enabled: !root.gesture; onClicked: root.removeAction(index) }
+                    }
+                }
+                RowLayout {
+                    ComboBox { id: actionOn; objectName: "interfaceActionOn"; model: ["Click","Change"] }
+                    ComboBox { id: actionKind; objectName: "interfaceActionKind"; model: ["Broadcast","Set variable"] }
+                }
+                TextField { id: actionMessage; objectName: "interfaceActionMessage"; Layout.fillWidth: true; visible: actionKind.currentIndex === 0; placeholderText: "Message to broadcast" }
+                TextField { id: actionActor; Layout.fillWidth: true; visible: actionKind.currentIndex === 1; placeholderText: "Actor id (blank for global)" }
+                TextField { id: actionVariable; objectName: "interfaceActionVariable"; Layout.fillWidth: true; visible: actionKind.currentIndex === 1; placeholderText: "Variable name" }
+                TextField { id: actionValue; objectName: "interfaceActionValue"; Layout.fillWidth: true; visible: actionKind.currentIndex === 1; placeholderText: "Value ($value is the new value on Change)" }
+                Button {
+                    objectName: "interfaceAddAction"; text: "Add event"
+                    enabled: !!root.widget && !root.gesture && (actionKind.currentIndex === 0 ? !!actionMessage.text.trim() : !!actionVariable.text.trim())
+                    onClicked: {
+                        root.addAction({on: actionOn.currentText, run: actionKind.currentIndex === 0
+                            ? {Broadcast: {message: actionMessage.text.trim()}}
+                            : {SetVariable: {actor: actionActor.text.trim(), name: actionVariable.text.trim(), value: actionValue.text}}});
+                    }
+                }
                 Label { text: "Advanced properties"; font.bold: true }
                 Repeater {
                     model: ["layout","style","bindings"]

@@ -515,7 +515,7 @@ pub fn draw_ui(
                 &paint,
             ));
         }
-        let wanted = crate::ui::text_of(element);
+        let wanted = crate::ui::display_text(element, id == focused);
         for (text_entity, owner, mut text, mut font, mut color) in &mut labels {
             if owner.0 != id {
                 continue;

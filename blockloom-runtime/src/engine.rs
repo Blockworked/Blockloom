@@ -826,7 +826,53 @@ impl Engine {
         format!("~h{}", self.made)
     }
 
+    /// Runs the actions a widget was authored with for `event`, if it is a
+    /// click or a change.
+    fn run_widget_actions(&mut self, event: &blockloom_core::vm::Event) {
+        use blockloom_core::ui::{UiDo, UiEventKind};
+        use blockloom_core::vm::Event;
+        let (id, kind, changed) = match event {
+            Event::UiClicked { id } => (id, UiEventKind::Click, None),
+            Event::UiChanged { id, value } => (id, UiEventKind::Change, Some(value)),
+            _ => return,
+        };
+        let Some(widget) = self
+            .project
+            .world
+            .interface
+            .widgets
+            .iter()
+            .find(|w| &w.element.id == id)
+        else {
+            return;
+        };
+        let actions: Vec<UiDo> = widget
+            .actions
+            .iter()
+            .filter(|a| a.on == kind)
+            .map(|a| a.run.clone())
+            .collect();
+        for run in actions {
+            match run {
+                UiDo::Broadcast { message } => {
+                    self.fire(Event::Message(message.trim().to_string()));
+                }
+                UiDo::SetVariable { actor, name, value } => {
+                    let value = match (value.trim(), changed) {
+                        ("$value", Some(v)) => v.clone(),
+                        (text, _) => match text.parse::<f64>() {
+                            Ok(n) => Evaluated::Number(n),
+                            Err(_) => Evaluated::Text(value.clone()),
+                        },
+                    };
+                    self.variables.write(&actor, &name, value);
+                }
+            }
+        }
+    }
+
     pub fn fire(&mut self, event: blockloom_core::vm::Event) {
+        self.run_widget_actions(&event);
         // Queued even while paused: the fixed `tick` skips paused steps, but
         // the per-frame `ui` entry point drains these so menus answer while
         // the world is frozen, the way UI strands do.
@@ -852,6 +898,43 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authored_widget_actions_broadcast_and_write_variables() {
+        use blockloom_core::ui::{UiAction, UiDo, UiEventKind, UiWidget};
+        use blockloom_core::vm::Event;
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        let mut slider = UiWidget::default();
+        slider.element.id = "volume".into();
+        slider.actions = vec![
+            UiAction {
+                on: UiEventKind::Change,
+                run: UiDo::SetVariable {
+                    actor: String::new(),
+                    name: "level".into(),
+                    value: "$value".into(),
+                },
+            },
+            UiAction {
+                on: UiEventKind::Click,
+                run: UiDo::Broadcast {
+                    message: "open".into(),
+                },
+            },
+        ];
+        engine.project.world.interface.widgets.push(slider);
+        engine.fire(Event::UiChanged {
+            id: "volume".into(),
+            value: Evaluated::Number(7.0),
+        });
+        assert_eq!(engine.variables.read("", "level"), Evaluated::Number(7.0));
+        // A click runs only the click handler; nothing else is written.
+        engine.fire(Event::UiClicked {
+            id: "volume".into(),
+        });
+        assert_eq!(engine.variables.read("", "level"), Evaluated::Number(7.0));
+    }
 
     #[test]
     fn say_replaces_and_empty_say_clears_an_actors_bubble() {

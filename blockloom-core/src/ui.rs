@@ -420,6 +420,184 @@ pub fn typed(text: &str, ch: char, allow: UiAllow, max_length: usize) -> Option<
     Some(next)
 }
 
+/// Where typing lands in a text input, and what is selected. Positions count
+/// characters, not bytes, and are kept inside the text by every operation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TextCaret {
+    pub at: usize,
+    /// The other end of a selection, when one is held.
+    pub anchor: Option<usize>,
+}
+
+impl TextCaret {
+    /// A caret at the end of `text`, as a freshly focused input has.
+    pub fn end_of(text: &str) -> Self {
+        Self {
+            at: text.chars().count(),
+            anchor: None,
+        }
+    }
+
+    /// The selected characters as `(start, end)`, if any are.
+    pub fn selection(&self) -> Option<(usize, usize)> {
+        self.anchor
+            .filter(|a| *a != self.at)
+            .map(|a| (a.min(self.at), a.max(self.at)))
+    }
+
+    pub fn clamp(&mut self, text: &str) {
+        let len = text.chars().count();
+        self.at = self.at.min(len);
+        self.anchor = self.anchor.map(|a| a.min(len));
+    }
+
+    fn byte(text: &str, chars: usize) -> usize {
+        text.char_indices()
+            .nth(chars)
+            .map_or(text.len(), |(i, _)| i)
+    }
+
+    /// Removes the selection, leaving the caret where it was. True if it did.
+    fn cut(&mut self, text: &mut String) -> bool {
+        let Some((start, end)) = self.selection() else {
+            self.anchor = None;
+            return false;
+        };
+        text.replace_range(Self::byte(text, start)..Self::byte(text, end), "");
+        self.at = start;
+        self.anchor = None;
+        true
+    }
+
+    /// Types one character over the selection, if any. The input's own rules
+    /// decide; a refused character leaves the text and selection as they were.
+    pub fn insert(
+        &mut self,
+        text: &mut String,
+        ch: char,
+        allow: UiAllow,
+        max_length: usize,
+    ) -> bool {
+        self.clamp(text);
+        let mut next = text.clone();
+        let mut caret = *self;
+        caret.cut(&mut next);
+        if max_length > 0 && next.chars().count() >= max_length {
+            return false;
+        }
+        // A minus only leads, so it is judged against what precedes it.
+        let seen = if ch == '-' {
+            &next[..Self::byte(&next, caret.at)]
+        } else {
+            &next[..]
+        };
+        if !allow.admits(seen, ch) {
+            return false;
+        }
+        next.insert(Self::byte(&next, caret.at), ch);
+        caret.at += 1;
+        *text = next;
+        *self = caret;
+        true
+    }
+
+    /// Rubs out the selection, or the character before the caret.
+    pub fn backspace(&mut self, text: &mut String) -> bool {
+        self.clamp(text);
+        if self.cut(text) {
+            return true;
+        }
+        if self.at == 0 {
+            return false;
+        }
+        text.replace_range(Self::byte(text, self.at - 1)..Self::byte(text, self.at), "");
+        self.at -= 1;
+        true
+    }
+
+    /// Rubs out the selection, or the character after the caret.
+    pub fn delete(&mut self, text: &mut String) -> bool {
+        self.clamp(text);
+        if self.cut(text) {
+            return true;
+        }
+        if self.at >= text.chars().count() {
+            return false;
+        }
+        text.replace_range(Self::byte(text, self.at)..Self::byte(text, self.at + 1), "");
+        true
+    }
+
+    /// Moves by `delta` characters. `extend` (Shift) grows the selection;
+    /// without it a held selection collapses to the edge it moves towards.
+    pub fn step(&mut self, text: &str, delta: isize, extend: bool) {
+        self.clamp(text);
+        if !extend && let Some((start, end)) = self.selection() {
+            self.at = if delta < 0 { start } else { end };
+            self.anchor = None;
+            return;
+        }
+        let len = text.chars().count() as isize;
+        let moved = (self.at as isize + delta).clamp(0, len) as usize;
+        self.go(moved, extend);
+    }
+
+    /// Jumps to `at` (clamped), selecting from where it was when `extend`.
+    pub fn go(&mut self, at: usize, extend: bool) {
+        if extend {
+            self.anchor.get_or_insert(self.at);
+        } else {
+            self.anchor = None;
+        }
+        self.at = at;
+    }
+
+    pub fn home(&mut self, extend: bool) {
+        self.go(0, extend);
+    }
+
+    pub fn end(&mut self, text: &str, extend: bool) {
+        self.go(text.chars().count(), extend);
+    }
+
+    pub fn select_all(&mut self, text: &str) {
+        self.anchor = Some(0);
+        self.at = text.chars().count();
+    }
+
+    /// The text with the caret drawn in and any selection and uncommitted IME
+    /// composition marked, for an input that holds the keyboard.
+    pub fn shown(&self, text: &str, preedit: &str) -> String {
+        let mut caret = *self;
+        caret.clamp(text);
+        let chars: Vec<char> = text.chars().collect();
+        let mut out = String::new();
+        let selection = caret.selection();
+        for (i, ch) in chars.iter().enumerate() {
+            if i == caret.at {
+                out.push_str(preedit);
+                if selection.is_none() {
+                    out.push('|');
+                }
+            }
+            if selection.is_some_and(|(s, _)| s == i) {
+                out.push('[');
+            }
+            out.push(*ch);
+            if selection.is_some_and(|(_, e)| e == i + 1) {
+                out.push(']');
+            }
+        }
+        if caret.at >= chars.len() {
+            out.push_str(preedit);
+            if selection.is_none() {
+                out.push('|');
+            }
+        }
+        out
+    }
+}
+
 /// Where a slider's number really lands: inside its own ends, and on a
 /// multiple of its step measured from the low end - so a 0-to-10 slider
 /// stepping 3 stops at 0, 3, 6 and 9, never at 7.4 and never at 10. A step
@@ -641,6 +819,58 @@ mod tests {
         assert!(UiKind::Input.is_input());
         assert!(!UiKind::Label.is_input());
         assert!(!UiKind::Button.is_input());
+    }
+    #[test]
+    fn a_caret_types_deletes_and_selects_inside_the_text() {
+        let mut text = String::from("held");
+        let mut caret = TextCaret::end_of(&text);
+        caret.step(&text, -2, false);
+        assert!(caret.insert(&mut text, 'x', UiAllow::Any, 0));
+        assert_eq!((text.as_str(), caret.at), ("hexld", 3));
+        assert!(caret.backspace(&mut text));
+        assert_eq!((text.as_str(), caret.at), ("held", 2));
+        assert!(caret.delete(&mut text));
+        assert_eq!(text, "hed");
+        // Shift-extend, then typing replaces the selection.
+        caret.home(true);
+        assert_eq!(caret.selection(), Some((0, 2)));
+        assert!(caret.insert(&mut text, 'J', UiAllow::Any, 0));
+        assert_eq!((text.as_str(), caret.at, caret.anchor), ("Jd", 1, None));
+        caret.select_all(&text);
+        assert!(caret.backspace(&mut text));
+        assert_eq!((text.as_str(), caret.at), ("", 0));
+        assert!(!caret.backspace(&mut text) && !caret.delete(&mut text));
+    }
+
+    #[test]
+    fn a_caret_keeps_the_inputs_rules_and_counts_characters() {
+        let mut text = String::from("5");
+        let mut caret = TextCaret::end_of(&text);
+        // A minus only leads; a full field takes no more; a number has one point.
+        assert!(!caret.insert(&mut text, '-', UiAllow::Numbers, 0));
+        caret.home(false);
+        assert!(caret.insert(&mut text, '-', UiAllow::Numbers, 0));
+        caret.end(&text, false);
+        assert!(caret.insert(&mut text, '.', UiAllow::Numbers, 0));
+        assert!(!caret.insert(&mut text, '.', UiAllow::Numbers, 0));
+        assert!(!caret.insert(&mut text, 'a', UiAllow::Digits, 0));
+        let mut word = String::from("ab");
+        let mut at = TextCaret::end_of(&word);
+        assert!(!at.insert(&mut word, 'c', UiAllow::Any, 2));
+        // Multi-byte characters move one at a time.
+        let mut text = String::from("héé");
+        let mut caret = TextCaret::end_of(&text);
+        caret.step(&text, -1, false);
+        assert!(caret.backspace(&mut text));
+        assert_eq!(text, "hé");
+        // A held selection collapses towards the arrow, and the display marks it.
+        let mut caret = TextCaret::end_of("abc");
+        assert_eq!(caret.shown("abc", ""), "abc|");
+        caret.select_all("abc");
+        assert_eq!(caret.shown("abc", ""), "[abc]");
+        caret.step("abc", -1, false);
+        assert_eq!((caret.at, caret.selection()), (0, None));
+        assert_eq!(caret.shown("abc", "ni"), "ni|abc");
     }
 }
 

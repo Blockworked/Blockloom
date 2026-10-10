@@ -230,6 +230,34 @@ pub struct UiBinding {
     pub two_way: bool,
 }
 
+/// What a widget reports to the game.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiEventKind {
+    Click,
+    Change,
+}
+
+/// What a widget event does. In `SetVariable`, a value of `$value` stands for
+/// the widget's new value on a Change event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum UiDo {
+    Broadcast {
+        message: String,
+    },
+    SetVariable {
+        #[serde(default)]
+        actor: String,
+        name: String,
+        value: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiAction {
+    pub on: UiEventKind,
+    pub run: UiDo,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiWidget {
@@ -238,6 +266,9 @@ pub struct UiWidget {
     pub style: UiStyles,
     pub class: String,
     pub bindings: Vec<UiBinding>,
+    /// Event handlers authored on the widget, run by the player without blocks.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<UiAction>,
     pub items: Vec<String>,
     pub tooltip: String,
     pub world_actor: String,
@@ -314,6 +345,8 @@ pub enum UiPropertyEdit {
     Class(String),
     #[serde(rename = "bindings")]
     Bindings(Vec<UiBinding>),
+    #[serde(rename = "actions")]
+    Actions(Vec<UiAction>),
     #[serde(rename = "items")]
     Items(Vec<String>),
     #[serde(rename = "tooltip")]
@@ -352,6 +385,7 @@ impl UiPropertyEdit {
             UiPropertyEdit::Style(_) => "style",
             UiPropertyEdit::Class(_) => "class",
             UiPropertyEdit::Bindings(_) => "bindings",
+            UiPropertyEdit::Actions(_) => "actions",
             UiPropertyEdit::Items(_) => "items",
             UiPropertyEdit::Tooltip(_) => "tooltip",
             UiPropertyEdit::ScrollTarget(_) => "scroll_target",
@@ -469,6 +503,7 @@ pub fn property_metadata() -> Vec<UiPropertyInfo> {
             vec![],
             vec![],
         ),
+        info("actions", "Events", "Bindings", "actions", vec![], vec![]),
         info(
             "items",
             "Items",
@@ -818,6 +853,10 @@ impl UiDocument {
                 }
                 UiPropertyEdit::Class(value) => w.class = value.clone(),
                 UiPropertyEdit::Bindings(value) => w.bindings = value.clone(),
+                UiPropertyEdit::Actions(value) => {
+                    check_actions(value)?;
+                    w.actions = value.clone();
+                }
                 UiPropertyEdit::Items(value) => w.items = value.clone(),
                 UiPropertyEdit::Tooltip(value) => w.tooltip = value.clone(),
                 UiPropertyEdit::ScrollTarget(value) => {
@@ -1253,6 +1292,7 @@ impl UiDocument {
             }) {
                 return Err(format!("Unsupported binding property on {id}"));
             }
+            check_actions(&widget.actions).map_err(|e| format!("{id}: {e}"))?;
             if let Some(layout) = &widget.layout
                 && (layout.columns == 0
                     || !layout.row_height.is_finite()
@@ -1329,6 +1369,21 @@ impl UiDocument {
         }
         Ok(widgets)
     }
+}
+
+fn check_actions(actions: &[UiAction]) -> Result<(), String> {
+    for action in actions {
+        match &action.run {
+            UiDo::Broadcast { message } if message.trim().is_empty() => {
+                return Err("A broadcast needs a message".into());
+            }
+            UiDo::SetVariable { name, .. } if name.trim().is_empty() => {
+                return Err("Set variable needs a variable name".into());
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn to_json(widget: &UiWidget) -> Result<serde_json::Value, String> {
@@ -1564,6 +1619,7 @@ mod tests {
             UiPropertyEdit::Style(Box::default()),
             UiPropertyEdit::Class(String::new()),
             UiPropertyEdit::Bindings(vec![]),
+            UiPropertyEdit::Actions(vec![]),
             UiPropertyEdit::Items(vec![]),
             UiPropertyEdit::Tooltip(String::new()),
             UiPropertyEdit::ScrollTarget(String::new()),
@@ -1960,6 +2016,42 @@ mod tests {
         .unwrap();
         assert!(doc.widgets.iter().all(|w| w.instance_of.is_empty()));
         doc.widgets[0].instance_of = "gone".into();
+        assert!(doc.validate().is_err());
+    }
+
+    #[test]
+    fn widget_actions_edit_validate_and_round_trip() {
+        let mut doc = UiDocument::default();
+        doc.widgets = vec![row("play", "", "Play")];
+        let good = serde_json::json!([
+            {"on": "Click", "run": {"Broadcast": {"message": "start"}}},
+            {"on": "Change", "run": {"SetVariable": {"name": "volume", "value": "$value"}}}
+        ]);
+        let edit = |value: serde_json::Value| UiEdit::SetProperty {
+            id: "play".into(),
+            property: serde_json::from_value(
+                serde_json::json!({"path": "actions", "value": value}),
+            )
+            .unwrap(),
+        };
+        doc.apply_edit(&edit(good)).unwrap();
+        assert_eq!(doc.widgets[0].actions.len(), 2);
+        let back: UiDocument = serde_json::from_str(&serde_json::to_string(&doc).unwrap()).unwrap();
+        assert_eq!(back.widgets[0].actions, doc.widgets[0].actions);
+        let before = doc.clone();
+        assert!(
+            doc.apply_edit(&edit(
+                serde_json::json!([{"on": "Click", "run": {"Broadcast": {"message": " "}}}])
+            ))
+            .is_err()
+        );
+        assert_eq!(doc, before);
+        assert!(UiDocument::default().widgets.is_empty());
+        doc.widgets[0].actions[0].run = UiDo::SetVariable {
+            actor: String::new(),
+            name: String::new(),
+            value: "1".into(),
+        };
         assert!(doc.validate().is_err());
     }
 

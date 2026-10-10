@@ -453,6 +453,16 @@ TestCase {
         panel.showReference = true;
         verify(!calls.some(c => c.command === "set_interface" || c.command === "begin_interface_edit"));
     }
+    function test_events_and_bindings_edit_through_typed_properties() {
+        panel.selectedId = "front";
+        panel.addAction({on: "Click", run: {Broadcast: {message: "start"}}});
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit, {kind:"SetProperty", id:"front", property:{path:"actions", value:[{on:"Click", run:{Broadcast:{message:"start"}}}]}});
+        compare(panel.describeAction({on:"Change", run:{SetVariable:{actor:"", name:"vol", value:"$value"}}}), "Change: set vol to $value");
+        compare(panel.describeBinding({property:"Text", source:{Variable:{actor:"", name:"score"}}, two_way:false}), "Text <- score");
+        panel.removeBinding(0);
+        verify(!calls.some(c=>c.command === "set_interface"));
+    }
     function test_guides_are_editor_only_and_snap_targets_follow_the_frame() {
         compare(panel.guides.length, 0);
         const a = panel.addGuide(0, 100);
