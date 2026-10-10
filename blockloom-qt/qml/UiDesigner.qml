@@ -29,6 +29,21 @@ Item {
     // Further selected widgets beside selectedId (Shift-click, Ctrl-click in the tree, marquee).
     property bool showSafeArea: false
     property bool showReference: false
+    // Editor-only guides in preview pixels: {axis: 0 vertical line at x, 1 horizontal line at y, pos}.
+    property bool showRulers: false
+    property var guides: []
+    onGuidesChanged: overlay.requestPaint()
+    function addGuide(axis, pos) { guides = guides.concat([{axis: axis, pos: pos}]); return guides.length - 1; }
+    function moveGuide(index, pos) { guides = guides.map((g, i) => i === index ? {axis: g.axis, pos: pos} : g); }
+    function removeGuide(index) { guides = guides.filter((g, i) => i !== index); }
+    // Axis 0 is x, 1 is y; stage pixels are the viewport, canvas pixels the preview.
+    function stageToCanvas(axis, s) { return (axis === 0 ? previewWidth : previewHeight) / 2 + (s - (axis === 0 ? stage.width : stage.height) / 2) / Math.max(0.05, zoom); }
+    function canvasToStage(axis, c) { return (axis === 0 ? stage.width : stage.height) / 2 + (c - (axis === 0 ? previewWidth : previewHeight) / 2) * Math.max(0.05, zoom); }
+    function guideTargets(frame, axis) {
+        // Guides only snap in axis-aligned frames, in the frame's own units.
+        if (Math.abs(frame[1]) > 1e-6 || Math.abs(frame[2]) > 1e-6) return [];
+        return guides.filter(g => g.axis === axis).map(g => (g.pos - frame[axis === 0 ? 4 : 5]) / frame[axis === 0 ? 0 : 3]);
+    }
     onShowSafeAreaChanged: overlay.requestPaint()
     onShowReferenceChanged: overlay.requestPaint()
     onSafeChanged: overlay.requestPaint()
@@ -170,6 +185,7 @@ Item {
             const box = boxInFrame(b, frameInverse);
             for (let axis=0;axis<2;++axis) targets[axis].push(box[axis],(box[axis]+box[axis+2])/2,box[axis+2]);
         });
+        for (let axis=0;axis<2;++axis) guideTargets(frame, axis).forEach(t => targets[axis].push(t));
         const g = {kind: kind, id: selectedId, original: copy(document), token: null,
             offset: (widget.element.offset || [0,0]).slice(), start: {x: x, y: y},
             inverse: bound ? geometry.inverse(bound.transform) : null,
@@ -769,11 +785,67 @@ Item {
                 Label { text: "px" }
                 CheckBox { objectName: "interfaceSafeArea"; text: "Safe area"; checked: root.showSafeArea; onToggled: root.showSafeArea = checked }
                 CheckBox { objectName: "interfaceReference"; text: "Reference size"; checked: root.showReference; onToggled: root.showReference = checked }
+                CheckBox { objectName: "interfaceRulers"; text: "Rulers"; checked: root.showRulers; onToggled: root.showRulers = checked }
+                Button { objectName: "interfaceClearGuides"; text: "Clear guides"; enabled: root.guides.length > 0; onClicked: root.guides = [] }
                 CheckBox { text: "Align edges/centers"; checked: root.snapAlign; onToggled: root.snapAlign = checked }
                 Label { text: "Hold Shift to bypass snapping" }
             }
             Rectangle {
                 id: stage; Layout.fillWidth: true; Layout.fillHeight: true; color: "#171a21"; clip: true
+                // Rulers: drag out of one for a guide, and drag a guide back onto it to remove it.
+                Repeater {
+                    model: root.showRulers ? [0, 1] : []
+                    delegate: Item {
+                        id: ruler
+                        required property int modelData
+                        // The top ruler measures x and pulls out horizontal guides; the left one the reverse.
+                        readonly property int measures: modelData
+                        readonly property int makes: 1 - modelData
+                        objectName: measures === 0 ? "interfaceRulerTop" : "interfaceRulerLeft"
+                        z: 5
+                        width: measures === 0 ? stage.width : 18
+                        height: measures === 0 ? 18 : stage.height
+                        property int dragging: -1
+                        Rectangle { anchors.fill: parent; color: "#1d222c"; opacity: 0.92 }
+                        Repeater {
+                            // A tick every 50 preview pixels, labelled every 100.
+                            model: Math.ceil((ruler.measures === 0 ? root.previewWidth : root.previewHeight) / 50) + 1
+                            delegate: Item {
+                                required property int index
+                                readonly property real at: root.canvasToStage(ruler.measures, index * 50)
+                                x: ruler.measures === 0 ? at : 0
+                                y: ruler.measures === 0 ? 0 : at
+                                Rectangle {
+                                    width: ruler.measures === 0 ? 1 : (index % 2 ? 6 : 12)
+                                    height: ruler.measures === 0 ? (index % 2 ? 6 : 12) : 1
+                                    color: "#8892a6"
+                                }
+                                Label {
+                                    visible: index % 2 === 0
+                                    x: ruler.measures === 0 ? 3 : 1; y: ruler.measures === 0 ? 0 : 3
+                                    text: index * 50; font.pixelSize: 8; color: "#8892a6"
+                                }
+                            }
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            function canvasPoint(mouse) {
+                                const p = mapToItem(stage, mouse.x, mouse.y);
+                                return Math.round(root.stageToCanvas(ruler.makes, ruler.makes === 0 ? p.x : p.y));
+                            }
+                            onPressed: mouse => { ruler.dragging = root.addGuide(ruler.makes, canvasPoint(mouse)); }
+                            onPositionChanged: mouse => { if (ruler.dragging >= 0) root.moveGuide(ruler.dragging, canvasPoint(mouse)); }
+                            onReleased: mouse => {
+                                if (ruler.dragging < 0) return;
+                                const p = mapToItem(stage, mouse.x, mouse.y);
+                                // Released on a ruler (or off the stage) takes the guide away again.
+                                if ((ruler.makes === 0 ? p.x : p.y) <= 18) root.removeGuide(ruler.dragging);
+                                ruler.dragging = -1;
+                            }
+                            onCanceled: { if (ruler.dragging >= 0) root.removeGuide(ruler.dragging); ruler.dragging = -1; }
+                        }
+                    }
+                }
                 Rectangle {
                     id: canvas; objectName: "interfaceCanvas"; anchors.centerIn: parent
                     width: root.previewWidth; height: root.previewHeight
@@ -827,6 +899,13 @@ Item {
                                 ctx.strokeStyle = "#c792ea"; ctx.lineWidth = 1/Math.max(0.05,root.zoom);
                                 ctx.strokeRect(inset.x, inset.y, ref[0]*root.designScale, ref[1]*root.designScale); ctx.restore();
                             }
+                            ctx.save(); ctx.strokeStyle = "#4dd0e1"; ctx.lineWidth = 1/Math.max(0.05,root.zoom);
+                            root.guides.forEach(g => {
+                                ctx.beginPath();
+                                if (g.axis === 0) { ctx.moveTo(g.pos, 0); ctx.lineTo(g.pos, height); } else { ctx.moveTo(0, g.pos); ctx.lineTo(width, g.pos); }
+                                ctx.stroke();
+                            });
+                            ctx.restore();
                             root.selectionIds.slice(1).forEach(id => outline(id, "#8fd0a0"));
                             outline(root.selectedId, "#70baff");
                             const m = root.marquee;

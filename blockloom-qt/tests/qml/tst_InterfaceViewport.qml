@@ -453,6 +453,25 @@ TestCase {
         panel.showReference = true;
         verify(!calls.some(c => c.command === "set_interface" || c.command === "begin_interface_edit"));
     }
+    function test_guides_are_editor_only_and_snap_targets_follow_the_frame() {
+        compare(panel.guides.length, 0);
+        const a = panel.addGuide(0, 100);
+        const b = panel.addGuide(1, 40);
+        compare(panel.guides.length, 2);
+        panel.moveGuide(a, 120);
+        compare(panel.guides[a].pos, 120);
+        // Frame: scale 2 at an origin of (10, 20); guides land in frame units.
+        compare(panel.guideTargets([2, 0, 0, 2, 10, 20], 0), [55]);
+        compare(panel.guideTargets([2, 0, 0, 2, 10, 20], 1), [10]);
+        // A rotated frame gets none.
+        compare(panel.guideTargets([0, 1, -1, 0, 0, 0], 0), []);
+        compare(panel.stageToCanvas(0, panel.canvasToStage(0, 300)), 300);
+        panel.removeGuide(b);
+        compare(panel.guides.length, 1);
+        findChild(panel, "interfaceRulers").toggle();
+        verify(panel.showRulers);
+        verify(!calls.some(c => c.command === "set_interface" || c.command === "begin_interface_edit"));
+    }
     function test_locked_widgets_are_not_picked_or_edited_but_nothing_is_saved() {
         panel.selectedId = "back";
         verify(panel.editable(panel.widget));
