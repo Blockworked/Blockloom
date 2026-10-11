@@ -336,13 +336,17 @@ pub struct UiTrack {
 
 /// The properties a track can drive: the sizes and colors an element is
 /// restyled by, and a value.
-pub const ANIMATABLE_NUMBERS: [UiProp; 6] = [
+pub const ANIMATABLE_NUMBERS: [UiProp; 10] = [
     UiProp::Width,
     UiProp::Height,
     UiProp::TextSize,
     UiProp::CornerRadius,
     UiProp::Padding,
     UiProp::Value,
+    UiProp::Opacity,
+    UiProp::OffsetX,
+    UiProp::OffsetY,
+    UiProp::Rotation,
 ];
 pub const ANIMATABLE_COLORS: [UiProp; 2] = [UiProp::Background, UiProp::TextColor];
 
@@ -480,6 +484,45 @@ pub struct UiAction {
     pub run: UiDo,
 }
 
+/// Visual state laid over an element after layout: it never changes what
+/// layout measures. Offset adds to wherever the anchor and layout put the
+/// element and rotation turns it about its centre, so neither fights the
+/// anchor's own shift. Opacity multiplies down the tree.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiFx {
+    pub opacity: f32,
+    pub offset: [f32; 2],
+    /// Degrees, clockwise.
+    pub rotation: f32,
+}
+
+impl Default for UiFx {
+    fn default() -> Self {
+        Self {
+            opacity: 1.,
+            offset: [0., 0.],
+            rotation: 0.,
+        }
+    }
+}
+
+impl UiFx {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.opacity.is_finite() || !(0. ..=1.).contains(&self.opacity) {
+            return Err("Opacity must be between 0 and 1".into());
+        }
+        if !self.offset.iter().all(|v| v.is_finite()) || !self.rotation.is_finite() {
+            return Err("Offset and rotation must be finite".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiWidget {
@@ -500,6 +543,9 @@ pub struct UiWidget {
     pub scroll_target: String,
     pub tab_index: Option<usize>,
     pub transition: f32,
+    /// Opacity, offset and rotation the widget starts with.
+    #[serde(skip_serializing_if = "UiFx::is_default")]
+    pub fx: UiFx,
     /// On the root of a prefab instance: the prefab it came from.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub instance_of: String,
@@ -606,6 +652,8 @@ pub enum UiPropertyEdit {
     TabIndex(Option<usize>),
     #[serde(rename = "transition")]
     Transition(f32),
+    #[serde(rename = "fx")]
+    Fx(UiFx),
 }
 
 /// How the inspector should draw a property path.
@@ -641,6 +689,7 @@ impl UiPropertyEdit {
             UiPropertyEdit::ScrollTarget(_) => "scroll_target",
             UiPropertyEdit::TabIndex(_) => "tab_index",
             UiPropertyEdit::Transition(_) => "transition",
+            UiPropertyEdit::Fx(_) => "fx",
         }
     }
 }
@@ -792,6 +841,14 @@ pub fn property_metadata() -> Vec<UiPropertyInfo> {
             "Transition seconds",
             "Appearance",
             "number",
+            vec![],
+            vec![],
+        ),
+        info(
+            "fx",
+            "Opacity, offset and rotation",
+            "Appearance",
+            "fx",
             vec![],
             vec![],
         ),
@@ -1272,6 +1329,10 @@ impl UiDocument {
                         return Err("Transition must be finite and not negative".into());
                     }
                     w.transition = *value;
+                }
+                UiPropertyEdit::Fx(value) => {
+                    value.validate()?;
+                    w.fx = *value;
                 }
             }
             return Ok(());
@@ -2149,6 +2210,48 @@ mod tests {
     }
 
     #[test]
+    fn fx_is_a_typed_edit_and_an_animation_track_may_drive_it() {
+        let mut doc: UiDocument = serde_json::from_value(serde_json::json!({
+            "widgets": [{"element": {"id": "a"}}]
+        }))
+        .unwrap();
+        let edit = |value| serde_json::from_value::<UiEdit>(value).unwrap();
+        doc.apply_edit(&edit(serde_json::json!({"kind": "SetProperty", "id": "a",
+            "property": {"path": "fx", "value": {"opacity": 0.0, "rotation": 15}}})))
+            .unwrap();
+        assert_eq!(doc.widgets[0].fx.opacity, 0.);
+        assert_eq!(doc.widgets[0].fx.rotation, 15.);
+        let bad = edit(serde_json::json!({"kind": "SetProperty", "id": "a",
+            "property": {"path": "fx", "value": {"opacity": 2.0}}}));
+        assert!(doc.apply_edit(&bad).is_err());
+        // A default fx is not written out.
+        doc.widgets[0].fx = UiFx::default();
+        assert!(
+            serde_json::to_value(&doc.widgets[0])
+                .unwrap()
+                .get("fx")
+                .is_none()
+        );
+        let track = |property| UiTrack {
+            widget: "a".into(),
+            property,
+            keys: vec![UiKey {
+                time: 0.,
+                value: UiKeyValue::Number(1.),
+                ease: UiEase::Linear,
+            }],
+        };
+        for property in [
+            UiProp::Opacity,
+            UiProp::OffsetX,
+            UiProp::OffsetY,
+            UiProp::Rotation,
+        ] {
+            assert!(track(property).validate(1.).is_ok(), "{property:?}");
+        }
+    }
+
+    #[test]
     fn property_metadata_covers_every_editable_path_and_batches_are_atomic() {
         let samples = [
             UiPropertyEdit::Kind(UiKind::Label),
@@ -2167,6 +2270,7 @@ mod tests {
             UiPropertyEdit::ScrollTarget(String::new()),
             UiPropertyEdit::TabIndex(None),
             UiPropertyEdit::Transition(0.),
+            UiPropertyEdit::Fx(UiFx::default()),
         ];
         let metadata = property_metadata();
         assert_eq!(metadata.len(), samples.len());

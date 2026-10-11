@@ -450,11 +450,17 @@ pub fn draw_ui(
         }
         let paint = manager.paint(element);
         let local_theme = element.theme.unwrap_or(theme);
-        let target = paint
-            .background
-            .as_ref()
-            .map(|hex| world::parse_color(hex))
-            .unwrap_or_else(|| crate::ui::background_for(local_theme, element.kind, id == focused));
+        let fade = manager.opacity_of(&id);
+        let target = faded(
+            paint
+                .background
+                .as_ref()
+                .map(|hex| world::parse_color(hex))
+                .unwrap_or_else(|| {
+                    crate::ui::background_for(local_theme, element.kind, id == focused)
+                }),
+            fade,
+        );
         if element.transition > 0. {
             commands
                 .entity(element.entity)
@@ -475,20 +481,23 @@ pub fn draw_ui(
             paint.radius.unwrap_or_else(crate::ui::corner_radius),
         ));
         node.border = UiRect::all(Val::Px(paint.border_width.unwrap_or(0.).max(0.)));
-        commands.entity(element.entity).insert(BorderColor::all(
-            paint
-                .border_color
-                .as_ref()
-                .map(|hex| world::parse_color(hex))
-                .unwrap_or(Color::NONE),
-        ));
+        commands
+            .entity(element.entity)
+            .insert(BorderColor::all(faded(
+                paint
+                    .border_color
+                    .as_ref()
+                    .map(|hex| world::parse_color(hex))
+                    .unwrap_or(Color::NONE),
+                fade,
+            )));
         commands.entity(element.entity).insert(BoxShadow(
             paint
                 .shadow
                 .as_ref()
                 .map(|hex| {
                     vec![ShadowStyle {
-                        color: world::parse_color(hex),
+                        color: faded(world::parse_color(hex), fade),
                         x_offset: Val::Px(2.),
                         y_offset: Val::Px(3.),
                         blur_radius: Val::Px(8.),
@@ -498,22 +507,25 @@ pub fn draw_ui(
                 .unwrap_or_default(),
         ));
         if element.parent.is_empty() || canvas {
-            let transform = if element.layout.as_ref().is_some_and(|l| l.absolute) {
+            let mut transform = if element.layout.as_ref().is_some_and(|l| l.absolute) {
                 UiTransform::default()
             } else {
                 let at = crate::ui::anchoring(element.spec.anchor, element.spec.offset);
                 UiTransform::from_translation(at.self_shift)
             };
+            transform.rotation = Rot2::degrees(element.fx.rotation);
             commands.entity(element.entity).insert(transform);
         }
         if element.kind == UiKind::Image && !element.spec.content.trim().is_empty() {
-            commands.entity(element.entity).insert(image_node(
+            let mut image = image_node(
                 assets.load(world::asset_path(
                     dir.as_deref(),
                     element.spec.content.trim(),
                 )),
                 &paint,
-            ));
+            );
+            image.color = faded(image.color, fade);
+            commands.entity(element.entity).insert(image);
         }
         let wanted = crate::ui::display_text(element, id == focused);
         for (text_entity, owner, mut text, mut font, mut color) in &mut labels {
@@ -561,7 +573,7 @@ pub fn draw_ui(
                                 },
                                 ..font.clone()
                             },
-                            TextColor(
+                            TextColor(faded(
                                 run.color
                                     .as_ref()
                                     .map(|c| world::parse_color(c))
@@ -572,17 +584,21 @@ pub fn draw_ui(
                                             .map(|c| world::parse_color(c))
                                             .unwrap_or_else(|| crate::ui::text_color(local_theme))
                                     }),
-                            ),
+                                fade,
+                            )),
                         ));
                     }
                 });
             } else if text.0 != wanted {
                 text.0.clone_from(&wanted);
             }
-            *color = TextColor(match &paint.text_color {
-                Some(hex) => world::parse_color(hex),
-                None => crate::ui::text_color(local_theme),
-            });
+            *color = TextColor(faded(
+                match &paint.text_color {
+                    Some(hex) => world::parse_color(hex),
+                    None => crate::ui::text_color(local_theme),
+                },
+                fade,
+            ));
         }
         // A slider's fill and a toggle's lamp are the only two whose look is
         // their value rather than their style.
@@ -604,12 +620,35 @@ pub fn draw_ui(
         let on = element.value.as_bool();
         for (owner, mut lamp) in &mut lamps {
             if owner.0 == id {
-                *lamp = BackgroundColor(toggle_lamp_color(local_theme, &paint, on));
+                *lamp = BackgroundColor(faded(toggle_lamp_color(local_theme, &paint, on), fade));
             }
         }
     }
     for id in unseen {
         manager.mark_dirty(&id);
+    }
+}
+
+/// `color` with its alpha scaled by an element's effective opacity.
+fn faded(color: Color, opacity: f32) -> Color {
+    if opacity >= 1.0 {
+        return color;
+    }
+    color.with_alpha(color.alpha() * opacity)
+}
+
+/// Turns elements whose rotation was written, about their centres. The
+/// anchor's shift lives in the same transform's translation and stays.
+pub fn apply_fx_rotation(mut manager: ResMut<UiManager>, mut transforms: Query<&mut UiTransform>) {
+    for (id, entity, degrees) in manager.fx_pending() {
+        // A spawn is deferred, so the transform may not exist for a frame.
+        if let Ok(mut transform) = transforms.get_mut(entity) {
+            let rotation = Rot2::degrees(degrees);
+            if transform.rotation != rotation {
+                transform.rotation = rotation;
+            }
+            manager.fx_done(&id);
+        }
     }
 }
 

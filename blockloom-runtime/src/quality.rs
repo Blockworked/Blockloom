@@ -946,6 +946,7 @@ mod tests {
                 Some(blockloom_protocol::InterfaceDesign {
                     screen: None,
                     hidden: vec![],
+                    animation: None,
                     viewport: None,
                     revision: 1,
                     generation: 1,
