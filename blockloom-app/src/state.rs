@@ -374,12 +374,22 @@ pub(crate) struct SyncDto {
 }
 
 /// One Dashboard card.
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, PartialEq)]
 pub(crate) struct ProjectEntryDto {
     pub(crate) path: String,
     pub(crate) name: String,
     pub(crate) mode: blockloom_core::scene::Mode,
     pub(crate) opened_at: u64,
+    pub(crate) available: bool,
+    pub(crate) error: Option<String>,
+    /// The installation the Hub bound this project to, if any.
+    pub(crate) installation: Option<String>,
+    /// That installation as a person would name it.
+    pub(crate) installation_label: Option<String>,
+    /// The Hub set this project to an editor other than this one.
+    pub(crate) wrong_editor: bool,
+    /// Another editor holds this project's folder right now.
+    pub(crate) in_use: bool,
 }
 
 /// A numeric field holding text that doesn't parse yet - the frontend keeps
@@ -388,6 +398,26 @@ pub(crate) struct ProjectEntryDto {
 pub(crate) struct InvalidFieldDto {
     pub(crate) location: ValueLocation,
     pub(crate) text: String,
+}
+
+/// The Dashboard's cards, with what the Hub and other editors say about each.
+pub(crate) fn library_dtos(s: &AppState) -> Vec<ProjectEntryDto> {
+    s.library
+        .iter()
+        .map(|entry| ProjectEntryDto {
+            path: entry.path.to_string_lossy().into_owned(),
+            name: entry.name.clone(),
+            mode: entry.mode,
+            opened_at: entry.opened_at,
+            available: entry.available,
+            error: entry.error.clone(),
+            installation: blockloom_core::hub::bound_installation(&entry.path),
+            installation_label: blockloom_core::hub::bound_installation(&entry.path)
+                .map(|id| blockloom_core::hub::friendly_name(&id)),
+            wrong_editor: blockloom_core::hub::conflict(&entry.path).is_some(),
+            in_use: blockloom_core::sync::live_owner(&entry.path, &s.session_id).is_some(),
+        })
+        .collect()
 }
 
 pub(crate) fn state_dto(s: &AppState) -> StateDto {
@@ -402,16 +432,7 @@ pub(crate) fn state_dto(s: &AppState) -> StateDto {
             .as_ref()
             .map(|open| open.script_statuses.clone())
             .unwrap_or_default(),
-        library: s
-            .library
-            .iter()
-            .map(|entry| ProjectEntryDto {
-                path: entry.path.to_string_lossy().into_owned(),
-                name: entry.name.clone(),
-                mode: entry.mode,
-                opened_at: entry.opened_at,
-            })
-            .collect(),
+        library: library_dtos(s),
         default_project_location: blockloom_core::project::default_projects_dir()
             .to_string_lossy()
             .into_owned(),

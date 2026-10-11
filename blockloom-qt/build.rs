@@ -19,6 +19,7 @@ fn main() {
                 "qml/Start.qml",
                 "qml/Main.qml",
                 "qml/Dashboard.qml",
+                "qml/NavigationGuard.qml",
                 "qml/NewProjectDialog.qml",
                 "qml/EditorPage.qml",
                 "qml/UiDesigner.qml",

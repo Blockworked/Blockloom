@@ -53,7 +53,7 @@ ApplicationWindow {
             color: control.checked ? Theme.panelRaised : control.hovered ? Theme.hover : "transparent"
         }
     }
-    component HubCheck: StitchCheckBox { font.pixelSize: 13 }
+    component HubCheck: StitchCheckBox { font.pixelSize: 13; hoverEnabled: true }
     component HubCombo: StitchComboBox {
         displayText: currentIndex < 0 ? "Select a version" : currentText
     }
@@ -64,6 +64,9 @@ ApplicationWindow {
     property string error: ""
     property string notice: ""
     property string lastBackup: ""
+    property var backupRows: []
+    property var backupsTarget: ({})
+    property var restoreTarget: ({})
     property var selectedProject: ({})
     property bool smokeBindingDone: false
     property bool smokeDevStarted: false
@@ -74,10 +77,48 @@ ApplicationWindow {
     property var toolsTarget: ({})
     property var deleteTarget: ({})
     property bool installMenuOpen: false
+    property string stage: ""
+    property var moduleInfo: ({})
+    function moduleText(id, fallback) {
+        const row = (moduleInfo.modules || []).find(m => m.id === id)
+        return row ? row.label + " (about " + row.approx_mib + " MiB)" : fallback
+    }
+    readonly property var readyEditors: installations.filter(i => i.status === "ready")
+
+    // Latest "Stage:" line of the running operation, for the status bar.
+    function updateStage() {
+        const lines = (service.log || "").split("\n")
+        for (let n = lines.length - 1; n >= 0; --n)
+            if (lines[n].startsWith("Stage: ")) { stage = lines[n].slice(7); return }
+        stage = ""
+    }
+    function opened(entry) {
+        if (!entry.opened_at) return "Never opened"
+        const days = Math.floor((Date.now() / 1000 - entry.opened_at) / 86400)
+        if (days <= 0) return "Opened today"
+        if (days === 1) return "Opened yesterday"
+        if (days < 30) return "Opened " + days + " days ago"
+        return "Opened " + new Date(entry.opened_at * 1000).toLocaleDateString()
+    }
+    function installationMissing(entry) {
+        return !!entry.installation && !readyEditors.some(i => i.id === entry.installation)
+    }
+    // Why Open is unavailable, or "" when it isn't.
+    function openBlocked(entry) {
+        if (!entry.available) return entry.error || "The project folder is unavailable."
+        if (!entry.installation) return defaultEditor() ? "" : "Install an editor first."
+        if (installationMissing(entry)) return "Its editor (" + friendly(entry.installation) + ") is not installed. Change editor to pick another."
+        if (entry.active) {
+            const owner = entry.owner || {}
+            return "Open in " + (owner.installation ? window.selection(owner.installation) : "another editor") + "."
+        }
+        return ""
+    }
 
     function perform(command, args) {
         error = ""
         notice = ""
+        noticeTimer.restart()
         service.run(command, args || [])
     }
     function refresh() { service.run("installations", []) }
@@ -93,10 +134,36 @@ ApplicationWindow {
             ? "Development: " + installation.name + " (" + installation.version + ")"
             : "Blockloom " + installation.version
     }
+    // "release-0.2.0" as a person says it; used when the installation is gone.
+    function friendly(identity) {
+        const text = String(identity || "")
+        if (text.startsWith("release-")) return "Blockloom " + text.slice(8)
+        if (text.startsWith("dev-")) return "Development build"
+        return text
+    }
     function selection(identity) {
         for (let installation of installations)
             if (installation.id === identity) return label(installation)
-        return identity ? "Missing installation: " + identity : "Choose an editor"
+        return identity ? friendly(identity) + " (not installed)" : "No editor chosen yet"
+    }
+    // What a project with no editor will open with: the newest release, else any ready one.
+    function defaultEditor() {
+        const releases = readyEditors.filter(i => i.kind === "release")
+        const pool = releases.length ? releases : readyEditors
+        if (pool.length === 0) return null
+        const key = i => String(i.version).split(/[.-]/).map(n => /^\d+$/.test(n) ? parseInt(n) : 0)
+        return pool.slice().sort((a, b) => {
+            const x = key(a), y = key(b)
+            for (let n = 0; n < Math.max(x.length, y.length); ++n) {
+                const d = (x[n] || 0) - (y[n] || 0)
+                if (d !== 0) return d
+            }
+            return 0
+        })[pool.length - 1]
+    }
+    function openable(entry) { return !!entry.available && !entry.active && openBlocked(entry) === "" }
+    function showFolderOf(entry) {
+        if (!service.showFolder(entry.path)) error = "The project folder could not be opened."
     }
     function matches(entry) {
         return ((entry.name || "") + " " + entry.path + " " + selection(entry.installation))
@@ -133,8 +200,12 @@ ApplicationWindow {
                 } else if (command === "installations") {
                     window.installations = result
                     service.run("projects", [])
+                } else if (command === "modules") {
+                    window.moduleInfo = result
                 } else if (command === "projects") {
                     window.projects = result
+                    if (!service.smokeTest() && window.moduleInfo.modules === undefined)
+                        Qt.callLater(() => { if (!service.busy) service.run("modules", []) })
                     if (service.smokeTest()) {
                         if ((service.smokePage() === "bind" || service.smokePage() === "upgrade-bind") && !window.smokeBindingDone && result.length > 0) {
                             window.smokeBindingDone = true
@@ -144,6 +215,7 @@ ApplicationWindow {
                             return
                         }
                         if (service.smokePage() === "installations") tabs.currentIndex = 1
+                        if (service.smokePage() === "no-match") search.text = "zzz-nothing"
                         if (service.smokePage() === "install") installDialog.open()
                         if (service.smokePage() === "version" && result.length > 0) window.choose(result[0])
                         if (service.smokePage() === "upgrade" && result.length > 0) {
@@ -167,21 +239,41 @@ ApplicationWindow {
                     logDialog.close()
                     devDialog.open()
                     if (service.smokeTest()) {
-                        if (service.smokePage() === "checkbox-checked") devSdk.checked = true
                         if (service.smokePage() === "dev-install") {
                             devJava.checked = false; devSdk.checked = false; devNdk.checked = false; devTargets.checked = false
                             devDialog.accept()
                         }
-                        else service.smokeReady(window.projects.length, window.installations.length)
+                        else if (!service.smokePage().startsWith("checkbox-"))
+                            service.smokeReady(window.projects.length, window.installations.length)
                     }
                 } else if (command === "remember") {
-                    window.choose(result)
+                    // Only ask about the editor when the project has none yet.
+                    if (!result.installation) window.choose(result)
+                    window.refresh()
+                } else if (command === "open" || command === "new-project") {
+                    window.notice = result.opened
+                        ? (command === "open" ? "Project opened in " : "New project created in ") + window.selection(result.installation)
+                            + (result.reused ? ", which was already running." : ".")
+                            + (result.bound ? " It was set to this editor." : "")
+                        : (result.reused ? "The running editor is still opening the project."
+                                         : "The editor started and is still opening the project.")
+                    window.refresh()
+                } else if (command === "focus") {
+                    window.notice = result.acknowledged
+                        ? "The editor heard you. If its window didn't come forward, your desktop may be holding it back."
+                        : "No editor window answered. Switch to it from your taskbar, or close it there first."
+                } else if (command === "backups") {
+                    window.backupRows = result
+                } else if (command === "restore-backup") {
+                    window.notice = "Project restored. What was there before is kept in its backups."
+                    window.refresh()
+                } else if (command === "forget" || command === "relocate") {
+                    window.notice = command === "forget" ? "Removed from the list. The folder was not touched." : "Project folder located."
                     window.refresh()
                 } else {
                     if (command === "bind" && result.backup) window.lastBackup = result.backup.path
-                    if (command === "bind") logDialog.close()
                     window.notice = command === "open" ? "Editor launched."
-                        : command === "bind" ? "Project editor selection saved." + (result.backup ? " Backup: " + result.backup.path : "")
+                        : command === "bind" ? "Project editor saved." + (result.backup ? " A backup was kept (Backups in the project's menu)." : "")
                         : command === "uninstall" ? "Installation uninstalled."
                         : command === "add-tools" ? "Modules added."
                         : "Installation saved."
@@ -193,9 +285,33 @@ ApplicationWindow {
     Timer {
         interval: 5000
         repeat: true
-        running: !service.busy && !service.smokeTest() && !versionDialog.visible && !devDialog.visible && !installDialog.visible && !settingsDialog.visible && !toolsDialog.visible && !deleteDialog.visible && !window.installMenuOpen
-        onTriggered: service.run("installations", [])
+        running: !service.busy && !service.smokeTest() && !versionDialog.visible && !newProjectDialog.visible && !devDialog.visible && !installDialog.visible && !settingsDialog.visible && !toolsDialog.visible && !deleteDialog.visible && !window.installMenuOpen
+        onTriggered: service.poll("installations")
     }
+    Connections {
+        target: service
+        // Background refreshes: no busy state, so buttons never flicker.
+        function onPolled(command, ok, response) {
+            if (!ok) return
+            try {
+                const result = JSON.parse(response)
+                if (command === "installations") {
+                    window.installations = result
+                    service.poll("projects")
+                } else if (command === "projects") {
+                    window.projects = result
+                }
+            } catch (e) {}
+        }
+    }
+    // A result line fades after a while; errors stay until the next action.
+    Timer {
+        id: noticeTimer
+        interval: 8000
+        running: window.notice.length > 0 && window.error.length === 0
+        onTriggered: window.notice = ""
+    }
+    Connections { target: service; function onLogChanged() { window.updateStage() } }
     Component.onCompleted: refresh()
     onClosing: function(close) {
         if (service.busy) {
@@ -246,14 +362,42 @@ ApplicationWindow {
             ColumnLayout {
                 spacing: 12
                 RowLayout {
-                    HubField { id: search; Layout.fillWidth: true; placeholderText: "Search projects" }
-                    HubButton { text: "Add project folder"; enabled: !service.busy; onClicked: projectFolder.open() }
+                    HubButton { objectName: "newProject"; primary: window.projects.length > 0; text: "New project"; enabled: !service.busy; onClicked: newProjectDialog.open() }
+                    HubButton { text: "Add existing project"; enabled: !service.busy; onClicked: projectFolder.open() }
+                    HubField { id: search; objectName: "searchField"; visible: window.projects.length > 4; Layout.fillWidth: true; placeholderText: "Search projects" }
+                    Item { visible: window.projects.length <= 4; Layout.fillWidth: true }
+                }
+                ColumnLayout {
+                    visible: window.projects.length === 0
+                    Layout.topMargin: 30
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: 10
+                    Label { Layout.alignment: Qt.AlignHCenter; text: "Make your first game"; font.pixelSize: 20; font.bold: true }
+                    Label {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: window.readyEditors.length === 0
+                            ? "Install an editor first, then create a project."
+                            : "Create a new project, or add one you already have."
+                        color: Theme.textDim
+                    }
+                    HubButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        primary: true
+                        objectName: "emptyPrimary"
+                        text: window.readyEditors.length === 0 ? "Get an editor" : "New project"
+                        onClicked: {
+                            if (window.readyEditors.length === 0) { releaseDialog.open(); perform("check-releases", []) }
+                            else newProjectDialog.open()
+                        }
+                    }
                 }
                 Label {
-                    visible: window.projects.length === 0
-                    text: "No projects yet. Add an existing project folder to get started."
+                    objectName: "noSearchMatch"
+                    visible: window.projects.length > 4 && search.text.length > 0
+                        && window.projects.filter(e => window.matches(e)).length === 0
+                    text: "No project matches “" + search.text + "”."
                     color: Theme.textDim
-                    Layout.topMargin: 30
+                    Layout.topMargin: 20
                 }
                 ListView {
                     Layout.fillWidth: true
@@ -263,11 +407,39 @@ ApplicationWindow {
                     model: window.projects.filter(entry => window.matches(entry))
                     ScrollBar.vertical: HubScrollBar { id: projectsScrollBar }
                     delegate: Rectangle {
+                        id: projectCard
                         required property var modelData
                         width: ListView.view.width - (projectsScrollBar.visible ? projectsScrollBar.width + 8 : 0)
                         height: projectRow.implicitHeight + 24
-                        color: "transparent"
+                        color: cardHover.hovered && window.openable(modelData) ? Theme.hover : "transparent"
                         Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: Theme.borderSoft }
+                        border.color: activeFocus ? Theme.accent : "transparent"
+                        activeFocusOnTab: true
+                        HoverHandler { id: cardHover }
+                        Keys.onReturnPressed: if (window.openable(modelData) && !service.busy) perform("open", [modelData.path])
+                        Keys.onEnterPressed: if (window.openable(modelData) && !service.busy) perform("open", [modelData.path])
+                        TapHandler {
+                            acceptedButtons: Qt.RightButton
+                            onTapped: if (modelData.available) rowMenu.popup()
+                        }
+                        Menu {
+                            id: rowMenu
+                            onOpened: window.installMenuOpen = true
+                            onClosed: window.installMenuOpen = false
+                            MenuItem {
+                                text: "Open"
+                                enabled: !service.busy && window.openable(modelData)
+                                onTriggered: perform("open", [modelData.path])
+                            }
+                            MenuItem { text: "Show in folder"; onTriggered: window.showFolderOf(modelData) }
+                            MenuItem {
+                                text: "Backups..."
+                                enabled: !service.busy
+                                onTriggered: { window.backupsTarget = modelData; window.backupRows = []; backupsDialog.open(); perform("backups", [modelData.path]) }
+                            }
+                            MenuSeparator {}
+                            MenuItem { text: "Remove from list"; enabled: !service.busy; onTriggered: perform("forget", [modelData.path]) }
+                        }
                         RowLayout {
                             id: projectRow
                             anchors.fill: parent
@@ -275,25 +447,78 @@ ApplicationWindow {
                             spacing: 16
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                Label { text: modelData.name || "Unavailable project"; font.weight: Font.DemiBold; font.pixelSize: 14 }
+                                // Clicking the words opens the project, the way an editor card does.
+                                TapHandler {
+                                    enabled: window.openable(modelData) && !service.busy
+                                    onTapped: perform("open", [modelData.path])
+                                }
+                                Label { text: modelData.name || "Unavailable project"; font.bold: true; font.pixelSize: 17 }
                                 Label { text: window.displayPath(modelData.path); color: Theme.textDim; elide: Text.ElideMiddle; Layout.fillWidth: true }
                                 Label {
-                                    text: modelData.error ? "Folder unavailable" : (modelData.mode === "ThreeD" ? "3D" : "2D")
-                                        + "  |  " + window.selection(modelData.installation)
-                                    color: modelData.error ? Theme.danger : Theme.accent
+                                    text: modelData.available
+                                        ? (modelData.mode === "ThreeD" ? "3D" : "2D") + "  ·  "
+                                            + (modelData.installation ? window.selection(modelData.installation)
+                                                : window.defaultEditor() ? "Will open with " + window.label(window.defaultEditor()) : "No editor chosen yet")
+                                            + "  ·  " + window.opened(modelData)
+                                        : window.opened(modelData)
+                                    color: modelData.available && modelData.installation ? Theme.accent : Theme.textDim
                                     elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                                Label {
+                                    objectName: "projectReason"
+                                    visible: text.length > 0
+                                    text: window.openBlocked(modelData)
+                                    color: modelData.available ? Theme.warning : Theme.danger
+                                    wrapMode: Text.Wrap
                                     Layout.fillWidth: true
                                 }
                             }
                             HubButton {
-                                text: "Select editor"
-                                enabled: !service.busy && !modelData.error && !modelData.active
+                                visible: !modelData.available
+                                objectName: "locateFolder"
+                                text: "Locate folder"
+                                enabled: !service.busy
+                                onClicked: { window.selectedProject = modelData; locateFolder.open() }
+                            }
+                            HubButton {
+                                visible: !modelData.available
+                                objectName: "removeFromList"
+                                text: "Remove from list"
+                                enabled: !service.busy
+                                onClicked: perform("forget", [modelData.path])
+                            }
+                            HubButton {
+                                visible: modelData.available
+                                text: "Change editor"
+                                enabled: !service.busy && !modelData.active
                                 onClicked: window.choose(modelData)
                             }
                             HubButton {
-                                text: modelData.active ? "In use" : "Open"
-                                enabled: !service.busy && !modelData.error && !modelData.active && !!modelData.installation
+                                visible: modelData.available && !modelData.active
+                                objectName: "openProject"
+                                primary: true
+                                text: "Open"
+                                enabled: !service.busy && window.openBlocked(modelData) === ""
                                 onClicked: perform("open", [modelData.path])
+                            }
+                            HubButton {
+                                visible: modelData.available && modelData.active
+                                objectName: "switchToEditor"
+                                primary: true
+                                text: "Switch to editor"
+                                enabled: !service.busy
+                                onClicked: perform("focus", [modelData.path])
+                            }
+                            HubButton {
+                                visible: modelData.available
+                                objectName: "projectMenu"
+                                text: "⋮"
+                                font.pixelSize: 18
+                                font.bold: true
+                                implicitWidth: 44
+                                Accessible.name: "Project options for " + modelData.name
+                                onClicked: rowMenu.popup(x, y + height)
                             }
                         }
                     }
@@ -302,25 +527,24 @@ ApplicationWindow {
             ColumnLayout {
                 spacing: 12
                 RowLayout {
-                    HubButton { text: "Get a release"; enabled: !service.busy; onClicked: { releaseDialog.open(); perform("check-releases", []) } }
-                    HubButton { text: "Import release bundle"; enabled: !service.busy; onClicked: { window.selectedRelease = {}; installDialog.open() } }
-                    HubButton { text: "Add local repository"; enabled: !service.busy; onClicked: repoFolder.open() }
-                }
-                Label {
-                    text: " "
-                    color: Theme.textDim
-                    wrapMode: Text.Wrap
-                    Layout.fillWidth: true
-                }
-                Label {
-                    text: " "
-                    color: Theme.textDim
-                    wrapMode: Text.Wrap
-                    Layout.fillWidth: true
+                    HubButton { primary: true; text: "Get a release"; enabled: !service.busy; onClicked: { releaseDialog.open(); perform("check-releases", []) } }
+                    HubButton {
+                        text: "More…"
+                        enabled: !service.busy
+                        onClicked: moreMenu.open()
+                        Menu {
+                            id: moreMenu
+                            y: parent.height
+                            onOpened: window.installMenuOpen = true
+                            onClosed: window.installMenuOpen = false
+                            MenuItem { text: "Import release bundle…"; onTriggered: { window.selectedRelease = {}; installDialog.open() } }
+                            MenuItem { text: "Add local repository…"; onTriggered: repoFolder.open() }
+                        }
+                    }
                 }
                 Label {
                     visible: window.installations.length === 0
-                    text: "Install a prepared release bundle or build from a local repository."
+                    text: "No editors yet. Choose Get a release to download one."
                     color: Theme.textDim
                     Layout.topMargin: 30
                 }
@@ -352,18 +576,20 @@ ApplicationWindow {
                                 }
                                 Label {
                                     text: modelData.status === "ready"
-                                        ? (modelData.running ? "In use" : "Ready") + "  |  Rust " + modelData.tools.rust.channel
-                                            + (Object.keys(modelData.tools).length > 1 ? "  |  " + Object.keys(modelData.tools).filter(t => t !== "rust").join(", ") : "")
+                                        ? (modelData.running ? "In use" : "Ready")
+                                            + (Object.keys(modelData.tools).filter(t => t !== "rust").length > 0
+                                                ? "  ·  Android: " + Object.keys(modelData.tools).filter(t => t !== "rust").join(", ") : "")
                                         : "Build this repository to create its installation."
                                     color: Theme.accent
                                     wrapMode: Text.Wrap
                                     Layout.fillWidth: true
                                 }
                             }
-                            ColumnLayout {
+                            RowLayout {
+                                spacing: 8
                                 HubButton {
                                     visible: !!modelData.prepared
-                                    text: "Install prepared build"
+                                    text: "Install new build"
                                     enabled: !service.busy && !modelData.running
                                     onClicked: perform("dev-options", [modelData.id])
                                 }
@@ -418,14 +644,95 @@ ApplicationWindow {
         }
         RowLayout {
             BusyIndicator { running: service.busy; visible: running; implicitWidth: 28; implicitHeight: 28 }
-            Label { text: service.cancelling ? "Stopping..." : service.busy ? "Working..." : "Ready"; color: Theme.textDim }
+            Label { objectName: "statusText"; text: service.cancelling ? "Stopping..." : service.busy ? (window.stage || "Working...") : "Ready"; color: Theme.textDim; elide: Text.ElideRight; Layout.maximumWidth: 600 }
             Item { Layout.fillWidth: true }
             HubButton { text: service.cancelling ? "Stopping..." : "Cancel"; visible: service.canCancel; enabled: !service.cancelling; onClicked: service.cancel() }
-            HubButton { text: "Operation log"; onClicked: logDialog.open() }
+            HubButton { flat: true; text: "Details"; onClicked: logDialog.open() }
         }
     }
 
     FolderDialog { id: projectFolder; title: "Select a Blockloom project"; onAccepted: perform("remember", [service.localPath(selectedFolder)]) }
+    FolderDialog {
+        id: locateFolder
+        title: "Locate the project folder"
+        onAccepted: perform("relocate", [window.selectedProject.path, service.localPath(selectedFolder)])
+    }
+    FolderDialog { id: newProjectLocation; title: "Where to keep the project"; onAccepted: npLocation.text = service.localPath(selectedFolder) }
+    HubDialog {
+        id: newProjectDialog
+        anchors.centerIn: parent
+        width: Math.min(window.width - 60, 560)
+        title: "New project"
+        modal: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        property string mode: "TwoD"
+        property string sample: ""
+        readonly property string folder: {
+            const cleaned = npName.text.replace(/[\/\\:*?"<>|]/g, "-").trim().replace(/^\.+|\.+$/g, "").trim()
+            return cleaned === "" ? "Project" : cleaned
+        }
+        onOpened: {
+            npName.text = "My Game"; mode = "TwoD"; sample = ""
+            if (npLocation.text.length === 0) npLocation.text = ""
+            npEditor.currentIndex = Math.max(0, npEditor.count - 1)
+        }
+        onAccepted: {
+            const args = [npName.text.trim(), "--mode", mode]
+            if (npEditor.currentIndex >= 0) args.push("--installation", window.readyEditors[npEditor.currentIndex].id)
+            if (npLocation.text.trim().length > 0) args.push("--location", npLocation.text.trim())
+            if (sample.length > 0) args.push("--sample", sample)
+            perform("new-project", args)
+        }
+        Component.onCompleted: {
+            standardButton(Dialog.Ok).text = "Create"
+            standardButton(Dialog.Ok).enabled = Qt.binding(() => npName.text.trim().length > 0 && npEditor.count > 0 && !service.busy)
+        }
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 8
+            Label { text: "Name"; color: Theme.textDim }
+            HubField { id: npName; objectName: "npName"; Layout.fillWidth: true }
+            Label { text: "Where to keep it (leave empty for the default)"; color: Theme.textDim }
+            RowLayout {
+                HubField { id: npLocation; Layout.fillWidth: true; placeholderText: "~/Blockloom/projects" }
+                HubButton { text: "Browse"; onClicked: newProjectLocation.open() }
+            }
+            Label {
+                Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; color: Theme.textDim
+                text: "The project gets a folder of its own: " + (npLocation.text.trim() || "~/Blockloom/projects") + "/" + newProjectDialog.folder
+            }
+            Label { text: "Dimension"; color: Theme.textDim }
+            RowLayout {
+                HubButton { text: "2D"; primary: newProjectDialog.mode === "TwoD"; onClicked: newProjectDialog.mode = "TwoD" }
+                HubButton { text: "3D"; primary: newProjectDialog.mode === "ThreeD"; onClicked: newProjectDialog.mode = "ThreeD" }
+            }
+            Label {
+                Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.textDim
+                text: (newProjectDialog.mode === "TwoD" ? "Sprites and flat physics, measured in pixels." : "Meshes and 3D physics, measured in metres.") + " A project can switch later."
+            }
+            Label { text: "Start from"; color: Theme.textDim }
+            RowLayout {
+                HubButton { text: "Empty"; primary: newProjectDialog.sample === ""; onClicked: newProjectDialog.sample = "" }
+                HubButton { text: "Physics playground"; primary: newProjectDialog.sample !== ""; onClicked: newProjectDialog.sample = "physics-playground" }
+            }
+            Label { text: "Editor"; color: Theme.textDim; visible: window.readyEditors.length > 1 }
+            HubCombo {
+                id: npEditor
+                visible: window.readyEditors.length > 1
+                Layout.fillWidth: true
+                model: window.readyEditors.map(i => window.label(i))
+            }
+            Label {
+                visible: window.readyEditors.length === 0
+                color: Theme.warning; wrapMode: Text.Wrap; Layout.fillWidth: true
+                text: "No editor is installed yet. Get a release on the Installations tab first."
+            }
+            Label {
+                visible: window.readyEditors.length === 1
+                color: Theme.textDim; text: "Editor: " + (window.readyEditors.length ? window.label(window.readyEditors[0]) : "")
+            }
+        }
+    }
     FolderDialog {
         id: repoFolder
         title: "Select a Blockloom repository"
@@ -440,7 +747,7 @@ ApplicationWindow {
         id: versionDialog
         anchors.centerIn: parent
         width: Math.min(window.width - 60, 550)
-        title: "Select editor for " + (window.selectedProject.name || "project")
+        title: (window.selectedProject.installation ? "Change editor for " : "Choose an editor for ") + (window.selectedProject.name || "project")
         modal: true
         standardButtons: Dialog.Save | Dialog.Cancel
         property var choices: window.installations.filter(i => i.status === "ready")
@@ -453,12 +760,14 @@ ApplicationWindow {
             let args = [window.selectedProject.path, choices[versionChooser.currentIndex].id]
             if (backupBeforeChange.checked && backupBeforeChange.visible) args.push("--backup")
             perform("bind", args)
-            if (args.includes("--backup")) logDialog.open()
         }
         Component.onCompleted: standardButton(Dialog.Save).enabled = Qt.binding(() => versionChooser.currentIndex >= 0 && !service.busy)
         ColumnLayout {
             anchors.fill: parent
-            Label { text: "Current: " + window.selection(window.selectedProject.installation); wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label {
+                visible: !!window.selectedProject.installation
+                text: "Current: " + window.selection(window.selectedProject.installation); wrapMode: Text.Wrap; Layout.fillWidth: true
+            }
             HubCombo {
                 id: versionChooser
                 Layout.fillWidth: true
@@ -473,7 +782,8 @@ ApplicationWindow {
             }
             Label {
                 text: versionDialog.choices.length === 0 ? "Install or build an editor first."
-                    : "Selecting an editor saves this project's choice. Opening with a newer editor may migrate project files. Back up your project before upgrading."
+                    : !window.selectedProject.installation ? "This project opens with the editor you pick here."
+                    : "Opening with a newer editor may update the project's files, so a backup is kept first. You can restore it from the project's Backups."
                 color: Theme.textDim
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
@@ -523,7 +833,7 @@ ApplicationWindow {
                         ColumnLayout {
                             Layout.fillWidth: true
                             Label { text: "Blockloom " + modelData.version; font.bold: true }
-                            Label { text: (modelData.channel || "release") + "  |  " + (modelData.size / 1024 / 1024).toFixed(0) + " MiB"; color: Theme.textDim }
+                            Label { text: (modelData.channel || "release") + "  ·  " + (modelData.size / 1024 / 1024).toFixed(0) + " MiB"; color: Theme.textDim }
                         }
                         HubButton {
                             text: modelData.installed ? "Installed" : "Install"
@@ -534,6 +844,11 @@ ApplicationWindow {
                 }
             }
             Label { text: "Installing a release keeps existing editors and project selections."; color: Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label {
+                visible: window.error.indexOf("GitHub CLI") >= 0
+                text: "Releases come from GitHub through its command-line tool. Install it and sign in, or open Settings to use a release catalog URL instead."
+                color: Theme.warning; wrapMode: Text.Wrap; Layout.fillWidth: true
+            }
             HubButton { visible: service.canCancel; text: service.cancelling ? "Stopping..." : "Cancel check"; enabled: !service.cancelling; onClicked: service.cancel() }
         }
     }
@@ -602,13 +917,19 @@ ApplicationWindow {
                 HubButton { text: "Browse"; onClicked: bundleFolder.open() }
             }
             HubCheck { text: "Rust toolchain (required)"; checked: true; enabled: false }
-            HubCheck { id: javaCheck; text: "Java"; enabled: true }
-            HubCheck { id: sdkCheck; text: "Android SDK"; enabled: true }
-            HubCheck { id: ndkCheck; text: "Android NDK"; enabled: true }
-            HubCheck { id: targetsCheck; text: "Android Rust targets (ARM64 and x86-64)"; enabled: true }
+            HubCheck {
+                objectName: "allAndroidInstall"
+                text: "All Android build tools"
+                checked: javaCheck.checked && sdkCheck.checked && ndkCheck.checked && targetsCheck.checked
+                onClicked: { javaCheck.checked = checked; sdkCheck.checked = checked; ndkCheck.checked = checked; targetsCheck.checked = checked }
+            }
+            HubCheck { id: javaCheck; text: window.moduleText("java", "Java"); enabled: true }
+            HubCheck { id: sdkCheck; text: window.moduleText("android-sdk", "Android SDK"); enabled: true }
+            HubCheck { id: ndkCheck; text: window.moduleText("android-ndk", "Android NDK"); enabled: true }
+            HubCheck { id: targetsCheck; text: window.moduleText("android-rust-targets", "Android Rust targets (ARM64 and x86-64)"); enabled: true }
             Label {
                 text: window.selectedRelease.version
-                    ? "Selected tools are downloaded with this release. APK builds need Java and the SDK; native Android builds also need the NDK and Rust targets."
+                    ? "Release installs start with no optional modules; sizes are approximate. Selected tools are downloaded with this release. APK builds need Java and the SDK; native Android builds also need the NDK and Rust targets."
                     : "Selected tools must be included in the bundle. APK builds need Java and the SDK; native Android builds also need the NDK and Rust targets."
                 color: Theme.textDim
                 wrapMode: Text.Wrap
@@ -710,6 +1031,10 @@ ApplicationWindow {
         standardButtons: Dialog.Ok | Dialog.Cancel
         onOpened: {
             devJava.checked = true; devSdk.checked = true; devNdk.checked = true; devTargets.checked = true
+            if (service.smokeTest() && service.smokePage().startsWith("checkbox-")) {
+                devSdk.checked = service.smokePage() === "checkbox-checked"
+                service.smokeReady(window.projects.length, window.installations.length)
+            }
         }
         onRejected: window.notice = "Build prepared. The current installation was kept."
         onAccepted: {
@@ -731,19 +1056,100 @@ ApplicationWindow {
             spacing: 10
             Label { text: "Build complete. Choose what to include in this installation."; color: Theme.text; wrapMode: Text.Wrap; Layout.fillWidth: true }
             HubCheck { text: "Rust toolchain (required)"; checked: true; enabled: false }
-            HubCheck { id: devJava; text: "Java" }
-            HubCheck { id: devSdk; objectName: "smokeCheckbox"; text: "Android SDK" }
-            HubCheck { id: devNdk; text: "Android NDK" }
+            HubCheck {
+                text: "All Android build tools"
+                checked: devJava.checked && devSdk.checked && devNdk.checked && devTargets.checked
+                onClicked: { devJava.checked = checked; devSdk.checked = checked; devNdk.checked = checked; devTargets.checked = checked }
+            }
+            HubCheck { id: devJava; text: window.moduleText("java", "Java") }
+            HubCheck { id: devSdk; objectName: "smokeCheckbox"; text: window.moduleText("android-sdk", "Android SDK") }
+            HubCheck { id: devNdk; text: window.moduleText("android-ndk", "Android NDK") }
             HubCheck {
                 id: devTargets
-                text: "Android Rust targets (ARM64 and x86-64)"
+                text: window.moduleText("android-rust-targets", "Android Rust targets (ARM64 and x86-64)")
             }
             Label {
-                text: "Selected tools are downloaded and bundled with this editor. Versions follow the repository's Android requirements. Local tool installations are not used."
+                text: "Development installs start with every module selected; release installs start with none. Sizes are approximate. Selected tools are downloaded and bundled with this editor. Versions follow the repository's Android requirements. Local tool installations are not used."
                 color: Theme.textDim
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
             }
+        }
+    }
+    HubDialog {
+        id: backupsDialog
+        anchors.centerIn: parent
+        width: Math.min(window.width - 60, 640)
+        height: Math.min(window.height - 80, 480)
+        title: "Backups of " + (window.backupsTarget.name || "project")
+        modal: true
+        standardButtons: Dialog.Close
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 10
+            Label {
+                visible: window.backupRows.length === 0
+                objectName: "noBackups"
+                text: service.busy ? "Looking for backups..." : "No backups yet. One is kept each time this project's editor changes."
+                color: Theme.textDim
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+            ListView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                spacing: 8
+                model: window.backupRows
+                ScrollBar.vertical: HubScrollBar { id: backupsScrollBar }
+                delegate: Rectangle {
+                    required property var modelData
+                    width: ListView.view.width - (backupsScrollBar.visible ? backupsScrollBar.width + 8 : 0)
+                    height: 64
+                    radius: 6
+                    color: Theme.window
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Label { text: new Date(modelData.created_at * 1000).toLocaleString(); font.bold: true }
+                            Label { text: (modelData.size / 1024 / 1024).toFixed(1) + " MiB"; color: Theme.textDim }
+                        }
+                        HubButton {
+                            text: "Show"
+                            onClicked: if (!service.showBackup(modelData.path)) window.error = "The backup folder could not be opened."
+                        }
+                        HubButton {
+                            objectName: "restoreBackup"
+                            text: "Restore"
+                            enabled: !service.busy && !window.backupsTarget.active
+                            onClicked: { window.restoreTarget = modelData; restoreDialog.open() }
+                        }
+                    }
+                }
+            }
+            Label { text: window.error || window.notice; visible: text.length > 0; color: window.error ? Theme.danger : Theme.running; wrapMode: Text.Wrap; Layout.fillWidth: true; maximumLineCount: 3; elide: Text.ElideRight }
+        }
+    }
+    HubDialog {
+        id: restoreDialog
+        anchors.centerIn: parent
+        width: Math.min(window.width - 60, 520)
+        title: "Restore this backup?"
+        modal: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: perform("restore-backup", [window.backupsTarget.path, window.restoreTarget.name])
+        Component.onCompleted: {
+            standardButton(Dialog.Ok).text = "Restore"
+            standardButton(Dialog.Ok).enabled = Qt.binding(() => !service.busy)
+        }
+        Label {
+            width: parent.width
+            wrapMode: Text.Wrap
+            text: "The project goes back to how it was on "
+                + (window.restoreTarget.created_at ? new Date(window.restoreTarget.created_at * 1000).toLocaleString() : "")
+                + ", including which editor it uses. What is there now is kept as a backup first."
         }
     }
     HubDialog {

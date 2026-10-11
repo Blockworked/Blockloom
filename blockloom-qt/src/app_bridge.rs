@@ -31,6 +31,7 @@ pub mod qobject {
         #[qproperty(QString, screen_json, cxx_name = "screenJson")]
         #[qproperty(QString, app_version, cxx_name = "appVersion")]
         #[qproperty(QString, startup_project, cxx_name = "startupProject")]
+        #[qproperty(QString, startup_new_project, cxx_name = "startupNewProject")]
         type AppBridge = super::AppBridgeRust;
 
         /// Starts the backend. Safe to call more than once.
@@ -102,6 +103,7 @@ pub struct AppBridgeRust {
     preview_layout: QString,
     app_version: QString,
     startup_project: QString,
+    startup_new_project: QString,
     backend: Option<Backend>,
     jobs: Option<mpsc::Sender<Job>>,
     preview: Option<preview::Watch>,
@@ -123,12 +125,43 @@ impl Default for AppBridgeRust {
                 .nth(1)
                 .map(|path| QString::from(path.to_string_lossy().as_ref()))
                 .unwrap_or_default(),
+            startup_new_project: new_project_from_args(),
             backend: None,
             jobs: None,
             preview: None,
             screen: None,
         }
     }
+}
+
+/// `--new-project NAME [--location DIR] [--mode 2d|3d] [--sample ID]`, as the
+/// JSON `create_project` takes, or empty. The Hub starts an editor this way
+/// so a project is made by the editor's own creation rules.
+fn new_project_from_args() -> QString {
+    let args: Vec<String> = std::env::args_os()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    let value = |flag: &str| {
+        args.iter()
+            .position(|arg| arg == flag)
+            .and_then(|at| args.get(at + 1))
+            .cloned()
+    };
+    let Some(name) = value("--new-project") else {
+        return QString::default();
+    };
+    let mode = match value("--mode").as_deref() {
+        Some("3d" | "ThreeD") => "ThreeD",
+        _ => "TwoD",
+    };
+    let mut project = serde_json::json!({"name": name, "mode": mode});
+    if let Some(location) = value("--location") {
+        project["location"] = location.into();
+    }
+    if let Some(sample) = value("--sample") {
+        project["sample"] = sample.into();
+    }
+    QString::from(project.to_string())
 }
 
 /// The latest value waiting to be handed to the Qt thread. Only one closure

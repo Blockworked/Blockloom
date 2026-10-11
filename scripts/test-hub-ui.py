@@ -83,6 +83,46 @@ def main():
             if json.loads(result.stdout) != {"projects": len(projects), "installations": 2}:
                 raise RuntimeError("The Qt window did not load the fixture data")
             print(f"PASS: {page}")
+        # Recovery and empty states, each against its own fixture.
+        def smoke(page, projects, expect=(), absent=(), setup=None):
+            registry = base / "Editor data" / "blockloom" / "projects.json"
+            registry.unlink(missing_ok=True)
+            (root / "projects.json").unlink(missing_ok=True)
+            hub.write_json(root / "projects.json", {"projects": projects})
+            if setup:
+                setup()
+            command = [str(binary), "--smoke-test", "--smoke-page", page,
+                       "--smoke-output", str(screenshots / (page + ".png"))]
+            if expect:
+                command += ["--smoke-expect", ",".join(expect)]
+            if absent:
+                command += ["--smoke-absent", ",".join(absent)]
+            result = subprocess.run(command, env=env, capture_output=True, text=True,
+                                    encoding="utf-8", timeout=30)
+            if result.returncode:
+                raise RuntimeError(f"Qt smoke test failed for {page} ({result.returncode}):\n{result.stdout}\n{result.stderr}")
+            print(f"PASS: {page}")
+
+        smoke("empty", [], expect=("newProject", "emptyPrimary"), absent=("searchField",))
+        # A project with no editor opens with the default one; nothing blocks it.
+        hub.write_json(project / ".blockloom/hub.json", {"schema": 1, "installation": ""})
+        smoke("unbound", [{"path": str(project)}], expect=("openProject", "projectMenu"), absent=("projectReason",))
+        gone = str(base / "Not there")
+        smoke("unavailable", [{"path": gone, "opened_at": 5}],
+              expect=("locateFolder", "removeFromList", "projectReason"), absent=("openProject",))
+        hub.write_json(project / ".blockloom/hub.json", {"schema": 1, "installation": "release-9.9.9"})
+        smoke("missing-editor", [{"path": str(project)}], expect=("projectReason",))
+        others = []
+        for index in range(4):
+            extra = base / ("Search project " + str(index + 1))
+            hub.write_json(extra / "project.blockloom", {"name": extra.name, "world": {"mode": "TwoD"}})
+            others.append({"path": str(extra)})
+        smoke("no-match", [{"path": str(project)}] + others, expect=("noSearchMatch", "searchField"))
+        hub.write_json(project / ".blockloom/hub.json", {"schema": 1, "installation": "release-0.1.0"})
+        smoke("busy", [{"path": str(project)}], expect=("switchToEditor",), absent=("openProject",),
+              setup=lambda: hub.write_json(project / ".blockloom/lock.json",
+                                           {"pid": os.getpid(), "heartbeat": __import__("time").time(), "app": "blockloom"}))
+        (project / ".blockloom/lock.json").unlink()
         if hub.read_json(project / ".blockloom" / "hub.json")["installation"] != "release-0.1.0":
             raise RuntimeError("The UI did not persist the selected installation")
         backups = list((root / "backups").glob("*/*.zip"))

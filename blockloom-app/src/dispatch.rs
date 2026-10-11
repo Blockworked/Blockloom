@@ -78,6 +78,7 @@ impl Backend {
         commands::poll_live_reload(self);
         match cmd {
             "get_state" => to_json(commands::get_state(state)?),
+            "refresh_library" => to_json(commands::refresh_library(state, app)?),
             "block_vocabulary" => to_json(commands::block_vocabulary()?),
             "sync_status" => to_json(commands::sync_status(state)?),
             "reload_project" => to_json(commands::reload_project(
@@ -93,6 +94,9 @@ impl Backend {
                 app,
                 arg(&args, "path")?,
                 arg(&args, "force").unwrap_or_default(),
+                arg(&args, "other_editor").unwrap_or_default(),
+                arg(&args, "discard").unwrap_or_default(),
+                arg(&args, "rebind").unwrap_or_default(),
             )?),
             "create_project" => to_json(commands::create_project(
                 state,
@@ -101,10 +105,37 @@ impl Backend {
                 arg(&args, "location").ok().flatten(),
                 arg(&args, "mode").unwrap_or_default(),
                 arg(&args, "sample").ok(),
+                arg(&args, "discard").unwrap_or_default(),
             )?),
-            "close_project" => to_json(commands::close_project(state, app)?),
-            "forget_project" => to_json(commands::forget_project(state, app, arg(&args, "path")?)?),
-            "delete_project" => to_json(commands::delete_project(state, app, arg(&args, "path")?)?),
+            "close_project" => to_json(commands::close_project(
+                state,
+                app,
+                arg(&args, "discard").unwrap_or_default(),
+            )?),
+            "forget_project" => to_json(commands::forget_project(
+                state,
+                app,
+                arg(&args, "path")?,
+                arg(&args, "discard").unwrap_or_default(),
+            )?),
+            "locate_project" => to_json(commands::locate_project(
+                state,
+                app,
+                arg(&args, "path")?,
+                arg(&args, "folder")?,
+            )?),
+            "delete_project" => to_json(commands::delete_project(
+                state,
+                app,
+                arg(&args, "path")?,
+                arg(&args, "permanent").unwrap_or_default(),
+            )?),
+            "take_focus_request" => to_json(commands::take_focus_request(state)?),
+            "hub_poll" => to_json(commands::hub_poll(state)?),
+            "hub_reply" => to_json(commands::hub_reply(
+                &arg::<String>(&args, "id")?,
+                arg(&args, "error").ok().filter(|e: &String| !e.is_empty()),
+            )?),
             "set_project_name" => {
                 to_json(commands::set_project_name(state, app, arg(&args, "name")?)?)
             }
@@ -119,7 +150,12 @@ impl Backend {
             "save_project" => to_json(commands::save_open_project(state, app)?),
             "export_file_name" => to_json(commands::export_file_name(state)?),
             "export_project" => to_json(commands::export_project(state, arg(&args, "path")?)?),
-            "import_project" => to_json(commands::import_project(state, app, arg(&args, "path")?)?),
+            "import_project" => to_json(commands::import_project(
+                state,
+                app,
+                arg(&args, "path")?,
+                arg(&args, "discard").unwrap_or_default(),
+            )?),
             "list_build_targets" => to_json(commands::list_build_targets(state)?),
             "start_build_game" => to_json(self.builds.start(
                 self,

@@ -61,7 +61,7 @@ pub fn serve_attach(_backend: Backend) -> Result<(), String> {
 
 /// Commands only the editor window may run, never a script or agent.
 #[cfg(unix)]
-const GUI_ONLY: &[&str] = &["plugin_trust", "plugin_untrust"];
+const GUI_ONLY: &[&str] = &["plugin_trust", "plugin_untrust", "hub_poll", "hub_reply"];
 
 /// One command arriving over the socket.
 #[cfg(unix)]

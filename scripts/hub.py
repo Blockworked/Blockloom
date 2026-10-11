@@ -17,16 +17,20 @@ import tomllib
 import uuid
 import hub_download
 import hub_github
-import hub_backup
 import hub_tools
 
 from hub_install import MANIFEST, editor_name, promote, stage, validate_payload
 from replace import host_target, just_exe
-from hub_process import Cancelled, bundle_rust, checkpoint, copy_file, process_token, running, run
+from hub_process import Cancelled, bundle_rust, checkpoint, process_token, run
 
 
 ANDROID_TARGETS = ("aarch64-linux-android", "x86_64-linux-android")
 OPTIONAL_TOOLS = ("java", "android-sdk", "android-ndk")
+# What the Rust state tool owns: projects, who holds them, snapshots and
+# starting or reusing editors. Everything else here installs editors.
+STATE_COMMANDS = ("projects", "installations", "remember", "forget", "relocate", "bind", "backups",
+                  "backup-project", "restore-backup", "focus", "open", "new-project",
+                  "default-installation", "installation-usage")
 
 
 def tool_path(directory, name):
@@ -74,16 +78,21 @@ def hub_root():
     return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "blockloom-hub"
 
 
-def project_registry():
-    if override := os.environ.get("BLOCKLOOM_DATA_DIR"):
-        base = Path(override)
-    elif sys.platform == "win32":
-        base = Path(os.environ["APPDATA"])
-    elif sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support"
-    else:
-        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-    return base / "blockloom" / "projects.json"
+def hubctl_command():
+    """The Rust tool that answers questions about projects and editors.
+
+    The Hub window sets BLOCKLOOM_HUBCTL to its own executable; a checkout
+    falls back to the built `blockloom-hubctl`.
+    """
+    if explicit := os.environ.get("BLOCKLOOM_HUBCTL"):
+        return [explicit, *os.environ.get("BLOCKLOOM_HUBCTL_ARGS", "").split()]
+    suffix = ".exe" if os.name == "nt" else ""
+    target = Path(__file__).resolve().parent.parent / "target"
+    for profile in ("release", "debug"):
+        candidate = target / profile / ("blockloom-hubctl" + suffix)
+        if candidate.is_file():
+            return [str(candidate)]
+    raise ValueError("The Hub state tool is missing. Build it with: cargo build --release -p blockloom-hub-state")
 
 
 def read_json(path):
@@ -108,22 +117,53 @@ def write_json(path, value):
 
 
 class Hub:
-    def __init__(self, root=None, registry=None):
+    def __init__(self, root=None, data_dir=None):
         self.root = Path(root or hub_root()).resolve()
-        self.registry = Path(registry or project_registry())
+        self.data_dir = Path(data_dir) if data_dir else None
+
+    def ctl(self, command, *arguments):
+        """Ask the state tool and return its JSON answer."""
+        env = {**os.environ, "BLOCKLOOM_HUB_DIR": str(self.root)}
+        if self.data_dir:
+            env["BLOCKLOOM_DATA_DIR"] = str(self.data_dir)
+        done = subprocess.run([*hubctl_command(), command, *map(str, arguments)],
+                              env=env, capture_output=True, text=True, encoding="utf-8")
+        if done.returncode != 0:
+            message = done.stderr.strip().splitlines()[-1] if done.stderr.strip() else "state tool failed"
+            raise ValueError(message.removeprefix("hub: "))
+        return json.loads(done.stdout)
+
+    @staticmethod
+    def _operation_is_stale(lock):
+        """Whether the process that made `lock` is gone (or never said who it was)."""
+        try:
+            owner = read_json(lock / "owner.json")
+            return process_token(owner["pid"]) is None
+        except (OSError, ValueError, KeyError, TypeError):
+            # No owner file: an older Hub's lock, or one still being made.
+            try:
+                return time.time() - lock.stat().st_mtime > 60
+            except OSError:
+                return True
 
     @contextmanager
     def mutation(self):
         self.root.mkdir(parents=True, exist_ok=True)
         lock = self.root / ".operation-lock"
+        for attempt in range(2):
+            try:
+                lock.mkdir()
+                break
+            except FileExistsError:
+                if attempt == 0 and self._operation_is_stale(lock):
+                    shutil.rmtree(lock, ignore_errors=True)
+                    continue
+                raise ValueError("Another Hub operation is running. Wait for it to finish, then try again.") from None
         try:
-            lock.mkdir()
-        except FileExistsError:
-            raise ValueError(f"Another Hub operation is active. If it crashed, remove {lock} after checking no Hub operation is running.") from None
-        try:
+            write_json(lock / "owner.json", {"pid": os.getpid()})
             yield
         finally:
-            lock.rmdir()
+            shutil.rmtree(lock, ignore_errors=True)
 
     def slot(self, identity):
         if not re.fullmatch(r"(?:release-[0-9A-Za-z.+-]+|dev-[0-9a-f]{16})", identity):
@@ -145,23 +185,6 @@ class Hub:
             validate_payload(directory)
             validate_tools(directory, result.get("tools", {}))
         return result
-
-    def installations(self):
-        directory = self.root / "installations"
-        if not directory.exists():
-            return []
-        entries = [self.installation(p.name) for p in sorted(directory.iterdir())
-                   if p.is_dir() and not p.name.startswith(".")]
-        active = self.running_editors()
-        for entry in entries:
-            entry["path"] = str(self.slot(entry["id"]))
-            count = sum(p["installation"] == entry["id"] for p in active)
-            if count:
-                entry["running"] = count
-            candidate = self.candidate_path(entry["id"]) / MANIFEST
-            if entry["kind"] == "dev" and candidate.exists():
-                entry["prepared"] = True
-        return entries
 
     def tool_cache_dir(self):
         return hub_tools.cache_dir(self.root)
@@ -193,10 +216,9 @@ class Hub:
         with self.mutation():
             manifest = self.installation(identity)
             self.require_installation_idle(identity)
-            bound = [p for p in self.projects()
-                     if not p.get("error") and p.get("installation") == identity]
+            bound = self.ctl("installation-usage", identity)["bound"]
             if bound:
-                names = ", ".join(sorted({p.get("name") or p["path"] for p in bound}))
+                names = ", ".join(sorted(set(bound)))
                 raise ValueError(f"Installation {identity} is used by projects: {names}. "
                                  "Assign those projects another editor first")
             checkpoint()
@@ -267,70 +289,37 @@ class Hub:
             print("Modules added.", file=sys.stderr, flush=True)
             return {**manifest, "added": added}
 
-    def running_editors(self):
-        path = self.root / "running.json"
-        records = read_json(path).get("editors", []) if path.exists() else []
-        return [record for record in records if running(record)]
+    # Approximate download sizes in MiB; exact sizes are only known on download.
+    MODULE_SIZES = {"java": 200, "android-sdk": 250, "android-ndk": 1000, "android-rust-targets": 60}
 
-    def project_active(self, project):
-        key = os.path.normcase(str(Path(project).resolve()))
-        if any(os.path.normcase(p["path"]) == key for p in self.running_editors()):
-            return True
-        lock = Path(project) / ".blockloom" / "lock.json"
-        if not lock.exists():
-            return False
-        owner = read_json(lock)
-        return process_token(owner["pid"]) is not None or time.time() - owner["heartbeat"] < 30
+    def modules(self, identity=None):
+        """The optional modules, with pinned versions and about how big each is.
 
-    def require_idle(self, project):
-        if self.project_active(project):
-            raise ValueError("Close this project's editor or shell before changing its editor or opening it again")
-
-    def project(self, path):
-        path = Path(path).expanduser().resolve()
-        meta = read_json(path / "project.blockloom")
-        scenes = meta.get("scenes", [])
-        scene = next((s for s in scenes if s.get("id") == meta.get("active_scene")),
-                     scenes[0] if scenes else {})
-        mode = scene.get("mode", scene.get("world", {}).get("mode",
-                        meta.get("world", {}).get("mode", "TwoD")))
-        binding = path / ".blockloom" / "hub.json"
-        return {"path": str(path), "name": meta["name"], "mode": mode,
-                "installation": read_json(binding).get("installation") if binding.exists() else None}
-
-    def projects(self):
-        sources = [self.registry, self.root / "projects.json"]
-        remembered_projects = {}
-        for source in sources:
-            if source.exists():
-                for remembered in read_json(source).get("projects", []):
-                    key = os.path.normcase(str(Path(remembered["path"]).expanduser().resolve()))
-                    previous = remembered_projects.get(key)
-                    if previous is None or remembered.get("opened_at", 0) > previous.get("opened_at", 0):
-                        remembered_projects[key] = remembered
-        entries = []
-        for remembered in remembered_projects.values():
-            entry = {"path": remembered["path"]}
-            try:
-                entry.update(self.project(remembered["path"]))
-                entry["active"] = self.project_active(entry["path"])
-            except (OSError, ValueError, KeyError) as error:
-                entry.update(error=str(error), active=True)
-            entry["opened_at"] = remembered.get("opened_at", 0)
-            entries.append(entry)
-        return sorted(entries, key=lambda p: (-p["opened_at"], p.get("name", "").lower()))
-
-    def remember(self, project):
-        with self.mutation():
-            result = self.project(project)
-            registry = self.root / "projects.json"
-            saved = read_json(registry) if registry.exists() else {"projects": []}
-            key = os.path.normcase(result["path"])
-            if not any(os.path.normcase(str(Path(p["path"]).expanduser().resolve())) == key
-                       for p in saved["projects"]):
-                saved["projects"].append({"path": result["path"], "opened_at": 0})
-                write_json(registry, saved)
-            return result
+        `defaults` says which are ticked for a release install (none) and for a
+        development install (all), so the UI can show the rule.
+        """
+        versions = hub_download.default_android_versions()
+        if identity:
+            manifest = self.installation(identity)
+            if manifest.get("kind") == "dev" and manifest.get("repo"):
+                try:
+                    versions = hub_download.android_versions(Path(manifest["repo"]))
+                except (OSError, ValueError):
+                    pass
+            versions = manifest.get("android_versions") or versions
+        platform = versions["PLATFORM"].replace("android-", "API ")
+        rows = [
+            {"id": "java", "label": "Java " + versions["JDK_MAJOR"], "tools": ["java"]},
+            {"id": "android-sdk", "label": f"Android SDK ({platform}, build tools {versions['BUILD_TOOLS']})",
+             "tools": ["android-sdk"]},
+            {"id": "android-ndk", "label": "Android NDK " + versions["NDK_MAJOR"], "tools": ["android-ndk"]},
+            {"id": "android-rust-targets", "label": "Android Rust targets (ARM64 and x86-64)",
+             "tools": ["android-rust-targets"]},
+        ]
+        for row in rows:
+            row["approx_mib"] = self.MODULE_SIZES[row["id"]]
+        return {"modules": rows, "defaults": {"release": [], "dev": [r["id"] for r in rows]},
+                "android_build_tools": [r["id"] for r in rows]}
 
     def add_dev(self, repo):
         repo = Path(repo).expanduser().resolve(strict=True)
@@ -425,7 +414,7 @@ class Hub:
         return {**config, "source": "https", "url": url, "releases": entries}
 
     def download_release(self, version, components=(), android_rust_targets=False, sha256=None):
-        print(f"Checking releases for Blockloom {version}...", file=sys.stderr, flush=True)
+        print(f"Stage: Checking releases for Blockloom {version}", file=sys.stderr, flush=True)
         entries = self.check_releases()["releases"]
         entry = next((item for item in entries if item["version"] == version), None)
         if entry is None:
@@ -437,16 +426,16 @@ class Hub:
         with tempfile.TemporaryDirectory(prefix=".download-", dir=self.root) as temporary:
             temporary = Path(temporary)
             archive = temporary / "release.archive"
-            print(f"Downloading Blockloom {version} ({entry['size'] / 1024**2:.0f} MiB)...",
+            print(f"Stage: Downloading Blockloom {version} ({entry['size'] / 1024**2:.0f} MiB)",
                   file=sys.stderr, flush=True)
             if github := entry.get("github"):
                 hub_github.asset(github["repo"], github["tag"], github["asset"], archive,
                                  size=entry["size"])
-                print("Verifying download checksum...", file=sys.stderr, flush=True)
+                print("Stage: Verifying the download", file=sys.stderr, flush=True)
                 hub_download.verify_file(archive, entry["sha256"], entry["size"])
             else:
                 hub_download.download(entry["url"], archive, entry["sha256"], entry["size"])
-            print(f"Extracting Blockloom {version} ({entry['unpacked_size'] / 1024**2:.0f} MiB unpacked)...",
+            print(f"Stage: Extracting Blockloom {version} ({entry['unpacked_size'] / 1024**2:.0f} MiB unpacked)",
                   file=sys.stderr, flush=True)
             output = temporary / "release"
             hub_download.extract(archive, output, entry["format"], entry["unpacked_size"])
@@ -487,47 +476,18 @@ class Hub:
                     tools = bundle_manifest.get("tools", {})
                     tools["android-rust-targets"] = list(ANDROID_TARGETS)
                     write_json(bundles[0] / MANIFEST, bundle_manifest)
-            print(f"Installing Blockloom {version}...", file=sys.stderr, flush=True)
+            print(f"Stage: Installing Blockloom {version}", file=sys.stderr, flush=True)
             return self.install(bundles[0], components, android_rust_targets)
-
-    def bind(self, project, identity, backup=False):
-        with self.mutation():
-            self.installation(identity, ready=True)
-            result = self.project(project)
-            self.require_idle(result["path"])
-            if backup and result["installation"] != identity:
-                snapshot = self._backup_project(result)
-                result["backup"] = snapshot
-                self.require_idle(result["path"])
-            checkpoint()
-            write_json(Path(result["path"]) / ".blockloom" / "hub.json",
-                       {"schema": 1, "installation": identity})
-            result["installation"] = identity
-            return result
-
-    def _backup_project(self, project):
-        source = Path(project["path"])
-        key = hashlib.sha256(os.path.normcase(str(source)).encode()).hexdigest()[:16]
-        directory = self.root / "backups" / key
-        if directory.resolve().is_relative_to(source):
-            raise ValueError("Project backups must be stored outside the project folder")
-        directory.mkdir(parents=True, exist_ok=True)
-        name = time.strftime("%Y%m%d-%H%M%S", time.gmtime()) + "-" + uuid.uuid4().hex[:8] + ".zip"
-        snapshot = hub_backup.create(source, directory / name, lambda: self.require_idle(source))
-        return {**snapshot, "project": str(source), "installation": project["installation"]}
-
-    def backup_project(self, project):
-        with self.mutation():
-            return self._backup_project(self.project(project))
 
     def rebuild(self, identity, jobs=None):
         self.prepare_dev(identity, jobs)
         return self.install_dev(identity, OPTIONAL_TOOLS, android_rust_targets=True)
 
     def require_installation_idle(self, identity):
-        if any(p["installation"] == identity for p in self.running_editors()):
+        usage = self.ctl("installation-usage", identity)
+        if usage["running"]:
             raise ValueError("Close editors using this installation before rebuilding it")
-        if any(p.get("installation") == identity and p.get("active") for p in self.projects()):
+        if usage["active"]:
             raise ValueError("Close projects using this installation before rebuilding it")
 
     def candidate_path(self, identity):
@@ -542,12 +502,14 @@ class Hub:
             self.require_installation_idle(identity)
             repo = Path(manifest["repo"])
             version = tomllib.loads((repo / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+            print("Stage: Preparing the build (step 1 of 3)", file=sys.stderr, flush=True)
             manifest.update(version=version, status="ready")
             manifest["build_id"] = uuid.uuid4().hex
             # Isolate build staging from the registered slot until it succeeds.
             with tempfile.TemporaryDirectory(prefix=".build-", dir=self.root) as temporary:
                 output = Path(temporary) / "installation"
                 env = {**os.environ, "BLOCKLOOM_INSTALL_DIR": str(output)}
+                print("Stage: Building the editor (step 2 of 3)", file=sys.stderr, flush=True)
                 command = [just_exe(), "replace"] + ([str(jobs)] if jobs else [])
                 run(command, cwd=repo, env=env, stdout=sys.stderr, stderr=sys.stderr,
                     log_file=self.root / "logs" / f"{identity}-build.log")
@@ -610,7 +572,7 @@ class Hub:
             # Build a final payload privately, keeping the prepared build for retry.
             with tempfile.TemporaryDirectory(prefix=".configure-", dir=self.root) as temporary:
                 output = Path(temporary) / "installation"
-                print("Preparing editor and Rust toolchain...", file=sys.stderr)
+                print("Stage: Installing the editor (step 3 of 3)", file=sys.stderr)
                 stage(candidate, output, excluded=excluded, checkpoint=checkpoint)
                 cache = self.tool_cache_dir()
                 if components:
@@ -624,68 +586,33 @@ class Hub:
                 manifest["tools"] = selected
                 validate_tools(output, selected)
                 checkpoint()
-                print("Saving development installation...", file=sys.stderr)
+                print("Stage: Saving the installation", file=sys.stderr)
                 promote(output, self.slot(identity), manifest, replace=True, checkpoint=checkpoint)
                 hub_tools.store_installation(cache, self.slot(identity), selected, checkpoint)
                 hub_tools.collect_garbage(self.root, self.cache_installations())
             print("Development installation ready.", file=sys.stderr)
             return manifest
 
-    def launch(self, project):
-        with self.mutation():
-            result = self.project(project)
-            self.require_idle(result["path"])
-            identity = result["installation"]
-            if not identity:
-                raise ValueError("Assign an installation to this project first")
-            installation = self.installation(identity, ready=True)
-            directory = self.slot(identity)
-            env = dict(os.environ)
-            rust = tool_path(directory, "rust")
-            bins = [str(rust / "bin")]
-            env["RUSTUP_TOOLCHAIN"] = str(rust)
-            for name, variable in (("java", "JAVA_HOME"),
-                                   ("android-sdk", "BLOCKLOOM_HUB_ANDROID_SDK"),
-                                   ("android-ndk", "BLOCKLOOM_HUB_ANDROID_NDK")):
-                # Clear inherited Hub paths when this installation omits a tool.
-                if variable.startswith("BLOCKLOOM_HUB_"):
-                    env.pop(variable, None)
-                if name in installation["tools"]:
-                    env[variable] = str(tool_path(directory, name))
-                    if name == "java":
-                        bins.append(str(tool_path(directory, name) / "bin"))
-                    elif name == "android-sdk":
-                        env["ANDROID_HOME"] = env["ANDROID_SDK_ROOT"] = env[variable]
-                    elif name == "android-ndk":
-                        env["ANDROID_NDK_HOME"] = env["ANDROID_NDK_ROOT"] = env[variable]
-            env["PATH"] = os.pathsep.join(bins + [env.get("PATH", "")])
-            logs = self.root / "logs"
-            logs.mkdir(exist_ok=True)
-            # Keep editor output out of the service's JSON response pipe.
-            with (logs / f"{identity}-editor.log").open("ab") as output:
-                process = subprocess.Popen([str(directory / editor_name()), "--project", result["path"]],
-                                           cwd=directory, env=env, stdin=subprocess.DEVNULL,
-                                           stdout=output, stderr=subprocess.STDOUT)
-            token = process_token(process.pid)
-            if token is not None:
-                records = self.running_editors()
-                records.append({"pid": process.pid, "token": token, "installation": identity,
-                                "path": result["path"], "launched_at": time.time()})
-                try:
-                    write_json(self.root / "running.json", {"editors": records})
-                except BaseException:
-                    process.terminate()
-                    process.wait(timeout=10)
-                    raise
-            return {"pid": process.pid, "installation": identity, "path": result["path"]}
+
+def delegate(argv):
+    """Hand a project or editor command to the Rust state tool."""
+    done = subprocess.run([*hubctl_command(), *argv])
+    return done.returncode
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    tail = argv[2:] if argv[:1] == ["--root"] else argv
+    if tail[:1] and tail[0] in STATE_COMMANDS:
+        try:
+            return delegate(argv)
+        except ValueError as error:
+            print(f"hub: {error}", file=sys.stderr)
+            return 1
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, help="Override the per-user Hub directory")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("projects", "installations", "tool-cache"):
-        commands.add_parser(name)
+    commands.add_parser("tool-cache")
     commands.add_parser("prune-tools")
     commands.add_parser("uninstall").add_argument("installation")
     tools_cmd = commands.add_parser("add-tools")
@@ -693,10 +620,9 @@ def main(argv=None):
     for component in OPTIONAL_TOOLS:
         tools_cmd.add_argument("--" + component, action="store_true")
     tools_cmd.add_argument("--android-rust-targets", action="store_true")
-    for name, argument in (("add-dev", "repo"), ("open", "project"), ("remember", "project")):
-        commands.add_parser(name).add_argument(argument)
+    commands.add_parser("add-dev").add_argument("repo")
+    commands.add_parser("modules").add_argument("installation", nargs="?")
     commands.add_parser("dev-options").add_argument("installation")
-    commands.add_parser("backup-project").add_argument("project")
     commands.add_parser("check-releases").add_argument("url", nargs="?")
     settings = commands.add_parser("release-settings")
     settings.add_argument("--source", choices=("https", "github-cli"))
@@ -713,10 +639,6 @@ def main(argv=None):
     for component in OPTIONAL_TOOLS:
         remote.add_argument("--" + component, action="store_true")
     remote.add_argument("--android-rust-targets", action="store_true")
-    bind = commands.add_parser("bind", help="Explicitly select an editor; does not migrate project data")
-    bind.add_argument("project")
-    bind.add_argument("installation")
-    bind.add_argument("--backup", action="store_true", help="Back up the project before changing its editor")
     for name in ("rebuild", "prepare-dev"):
         rebuild = commands.add_parser(name)
         rebuild.add_argument("installation")
@@ -732,11 +654,7 @@ def main(argv=None):
         parser.error("--jobs must be positive")
     hub = Hub(root=args.root)
     try:
-        if args.command == "projects":
-            result = hub.projects()
-        elif args.command == "installations":
-            result = hub.installations()
-        elif args.command == "tool-cache":
+        if args.command == "tool-cache":
             result = hub.tool_cache()
         elif args.command == "prune-tools":
             result = hub.prune_tools()
@@ -747,8 +665,8 @@ def main(argv=None):
             result = hub.add_tools(args.installation, components, args.android_rust_targets)
         elif args.command == "add-dev":
             result = hub.add_dev(args.repo)
-        elif args.command == "remember":
-            result = hub.remember(args.project)
+        elif args.command == "modules":
+            result = hub.modules(args.installation)
         elif args.command == "install":
             components = [name for name in OPTIONAL_TOOLS if getattr(args, name.replace("-", "_"))]
             result = hub.install(args.bundle, components, args.android_rust_targets)
@@ -759,10 +677,6 @@ def main(argv=None):
         elif args.command == "download-release":
             components = [name for name in OPTIONAL_TOOLS if getattr(args, name.replace("-", "_"))]
             result = hub.download_release(args.version, components, args.android_rust_targets, args.sha256)
-        elif args.command == "bind":
-            result = hub.bind(args.project, args.installation, args.backup)
-        elif args.command == "backup-project":
-            result = hub.backup_project(args.project)
         elif args.command == "rebuild":
             result = hub.rebuild(args.installation, args.jobs)
         elif args.command == "prepare-dev":
@@ -772,8 +686,6 @@ def main(argv=None):
         elif args.command == "install-dev":
             components = [name for name in OPTIONAL_TOOLS if getattr(args, name.replace("-", "_"))]
             result = hub.install_dev(args.installation, components, args.android_rust_targets, build_id=args.build_id)
-        else:
-            result = hub.launch(args.project)
         print(json.dumps(result, indent=2))
         return 0
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError,

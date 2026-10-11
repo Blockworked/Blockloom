@@ -29,3 +29,5 @@ opencode.json
 .mcp.json
 plans/
 .codex/
+# Staged by blockloom-qt/build.rs from the lucide-qt crate (do not commit).
+blockloom-qt/qml/Lucide/

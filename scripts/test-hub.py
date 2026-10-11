@@ -14,6 +14,11 @@ from unittest.mock import patch
 sys.dont_write_bytecode = True
 import hub
 import hub_install
+import hub_testing
+
+
+def setUpModule():
+    hub_testing.ensure_hubctl()
 
 
 class HubTests(unittest.TestCase):
@@ -21,7 +26,7 @@ class HubTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name).resolve()
-        self.service = hub.Hub(self.base / "Hub", self.base / "projects.json")
+        self.service = hub.Hub(self.base / "Hub", self.base / "data")
         self.bundle = self.base / "bundle"
         self.bundle.mkdir()
         self.binary(self.bundle, "blockloom")
@@ -57,7 +62,7 @@ class HubTests(unittest.TestCase):
             self.service.install(self.bundle)
         with self.assertRaisesRegex(ValueError, "cannot be replaced"):
             hub_install.stage(self.bundle, self.service.slot(first["id"]), replace=True)
-        self.assertEqual(self.service.installations(),
+        self.assertEqual(self.service.ctl("installations"),
                          [{**first, "path": str(self.service.slot(first["id"]))}])
 
     def test_prepared_payload_promotes_without_copying(self):
@@ -99,20 +104,20 @@ class HubTests(unittest.TestCase):
 
     def test_new_version_does_not_change_project_binding(self):
         self.service.install(self.bundle)
-        self.service.bind(self.project, "release-0.1.0")
+        self.service.ctl("bind", self.project, "release-0.1.0")
         self.manifest["version"] = "0.2.0"
         self.save_manifest()
         self.service.install(self.bundle)
-        self.assertEqual(self.service.project(self.project)["installation"], "release-0.1.0")
+        self.assertEqual(self.service.ctl("remember", self.project)["installation"], "release-0.1.0")
         before = (self.project / "project.blockloom").read_bytes()
-        self.service.bind(self.project, "release-0.2.0")
+        self.service.ctl("bind", self.project, "release-0.2.0")
         self.assertEqual((self.project / "project.blockloom").read_bytes(), before)
 
     def test_private_release_download_verifies_and_keeps_project_binding(self):
         import hashlib
         import zipfile
         self.service.install(self.bundle)
-        self.service.bind(self.project, "release-0.1.0")
+        self.service.ctl("bind", self.project, "release-0.1.0")
         self.manifest["version"] = "0.2.0"
         self.save_manifest()
         archive = self.base / "remote.zip"
@@ -135,7 +140,7 @@ class HubTests(unittest.TestCase):
                 self.service.download_release("0.2.0", sha256="0" * 64)
             installed = self.service.download_release("0.2.0", sha256=checksum)
         self.assertEqual(installed["id"], "release-0.2.0")
-        self.assertEqual(self.service.project(self.project)["installation"], "release-0.1.0")
+        self.assertEqual(self.service.ctl("remember", self.project)["installation"], "release-0.1.0")
 
     def test_release_source_defaults_to_github_cli(self):
         settings = self.service.release_settings()
@@ -144,13 +149,13 @@ class HubTests(unittest.TestCase):
 
     def test_installations_list_slot_paths(self):
         installed = self.service.install(self.bundle)
-        entries = self.service.installations()
+        entries = self.service.ctl("installations")
         self.assertEqual(entries[0]["path"], str(self.service.slot(installed["id"])))
 
     def test_uninstall_refuses_installation_used_by_a_project(self):
         self.service.install(self.bundle)
-        self.service.remember(self.project)
-        self.service.bind(self.project, "release-0.1.0")
+        self.service.ctl("remember", self.project)
+        self.service.ctl("bind", self.project, "release-0.1.0")
         with self.assertRaisesRegex(ValueError, "used by projects"):
             self.service.uninstall("release-0.1.0")
         self.assertTrue(self.service.slot("release-0.1.0").exists())
@@ -202,8 +207,8 @@ class HubTests(unittest.TestCase):
 
     def test_add_tools_refuses_installation_in_use(self):
         self.service.install(self.bundle)
-        self.service.remember(self.project)
-        self.service.bind(self.project, "release-0.1.0")
+        self.service.ctl("remember", self.project)
+        self.service.ctl("bind", self.project, "release-0.1.0")
         hub.write_json(self.project / ".blockloom/lock.json", {"pid": os.getpid(), "heartbeat": time.time()})
         with self.assertRaisesRegex(ValueError, "Close projects"):
             self.service.add_tools("release-0.1.0", ["java"])
@@ -243,16 +248,9 @@ class HubTests(unittest.TestCase):
         self.assertEqual(installed["tools"]["java"], {"version": "25.0.1"})
         self.assertTrue((self.service.slot("release-0.2.0") / "tools/java/bin" / ("java.exe" if os.name == "nt" else "java")).is_file())
 
-    def test_project_binding_survives_folder_move(self):
-        self.service.install(self.bundle)
-        self.service.bind(self.project, "release-0.1.0")
-        renamed = self.base / "Renamed"
-        self.project.rename(renamed)
-        self.assertEqual(self.service.project(renamed)["installation"], "release-0.1.0")
-
     def prepare_upgrade(self):
         self.service.install(self.bundle)
-        self.service.bind(self.project, "release-0.1.0")
+        self.service.ctl("bind", self.project, "release-0.1.0")
         self.manifest["version"] = "0.2.0"
         self.save_manifest()
         self.service.install(self.bundle)
@@ -268,82 +266,15 @@ class HubTests(unittest.TestCase):
         cache.mkdir()
         (cache / "cache.dll").write_bytes(b"generated")
         before = (self.project / "project.blockloom").read_bytes()
-        result = self.service.bind(self.project, "release-0.2.0", backup=True)
+        result = self.service.ctl("bind", self.project, "release-0.2.0", "--backup")
         with zipfile.ZipFile(result["backup"]["path"]) as archive:
             self.assertEqual(archive.read("project.blockloom"), before)
             self.assertEqual(archive.read("assets/picture.png"), b"game asset")
             self.assertEqual(json.loads(archive.read(".blockloom/hub.json"))["installation"], "release-0.1.0")
             self.assertIn("assets/empty/", archive.namelist())
             self.assertFalse(any(name.startswith(".blockloom/build") for name in archive.namelist()))
-        self.assertEqual(self.service.project(self.project)["installation"], "release-0.2.0")
+        self.assertEqual(self.service.ctl("remember", self.project)["installation"], "release-0.2.0")
         self.assertEqual((self.project / "project.blockloom").read_bytes(), before)
-
-    def test_failed_or_cancelled_backup_keeps_binding_and_removes_partial(self):
-        self.prepare_upgrade()
-        for error in (OSError("disk full"), hub.Cancelled("cancelled")):
-            with patch.object(hub.hub_backup.zipfile.ZipFile, "open", side_effect=error):
-                with self.assertRaises(type(error)):
-                    self.service.bind(self.project, "release-0.2.0", backup=True)
-            self.assertEqual(self.service.project(self.project)["installation"], "release-0.1.0")
-            self.assertEqual(list((self.service.root / "backups").glob("*/*.zip")), [])
-            self.assertFalse((self.service.root / ".operation-lock").exists())
-
-    def test_backup_refuses_an_active_project(self):
-        self.prepare_upgrade()
-        hub.write_json(self.project / ".blockloom/lock.json", {"pid": os.getpid(), "heartbeat": time.time()})
-        with self.assertRaisesRegex(ValueError, "Close"):
-            self.service.bind(self.project, "release-0.2.0", backup=True)
-        self.assertFalse((self.service.root / "backups").exists())
-
-    def test_project_changes_during_backup_keep_old_binding(self):
-        self.prepare_upgrade()
-        original = hub.hub_backup.inventory
-        count = 0
-
-        def inventory(project):
-            nonlocal count
-            count += 1
-            if count == 2:
-                (project / "new-file").write_text("changed during backup")
-            return original(project)
-
-        with patch.object(hub.hub_backup, "inventory", side_effect=inventory):
-            with self.assertRaisesRegex(ValueError, "changed during backup"):
-                self.service.bind(self.project, "release-0.2.0", backup=True)
-        self.assertEqual(self.service.project(self.project)["installation"], "release-0.1.0")
-        self.assertEqual(list((self.service.root / "backups").glob("*/*.zip")), [])
-
-    def test_backup_cannot_write_inside_project(self):
-        self.service.root = self.project / "Hub"
-        with self.assertRaisesRegex(ValueError, "outside"):
-            self.service.backup_project(self.project)
-
-    def test_standalone_backups_are_unique_and_skip_owner_locks(self):
-        import zipfile
-        hub.write_json(self.project / ".blockloom/lock.json", {"pid": 12345, "heartbeat": 0})
-        with patch.object(hub, "process_token", return_value=None):
-            first = self.service.backup_project(self.project)
-            second = self.service.backup_project(self.project)
-        self.assertNotEqual(first["path"], second["path"])
-        with zipfile.ZipFile(first["path"]) as archive:
-            self.assertNotIn(".blockloom/lock.json", archive.namelist())
-
-    def test_same_editor_selection_does_not_create_backup(self):
-        self.prepare_upgrade()
-        result = self.service.bind(self.project, "release-0.1.0", backup=True)
-        self.assertNotIn("backup", result)
-        self.assertFalse((self.service.root / "backups").exists())
-
-    def test_registry_is_read_only_and_retains_missing_projects(self):
-        hub.write_json(self.service.registry, {"projects": [
-            {"path": str(self.project), "opened_at": 100},
-            {"path": str(self.base / "missing"), "opened_at": 101}]})
-        before = self.service.registry.read_bytes()
-        entries = self.service.projects()
-        self.assertIn("error", entries[0])
-        self.assertEqual(entries[1]["mode"], "ThreeD")
-        self.assertIsNone(entries[1]["installation"])
-        self.assertEqual(self.service.registry.read_bytes(), before)
 
     def test_missing_required_rust_is_rejected(self):
         self.manifest["tools"] = {}
@@ -351,23 +282,14 @@ class HubTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "pinned Rust"):
             self.service.install(self.bundle)
 
-    def test_remember_is_idempotent_and_does_not_write_editor_registry(self):
-        hub.write_json(self.service.registry, {"projects": [{"path": str(self.project), "opened_at": 123}]})
-        before = self.service.registry.read_bytes()
-        self.service.remember(self.project)
-        self.service.remember(self.project / ".")
-        self.assertEqual(len(self.service.projects()), 1)
-        self.assertEqual(self.service.projects()[0]["opened_at"], 123)
-        self.assertEqual(len(hub.read_json(self.service.root / "projects.json")["projects"]), 1)
-        self.assertEqual(self.service.registry.read_bytes(), before)
-
-    def test_remember_without_editor_registry_and_invalid_project(self):
-        with self.assertRaises(OSError):
-            self.service.remember(self.base / "missing")
-        self.assertFalse((self.service.root / "projects.json").exists())
-        result = self.service.remember(self.project)
-        self.assertEqual(self.service.projects()[0]["path"], result["path"])
-        self.assertEqual(self.service.installations(), [])
+    def test_modules_list_versions_sizes_and_default_rule(self):
+        result = self.service.modules()
+        ids = [m["id"] for m in result["modules"]]
+        self.assertEqual(ids, ["java", "android-sdk", "android-ndk", "android-rust-targets"])
+        self.assertIn("Java 25", result["modules"][0]["label"])
+        self.assertTrue(all(m["approx_mib"] > 0 for m in result["modules"]))
+        self.assertEqual(result["defaults"]["release"], [])
+        self.assertEqual(result["defaults"]["dev"], ids)
 
     def test_components_are_optional_and_filter_payload(self):
         for name in hub.OPTIONAL_TOOLS:
@@ -435,7 +357,7 @@ class HubTests(unittest.TestCase):
         self.assertEqual(first, self.service.add_dev(repo / "."))
         self.assertEqual(first["status"], "unbuilt")
         with self.assertRaisesRegex(ValueError, "Build this"):
-            self.service.bind(self.project, first["id"])
+            self.service.ctl("bind", self.project, first["id"])
 
     def test_failed_rebuild_preserves_previous_installation(self):
         dev = self.service.add_dev(self.repo())
@@ -471,46 +393,6 @@ class HubTests(unittest.TestCase):
         self.assertEqual(result["tools"]["rust"]["channel"], "1.98.1")
         self.service.installation(dev["id"], ready=True)
 
-    def test_launch_passes_path_and_bundled_tools_without_shell(self):
-        self.service.install(self.bundle)
-        self.service.bind(self.project, "release-0.1.0")
-        with patch.object(hub.subprocess, "Popen") as launch, \
-                patch.object(hub, "process_token", return_value="editor-birth") as identity:
-            launch.return_value.pid = 42
-            result = self.service.launch(self.project)
-        identity.assert_called_once_with(42)
-        record = hub.read_json(self.service.root / "running.json")["editors"][0]
-        self.assertEqual(record["pid"], 42)
-        self.assertEqual(record["token"], "editor-birth")
-        args, kwargs = launch.call_args
-        self.assertEqual(args[0][-2:], ["--project", str(self.project)])
-        self.assertEqual(result["pid"], 42)
-        self.assertTrue(kwargs["env"]["PATH"].startswith(str(self.service.slot("release-0.1.0") / "tools" / "rust" / "bin")))
-        self.assertNotIn("shell", kwargs)
-        self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
-        self.assertEqual(kwargs["stderr"], subprocess.STDOUT)
-        self.assertEqual(Path(kwargs["stdout"].name).parent, self.service.root / "logs")
-
-    def test_launch_overrides_local_android_environment_with_bundled_tools(self):
-        self.binary(self.bundle / "tools/java/bin", "java")
-        self.binary(self.bundle / "tools/android-sdk/platform-tools", "adb")
-        ndk = self.bundle / "tools/android-ndk"
-        ndk.mkdir()
-        (ndk / "source.properties").write_text("Pkg.Revision=27.2.1")
-        self.manifest["tools"].update({name: {"version": "test"} for name in hub.OPTIONAL_TOOLS})
-        self.save_manifest()
-        self.service.install(self.bundle, hub.OPTIONAL_TOOLS)
-        self.service.bind(self.project, "release-0.1.0")
-        with patch.dict(os.environ, {"JAVA_HOME": "local-java", "ANDROID_HOME": "local-sdk", "ANDROID_SDK_ROOT": "local-sdk", "ANDROID_NDK_HOME": "local-ndk"}), \
-                patch.object(hub.subprocess, "Popen") as launch, patch.object(hub, "process_token", return_value="birth"):
-            launch.return_value.pid = 42
-            self.service.launch(self.project)
-        env = launch.call_args.kwargs["env"]
-        for name, variables in (("java", ("JAVA_HOME",)), ("android-sdk", ("ANDROID_HOME", "ANDROID_SDK_ROOT", "BLOCKLOOM_HUB_ANDROID_SDK")),
-                                ("android-ndk", ("ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "BLOCKLOOM_HUB_ANDROID_NDK"))):
-            for variable in variables:
-                self.assertEqual(env[variable], str(self.service.slot("release-0.1.0") / "tools" / name))
-
     def prepare_fake_dev(self):
         dev = self.service.add_dev(self.repo())
         manifest = {**dev, "status": "ready", "tools": self.manifest["tools"],
@@ -521,7 +403,7 @@ class HubTests(unittest.TestCase):
     def test_prepared_build_requires_explicit_install_and_can_retry(self):
         dev = self.prepare_fake_dev()
         self.assertEqual(self.service.installation(dev["id"])["status"], "unbuilt")
-        self.assertTrue(self.service.installations()[0]["prepared"])
+        self.assertTrue(self.service.ctl("installations")[0]["prepared"])
         result = self.service.install_dev(dev["id"])
         self.assertEqual(result["status"], "ready")
         self.assertNotIn("sources", result)
@@ -603,37 +485,6 @@ class HubTests(unittest.TestCase):
                 self.service.install_dev(dev["id"], android_rust_targets=True)
         self.assertEqual(self.service.installation(dev["id"])["status"], "unbuilt")
 
-    def test_running_editor_prevents_rebuild_and_duplicate_launch(self):
-        dev = self.prepare_fake_dev()
-        self.service.install_dev(dev["id"])
-        self.service.bind(self.project, dev["id"])
-        self.service.remember(self.project)
-        with patch.object(hub.subprocess, "Popen") as launch, patch.object(hub, "process_token", return_value="birth"), patch.object(hub, "running", return_value=True):
-            launch.return_value.pid = 42
-            self.service.launch(self.project)
-            self.assertTrue(self.service.projects()[0]["active"])
-            self.assertEqual(self.service.installations()[0]["running"], 1)
-            with self.assertRaisesRegex(ValueError, "Close"):
-                self.service.prepare_dev(dev["id"])
-            with self.assertRaisesRegex(ValueError, "Close"):
-                self.service.bind(self.project, dev["id"])
-            with self.assertRaisesRegex(ValueError, "Close"):
-                self.service.launch(self.project)
-        with patch.object(hub, "running", return_value=False):
-            self.assertFalse(self.service.project_active(self.project))
-
-    def test_external_owner_blocks_binding_and_stale_lock_does_not(self):
-        self.service.install(self.bundle)
-        hub.write_json(self.project / ".blockloom" / "lock.json", {
-            "pid": os.getpid(), "heartbeat": time.time(), "session": "editor", "app": "editor"})
-        with self.assertRaisesRegex(ValueError, "Close"):
-            self.service.bind(self.project, "release-0.1.0")
-        with patch.object(hub, "process_token", return_value=None):
-            with self.assertRaisesRegex(ValueError, "Close"):
-                self.service.bind(self.project, "release-0.1.0")
-            hub.write_json(self.project / ".blockloom" / "lock.json", {"pid": 123, "heartbeat": 0})
-            self.service.bind(self.project, "release-0.1.0")
-
     def test_cancelled_dev_install_preserves_slot_and_releases_lock(self):
         dev = self.prepare_fake_dev()
         self.service.install_dev(dev["id"])
@@ -669,6 +520,25 @@ class HubTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 hub_install.stage(self.bundle, destination, {"kind": "dev", "changed": True}, replace=True)
         self.assertEqual(hub.read_json(destination / hub.MANIFEST), {"kind": "dev"})
+
+    def test_a_crashed_operation_does_not_lock_the_hub_forever(self):
+        lock = self.service.root / ".operation-lock"
+        lock.mkdir(parents=True)
+        hub.write_json(lock / "owner.json", {"pid": 2 ** 22 + 7})
+        with patch.object(hub, "process_token", return_value=None):
+            self.service.install(self.bundle)
+        self.assertFalse(lock.exists())
+        # A lock whose owner is alive still blocks.
+        lock.mkdir()
+        hub.write_json(lock / "owner.json", {"pid": os.getpid()})
+        with self.assertRaisesRegex(ValueError, "Another Hub operation"):
+            self.service.install(self.bundle)
+
+
+    CONTRACT = Path(__file__).resolve().parent.parent / "blockloom-core" / "tests" / "fixtures" / "hub-contract"
+
+    def contract(self, name):
+        return json.loads((self.CONTRACT / name).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

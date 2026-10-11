@@ -7,6 +7,7 @@ description = "Manage Blockloom projects and editor installations."
 build = "build.rs"
 
 [dependencies]
+blockloom-hub-state = { path = "../blockloom-hub-state" }
 cxx-qt = "0.10"
 cxx-qt-lib = { version = "0.10", features = ["qt_full"] }
 blockstitch-qml.workspace = true

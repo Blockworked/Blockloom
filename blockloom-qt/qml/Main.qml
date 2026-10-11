@@ -81,9 +81,11 @@ ApplicationWindow {
     function invoke(command, args, done, failed) {
         if (command === "select_actor") { inspectScene = false; inspectedScene = ""; inspectedLighting = ""; }
         const token = nextToken++;
-        pending[token] = { command: command, done: done, failed: failed };
+        pending[token] = { command: command, args: args || {}, done: done, failed: failed };
         bridge.invokeCommand(token, command, JSON.stringify(args || {}));
     }
+    function guarded(error) { return /^(save-failed|wrong-editor):/.test(String(error)); }
+    function guardMessage(error) { return String(error).replace(/^(save-failed|wrong-editor):\s*/, ""); }
     function showError(text) { errorBar.text = String(text); errorBar.visible = true; errorTimer.restart(); }
     function toFileUrl(path) {
         if (!path) return "";
@@ -155,6 +157,12 @@ ApplicationWindow {
             let reply;
             try { reply = JSON.parse(response); } catch (error) { reply = { ok: false, error: String(error) }; }
             if (reply.ok) { if (call && call.done) call.done(reply.result); }
+            else if (call && root.guarded(reply.error)) {
+                // Navigation that needs a decision: ask once, then repeat the
+                // same command with the answer the user chose.
+                navGuard.ask(call.command, call.args, String(reply.error));
+                if (call.failed) call.failed(root.guardMessage(reply.error));
+            }
             else if (call && call.failed) call.failed(reply.error);
             else { console.warn((call ? call.command : "command") + " failed:", reply.error); root.showError(reply.error); }
         }
@@ -163,8 +171,51 @@ ApplicationWindow {
         bridge.start();
         if (bridge.startupProject.length > 0)
             invoke("open_project", { path: bridge.startupProject });
+        else if (bridge.startupNewProject.length > 0)
+            invoke("create_project", JSON.parse(bridge.startupNewProject));
     }
-    onClosing: bridge.shutdown()
+    // Quitting saves first. A failed save keeps the window open and asks.
+    property bool quitReady: false
+    onClosing: close => {
+        if (!quitReady && appState.project) {
+            close.accepted = false;
+            invoke("save_project", {}, () => { quitReady = true; root.close(); },
+                   e => navGuard.askQuit(String(e)));
+            return;
+        }
+        bridge.shutdown();
+    }
+    // The Hub (or another editor) may add, forget or open projects while the
+    // Dashboard shows, so re-read the list now and then and when the window
+    // comes back to the front.
+    Timer {
+        id: libraryTimer
+        interval: 3000; repeat: true; running: !root.appState.project
+        onTriggered: root.invoke("refresh_library", {}, null, () => {})
+    }
+    onActiveChanged: if (active && !root.appState.project) root.invoke("refresh_library", {}, null, () => {})
+    // The Hub's channel: say what is open, and hear a request to come to the
+    // front or to open (or create) a project in this already running editor.
+    function bringToFront() { root.show(); root.raise(); root.requestActivate(); }
+    function answerHub(request, error) {
+        root.invoke("hub_reply", { id: request.id, error: error || "" }, null, () => {});
+    }
+    function carryOut(request) {
+        bringToFront();
+        const done = () => answerHub(request, "");
+        const failed = e => answerHub(request, String(e));
+        if (request.action === "create")
+            invoke("create_project", request.project || {}, done, failed);
+        else
+            invoke("open_project", { path: request.path || "" }, done, failed);
+    }
+    Timer {
+        interval: 1500; repeat: true; running: true
+        onTriggered: root.invoke("hub_poll", {}, poll => {
+            if (poll.focus) root.bringToFront();
+            if (poll.open) root.carryOut(poll.open);
+        }, () => {})
+    }
 
     // Undo and redo, unless a text field wants the keys for itself.
     Shortcut { sequences: [StandardKey.Undo]; enabled: !!root.appState.project; onActivated: root.invoke("undo") }
@@ -195,6 +246,7 @@ ApplicationWindow {
         anchors.fill: parent
         sourceComponent: root.appState.project ? editorComponent : dashboardComponent
     }
+    NavigationGuard { id: navGuard; app: root }
     Component { id: dashboardComponent; Dashboard { app: root } }
     Component { id: editorComponent; EditorPage { app: root } }
 

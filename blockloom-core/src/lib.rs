@@ -52,6 +52,8 @@ mod distribution;
 pub mod fields;
 pub mod fog;
 pub mod input;
+pub mod hub;
+pub mod trash;
 pub mod library;
 pub mod light2d;
 pub mod lightning;

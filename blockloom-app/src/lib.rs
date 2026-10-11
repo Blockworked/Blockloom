@@ -141,5 +141,6 @@ impl Backend {
             }
             s.runtime = None;
         }
+        blockloom_core::hub::retire_presence(&blockloom_core::hub::editors_dir());
     }
 }

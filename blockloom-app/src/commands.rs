@@ -73,24 +73,33 @@ fn push_undo_for(s: &mut AppState, session: Option<EditSession>) {
     }
 }
 
-/// Writes the open project to its folder, tracking the new revision. Failures
-/// are logged, not surfaced: an unwritable folder shouldn't stop the editor
-/// working. A failed save marks the copy dirty, which is what makes the next
-/// reload a conflict with a choice instead of a quiet overwrite.
-fn auto_save(s: &AppState) {
-    if let Some(open) = &s.open {
-        match project::save_project(&open.project, &open.dir) {
-            Ok(revision) => {
-                open.revision.store(revision, Ordering::SeqCst);
-                open.dirty.store(false, Ordering::SeqCst);
-                open.touched.store(sync::now_secs(), Ordering::SeqCst);
-                sync::refresh_heartbeat(&open.dir, &s.session_id, "");
-            }
-            Err(e) => {
-                tracing::warn!("Couldn't save the project: {e}");
-                open.dirty.store(true, Ordering::SeqCst);
-            }
+/// Writes the open project to its folder, tracking the new revision. A failed
+/// save marks the copy dirty, which is what makes the next reload a conflict
+/// with a choice instead of a quiet overwrite.
+fn save_open(s: &AppState) -> Result<(), String> {
+    let Some(open) = &s.open else {
+        return Ok(());
+    };
+    match project::save_project(&open.project, &open.dir) {
+        Ok(revision) => {
+            open.revision.store(revision, Ordering::SeqCst);
+            open.dirty.store(false, Ordering::SeqCst);
+            open.touched.store(sync::now_secs(), Ordering::SeqCst);
+            sync::refresh_heartbeat(&open.dir, &s.session_id, "");
+            Ok(())
         }
+        Err(e) => {
+            open.dirty.store(true, Ordering::SeqCst);
+            Err(e)
+        }
+    }
+}
+
+/// [`save_open`] for an edit: failures are logged, not surfaced, since an
+/// unwritable folder shouldn't stop the editor working.
+fn auto_save(s: &AppState) {
+    if let Err(e) = save_open(s) {
+        tracing::warn!("Couldn't save the project: {e}");
     }
 }
 
@@ -278,6 +287,90 @@ pub(crate) fn block_vocabulary() -> Result<serde_json::Value, String> {
 
 // ─── Projects ──────────────────────────────────────────────────────────────
 
+/// Whether another app (the Hub) asked this editor to come to the front since
+/// the last call. The request is a file in the open project's folder, so it
+/// reaches whichever editor owns the project.
+pub(crate) fn take_focus_request(state: &SharedState) -> Result<bool, String> {
+    let s = lock(state)?;
+    let Some(open) = &s.open else {
+        return Ok(false);
+    };
+    if !open.owns_lock {
+        return Ok(false);
+    }
+    let file = open.dir.join(".blockloom").join("focus.json");
+    let Ok(text) = std::fs::read_to_string(&file) else {
+        return Ok(false);
+    };
+    let _ = std::fs::remove_file(&file);
+    let asked = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| v["requested_at"].as_u64())
+        .unwrap_or(0);
+    Ok(sync::now_secs().saturating_sub(asked) < 15)
+}
+
+/// What one poll of the Hub's channel turned up.
+#[derive(Debug, Default, serde::Serialize)]
+pub(crate) struct HubPoll {
+    /// The Hub asked this window to come to the front.
+    pub focus: bool,
+    /// A request to open or create a project, for the window to carry out and
+    /// then answer with `hub_reply`.
+    pub open: Option<blockloom_core::hub::Request>,
+}
+
+/// The editor's side of the Hub channel, once per poll: publish what is open
+/// (so the Hub can tell an idle editor from a busy one), take a focus
+/// request, and, while at the Dashboard, take a request to open a project.
+/// A request that arrives while a project is open is refused, not queued.
+pub(crate) fn hub_poll(state: &SharedState) -> Result<HubPoll, String> {
+    let dir = blockloom_core::hub::editors_dir();
+    let open_dir = lock(state)?.open.as_ref().map(|o| o.dir.clone());
+    blockloom_core::hub::publish_presence(&dir, open_dir.as_deref());
+    let mut poll = HubPoll {
+        focus: take_focus_request(state)?,
+        open: None,
+    };
+    if let Some(request) = blockloom_core::hub::take_request(&dir) {
+        if open_dir.is_some() {
+            blockloom_core::hub::publish_reply(
+                &dir,
+                &request.id,
+                Err("That editor already has a project open.".to_string()),
+            );
+        } else {
+            poll.open = Some(request);
+        }
+    }
+    Ok(poll)
+}
+
+/// Answers a request `hub_poll` handed over.
+pub(crate) fn hub_reply(id: &str, error: Option<String>) -> Result<(), String> {
+    blockloom_core::hub::publish_reply(
+        &blockloom_core::hub::editors_dir(),
+        id,
+        match error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        },
+    );
+    Ok(())
+}
+
+/// Re-reads the project list, so a project the Hub added (or another editor
+/// forgot) shows up without a restart. Emits only when a card changed.
+pub(crate) fn refresh_library(state: &SharedState, app: &AppHandle) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let before = crate::state::library_dtos(&s);
+    s.library = library::list();
+    if crate::state::library_dtos(&s) != before {
+        emit(app, &s);
+    }
+    Ok(())
+}
+
 /// What opening a folder decided about sharing it.
 #[derive(serde::Serialize)]
 pub(crate) struct OpenReport {
@@ -292,6 +385,12 @@ pub(crate) struct OpenReport {
     pub(crate) warning: Option<String>,
 }
 
+/// Starts the error a refused close carries, which the Dashboard looks for to
+/// offer retry or discard.
+pub(crate) const SAVE_FAILED: &str = "save-failed:";
+/// Starts the error an open refused over the project's editor.
+pub(crate) const WRONG_EDITOR: &str = "wrong-editor:";
+
 /// Our claim on a folder we are about to own.
 fn owner_lock(session: &str) -> LockInfo {
     LockInfo {
@@ -305,14 +404,28 @@ fn owner_lock(session: &str) -> LockInfo {
 /// Opens the project in `dir`, replacing whatever was open. The Dashboard's
 /// cards and its "Open a folder" both land here. When a live backend owns the
 /// folder this one attaches instead of forking a silent second copy - unless
-/// `force` takes the lock off it explicitly, never silently.
+/// `force` takes the lock off it explicitly, never silently. A project the Hub
+/// bound to another editor is refused unless `other_editor` says to open it
+/// here anyway (the document is copied aside first, and `rebind` makes this
+/// editor the project's from then on); a failed save of the open project is
+/// refused unless `discard`.
 pub(crate) fn open_project(
     state: &SharedState,
     app: &AppHandle,
     path: String,
     force: bool,
+    other_editor: bool,
+    discard: bool,
+    rebind: bool,
 ) -> Result<OpenReport, String> {
     let dir = std::path::PathBuf::from(path);
+    if let Some(why) = blockloom_core::hub::conflict(&dir) {
+        if !other_editor {
+            return Err(format!("{WRONG_EDITOR} {why}"));
+        }
+        // Opening is what may migrate the document, so keep the old one.
+        blockloom_core::hub::backup_document(&dir)?;
+    }
     let mut project = project::read_project_dir(&dir)?;
     // Booting a project loads its default scene, not wherever the last
     // editor left off.
@@ -320,7 +433,10 @@ pub(crate) fn open_project(
     let disk_revision = sync::read_revision(&dir);
     let mut s = lock(state)?;
     let session = s.session_id.clone();
-    close_open_project(&mut s, true);
+    close_open_project(&mut s, !discard)?;
+    if rebind && let Err(e) = blockloom_core::hub::rebind(&dir) {
+        tracing::warn!("Couldn't record the project's editor: {e}");
+    }
     library::remember(&dir);
     let owner = sync::live_owner(&dir, &session);
     let (owns_lock, attached, took_over, warning) = match &owner {
@@ -382,6 +498,7 @@ pub(crate) fn create_project(
     location: Option<String>,
     mode: Mode,
     sample: Option<String>,
+    discard: bool,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
     if name.is_empty() {
@@ -396,11 +513,12 @@ pub(crate) fn create_project(
         Some(sample) => blockloom_core::physics::sample::build(sample, &name, mode)?,
         None => Project::starter(name, mode),
     };
-    let dir = project::create_project(&project, &parent)?;
-
     let mut s = lock(state)?;
+    // Before the folder exists, so a refused close leaves nothing behind.
+    close_open_project(&mut s, !discard)?;
+    let dir = project::create_project(&project, &parent)?;
+    blockloom_core::hub::bind_new_project(&dir);
     let session = s.session_id.clone();
-    close_open_project(&mut s, true);
     library::remember(&dir);
     let revision = sync::read_revision(&dir);
     let owns_lock = sync::write_lock(&dir, &owner_lock(&session)).is_ok();
@@ -414,10 +532,15 @@ pub(crate) fn create_project(
     Ok(())
 }
 
-/// Saves the open project and goes back to the Dashboard.
-pub(crate) fn close_project(state: &SharedState, app: &AppHandle) -> Result<(), String> {
+/// Saves the open project and goes back to the Dashboard. When the save fails
+/// the project stays open, unless `discard` says to drop the unsaved work.
+pub(crate) fn close_project(
+    state: &SharedState,
+    app: &AppHandle,
+    discard: bool,
+) -> Result<(), String> {
     let mut s = lock(state)?;
-    close_open_project(&mut s, true);
+    close_open_project(&mut s, !discard)?;
     s.library = library::list();
     emit(app, &s);
     Ok(())
@@ -429,11 +552,12 @@ pub(crate) fn forget_project(
     state: &SharedState,
     app: &AppHandle,
     path: String,
+    discard: bool,
 ) -> Result<(), String> {
     let dir = std::path::PathBuf::from(path);
     let mut s = lock(state)?;
     if s.project_dir() == Some(dir.as_path()) {
-        close_open_project(&mut s, true);
+        close_open_project(&mut s, !discard)?;
     }
     library::forget(&dir);
     s.library = library::list();
@@ -441,20 +565,59 @@ pub(crate) fn forget_project(
     Ok(())
 }
 
-/// Deletes a project folder outright. Refuses a folder that isn't one, so a
-/// stale entry can't take something else with it.
+/// Points a remembered project at the folder it now lives in, for an entry
+/// whose folder went missing. Refuses a folder that isn't a project.
+pub(crate) fn locate_project(
+    state: &SharedState,
+    app: &AppHandle,
+    path: String,
+    folder: String,
+) -> Result<(), String> {
+    let (from, to) = (std::path::PathBuf::from(path), std::path::PathBuf::from(folder));
+    if !project::is_project_dir(&to) {
+        return Err(format!("{} isn't a Blockloom project folder", to.display()));
+    }
+    let mut s = lock(state)?;
+    library::moved(&from, &to);
+    s.library = library::list();
+    emit(app, &s);
+    Ok(())
+}
+
+/// Deletes a project folder: into the OS trash, or for good with `permanent`.
+/// Refuses a folder that isn't a project, so a stale entry can't take
+/// something else with it.
 pub(crate) fn delete_project(
     state: &SharedState,
     app: &AppHandle,
     path: String,
+    permanent: bool,
 ) -> Result<(), String> {
     let dir = std::path::PathBuf::from(path);
     let mut s = lock(state)?;
+    // Another editor holding the folder is using it; never delete under it.
+    if let Some(owner) = sync::live_owner(&dir, &s.session_id) {
+        return Err(format!(
+            "\"{}\" is open in another Blockloom (session {}). Close it there before deleting the project.",
+            dir.display(),
+            owner.session
+        ));
+    }
     // Discard rather than save: the folder is about to go.
     if s.project_dir() == Some(dir.as_path()) {
-        close_open_project(&mut s, false);
+        close_open_project(&mut s, false)?;
     }
-    project::delete_project_dir(&dir)?;
+    if permanent {
+        project::delete_project_dir(&dir)?;
+    } else if dir.exists() {
+        if !project::is_project_dir(&dir) {
+            return Err(format!(
+                "{} isn't a Blockloom project folder, so it wasn't deleted",
+                dir.display()
+            ));
+        }
+        blockloom_core::trash::move_to_trash(&dir)?;
+    }
     library::forget(&dir);
     s.library = library::list();
     emit(app, &s);
@@ -478,14 +641,18 @@ pub(crate) fn set_project_name(
     open.project.name = name.clone();
     let from = open.dir.clone();
     // Save first, so the rename moves a folder that already says the new name.
+    // A failed save stops the rename rather than moving an unsaved project.
     match project::save_project(&open.project, &from) {
         Ok(revision) => {
             open.revision.store(revision, Ordering::SeqCst);
             open.dirty.store(false, Ordering::SeqCst);
         }
         Err(e) => {
-            tracing::warn!("Couldn't save the project: {e}");
             open.dirty.store(true, Ordering::SeqCst);
+            return Err(format!(
+                "{SAVE_FAILED} Couldn't save \"{name}\" to {}: {e}",
+                from.display()
+            ));
         }
     }
     match project::rename_project_dir(&from, &name) {
@@ -594,16 +761,17 @@ pub(crate) fn import_project(
     state: &SharedState,
     app: &AppHandle,
     path: String,
+    discard: bool,
 ) -> Result<(), String> {
     let mut project = project::read_project(std::path::Path::new(&path))?;
     // A fresh id, so importing the same file twice gives two projects rather
     // than two folders claiming to be one.
     project.id = uuid::Uuid::new_v4().simple().to_string();
-    let dir = project::create_project(&project, &project::default_projects_dir())?;
-
     let mut s = lock(state)?;
+    close_open_project(&mut s, !discard)?;
+    let dir = project::create_project(&project, &project::default_projects_dir())?;
+    blockloom_core::hub::bind_new_project(&dir);
     let session = s.session_id.clone();
-    close_open_project(&mut s, true);
     library::remember(&dir);
     let revision = sync::read_revision(&dir);
     let owns_lock = sync::write_lock(&dir, &owner_lock(&session)).is_ok();
@@ -696,14 +864,20 @@ pub(crate) fn take_over_lock(state: &SharedState, app: &AppHandle) -> Result<Loc
 
 /// Lets go of whatever is open, leaving the editor on the Dashboard. The game
 /// window and the run log belong to the project, so they go too. `save` is
-/// false only when the project is on its way to being deleted. Releases our
-/// owner lock, but only when it is still ours.
-fn close_open_project(s: &mut AppState, save: bool) {
+/// false only when the user chose to discard, or the project is on its way to
+/// being deleted. A save that fails leaves the project open and says so, so
+/// work is never dropped without a decision. Releases our owner lock, but
+/// only when it is still ours.
+fn close_open_project(s: &mut AppState, save: bool) -> Result<(), String> {
+    if save && let Err(e) = save_open(s) {
+        let name = s.project().map(|p| p.name.clone()).unwrap_or_default();
+        let folder = s.project_dir().map(|d| d.display().to_string()).unwrap_or_default();
+        return Err(format!(
+            "{SAVE_FAILED} Couldn't save \"{name}\" to {folder}: {e}"
+        ));
+    }
     s.interface_design = None;
     s.interface_layout = None;
-    if save {
-        auto_save(s);
-    }
     if let Some(open) = &s.open
         && open.owns_lock
     {
@@ -722,6 +896,7 @@ fn close_open_project(s: &mut AppState, save: bool) {
     s.preview_headless = false;
     s.preview_port = None;
     s.log.clear();
+    Ok(())
 }
 
 // ─── The world ─────────────────────────────────────────────────────────────

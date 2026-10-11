@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "blockloom-hub",
+    "blockloom-hub-state",
     "blockloom-net",
     "blockloom-qt",
     "blockloom-app",
@@ -21,6 +22,7 @@ resolver = "2"
 
 default-members = [
     "blockloom-qt",
+    "blockloom-hub-state",
     "blockloom-app",
     "blockloom-core",
     "blockloom-protocol",

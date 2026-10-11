@@ -2440,6 +2440,40 @@ appears once a project is open, and `state.project` being null is what decides
 which of the two shows. Every edit is still written to disk right after it
 lands.
 
+### Hub coordination
+
+`blockloom-core/src/hub.rs` holds the Hub's say over the editor. The running
+installation comes from `BLOCKLOOM_INSTALLATION` (set by the Hub) or the
+manifest beside the executable; a project's binding is `.blockloom/hub.json`.
+`open_project` refuses a mismatch with a `wrong-editor:` error unless
+`other_editor=true`. Closing paths return a `save-failed:` error instead of
+dropping unsaved work unless `discard=true`. The project list
+(`library::list`) never prunes: missing folders come back with
+`available: false`, and `locate_project`/`forget_project` recover them. The Hub
+reads and writes the same `projects.json`.
+
+The editor's Dashboard re-reads the library on a timer and on window
+activation (`refresh_library`). `ProjectEntryDto` carries
+`installation_label` and `wrong_editor` so a card names the editor and flags a
+mismatch. `open_project`'s `other_editor` copies the project file to
+`.blockloom/backups/` first and `rebind` makes the running editor the
+project's. The Hub's service has `backups` and `restore-backup`; `focus`
+reports `acknowledged`; polling goes through `HubService::poll`, which never
+sets busy. The editor/Hub file formats are pinned by
+`blockloom-core/tests/fixtures/hub-contract/`, read by both
+`blockloom-core/tests/hub_contract.rs` and `blockloom-hub-state/tests/contract.rs`.
+
+`blockloom-hub-state` (Qt-free) is the one implementation of the Hub's project
+and editor logic: the project list, who holds a project, binding, snapshots,
+focus, and starting or reusing editors. The Hub window runs it as
+`blockloom-hub --hubctl <command>`; `scripts/hub.py` (installing and building
+editors only) forwards project commands to it and asks it for installation
+guards (`BLOCKLOOM_HUBCTL`, else `target/*/blockloom-hubctl`). Open and New
+project reuse an idle editor: the editor's `hub_poll` (every 1.5 s, GUI-only)
+publishes `<data dir>/blockloom/editors/<pid>.json`, the Hub drops
+`<pid>.request.json` beside it and waits for `<pid>.reply.json`, and a new
+process starts only when nothing idle answers.
+
 ### Known gaps
 
 - The interface has three global themes plus per-element overrides and

@@ -64,10 +64,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     },
     // ── Projects ──────────────────────────────────────────────────────────
     CommandSpec {
+        name: "refresh-library",
+        cmd: "refresh_library",
+        aliases: &["refresh_library"],
+        summary: "Re-read the project list, picking up projects the Hub added or another editor forgot.",
+        args: &[],
+    },
+    CommandSpec {
         name: "open-project",
         cmd: "open_project",
         aliases: &["open_project"],
-        summary: "Open the project in a folder, replacing whatever was open. Attaches to a live owner's copy unless force takes it over.",
+        summary: "Open the project in a folder, replacing whatever was open. Attaches to a live owner's copy unless force takes it over. Refused when the Hub set the project to another editor unless other_editor is true (the project file is copied to .blockloom/backups first, and rebind makes this editor the project's), and when saving the open project failed unless discard is true.",
         args: &[
             ArgSpec {
                 name: "path",
@@ -76,6 +83,21 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             },
             ArgSpec {
                 name: "force",
+                ty: "bool",
+                required: false,
+            },
+            ArgSpec {
+                name: "other_editor",
+                ty: "bool",
+                required: false,
+            },
+            ArgSpec {
+                name: "discard",
+                ty: "bool",
+                required: false,
+            },
+            ArgSpec {
+                name: "rebind",
                 ty: "bool",
                 required: false,
             },
@@ -107,36 +129,84 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 ty: "physics-playground",
                 required: false,
             },
+            ArgSpec {
+                name: "discard",
+                ty: "bool",
+                required: false,
+            },
         ],
     },
     CommandSpec {
         name: "close-project",
         cmd: "close_project",
         aliases: &["close_project"],
-        summary: "Save and go back to the Dashboard.",
-        args: &[],
+        summary: "Save and go back to the Dashboard. Stays open when the save fails unless discard is true.",
+        args: &[ArgSpec {
+            name: "discard",
+            ty: "bool",
+            required: false,
+        }],
     },
     CommandSpec {
         name: "forget-project",
         cmd: "forget_project",
         aliases: &["forget_project"],
         summary: "Drop a project from the Dashboard without touching its folder.",
-        args: &[ArgSpec {
-            name: "path",
-            ty: "folder path",
-            required: true,
-        }],
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "folder path",
+                required: true,
+            },
+            ArgSpec {
+                name: "discard",
+                ty: "bool",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "take-focus-request",
+        cmd: "take_focus_request",
+        aliases: &["take_focus_request"],
+        summary: "True when the Hub asked this editor to come to the front since the last call.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "locate-project",
+        cmd: "locate_project",
+        aliases: &["locate_project"],
+        summary: "Point a remembered project whose folder went missing at the folder it moved to.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "folder path",
+                required: true,
+            },
+            ArgSpec {
+                name: "folder",
+                ty: "folder path",
+                required: true,
+            },
+        ],
     },
     CommandSpec {
         name: "delete-project",
         cmd: "delete_project",
         aliases: &["delete_project"],
-        summary: "Delete a project folder outright.",
-        args: &[ArgSpec {
-            name: "path",
-            ty: "folder path",
-            required: true,
-        }],
+        summary: "Move a project folder to the OS trash, or delete it for good with permanent=true. Refused while another editor has it open.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "folder path",
+                required: true,
+            },
+            ArgSpec {
+                name: "permanent",
+                ty: "bool",
+                required: false,
+            },
+        ],
     },
     CommandSpec {
         name: "set-project-name",
@@ -208,11 +278,18 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         cmd: "import_project",
         aliases: &["import_project"],
         summary: "Read a .blockloom file into a folder of its own and open it.",
-        args: &[ArgSpec {
-            name: "path",
-            ty: "file path",
-            required: true,
-        }],
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "file path",
+                required: true,
+            },
+            ArgSpec {
+                name: "discard",
+                ty: "bool",
+                required: false,
+            },
+        ],
     },
     CommandSpec {
         name: "list-build-targets",

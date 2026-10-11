@@ -66,8 +66,10 @@ prune-target *args:
 run: build
     {{TARGET}}
 
-# Hub inspection and installation commands do not need an editor build.
+# Hub inspection and installation commands do not need an editor build; the
+# project and editor commands run in the small Rust state tool.
 hub *args:
+    cargo build -q -p blockloom-hub-state --bin blockloom-hubctl
     {{if os() == "windows" { "python" } else { "python3" }}} scripts/hub.py {{args}}
 
 # Build the workspace and open the separate Hub window.
@@ -377,6 +379,14 @@ blockstitch-published commit="": prepare-patched-deps
     {{rm-cargo-cfg}}
     {{ if os() == "windows" { 'if not "' + commit + '"=="" (node scripts/set-blockstitch-rev.js ' + commit + ')' } else { 'if [ -n "' + commit + '" ]; then node scripts/set-blockstitch-rev.js ' + commit + '; fi' } }}
     cargo fetch
+
+# Work on lucide-qt locally: point cargo's lucide-qt at the same checkout,
+# without touching the committed lockfiles. Merges with (never replaces) any
+# paths `just blockstitch-local` wrote; `just blockstitch-published` clears
+# the whole override file, including this entry.
+lucide-local path="../lucide-qt":
+    {{mkdir-cargo}}
+    {{ if os() == "windows" { 'python scripts/cargo-paths-add.py "' + clean(justfile_directory() / path) + '"' } else { 'python3 scripts/cargo-paths-add.py "' + clean(justfile_directory() / path) + '"' } }}
 
 [linux]
 install:

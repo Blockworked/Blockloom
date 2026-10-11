@@ -4,8 +4,9 @@
 //! at, so there is no directory to scan. Instead Blockloom remembers the
 //! folders it has opened in `<data dir>/projects.json` and reads each one's
 //! name and dimension back off disk, so a project renamed or moved outside the
-//! app is never shown wrong. A folder that has gone away is dropped from the
-//! list.
+//! app is never shown wrong. A folder that has gone away stays listed as
+//! unavailable, so a disconnected drive never erases a remembered project; the
+//! user can locate it again or remove it.
 
 use crate::project;
 use crate::scene::Mode;
@@ -21,6 +22,10 @@ pub struct ProjectEntry {
     pub mode: Mode,
     /// Unix seconds, for the "newest first" order the Dashboard shows.
     pub opened_at: u64,
+    /// False when the folder is gone or unreadable. Name and mode are then the
+    /// folder's name and the default, and `error` says why.
+    pub available: bool,
+    pub error: Option<String>,
 }
 
 /// What `projects.json` holds: paths and when each was last opened. Names and
@@ -112,7 +117,7 @@ fn write_registry(registry: &Registry) {
 /// The name and dimension of the project in `dir`, without building the whole
 /// document. New folders read the active scene's mode off the index; old ones
 /// read the embedded world.
-fn read_meta(dir: &Path) -> Option<(String, Mode)> {
+pub fn read_meta(dir: &Path) -> Option<(String, Mode)> {
     let path = project::project_file(dir);
     let text = std::fs::read_to_string(&path).ok()?;
     let meta: Meta = serde_json::from_str(&text)
@@ -143,30 +148,51 @@ fn read_meta(dir: &Path) -> Option<(String, Mode)> {
     Some((meta.name, mode))
 }
 
-/// Every remembered project, most recently opened first. Folders that are
-/// gone or unreadable are dropped, here and from the file.
-pub fn list() -> Vec<ProjectEntry> {
-    let mut registry = read_registry();
-    let mut entries = Vec::with_capacity(registry.projects.len());
-    let before = registry.projects.len();
-    registry.projects.retain(|remembered| {
-        let Some((name, mode)) = read_meta(&remembered.path) else {
-            return false;
-        };
-        entries.push(ProjectEntry {
-            path: remembered.path.clone(),
-            name,
-            mode,
-            opened_at: remembered.opened_at,
-        });
-        true
-    });
-    if registry.projects.len() != before {
-        write_registry(&registry);
+/// Why `dir` can't be listed as a project.
+fn unavailable_reason(dir: &Path) -> String {
+    if !dir.exists() {
+        return "The folder is missing. Its drive may be disconnected.".to_string();
     }
+    if !project::project_file(dir).is_file() {
+        return "The folder no longer holds a Blockloom project.".to_string();
+    }
+    "The project file couldn't be read.".to_string()
+}
+
+/// Every remembered project, most recently opened first. Folders that have
+/// gone away stay listed as unavailable and are never dropped from the file.
+pub fn list() -> Vec<ProjectEntry> {
+    let registry = read_registry();
+    let mut entries: Vec<ProjectEntry> = registry
+        .projects
+        .iter()
+        .map(|remembered| match read_meta(&remembered.path) {
+            Some((name, mode)) => ProjectEntry {
+                path: remembered.path.clone(),
+                name,
+                mode,
+                opened_at: remembered.opened_at,
+                available: true,
+                error: None,
+            },
+            None => ProjectEntry {
+                path: remembered.path.clone(),
+                name: remembered
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| remembered.path.to_string_lossy().into_owned()),
+                mode: Mode::default(),
+                opened_at: remembered.opened_at,
+                available: false,
+                error: Some(unavailable_reason(&remembered.path)),
+            },
+        })
+        .collect();
     entries.sort_by(|a, b| {
-        b.opened_at
-            .cmp(&a.opened_at)
+        b.available
+            .cmp(&a.available)
+            .then_with(|| b.opened_at.cmp(&a.opened_at))
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
     entries
@@ -176,7 +202,7 @@ pub fn list() -> Vec<ProjectEntry> {
 pub fn remember(dir: &Path) {
     let dir = canonical(dir);
     let mut registry = read_registry();
-    registry.projects.retain(|p| p.path != dir);
+    registry.projects.retain(|p| !same(&p.path, &dir));
     registry.projects.push(Remembered {
         path: dir,
         opened_at: now(),
@@ -189,7 +215,7 @@ pub fn forget(dir: &Path) {
     let dir = canonical(dir);
     let mut registry = read_registry();
     let before = registry.projects.len();
-    registry.projects.retain(|p| p.path != dir);
+    registry.projects.retain(|p| !same(&p.path, &dir));
     if registry.projects.len() != before {
         write_registry(&registry);
     }
@@ -200,7 +226,7 @@ pub fn forget(dir: &Path) {
 pub fn moved(from: &Path, to: &Path) {
     let (from, to) = (canonical(from), canonical(to));
     let mut registry = read_registry();
-    match registry.projects.iter_mut().find(|p| p.path == from) {
+    match registry.projects.iter_mut().find(|p| same(&p.path, &from)) {
         Some(entry) => entry.path = to,
         None => registry.projects.push(Remembered {
             path: to,
@@ -213,6 +239,11 @@ pub fn moved(from: &Path, to: &Path) {
 /// Absolute where possible, so the same folder reached two ways is one entry.
 fn canonical(dir: &Path) -> PathBuf {
     std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
+}
+
+/// Whether a remembered path names `dir`, reached either way.
+fn same(remembered: &Path, dir: &Path) -> bool {
+    remembered == dir || canonical(remembered) == dir
 }
 
 /// Moves projects saved before they were folders into folders of their own

@@ -3,6 +3,7 @@
 
 #include <QtCore/QObject>
 #include <QtCore/QProcess>
+#include <QtCore/QProcessEnvironment>
 #include <QtCore/QTemporaryDir>
 #include <QtCore/QUrl>
 #include <QtQml/qqmlregistration.h>
@@ -24,6 +25,8 @@ public:
     bool cancelling() const { return m_cancelRequested; }
     Q_INVOKABLE void cancel();
     Q_INVOKABLE void run(const QString &command, const QStringList &arguments);
+    // A read-only refresh on its own process: never marks the service busy.
+    Q_INVOKABLE void poll(const QString &command);
     Q_INVOKABLE QString localPath(const QUrl &url) const;
     Q_INVOKABLE bool showBackup(const QString &path) const;
     Q_INVOKABLE bool showFolder(const QString &path) const;
@@ -36,13 +39,18 @@ Q_SIGNALS:
     void logChanged();
     void cancellingChanged();
     void completed(const QString &command, bool ok, const QString &response);
+    void polled(const QString &command, bool ok, const QString &response);
 
 private:
     void finishSmoke(int projects, int installations);
     void appendLog(const QString &text);
     void finish(bool ok, const QString &error = {});
+    QString pythonPath() const;
+    QProcessEnvironment serviceEnvironment() const;
     QTemporaryDir m_scripts;
     QProcess m_process;
+    QProcess m_poll;
+    QString m_pollCommand;
     QString m_command;
     QString m_log;
     QByteArray m_output;

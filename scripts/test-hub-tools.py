@@ -9,7 +9,12 @@ import unittest
 
 sys.dont_write_bytecode = True
 import hub
+import hub_testing
 import hub_tools
+
+
+def setUpModule():
+    hub_testing.ensure_hubctl()
 
 
 class ToolCacheTests(unittest.TestCase):
@@ -17,7 +22,7 @@ class ToolCacheTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name).resolve()
-        self.service = hub.Hub(self.base / "Hub", self.base / "projects.json")
+        self.service = hub.Hub(self.base / "Hub", self.base / "data")
         self.bundle = self.base / "bundle"
         self.bundle.mkdir()
         self.binary(self.bundle, "blockloom")
@@ -98,8 +103,8 @@ class ToolCacheTests(unittest.TestCase):
         hub.write_json(project / "project.blockloom", {
             "name": "Demo", "scenes": [{"id": "main", "path": "main.blockscene", "mode": "TwoD"}],
             "active_scene": "main"})
-        self.service.remember(project)
-        self.service.bind(project, "release-0.1.0")
+        self.service.ctl("remember", project)
+        self.service.ctl("bind", project, "release-0.1.0")
         with self.assertRaisesRegex(ValueError, "used by projects"):
             self.service.uninstall("release-0.1.0")
         self.assertTrue(self.service.slot("release-0.1.0").exists())

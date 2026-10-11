@@ -1,0 +1,23 @@
+[package]
+name = "blockloom-hub-state"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "What the Hub knows about projects and running editors, as one Qt-free library and CLI."
+
+[[bin]]
+name = "blockloom-hubctl"
+path = "src/bin/hubctl.rs"
+
+[dependencies]
+blockloom-core = { path = "../blockloom-core" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+dirs.workspace = true
+sha2.workspace = true
+zip = { version = "7.2", default-features = false, features = ["deflate"] }
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+
+[dev-dependencies]
+tempfile.workspace = true

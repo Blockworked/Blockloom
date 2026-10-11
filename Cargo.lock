@@ -2605,12 +2605,28 @@ dependencies = [
 name = "blockloom-hub"
 version = "0.0.1"
 dependencies = [
+ "blockloom-hub-state",
  "blockstitch-qml",
  "cxx-qt",
  "cxx-qt-build",
  "cxx-qt-lib",
  "qt-build-utils",
  "qt-version",
+]
+
+[[package]]
+name = "blockloom-hub-state"
+version = "0.0.1"
+dependencies = [
+ "blockloom-core",
+ "dirs 7.0.0",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sysinfo",
+ "tempfile",
+ "uuid",
+ "zip",
 ]
 
 [[package]]
