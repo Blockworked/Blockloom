@@ -56,6 +56,7 @@ mod fx;
 mod gpu;
 mod hdr;
 mod indirect;
+mod input_caret;
 mod lan;
 mod light2d;
 mod light_probes;
@@ -625,6 +626,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     ui_systems::project_widgets.run_if(ui_design::inactive),
                     ui_systems::play_animations,
                     overlay::draw_ui,
+                    overlay::apply_fx_rotation,
+                    input_caret::draw_input_caret,
                     ui_systems::animate,
                     ui_systems::atlas,
                 )
@@ -632,6 +635,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 world::type_into_focused_input,
                 world::scroll_ui_lists,
                 world::detect_clicks,
+                world::drag_input_selection,
                 world::publish_sensors,
                 world::step_scripts_frame_ui,
                 sound::maintain_voices,

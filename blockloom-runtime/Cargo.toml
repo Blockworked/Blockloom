@@ -23,6 +23,8 @@ blockloom-plugin-gpu = { path = "../blockloom-plugin-gpu", optional = true, feat
 tracing-log = { workspace = true }
 polyanya.workspace = true
 half = "2"
+# The text layout Bevy shapes into: caret and selection geometry.
+parley = { version = "0.11", default-features = false, features = ["std"] }
 # The key set Bevy hands a schedule build pass (see `hdr::ToneInputs`).
 indexmap = "2"
 bytemuck = { version = "1.25", features = ["derive"] }

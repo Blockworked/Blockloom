@@ -2423,6 +2423,13 @@ pub fn detect_clicks(
     cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     actors: Query<(&ActorId, &Transform)>,
     laid_out: Query<(&ComputedNode, &UiGlobalTransform)>,
+    words: Query<(
+        &crate::ui::UiElementText,
+        &bevy::text::ComputedTextBlock,
+        &ComputedNode,
+        &UiGlobalTransform,
+    )>,
+    keys: Option<Res<ButtonInput<KeyCode>>>,
     preview_pointer: Option<Res<crate::preview::PreviewPointer>>,
 ) {
     if !engine.running || !buttons.just_pressed(MouseButton::Left) {
@@ -2473,6 +2480,16 @@ pub fn detect_clicks(
         } else {
             None
         });
+        // A click on a focused input puts the caret under the pointer.
+        if kind == UiKind::Input
+            && let Some((_, block, node, at)) = words.iter().find(|(owner, ..)| owner.0 == id)
+            && let Some(byte) = crate::input_caret::byte_at(block, node, at, cursor)
+        {
+            let shift = keys
+                .as_ref()
+                .is_some_and(|k| k.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]));
+            manager.place_caret(&id, byte, shift);
+        }
         // A drag on a slider and a press on a toggle are changes, not
         // clicks - though both also count as a click on the element.
         let changed = match kind {
@@ -2627,6 +2644,49 @@ fn world_takes_clicks(engine: &Engine, manager: &crate::ui::UiManager) -> bool {
 
 /// Where one interface element's box ended up on screen, from the layout
 /// Bevy computed this frame. `None` for an element nothing has drawn yet.
+/// Holding the button down on a focused input drags its selection.
+pub fn drag_input_selection(
+    engine: NonSend<Engine>,
+    mut manager: ResMut<crate::ui::UiManager>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    words: Query<(
+        &crate::ui::UiElementText,
+        &bevy::text::ComputedTextBlock,
+        &ComputedNode,
+        &UiGlobalTransform,
+    )>,
+    preview_pointer: Option<Res<crate::preview::PreviewPointer>>,
+) {
+    if !engine.running
+        || !buttons.pressed(MouseButton::Left)
+        || buttons.just_pressed(MouseButton::Left)
+    {
+        return;
+    }
+    let Some(id) = manager.focus().map(str::to_string) else {
+        return;
+    };
+    let window = windows.iter().next();
+    let Some(cursor) = preview_pointer
+        .as_ref()
+        .and_then(|pointer| {
+            pointer
+                .pos
+                .filter(|_| crate::preview::pointer_live(pointer))
+        })
+        .or_else(|| window.and_then(Window::cursor_position))
+    else {
+        return;
+    };
+    let cursor = cursor * window.map_or(1.0, Window::scale_factor);
+    if let Some((_, block, node, at)) = words.iter().find(|(owner, ..)| owner.0 == id)
+        && let Some(byte) = crate::input_caret::byte_at(block, node, at, cursor)
+    {
+        manager.place_caret(&id, byte, true);
+    }
+}
+
 pub(crate) fn screen_rect(
     laid_out: &Query<(&ComputedNode, &UiGlobalTransform)>,
     entity: Entity,
@@ -7944,7 +8004,7 @@ mod tests {
             let manager = app.world().resource::<crate::ui::UiManager>();
             crate::ui::display_text(manager.get("name").unwrap(), focused)
         };
-        assert_eq!(shown(&app, true), "ex|");
+        assert_eq!(shown(&app, true), "ex");
         assert_eq!(shown(&app, false), "ex");
         // An input method's composition is shown at the caret, then committed.
         app.init_resource::<Messages<Ime>>();
@@ -7956,7 +8016,7 @@ mod tests {
                 cursor: Some((2, 2)),
             });
         app.update();
-        assert_eq!(shown(&app, true), "exni|");
+        assert_eq!(shown(&app, true), "exni");
         assert_eq!(typed_text(&app), "ex");
         app.world_mut()
             .resource_mut::<Messages<Ime>>()
@@ -7966,7 +8026,7 @@ mod tests {
             });
         app.update();
         assert_eq!(typed_text(&app), "ex你");
-        assert_eq!(shown(&app, true), "ex你|");
+        assert_eq!(shown(&app, true), "ex你");
     }
 
     #[test]

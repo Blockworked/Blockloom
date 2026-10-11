@@ -270,6 +270,13 @@ pub enum UiProp {
     Tooltip,
     WorldActor,
     Transition,
+    /// Whole-element fade, 0 to 1, inherited by its children. Visual only.
+    Opacity,
+    /// Visual shift in pixels, added to wherever layout and anchor put it.
+    OffsetX,
+    OffsetY,
+    /// Visual turn about the element's centre, in degrees.
+    Rotation,
 }
 
 impl UiProp {
@@ -302,6 +309,10 @@ impl UiProp {
         UiProp::Tooltip,
         UiProp::WorldActor,
         UiProp::Transition,
+        UiProp::Opacity,
+        UiProp::OffsetX,
+        UiProp::OffsetY,
+        UiProp::Rotation,
     ];
 
     /// The wire name, which is also what the ABI carries and what the
@@ -335,6 +346,10 @@ impl UiProp {
             UiProp::Tooltip => "Tooltip",
             UiProp::WorldActor => "WorldActor",
             UiProp::Transition => "Transition",
+            UiProp::Opacity => "Opacity",
+            UiProp::OffsetX => "OffsetX",
+            UiProp::OffsetY => "OffsetY",
+            UiProp::Rotation => "Rotation",
         }
     }
 
@@ -565,37 +580,44 @@ impl TextCaret {
         self.at = text.chars().count();
     }
 
-    /// The text with the caret drawn in and any selection and uncommitted IME
-    /// composition marked, for an input that holds the keyboard.
-    pub fn shown(&self, text: &str, preedit: &str) -> String {
+    /// The text an input draws, with any uncommitted IME composition spliced
+    /// in at the caret. Marks are byte offsets into that text; the caret sits
+    /// after the composition.
+    pub fn compose(&self, text: &str, preedit: &str) -> ShownText {
         let mut caret = *self;
         caret.clamp(text);
-        let chars: Vec<char> = text.chars().collect();
-        let mut out = String::new();
-        let selection = caret.selection();
-        for (i, ch) in chars.iter().enumerate() {
-            if i == caret.at {
-                out.push_str(preedit);
-                if selection.is_none() {
-                    out.push('|');
-                }
-            }
-            if selection.is_some_and(|(s, _)| s == i) {
-                out.push('[');
-            }
-            out.push(*ch);
-            if selection.is_some_and(|(_, e)| e == i + 1) {
-                out.push(']');
-            }
+        let at = Self::byte(text, caret.at);
+        let mut out = String::with_capacity(text.len() + preedit.len());
+        out.push_str(&text[..at]);
+        out.push_str(preedit);
+        out.push_str(&text[at..]);
+        // Bytes after the splice move right by the composition's length.
+        let moved = |chars: usize| {
+            let b = Self::byte(text, chars);
+            if b >= at { b + preedit.len() } else { b }
+        };
+        ShownText {
+            text: out,
+            caret: at + preedit.len(),
+            selection: caret.selection().map(|(s, e)| (moved(s), moved(e))),
+            preedit: (!preedit.is_empty()).then_some((at, at + preedit.len())),
         }
-        if caret.at >= chars.len() {
-            out.push_str(preedit);
-            if selection.is_none() {
-                out.push('|');
-            }
-        }
-        out
     }
+}
+
+/// What an input draws: its words, and where the caret, selection and
+/// composition sit in them as byte offsets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShownText {
+    pub text: String,
+    pub caret: usize,
+    pub selection: Option<(usize, usize)>,
+    pub preedit: Option<(usize, usize)>,
+}
+
+/// The character index a byte offset of `text` falls on, rounding down.
+pub fn char_at_byte(text: &str, byte: usize) -> usize {
+    text.char_indices().take_while(|(i, _)| *i < byte).count()
 }
 
 /// Where a slider's number really lands: inside its own ends, and on a
@@ -865,12 +887,29 @@ mod tests {
         assert_eq!(text, "hé");
         // A held selection collapses towards the arrow, and the display marks it.
         let mut caret = TextCaret::end_of("abc");
-        assert_eq!(caret.shown("abc", ""), "abc|");
+        let shown = caret.compose("abc", "");
+        assert_eq!(
+            (shown.text.as_str(), shown.caret, shown.selection),
+            ("abc", 3, None)
+        );
         caret.select_all("abc");
-        assert_eq!(caret.shown("abc", ""), "[abc]");
+        assert_eq!(caret.compose("abc", "").selection, Some((0, 3)));
         caret.step("abc", -1, false);
         assert_eq!((caret.at, caret.selection()), (0, None));
-        assert_eq!(caret.shown("abc", "ni"), "ni|abc");
+        let shown = caret.compose("abc", "ni");
+        assert_eq!(
+            (shown.text.as_str(), shown.caret, shown.preedit),
+            ("niabc", 2, Some((0, 2)))
+        );
+        // Marks are bytes, and a composition pushes what follows it right.
+        let caret = TextCaret {
+            at: 1,
+            anchor: Some(3),
+        };
+        let shown = caret.compose("héé", "x");
+        assert_eq!(shown.text, "hxéé");
+        assert_eq!((shown.caret, shown.selection), (2, Some((2, 6))));
+        assert_eq!(char_at_byte("héé", 3), 2);
     }
 }
 
