@@ -99,6 +99,28 @@ pub struct UiPaint {
     pub radius: Option<f32>,
     pub shadow: Option<String>,
     pub fonts: Vec<String>,
+    /// How an Image widget fills its box; unset keeps the image's own size.
+    pub image_fit: Option<UiImageFit>,
+}
+
+/// How an image fills its widget. `Sliced` borders are `[left, right, top, bottom]`
+/// in image pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum UiImageFit {
+    Stretch,
+    Sliced { border: [f32; 4] },
+    Tiled,
+}
+
+impl UiImageFit {
+    pub fn validate(&self) -> Result<(), String> {
+        if let UiImageFit::Sliced { border } = self
+            && border.iter().any(|v| !v.is_finite() || *v < 0.)
+        {
+            return Err("Nine-slice borders must be zero or more".into());
+        }
+        Ok(())
+    }
 }
 impl UiPaint {
     pub fn over(&self, base: &Self) -> Self {
@@ -115,6 +137,7 @@ impl UiPaint {
             } else {
                 self.fonts.clone()
             },
+            image_fit: self.image_fit.or(base.image_fit),
         }
     }
 }
@@ -207,6 +230,299 @@ pub struct UiBinding {
     pub two_way: bool,
 }
 
+/// A viewport size range; every bound is optional and inclusive, in canvas
+/// pixels (after the safe area and scale are taken off).
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiBreakpoint {
+    pub min_width: Option<f32>,
+    pub max_width: Option<f32>,
+    pub min_height: Option<f32>,
+    pub max_height: Option<f32>,
+}
+
+impl UiBreakpoint {
+    pub fn matches(&self, width: f32, height: f32) -> bool {
+        self.min_width.is_none_or(|v| width >= v)
+            && self.max_width.is_none_or(|v| width <= v)
+            && self.min_height.is_none_or(|v| height >= v)
+            && self.max_height.is_none_or(|v| height <= v)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        let bounds = [
+            self.min_width,
+            self.max_width,
+            self.min_height,
+            self.max_height,
+        ];
+        if bounds.iter().flatten().any(|v| !v.is_finite() || *v < 0.) {
+            return Err("Breakpoint sizes must be finite and not negative".into());
+        }
+        let ordered = |lo: Option<f32>, hi: Option<f32>| lo.zip(hi).is_none_or(|(lo, hi)| lo <= hi);
+        if !ordered(self.min_width, self.max_width) || !ordered(self.min_height, self.max_height) {
+            return Err("A breakpoint's minimum cannot exceed its maximum".into());
+        }
+        Ok(())
+    }
+}
+
+/// How a widget differs while the viewport is inside `when`. The first
+/// matching variant wins; what it leaves unset follows the base widget.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiVariant {
+    pub when: UiBreakpoint,
+    #[serde(default)]
+    pub layout: Option<UiLayout>,
+    #[serde(default)]
+    pub visible: Option<bool>,
+}
+
+impl UiWidget {
+    /// Index of the first variant that fits a viewport of this size.
+    pub fn variant_for(&self, width: f32, height: f32) -> Option<usize> {
+        self.variants
+            .iter()
+            .position(|v| v.when.matches(width, height))
+    }
+}
+
+/// How a key eases into the next one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum UiEase {
+    #[default]
+    Linear,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+}
+
+impl UiEase {
+    pub fn apply(self, t: f32) -> f32 {
+        let t = t.clamp(0., 1.);
+        match self {
+            UiEase::Linear => t,
+            UiEase::EaseIn => t * t,
+            UiEase::EaseOut => 1. - (1. - t) * (1. - t),
+            UiEase::EaseInOut => t * t * (3. - 2. * t),
+        }
+    }
+}
+
+/// A keyed value: a number, or a `#rrggbb[aa]` color for the color tracks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum UiKeyValue {
+    Number(f64),
+    Color(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiKey {
+    pub time: f32,
+    pub value: UiKeyValue,
+    /// How it eases from this key to the next.
+    #[serde(default)]
+    pub ease: UiEase,
+}
+
+/// One property of one widget over time.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiTrack {
+    pub widget: String,
+    pub property: UiProp,
+    pub keys: Vec<UiKey>,
+}
+
+/// The properties a track can drive: the sizes and colors an element is
+/// restyled by, and a value.
+pub const ANIMATABLE_NUMBERS: [UiProp; 10] = [
+    UiProp::Width,
+    UiProp::Height,
+    UiProp::TextSize,
+    UiProp::CornerRadius,
+    UiProp::Padding,
+    UiProp::Value,
+    UiProp::Opacity,
+    UiProp::OffsetX,
+    UiProp::OffsetY,
+    UiProp::Rotation,
+];
+pub const ANIMATABLE_COLORS: [UiProp; 2] = [UiProp::Background, UiProp::TextColor];
+
+fn parse_hex(text: &str) -> Option<[f32; 4]> {
+    let hex = text.trim().strip_prefix('#')?;
+    if !(hex.len() == 6 || hex.len() == 8) || !hex.is_ascii() {
+        return None;
+    }
+    let byte = |i: usize| {
+        u8::from_str_radix(&hex[i..i + 2], 16)
+            .ok()
+            .map(|b| b as f32)
+    };
+    Some([
+        byte(0)?,
+        byte(2)?,
+        byte(4)?,
+        if hex.len() == 8 { byte(6)? } else { 255. },
+    ])
+}
+
+impl UiTrack {
+    /// The value at `time`, holding the first key before it and the last after.
+    pub fn sample(&self, time: f32) -> Option<UiKeyValue> {
+        let first = self.keys.first()?;
+        let last = self.keys.last()?;
+        if time <= first.time {
+            return Some(first.value.clone());
+        }
+        if time >= last.time {
+            return Some(last.value.clone());
+        }
+        let at = self.keys.iter().rposition(|k| k.time <= time)?;
+        let (a, b) = (&self.keys[at], &self.keys[at + 1]);
+        let span = (b.time - a.time).max(f32::EPSILON);
+        let f = a.ease.apply((time - a.time) / span);
+        match (&a.value, &b.value) {
+            (UiKeyValue::Number(x), UiKeyValue::Number(y)) => {
+                Some(UiKeyValue::Number(x + (y - x) * f as f64))
+            }
+            (UiKeyValue::Color(x), UiKeyValue::Color(y)) => {
+                let (x, y) = (parse_hex(x)?, parse_hex(y)?);
+                let c: Vec<u8> = (0..4)
+                    .map(|i| (x[i] + (y[i] - x[i]) * f).round().clamp(0., 255.) as u8)
+                    .collect();
+                Some(UiKeyValue::Color(format!(
+                    "#{:02x}{:02x}{:02x}{:02x}",
+                    c[0], c[1], c[2], c[3]
+                )))
+            }
+            _ => Some(a.value.clone()),
+        }
+    }
+
+    fn validate(&self, duration: f32) -> Result<(), String> {
+        let color = ANIMATABLE_COLORS.contains(&self.property);
+        if !color && !ANIMATABLE_NUMBERS.contains(&self.property) {
+            return Err(format!("{:?} cannot be animated", self.property));
+        }
+        if self.keys.is_empty() {
+            return Err(format!("A track on {} needs a key", self.widget));
+        }
+        let mut last = -1.;
+        for key in &self.keys {
+            if !key.time.is_finite() || key.time < 0. || key.time > duration || key.time <= last {
+                return Err("Keys must be in strictly increasing time inside the animation".into());
+            }
+            last = key.time;
+            match &key.value {
+                UiKeyValue::Number(n) if !color && n.is_finite() => {}
+                UiKeyValue::Color(c) if color && parse_hex(c).is_some() => {}
+                _ => {
+                    return Err(format!(
+                        "A key on {} holds the wrong kind of value",
+                        self.widget
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiAnimation {
+    pub duration: f32,
+    #[serde(default)]
+    pub looping: bool,
+    pub tracks: Vec<UiTrack>,
+}
+
+impl UiAnimation {
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.duration.is_finite() || self.duration <= 0. || self.duration > 3600. {
+            return Err("An animation's duration must be above zero".into());
+        }
+        self.tracks
+            .iter()
+            .try_for_each(|t| t.validate(self.duration))
+    }
+}
+
+/// What a widget reports to the game.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiEventKind {
+    Click,
+    Change,
+}
+
+/// What a widget event does. In `SetVariable`, a value of `$value` stands for
+/// the widget's new value on a Change event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum UiDo {
+    Broadcast {
+        message: String,
+    },
+    /// Starts (or restarts) a document animation.
+    PlayAnimation {
+        name: String,
+    },
+    StopAnimation {
+        name: String,
+    },
+    SetVariable {
+        #[serde(default)]
+        actor: String,
+        name: String,
+        value: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiAction {
+    pub on: UiEventKind,
+    pub run: UiDo,
+}
+
+/// Visual state laid over an element after layout: it never changes what
+/// layout measures. Offset adds to wherever the anchor and layout put the
+/// element and rotation turns it about its centre, so neither fights the
+/// anchor's own shift. Opacity multiplies down the tree.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiFx {
+    pub opacity: f32,
+    pub offset: [f32; 2],
+    /// Degrees, clockwise.
+    pub rotation: f32,
+}
+
+impl Default for UiFx {
+    fn default() -> Self {
+        Self {
+            opacity: 1.,
+            offset: [0., 0.],
+            rotation: 0.,
+        }
+    }
+}
+
+impl UiFx {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.opacity.is_finite() || !(0. ..=1.).contains(&self.opacity) {
+            return Err("Opacity must be between 0 and 1".into());
+        }
+        if !self.offset.iter().all(|v| v.is_finite()) || !self.rotation.is_finite() {
+            return Err("Offset and rotation must be finite".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiWidget {
@@ -215,12 +531,24 @@ pub struct UiWidget {
     pub style: UiStyles,
     pub class: String,
     pub bindings: Vec<UiBinding>,
+    /// Event handlers authored on the widget, run by the player without blocks.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<UiAction>,
+    /// Layout and visibility changes for other viewport sizes.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub variants: Vec<UiVariant>,
     pub items: Vec<String>,
     pub tooltip: String,
     pub world_actor: String,
     pub scroll_target: String,
     pub tab_index: Option<usize>,
     pub transition: f32,
+    /// Opacity, offset and rotation the widget starts with.
+    #[serde(skip_serializing_if = "UiFx::is_default")]
+    pub fx: UiFx,
+    /// On the root of a prefab instance: the prefab it came from.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub instance_of: String,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum UiScale {
@@ -232,6 +560,9 @@ pub enum UiScale {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiDocument {
+    /// Schema version; 0 is a document saved before versions existed.
+    #[serde(default = "legacy_version")]
+    pub version: u32,
     pub widgets: Vec<UiWidget>,
     pub theme: UiTheme,
     pub styles: BTreeMap<String, UiStyles>,
@@ -240,10 +571,38 @@ pub struct UiDocument {
     pub reference_size: [f32; 2],
     pub safe_area: [f32; 4],
     pub prefabs: BTreeMap<String, Vec<UiWidget>>,
+    /// What each prefab lets an instance set by name: properties and slots.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub exports: BTreeMap<String, Vec<UiExport>>,
+    /// Named property animations the document's actions (or blocks) can play.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub animations: BTreeMap<String, UiAnimation>,
 }
+
+/// A named handle on a prefab: one property of one widget inside it, or a
+/// container widget other widgets can be placed into.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiExport {
+    pub name: String,
+    /// The widget's id inside the prefab.
+    pub widget: String,
+    /// A property path (see `property_metadata`); empty for a slot.
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub slot: bool,
+}
+/// The schema version this build writes.
+pub const UI_SCHEMA_VERSION: u32 = 1;
+
+fn legacy_version() -> u32 {
+    0
+}
+
 impl Default for UiDocument {
     fn default() -> Self {
         Self {
+            version: UI_SCHEMA_VERSION,
             widgets: vec![],
             theme: UiTheme::default(),
             styles: BTreeMap::new(),
@@ -252,6 +611,8 @@ impl Default for UiDocument {
             reference_size: [960., 720.],
             safe_area: [0.; 4],
             prefabs: BTreeMap::new(),
+            exports: BTreeMap::new(),
+            animations: BTreeMap::new(),
         }
     }
 }
@@ -269,6 +630,229 @@ pub enum UiPropertyEdit {
     Modal(bool),
     #[serde(rename = "layout")]
     Layout(#[serde(deserialize_with = "deserialize_edit_layout")] Option<UiLayout>),
+    #[serde(rename = "element.range")]
+    Range([f32; 2]),
+    #[serde(rename = "style")]
+    Style(Box<UiStyles>),
+    #[serde(rename = "class")]
+    Class(String),
+    #[serde(rename = "bindings")]
+    Bindings(Vec<UiBinding>),
+    #[serde(rename = "actions")]
+    Actions(Vec<UiAction>),
+    #[serde(rename = "variants")]
+    Variants(Vec<UiVariant>),
+    #[serde(rename = "items")]
+    Items(Vec<String>),
+    #[serde(rename = "tooltip")]
+    Tooltip(String),
+    #[serde(rename = "scroll_target")]
+    ScrollTarget(String),
+    #[serde(rename = "tab_index")]
+    TabIndex(Option<usize>),
+    #[serde(rename = "transition")]
+    Transition(f32),
+    #[serde(rename = "fx")]
+    Fx(UiFx),
+}
+
+/// How the inspector should draw a property path.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct UiPropertyInfo {
+    pub path: &'static str,
+    pub label: &'static str,
+    pub group: &'static str,
+    /// `choice`, `text`, `bool` or `layout`.
+    pub ty: &'static str,
+    /// Choices for a `choice`; empty otherwise.
+    pub choices: Vec<String>,
+    /// Kinds the property applies to; empty means every kind.
+    pub kinds: Vec<&'static str>,
+}
+
+impl UiPropertyEdit {
+    pub fn path(&self) -> &'static str {
+        match self {
+            UiPropertyEdit::Kind(_) => "element.kind",
+            UiPropertyEdit::Content(_) => "element.content",
+            UiPropertyEdit::Anchor(_) => "element.anchor",
+            UiPropertyEdit::Modal(_) => "element.modal",
+            UiPropertyEdit::Layout(_) => "layout",
+            UiPropertyEdit::Range(_) => "element.range",
+            UiPropertyEdit::Style(_) => "style",
+            UiPropertyEdit::Class(_) => "class",
+            UiPropertyEdit::Bindings(_) => "bindings",
+            UiPropertyEdit::Actions(_) => "actions",
+            UiPropertyEdit::Variants(_) => "variants",
+            UiPropertyEdit::Items(_) => "items",
+            UiPropertyEdit::Tooltip(_) => "tooltip",
+            UiPropertyEdit::ScrollTarget(_) => "scroll_target",
+            UiPropertyEdit::TabIndex(_) => "tab_index",
+            UiPropertyEdit::Transition(_) => "transition",
+            UiPropertyEdit::Fx(_) => "fx",
+        }
+    }
+}
+
+/// One entry per `UiPropertyEdit` path; a test keeps them in step.
+pub fn property_metadata() -> Vec<UiPropertyInfo> {
+    let names = |values: serde_json::Value| -> Vec<String> {
+        values
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let kinds = names(
+        serde_json::to_value([
+            UiKind::Panel,
+            UiKind::Label,
+            UiKind::Button,
+            UiKind::Image,
+            UiKind::Input,
+            UiKind::Slider,
+            UiKind::Toggle,
+            UiKind::List,
+            UiKind::VerticalBox,
+            UiKind::HorizontalBox,
+            UiKind::Grid,
+            UiKind::Canvas,
+            UiKind::WrapBox,
+            UiKind::SizeBox,
+            UiKind::Spacer,
+            UiKind::Progress,
+            UiKind::RadialProgress,
+            UiKind::ListView,
+            UiKind::Tabs,
+            UiKind::Select,
+            UiKind::Scrollbar,
+            UiKind::RichText,
+            UiKind::Tooltip,
+        ])
+        .unwrap_or_default(),
+    );
+    let anchors = names(
+        serde_json::to_value([
+            UiAnchor::TopLeft,
+            UiAnchor::Top,
+            UiAnchor::TopRight,
+            UiAnchor::Left,
+            UiAnchor::Center,
+            UiAnchor::Right,
+            UiAnchor::BottomLeft,
+            UiAnchor::Bottom,
+            UiAnchor::BottomRight,
+        ])
+        .unwrap_or_default(),
+    );
+    let info =
+        |path, label, group, ty, choices: Vec<String>, kinds: Vec<&'static str>| UiPropertyInfo {
+            path,
+            label,
+            group,
+            ty,
+            choices,
+            kinds,
+        };
+    vec![
+        info("element.kind", "Type", "Content", "choice", kinds, vec![]),
+        info(
+            "element.content",
+            "Content",
+            "Content",
+            "text",
+            vec![],
+            vec![],
+        ),
+        info(
+            "element.anchor",
+            "Anchor",
+            "Layout",
+            "choice",
+            anchors,
+            vec![],
+        ),
+        info(
+            "element.modal",
+            "Modal",
+            "Interaction",
+            "bool",
+            vec![],
+            vec!["Panel"],
+        ),
+        info("layout", "Layout", "Layout", "layout", vec![], vec![]),
+        info(
+            "element.range",
+            "Range",
+            "Content",
+            "range",
+            vec![],
+            vec!["Slider", "Progress", "RadialProgress", "Scrollbar"],
+        ),
+        info("style", "Style", "Appearance", "style", vec![], vec![]),
+        info("class", "Style class", "Appearance", "text", vec![], vec![]),
+        info(
+            "bindings",
+            "Bindings",
+            "Bindings",
+            "bindings",
+            vec![],
+            vec![],
+        ),
+        info("actions", "Events", "Bindings", "actions", vec![], vec![]),
+        info(
+            "variants",
+            "Responsive variants",
+            "Layout",
+            "variants",
+            vec![],
+            vec![],
+        ),
+        info(
+            "items",
+            "Items",
+            "Content",
+            "lines",
+            vec![],
+            vec!["List", "ListView", "Select", "Tabs"],
+        ),
+        info("tooltip", "Tooltip", "Interaction", "text", vec![], vec![]),
+        info(
+            "scroll_target",
+            "Scroll target",
+            "Interaction",
+            "widget",
+            vec![],
+            vec!["Scrollbar"],
+        ),
+        info(
+            "tab_index",
+            "Tab page",
+            "Interaction",
+            "int",
+            vec![],
+            vec![],
+        ),
+        info(
+            "transition",
+            "Transition seconds",
+            "Appearance",
+            "number",
+            vec![],
+            vec![],
+        ),
+        info(
+            "fx",
+            "Opacity, offset and rotation",
+            "Appearance",
+            "fx",
+            vec![],
+            vec![],
+        ),
+    ]
 }
 
 fn deserialize_edit_layout<'de, D: serde::Deserializer<'de>>(
@@ -329,6 +913,38 @@ pub enum UiEdit {
         parent: String,
         placement: UiPlacement,
     },
+    /// Applies several edits in order as one; any failure rejects them all.
+    Batch {
+        edits: Vec<UiEdit>,
+    },
+    /// Sets document-wide options; omitted fields stay as they are.
+    SetDocument {
+        #[serde(default)]
+        theme: Option<UiTheme>,
+        #[serde(default)]
+        scale: Option<UiScale>,
+    },
+    /// Defines or (with null) removes a shared named style.
+    SetClass {
+        name: String,
+        styles: Option<Box<UiStyles>>,
+    },
+    /// Appends a new widget; a Canvas parent makes it free, any other parent flow.
+    Create {
+        widget: Box<UiWidget>,
+    },
+    /// Removes a widget and its descendants.
+    Delete {
+        id: String,
+    },
+    /// Copies a subtree after the original under fresh ids (`new_id` for the
+    /// root, `new_id.old` below it). `offset` moves a free-placed root.
+    Duplicate {
+        id: String,
+        new_id: String,
+        #[serde(default)]
+        offset: Option<[f32; 2]>,
+    },
     Move {
         id: String,
         offset: [f32; 2],
@@ -337,6 +953,68 @@ pub enum UiEdit {
         id: String,
         size: [f32; 2],
         offset: [f32; 2],
+    },
+    /// Stores the subtree at `root` as the prefab `name` (replacing one of that
+    /// name). With `update_instances`, every instance is rebuilt from the new
+    /// version; widgets an instance changed from the old version are kept.
+    SavePrefab {
+        name: String,
+        root: String,
+        #[serde(default)]
+        update_instances: bool,
+    },
+    /// Forgets a prefab; its instances stay as plain widgets.
+    DeletePrefab {
+        name: String,
+    },
+    /// Adds a prefab's widgets under `parent`, every id prefixed by `prefix`.
+    InstantiatePrefab {
+        name: String,
+        prefix: String,
+        #[serde(default)]
+        parent: String,
+    },
+    /// Turns an instance back into plain widgets.
+    DetachInstance {
+        id: String,
+    },
+    /// Throws away every change an instance made and rebuilds it from its prefab.
+    ResetInstance {
+        id: String,
+    },
+    /// Stores (or with `None`, removes) the animation `name`.
+    SetAnimation {
+        name: String,
+        animation: Option<UiAnimation>,
+    },
+    /// Lets instances of `prefab` set `path` of its widget `widget` as `name`.
+    ExposeProperty {
+        prefab: String,
+        name: String,
+        widget: String,
+        path: String,
+    },
+    /// Lets instances of `prefab` take widgets inside its container `widget`.
+    ExposeSlot {
+        prefab: String,
+        name: String,
+        widget: String,
+    },
+    Unexpose {
+        prefab: String,
+        name: String,
+    },
+    /// Sets an exposed property on the instance rooted at `instance`.
+    SetExposed {
+        instance: String,
+        name: String,
+        value: serde_json::Value,
+    },
+    /// Moves `widget` into the instance's slot `slot`.
+    FillSlot {
+        instance: String,
+        slot: String,
+        widget: String,
     },
 }
 
@@ -350,12 +1028,202 @@ impl UiDocument {
     }
 
     fn apply_edit_inner(&mut self, edit: &UiEdit) -> Result<(), String> {
+        match edit {
+            UiEdit::Batch { edits } => {
+                if edits.len() > 1000 || edits.iter().any(|e| matches!(e, UiEdit::Batch { .. })) {
+                    return Err("A batch holds at most 1000 edits and cannot nest".into());
+                }
+                for edit in edits {
+                    self.apply_edit_inner(edit)?;
+                }
+                return Ok(());
+            }
+            UiEdit::SetDocument { theme, scale } => {
+                if let Some(theme) = theme {
+                    self.theme = *theme;
+                }
+                if let Some(scale) = scale {
+                    self.scale = *scale;
+                }
+                return Ok(());
+            }
+            UiEdit::SetClass { name, styles } => {
+                if name.trim().is_empty() {
+                    return Err("A style class needs a name".into());
+                }
+                match styles {
+                    Some(styles) => {
+                        self.styles.insert(name.clone(), (**styles).clone());
+                    }
+                    None => {
+                        self.styles.remove(name);
+                    }
+                }
+                return Ok(());
+            }
+            UiEdit::Create { widget } => return self.create_widget(widget),
+            UiEdit::Delete { id } => return self.delete_subtree(id),
+            UiEdit::Duplicate { id, new_id, offset } => {
+                return self.duplicate_subtree(id, new_id, *offset);
+            }
+            UiEdit::SavePrefab {
+                name,
+                root,
+                update_instances,
+            } => return self.save_prefab(name, root, *update_instances),
+            UiEdit::DeletePrefab { name } => {
+                if self.prefabs.remove(name).is_none() {
+                    return Err(format!("No UI prefab named {name}"));
+                }
+                self.exports.remove(name);
+                for w in &mut self.widgets {
+                    if &w.instance_of == name {
+                        w.instance_of.clear();
+                    }
+                }
+                return Ok(());
+            }
+            UiEdit::InstantiatePrefab {
+                name,
+                prefix,
+                parent,
+            } => {
+                for widget in self.instantiate(name, prefix, parent)? {
+                    self.create_widget(&widget)?;
+                }
+                return Ok(());
+            }
+            UiEdit::DetachInstance { id } => {
+                let i = self
+                    .find(id)
+                    .ok_or_else(|| format!("Unknown widget: {id}"))?;
+                self.widgets[i].instance_of.clear();
+                return Ok(());
+            }
+            UiEdit::ResetInstance { id } => return self.reset_instance(id),
+            UiEdit::SetAnimation { name, animation } => {
+                if name.trim().is_empty() {
+                    return Err("An animation needs a name".into());
+                }
+                match animation {
+                    Some(animation) => {
+                        animation.validate()?;
+                        if let Some(missing) = animation
+                            .tracks
+                            .iter()
+                            .find(|t| self.find(&t.widget).is_none())
+                        {
+                            return Err(format!("Unknown widget: {}", missing.widget));
+                        }
+                        self.animations.insert(name.clone(), animation.clone());
+                    }
+                    None => {
+                        if self.animations.remove(name).is_none() {
+                            return Err(format!("No UI animation named {name}"));
+                        }
+                    }
+                }
+                return Ok(());
+            }
+            UiEdit::ExposeProperty {
+                prefab,
+                name,
+                widget,
+                path,
+            } => {
+                if !property_metadata().iter().any(|m| m.path == path.as_str()) {
+                    return Err(format!("Unknown property path: {path}"));
+                }
+                return self.expose(prefab, name, widget, path, false);
+            }
+            UiEdit::ExposeSlot {
+                prefab,
+                name,
+                widget,
+            } => return self.expose(prefab, name, widget, "", true),
+            UiEdit::Unexpose { prefab, name } => {
+                let list = self.exports.get_mut(prefab);
+                let before = list.as_ref().map_or(0, |l| l.len());
+                if let Some(list) = list {
+                    list.retain(|e| &e.name != name);
+                    if list.is_empty() {
+                        self.exports.remove(prefab);
+                    }
+                }
+                let after = self.exports.get(prefab).map_or(0, |l| l.len());
+                return if before == after {
+                    Err(format!("{prefab} exposes nothing called {name}"))
+                } else {
+                    Ok(())
+                };
+            }
+            UiEdit::SetExposed {
+                instance,
+                name,
+                value,
+            } => {
+                let (export, prefix) = self.exported(instance, name, false)?;
+                let property = serde_json::from_value(
+                    serde_json::json!({"path": export.path, "value": value}),
+                )
+                .map_err(|e| format!("{name}: {e}"))?;
+                return self.apply_edit(&UiEdit::SetProperty {
+                    id: format!("{prefix}{}", export.widget),
+                    property,
+                });
+            }
+            UiEdit::FillSlot {
+                instance,
+                slot,
+                widget,
+            } => {
+                let (export, prefix) = self.exported(instance, slot, true)?;
+                let parent = format!("{prefix}{}", export.widget);
+                let canvas = self
+                    .find(&parent)
+                    .is_some_and(|i| self.widgets[i].element.kind == UiKind::Canvas);
+                let placement = if canvas {
+                    let size = self
+                        .find(widget)
+                        .map_or([100., 40.], |i| self.widgets[i].element.size);
+                    UiPlacement::Free {
+                        offset: [0.; 2],
+                        size: [size[0].max(1.), size[1].max(1.)],
+                    }
+                } else {
+                    UiPlacement::Flow
+                };
+                return self.apply_edit(&UiEdit::Reparent {
+                    id: widget.clone(),
+                    parent,
+                    placement,
+                });
+            }
+            _ => {}
+        }
         let id = match edit {
             UiEdit::Move { id, .. }
             | UiEdit::Resize { id, .. }
             | UiEdit::SetProperty { id, .. }
             | UiEdit::Reparent { id, .. }
             | UiEdit::Reorder { id, .. } => id,
+            UiEdit::Batch { .. }
+            | UiEdit::SetDocument { .. }
+            | UiEdit::SetClass { .. }
+            | UiEdit::Create { .. }
+            | UiEdit::Delete { .. }
+            | UiEdit::Duplicate { .. }
+            | UiEdit::SavePrefab { .. }
+            | UiEdit::DeletePrefab { .. }
+            | UiEdit::InstantiatePrefab { .. }
+            | UiEdit::DetachInstance { .. }
+            | UiEdit::ResetInstance { .. }
+            | UiEdit::SetAnimation { .. }
+            | UiEdit::ExposeProperty { .. }
+            | UiEdit::ExposeSlot { .. }
+            | UiEdit::Unexpose { .. }
+            | UiEdit::SetExposed { .. }
+            | UiEdit::FillSlot { .. } => unreachable!(),
         };
         let index = self
             .widgets
@@ -387,6 +1255,7 @@ impl UiDocument {
             return Ok(());
         }
         if let UiEdit::SetProperty { property, .. } = edit {
+            let ids: HashSet<String> = self.widgets.iter().map(|w| w.element.id.clone()).collect();
             let w = &mut self.widgets[index];
             match property {
                 UiPropertyEdit::Kind(value) => w.element.kind = *value,
@@ -398,6 +1267,72 @@ impl UiDocument {
                         layout.validate_edit()?;
                     }
                     w.layout = value.clone();
+                }
+                UiPropertyEdit::Range(value) => {
+                    if value.iter().any(|n| !n.is_finite()) || value[0] >= value[1] {
+                        return Err("Range must be finite with min below max".into());
+                    }
+                    w.element.range = *value;
+                }
+                UiPropertyEdit::Style(value) => {
+                    let bad = [
+                        &value.normal,
+                        &value.hover,
+                        &value.pressed,
+                        &value.disabled,
+                        &value.focused,
+                    ]
+                    .into_iter()
+                    .any(|p| {
+                        [p.text_size, p.border_width, p.radius]
+                            .into_iter()
+                            .flatten()
+                            .any(|n| !n.is_finite() || n < 0.)
+                    });
+                    if bad {
+                        return Err("Style sizes must be finite and not negative".into());
+                    }
+                    for p in [
+                        &value.normal,
+                        &value.hover,
+                        &value.pressed,
+                        &value.disabled,
+                        &value.focused,
+                    ] {
+                        if let Some(fit) = &p.image_fit {
+                            fit.validate()?;
+                        }
+                    }
+                    w.style = (**value).clone();
+                }
+                UiPropertyEdit::Class(value) => w.class = value.clone(),
+                UiPropertyEdit::Bindings(value) => w.bindings = value.clone(),
+                UiPropertyEdit::Variants(value) => {
+                    check_variants(value)?;
+                    w.variants = value.clone();
+                }
+                UiPropertyEdit::Actions(value) => {
+                    check_actions(value)?;
+                    w.actions = value.clone();
+                }
+                UiPropertyEdit::Items(value) => w.items = value.clone(),
+                UiPropertyEdit::Tooltip(value) => w.tooltip = value.clone(),
+                UiPropertyEdit::ScrollTarget(value) => {
+                    if !value.is_empty() && !ids.contains(value.as_str()) {
+                        return Err(format!("Unknown scroll target: {value}"));
+                    }
+                    w.scroll_target = value.clone();
+                }
+                UiPropertyEdit::TabIndex(value) => w.tab_index = *value,
+                UiPropertyEdit::Transition(value) => {
+                    if !value.is_finite() || *value < 0. {
+                        return Err("Transition must be finite and not negative".into());
+                    }
+                    w.transition = *value;
+                }
+                UiPropertyEdit::Fx(value) => {
+                    value.validate()?;
+                    w.fx = *value;
                 }
             }
             return Ok(());
@@ -495,7 +1430,392 @@ impl UiDocument {
 }
 
 impl UiDocument {
+    /// Brings an older document up to the current schema. Each step is
+    /// deterministic and keeps widget IDs, order and geometry. Version 1 only
+    /// stamps the version: version 0 documents already have its shape. A
+    /// newer document is left alone and refused by `validate`.
+    pub fn migrate(&mut self) {
+        if self.version < UI_SCHEMA_VERSION {
+            self.version = UI_SCHEMA_VERSION;
+        }
+    }
+
+    fn find(&self, id: &str) -> Option<usize> {
+        self.widgets.iter().position(|w| w.element.id == id)
+    }
+
+    /// Indices of `id` and everything below it, in document order.
+    fn subtree(&self, id: &str) -> Vec<usize> {
+        let mut ids = vec![id.to_string()];
+        let mut i = 0;
+        while i < ids.len() {
+            let parent = ids[i].clone();
+            for w in &self.widgets {
+                if w.element.parent == parent && !ids.contains(&w.element.id) {
+                    ids.push(w.element.id.clone());
+                }
+            }
+            i += 1;
+        }
+        (0..self.widgets.len())
+            .filter(|i| ids.contains(&self.widgets[*i].element.id))
+            .collect()
+    }
+
+    fn create_widget(&mut self, widget: &UiWidget) -> Result<(), String> {
+        if !widget.world_actor.is_empty() {
+            return Err("Projected widgets cannot be created in the editor".into());
+        }
+        let mut widget = widget.clone();
+        let parent = widget.element.parent.clone();
+        if !parent.is_empty() {
+            let target = self
+                .find(&parent)
+                .map(|i| &self.widgets[i])
+                .ok_or_else(|| format!("Unknown parent: {parent}"))?;
+            if !target.world_actor.is_empty() {
+                return Err("Cannot create inside a projected widget".into());
+            }
+            let free = target.element.kind == UiKind::Canvas;
+            if free {
+                widget.layout.get_or_insert_with(UiLayout::default).absolute = true;
+            } else if let Some(layout) = &mut widget.layout {
+                layout.absolute = false;
+            }
+        }
+        if let Some(layout) = &widget.layout {
+            layout.validate_edit()?;
+        }
+        self.widgets.push(widget);
+        Ok(())
+    }
+
+    fn delete_subtree(&mut self, id: &str) -> Result<(), String> {
+        if self.find(id).is_none() {
+            return Err(format!("Unknown widget: {id}"));
+        }
+        let gone = self.subtree(id);
+        let removed: HashSet<String> = gone
+            .iter()
+            .map(|i| self.widgets[*i].element.id.clone())
+            .collect();
+        let mut slot = 0;
+        self.widgets.retain(|_| {
+            slot += 1;
+            !gone.contains(&(slot - 1))
+        });
+        for w in &mut self.widgets {
+            if removed.contains(&w.scroll_target) {
+                w.scroll_target.clear();
+            }
+        }
+        Ok(())
+    }
+
+    fn duplicate_subtree(
+        &mut self,
+        id: &str,
+        new_id: &str,
+        offset: Option<[f32; 2]>,
+    ) -> Result<(), String> {
+        let root = self
+            .find(id)
+            .ok_or_else(|| format!("Unknown widget: {id}"))?;
+        if !self.widgets[root].world_actor.is_empty() {
+            return Err("Projected widgets cannot be duplicated".into());
+        }
+        let members = self.subtree(id);
+        let rename = |old: &str| {
+            if old == id {
+                new_id.to_string()
+            } else {
+                format!("{new_id}.{old}")
+            }
+        };
+        let old_ids: HashSet<String> = members
+            .iter()
+            .map(|i| self.widgets[*i].element.id.clone())
+            .collect();
+        let mut copies: Vec<UiWidget> = members.iter().map(|i| self.widgets[*i].clone()).collect();
+        for w in &mut copies {
+            if old_ids.contains(&w.element.parent) {
+                w.element.parent = rename(&w.element.parent);
+            }
+            if old_ids.contains(&w.scroll_target) {
+                w.scroll_target = rename(&w.scroll_target);
+            }
+            w.element.id = rename(&w.element.id);
+        }
+        if let Some(offset) = offset {
+            let root_copy = copies.iter_mut().find(|w| w.element.id == new_id).unwrap();
+            let parent = &root_copy.element.parent;
+            let free = parent.is_empty()
+                || root_copy.layout.as_ref().is_some_and(|l| l.absolute)
+                || self
+                    .find(parent)
+                    .is_some_and(|i| self.widgets[i].element.kind == UiKind::Canvas);
+            if !free {
+                return Err("This widget is positioned by its parent layout".into());
+            }
+            root_copy.element.offset = offset;
+        }
+        let at = members.iter().max().copied().unwrap_or(root) + 1;
+        self.widgets.splice(at..at, copies);
+        Ok(())
+    }
+
+    fn save_prefab(&mut self, name: &str, root: &str, update: bool) -> Result<(), String> {
+        if name.trim().is_empty() {
+            return Err("A prefab needs a name".into());
+        }
+        let root_index = self
+            .find(root)
+            .ok_or_else(|| format!("Unknown widget: {root}"))?;
+        let members = self.subtree(root);
+        if members
+            .iter()
+            .any(|i| !self.widgets[*i].world_actor.is_empty())
+        {
+            return Err("Projected widgets cannot be saved as a prefab".into());
+        }
+        let mut copies: Vec<UiWidget> = members.iter().map(|i| self.widgets[*i].clone()).collect();
+        copies[0].element.parent.clear();
+        for w in &mut copies {
+            w.instance_of.clear();
+        }
+        // The source stays as it is; only instances elsewhere are rebuilt.
+        let old = self.prefabs.insert(name.to_string(), copies);
+        let _ = root_index;
+        if !update {
+            return Ok(());
+        }
+        let Some(old) = old else { return Ok(()) };
+        let old_root = old
+            .iter()
+            .find(|w| w.element.parent.is_empty())
+            .map(|w| w.element.id.clone())
+            .ok_or("The old prefab has no root")?;
+        let roots: Vec<String> = self
+            .widgets
+            .iter()
+            .filter(|w| w.instance_of == name)
+            .map(|w| w.element.id.clone())
+            .collect();
+        let mut old_doc = self.clone();
+        old_doc.prefabs.insert(name.to_string(), old);
+        for instance in roots {
+            let Some(at) = self.find(&instance) else {
+                continue;
+            };
+            let prefix = instance
+                .strip_suffix(&old_root)
+                .ok_or_else(|| format!("Instance {instance} does not follow its prefab's naming"))?
+                .to_string();
+            let parent = self.widgets[at].element.parent.clone();
+            let members = self.subtree(&instance);
+            let expected = old_doc.instantiate(name, &prefix, &parent)?;
+            let fresh = self.instantiate(name, &prefix, &parent)?;
+            let current: Vec<UiWidget> = members.iter().map(|i| self.widgets[*i].clone()).collect();
+            let mut rebuilt: Vec<UiWidget> = Vec::new();
+            for w in fresh {
+                let kept = current.iter().find(|c| c.element.id == w.element.id);
+                let was = expected.iter().find(|e| e.element.id == w.element.id);
+                match (kept, was) {
+                    (Some(c), Some(e)) if c != e => rebuilt.push(merge_widget(e, &w, c)?),
+                    _ => rebuilt.push(w),
+                }
+            }
+            for c in &current {
+                let known = expected.iter().find(|e| e.element.id == c.element.id);
+                let placed = rebuilt.iter().any(|r| r.element.id == c.element.id);
+                if !placed && known.is_none_or(|e| e != c) {
+                    rebuilt.push(c.clone());
+                }
+            }
+            let first = members[0];
+            let mut slot = 0;
+            self.widgets.retain(|_| {
+                slot += 1;
+                !members.contains(&(slot - 1))
+            });
+            self.widgets.splice(first..first, rebuilt);
+        }
+        Ok(())
+    }
+
+    fn expose(
+        &mut self,
+        prefab: &str,
+        name: &str,
+        widget: &str,
+        path: &str,
+        slot: bool,
+    ) -> Result<(), String> {
+        if name.trim().is_empty() {
+            return Err("An exposed name cannot be empty".into());
+        }
+        let members = self
+            .prefabs
+            .get(prefab)
+            .ok_or_else(|| format!("No UI prefab named {prefab}"))?;
+        if !members.iter().any(|w| w.element.id == widget) {
+            return Err(format!("{prefab} has no widget {widget}"));
+        }
+        let list = self.exports.entry(prefab.to_string()).or_default();
+        if list.iter().any(|e| e.name == name) {
+            return Err(format!("{prefab} already exposes {name}"));
+        }
+        list.push(UiExport {
+            name: name.to_string(),
+            widget: widget.to_string(),
+            path: path.to_string(),
+            slot,
+        });
+        Ok(())
+    }
+
+    /// The prefab export `name` of the instance at `instance`, and the id
+    /// prefix its widgets carry.
+    fn exported(
+        &self,
+        instance: &str,
+        name: &str,
+        slot: bool,
+    ) -> Result<(UiExport, String), String> {
+        let at = self
+            .find(instance)
+            .ok_or_else(|| format!("Unknown widget: {instance}"))?;
+        let prefab = self.widgets[at].instance_of.clone();
+        let root = self
+            .prefabs
+            .get(&prefab)
+            .and_then(|p| p.iter().find(|w| w.element.parent.is_empty()))
+            .map(|w| w.element.id.clone())
+            .ok_or_else(|| format!("{instance} is not the root of a component instance"))?;
+        let prefix = instance
+            .strip_suffix(&root)
+            .ok_or_else(|| format!("Instance {instance} does not follow its prefab's naming"))?
+            .to_string();
+        let export = self
+            .exports
+            .get(&prefab)
+            .and_then(|l| l.iter().find(|e| e.name == name && e.slot == slot))
+            .ok_or_else(|| {
+                format!(
+                    "{prefab} exposes no {} called {name}",
+                    if slot { "slot" } else { "property" }
+                )
+            })?;
+        Ok((export.clone(), prefix))
+    }
+
+    /// What an instance's exposed properties currently hold, by name.
+    pub fn exposed_values(
+        &self,
+        instance: &str,
+    ) -> Result<Vec<(String, serde_json::Value)>, String> {
+        let at = self
+            .find(instance)
+            .ok_or_else(|| format!("Unknown widget: {instance}"))?;
+        let prefab = &self.widgets[at].instance_of;
+        let mut out = Vec::new();
+        for export in self
+            .exports
+            .get(prefab)
+            .into_iter()
+            .flatten()
+            .filter(|e| !e.slot)
+        {
+            let (_, prefix) = self.exported(instance, &export.name, false)?;
+            let Some(i) = self.find(&format!("{prefix}{}", export.widget)) else {
+                continue;
+            };
+            let mut value = to_json(&self.widgets[i])?;
+            for step in export.path.split('.') {
+                value = value.get(step).cloned().unwrap_or(serde_json::Value::Null);
+            }
+            out.push((export.name.clone(), value));
+        }
+        Ok(out)
+    }
+
+    /// Rebuilds the instance rooted at `id` exactly as its prefab says.
+    fn reset_instance(&mut self, id: &str) -> Result<(), String> {
+        let at = self
+            .find(id)
+            .ok_or_else(|| format!("Unknown widget: {id}"))?;
+        let name = self.widgets[at].instance_of.clone();
+        if name.is_empty() {
+            return Err(format!("{id} is not the root of a component instance"));
+        }
+        let old_root = self
+            .prefabs
+            .get(&name)
+            .and_then(|p| p.iter().find(|w| w.element.parent.is_empty()))
+            .map(|w| w.element.id.clone())
+            .ok_or_else(|| format!("No UI prefab named {name}"))?;
+        let prefix = id
+            .strip_suffix(&old_root)
+            .ok_or_else(|| format!("Instance {id} does not follow its prefab's naming"))?
+            .to_string();
+        let parent = self.widgets[at].element.parent.clone();
+        let members = self.subtree(id);
+        let fresh = self.instantiate(&name, &prefix, &parent)?;
+        let first = members[0];
+        let mut slot = 0;
+        self.widgets.retain(|_| {
+            slot += 1;
+            !members.contains(&(slot - 1))
+        });
+        self.widgets.splice(first..first, fresh);
+        Ok(())
+    }
+
+    /// The fields an instance changed from its prefab, as `widget id: path`.
+    pub fn instance_overrides(&self, id: &str) -> Result<Vec<String>, String> {
+        let at = self
+            .find(id)
+            .ok_or_else(|| format!("Unknown widget: {id}"))?;
+        let name = &self.widgets[at].instance_of;
+        let old_root = self
+            .prefabs
+            .get(name)
+            .and_then(|p| p.iter().find(|w| w.element.parent.is_empty()))
+            .map(|w| w.element.id.clone())
+            .ok_or_else(|| format!("{id} is not the root of a component instance"))?;
+        let prefix = id
+            .strip_suffix(&old_root)
+            .ok_or_else(|| format!("Instance {id} does not follow its prefab's naming"))?;
+        let parent = &self.widgets[at].element.parent;
+        let fresh = self.instantiate(name, prefix, parent)?;
+        let mut out = Vec::new();
+        for member in self.subtree(id) {
+            let current = &self.widgets[member];
+            match fresh.iter().find(|w| w.element.id == current.element.id) {
+                Some(base) => {
+                    let (a, b) = (to_json(base)?, to_json(current)?);
+                    changed_paths(&a, &b, "", &mut |path| {
+                        out.push(format!("{}: {path}", current.element.id))
+                    });
+                }
+                None => out.push(format!("{}: added", current.element.id)),
+            }
+        }
+        for w in &fresh {
+            if self.find(&w.element.id).is_none() {
+                out.push(format!("{}: removed", w.element.id));
+            }
+        }
+        Ok(out)
+    }
+
     pub fn validate(&self) -> Result<(), String> {
+        if self.version > UI_SCHEMA_VERSION {
+            return Err(format!(
+                "This interface uses schema version {} but this Blockloom understands up to {UI_SCHEMA_VERSION}; update Blockloom to edit it",
+                self.version
+            ));
+        }
         if self
             .reference_size
             .iter()
@@ -509,6 +1829,32 @@ impl UiDocument {
             return Err("An interface supports at most 10000 widgets".into());
         }
         let mut ids = HashSet::new();
+        for (name, animation) in &self.animations {
+            animation
+                .validate()
+                .map_err(|e| format!("Animation {name}: {e}"))?;
+            if let Some(t) = animation
+                .tracks
+                .iter()
+                .find(|t| !self.widgets.iter().any(|w| w.element.id == t.widget))
+            {
+                return Err(format!(
+                    "Animation {name} animates a missing widget: {}",
+                    t.widget
+                ));
+            }
+        }
+        for (prefab, list) in &self.exports {
+            let members = self
+                .prefabs
+                .get(prefab)
+                .ok_or_else(|| format!("Exports for a missing prefab: {prefab}"))?;
+            if list.iter().any(|e| {
+                e.name.trim().is_empty() || !members.iter().any(|w| w.element.id == e.widget)
+            }) {
+                return Err(format!("{prefab} exposes something that is not in it"));
+            }
+        }
         for widget in &self.widgets {
             let id = &widget.element.id;
             if id.is_empty()
@@ -519,6 +1865,9 @@ impl UiDocument {
             {
                 return Err(format!("Duplicate or empty widget id: {id}"));
             }
+            if !widget.instance_of.is_empty() && !self.prefabs.contains_key(&widget.instance_of) {
+                return Err(format!("{id} is an instance of a missing prefab"));
+            }
             if widget.bindings.iter().any(|b| {
                 !matches!(
                     b.property,
@@ -527,6 +1876,8 @@ impl UiDocument {
             }) {
                 return Err(format!("Unsupported binding property on {id}"));
             }
+            check_actions(&widget.actions).map_err(|e| format!("{id}: {e}"))?;
+            check_variants(&widget.variants).map_err(|e| format!("{id}: {e}"))?;
             if let Some(layout) = &widget.layout
                 && (layout.columns == 0
                     || !layout.row_height.is_finite()
@@ -595,12 +1946,119 @@ impl UiDocument {
             }
             w.element.id = format!("{prefix}{}", w.element.id);
             w.element.parent = if w.element.parent.is_empty() {
+                w.instance_of = name.into();
                 parent.into()
             } else {
                 format!("{prefix}{}", w.element.parent)
             };
         }
         Ok(widgets)
+    }
+}
+
+fn check_variants(variants: &[UiVariant]) -> Result<(), String> {
+    for variant in variants {
+        variant.when.validate()?;
+        if let Some(layout) = &variant.layout
+            && (layout.columns == 0 || !layout.row_height.is_finite() || layout.row_height <= 0.)
+        {
+            return Err("A variant's layout is invalid".into());
+        }
+    }
+    Ok(())
+}
+
+fn check_actions(actions: &[UiAction]) -> Result<(), String> {
+    for action in actions {
+        match &action.run {
+            UiDo::Broadcast { message } if message.trim().is_empty() => {
+                return Err("A broadcast needs a message".into());
+            }
+            UiDo::PlayAnimation { name } | UiDo::StopAnimation { name }
+                if name.trim().is_empty() =>
+            {
+                return Err("An animation action needs a name".into());
+            }
+            UiDo::SetVariable { name, .. } if name.trim().is_empty() => {
+                return Err("Set variable needs a variable name".into());
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn to_json(widget: &UiWidget) -> Result<serde_json::Value, String> {
+    serde_json::to_value(widget).map_err(|e| e.to_string())
+}
+
+/// Field-level three-way merge: a field the instance changed from `old` keeps
+/// its value, every other field takes the prefab's `new` one.
+fn merge_json(
+    old: &serde_json::Value,
+    new: &serde_json::Value,
+    cur: &serde_json::Value,
+) -> serde_json::Value {
+    use serde_json::Value;
+    if cur == old {
+        return new.clone();
+    }
+    match (old, new, cur) {
+        (Value::Object(o), Value::Object(n), Value::Object(c)) => {
+            let mut out = serde_json::Map::new();
+            for key in n.keys().chain(c.keys()) {
+                if out.contains_key(key) {
+                    continue;
+                }
+                let blank = Value::Null;
+                let merged = match (o.get(key), n.get(key), c.get(key)) {
+                    (o, n, Some(c)) => merge_json(o.unwrap_or(&blank), n.unwrap_or(&blank), c),
+                    (_, Some(n), None) => n.clone(),
+                    _ => continue,
+                };
+                out.insert(key.clone(), merged);
+            }
+            Value::Object(out)
+        }
+        _ => cur.clone(),
+    }
+}
+
+fn merge_widget(old: &UiWidget, new: &UiWidget, cur: &UiWidget) -> Result<UiWidget, String> {
+    let merged = merge_json(&to_json(old)?, &to_json(new)?, &to_json(cur)?);
+    let mut widget: UiWidget = serde_json::from_value(merged).map_err(|e| e.to_string())?;
+    // Identity and place in the tree always follow the rebuilt instance.
+    widget.element.id = new.element.id.clone();
+    widget.element.parent = new.element.parent.clone();
+    widget.instance_of = new.instance_of.clone();
+    Ok(widget)
+}
+
+fn changed_paths(a: &serde_json::Value, b: &serde_json::Value, at: &str, f: &mut dyn FnMut(&str)) {
+    use serde_json::Value;
+    if a == b {
+        return;
+    }
+    match (a, b) {
+        (Value::Object(x), Value::Object(y)) => {
+            let mut keys: Vec<&String> = x.keys().chain(y.keys()).collect();
+            keys.sort();
+            keys.dedup();
+            for key in keys {
+                let path = if at.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{at}.{key}")
+                };
+                changed_paths(
+                    x.get(key).unwrap_or(&Value::Null),
+                    y.get(key).unwrap_or(&Value::Null),
+                    &path,
+                    f,
+                );
+            }
+        }
+        _ => f(at),
     }
 }
 
@@ -752,6 +2210,278 @@ mod tests {
     }
 
     #[test]
+    fn fx_is_a_typed_edit_and_an_animation_track_may_drive_it() {
+        let mut doc: UiDocument = serde_json::from_value(serde_json::json!({
+            "widgets": [{"element": {"id": "a"}}]
+        }))
+        .unwrap();
+        let edit = |value| serde_json::from_value::<UiEdit>(value).unwrap();
+        doc.apply_edit(&edit(serde_json::json!({"kind": "SetProperty", "id": "a",
+            "property": {"path": "fx", "value": {"opacity": 0.0, "rotation": 15}}})))
+            .unwrap();
+        assert_eq!(doc.widgets[0].fx.opacity, 0.);
+        assert_eq!(doc.widgets[0].fx.rotation, 15.);
+        let bad = edit(serde_json::json!({"kind": "SetProperty", "id": "a",
+            "property": {"path": "fx", "value": {"opacity": 2.0}}}));
+        assert!(doc.apply_edit(&bad).is_err());
+        // A default fx is not written out.
+        doc.widgets[0].fx = UiFx::default();
+        assert!(
+            serde_json::to_value(&doc.widgets[0])
+                .unwrap()
+                .get("fx")
+                .is_none()
+        );
+        let track = |property| UiTrack {
+            widget: "a".into(),
+            property,
+            keys: vec![UiKey {
+                time: 0.,
+                value: UiKeyValue::Number(1.),
+                ease: UiEase::Linear,
+            }],
+        };
+        for property in [
+            UiProp::Opacity,
+            UiProp::OffsetX,
+            UiProp::OffsetY,
+            UiProp::Rotation,
+        ] {
+            assert!(track(property).validate(1.).is_ok(), "{property:?}");
+        }
+    }
+
+    #[test]
+    fn property_metadata_covers_every_editable_path_and_batches_are_atomic() {
+        let samples = [
+            UiPropertyEdit::Kind(UiKind::Label),
+            UiPropertyEdit::Content(String::new()),
+            UiPropertyEdit::Anchor(UiAnchor::Top),
+            UiPropertyEdit::Modal(true),
+            UiPropertyEdit::Layout(None),
+            UiPropertyEdit::Range([0., 1.]),
+            UiPropertyEdit::Style(Box::default()),
+            UiPropertyEdit::Class(String::new()),
+            UiPropertyEdit::Bindings(vec![]),
+            UiPropertyEdit::Actions(vec![]),
+            UiPropertyEdit::Variants(vec![]),
+            UiPropertyEdit::Items(vec![]),
+            UiPropertyEdit::Tooltip(String::new()),
+            UiPropertyEdit::ScrollTarget(String::new()),
+            UiPropertyEdit::TabIndex(None),
+            UiPropertyEdit::Transition(0.),
+            UiPropertyEdit::Fx(UiFx::default()),
+        ];
+        let metadata = property_metadata();
+        assert_eq!(metadata.len(), samples.len());
+        for sample in &samples {
+            assert!(metadata.iter().any(|m| m.path == sample.path()));
+        }
+        assert!(metadata[0].choices.contains(&"Canvas".to_string()));
+        assert_eq!(metadata[2].choices.len(), 9);
+        let mut doc: UiDocument = serde_json::from_value(serde_json::json!({"widgets": [
+            {"element": {"id": "a", "offset": [1, 1]}, "layout": {"absolute": true}},
+            {"element": {"id": "b", "offset": [2, 2]}, "layout": {"absolute": true}}
+        ]}))
+        .unwrap();
+        let parse = |value| serde_json::from_value::<UiEdit>(value).unwrap();
+        doc.apply_edit(&parse(serde_json::json!({"kind": "Batch", "edits": [
+            {"kind": "Move", "id": "a", "offset": [10, 10]},
+            {"kind": "Move", "id": "b", "offset": [20, 20]}
+        ]})))
+        .unwrap();
+        assert_eq!(doc.widgets[0].element.offset, [10., 10.]);
+        assert_eq!(doc.widgets[1].element.offset, [20., 20.]);
+        let before = doc.clone();
+        for value in [
+            serde_json::json!({"kind": "Batch", "edits": [
+                {"kind": "Move", "id": "a", "offset": [99, 99]},
+                {"kind": "Move", "id": "missing", "offset": [1, 1]}]}),
+            serde_json::json!({"kind": "Batch", "edits": [{"kind": "Batch", "edits": []}]}),
+        ] {
+            assert!(doc.apply_edit(&parse(value)).is_err());
+            assert_eq!(doc, before);
+        }
+    }
+
+    #[test]
+    fn content_style_and_document_edits_validate_and_apply() {
+        let mut doc: UiDocument = serde_json::from_value(serde_json::json!({"widgets": [
+            {"element": {"id": "bar", "kind": "Scrollbar"}},
+            {"element": {"id": "list", "kind": "List"}}
+        ]}))
+        .unwrap();
+        let parse = |value| serde_json::from_value::<UiEdit>(value).unwrap();
+        let prop = |id: &str, path: &str, value: serde_json::Value| {
+            parse(
+                serde_json::json!({"kind": "SetProperty", "id": id, "property": {"path": path, "value": value}}),
+            )
+        };
+        doc.apply_edit(&prop("bar", "scroll_target", "list".into()))
+            .unwrap();
+        doc.apply_edit(&prop("list", "items", serde_json::json!(["a", "b"])))
+            .unwrap();
+        doc.apply_edit(&prop(
+            "list",
+            "style",
+            serde_json::json!({"normal": {"background": "#102030", "radius": 4.0}}),
+        ))
+        .unwrap();
+        doc.apply_edit(&prop(
+            "list",
+            "bindings",
+            serde_json::json!([{"property": "Visible", "source": {"Variable": {"name": "shown"}}}]),
+        ))
+        .unwrap();
+        doc.apply_edit(&prop("list", "tab_index", serde_json::json!(2)))
+            .unwrap();
+        doc.apply_edit(&prop("list", "element.range", serde_json::json!([0, 10])))
+            .unwrap();
+        assert_eq!(doc.widgets[0].scroll_target, "list");
+        assert_eq!(doc.widgets[1].items, ["a", "b"]);
+        assert_eq!(doc.widgets[1].style.normal.radius, Some(4.));
+        assert_eq!(doc.widgets[1].bindings.len(), 1);
+        assert_eq!(doc.widgets[1].tab_index, Some(2));
+        let before = doc.clone();
+        for edit in [
+            prop("bar", "scroll_target", "missing".into()),
+            prop("list", "element.range", serde_json::json!([5, 5])),
+            prop("list", "transition", serde_json::json!(-1)),
+            prop(
+                "list",
+                "style",
+                serde_json::json!({"normal": {"radius": -2.0}}),
+            ),
+            prop(
+                "list",
+                "bindings",
+                serde_json::json!([{"property": "Value", "source": {"Variable": {"name": "x"}}}, {"property": "Tooltip", "source": {"Variable": {"name": "x"}}}]),
+            ),
+        ] {
+            assert!(doc.apply_edit(&edit).is_err());
+            assert_eq!(doc, before);
+        }
+        doc.apply_edit(&parse(
+            serde_json::json!({"kind": "SetDocument", "theme": "Light", "scale": "ScaleWithSize"}),
+        ))
+        .unwrap();
+        assert_eq!(doc.theme, UiTheme::Light);
+        assert_eq!(doc.scale, UiScale::ScaleWithSize);
+        doc.apply_edit(&parse(serde_json::json!({"kind": "SetClass", "name": "title", "styles": {"normal": {"text_size": 24.0}}}))).unwrap();
+        assert_eq!(doc.styles["title"].normal.text_size, Some(24.));
+        doc.apply_edit(&parse(
+            serde_json::json!({"kind": "SetClass", "name": "title", "styles": null}),
+        ))
+        .unwrap();
+        assert!(doc.styles.is_empty());
+        assert!(
+            doc.apply_edit(&parse(
+                serde_json::json!({"kind": "SetClass", "name": " ", "styles": null})
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn schema_versions_migrate_forward_and_refuse_newer_documents() {
+        let mut legacy: UiDocument =
+            serde_json::from_value(serde_json::json!({"widgets": [{"element": {"id": "a"}}]}))
+                .unwrap();
+        assert_eq!(legacy.version, 0);
+        let before = legacy.widgets.clone();
+        legacy.migrate();
+        assert_eq!(legacy.version, UI_SCHEMA_VERSION);
+        assert_eq!(legacy.widgets, before);
+        let again = legacy.clone();
+        legacy.migrate();
+        assert_eq!(legacy, again);
+        assert_eq!(UiDocument::default().version, UI_SCHEMA_VERSION);
+        let newer: UiDocument = serde_json::from_value(serde_json::json!({"version": 99})).unwrap();
+        assert!(newer.validate().unwrap_err().contains("schema version 99"));
+        let mut kept = newer.clone();
+        kept.migrate();
+        assert_eq!(kept.version, 99);
+    }
+
+    #[test]
+    fn create_delete_and_duplicate_keep_ids_and_references_consistent() {
+        let mut doc: UiDocument = serde_json::from_value(serde_json::json!({"widgets": [
+            {"element": {"id": "canvas", "kind": "Canvas"}},
+            {"element": {"id": "flow", "kind": "VerticalBox"}},
+            {"element": {"id": "menu", "parent": "canvas", "offset": [5, 6]}, "layout": {"absolute": true}},
+            {"element": {"id": "list", "parent": "menu"}, "scroll_target": "bar"},
+            {"element": {"id": "bar", "parent": "menu"}, "scroll_target": "outside"},
+            {"element": {"id": "outside"}}
+        ]}))
+        .unwrap();
+        let ids = |d: &UiDocument| {
+            d.widgets
+                .iter()
+                .map(|w| w.element.id.clone())
+                .collect::<Vec<_>>()
+        };
+        let parse = |value| serde_json::from_value::<UiEdit>(value).unwrap();
+        doc.apply_edit(&parse(serde_json::json!({"kind": "Create", "widget": {"element": {"id": "a", "parent": "canvas"}}}))).unwrap();
+        assert!(doc.widgets[6].layout.as_ref().unwrap().absolute);
+        doc.apply_edit(&parse(serde_json::json!({"kind": "Create", "widget": {"element": {"id": "b", "parent": "flow"}, "layout": {"absolute": true}}}))).unwrap();
+        assert!(!doc.widgets[7].layout.as_ref().unwrap().absolute);
+        for value in [
+            serde_json::json!({"kind": "Create", "widget": {"element": {"id": "a"}}}),
+            serde_json::json!({"kind": "Create", "widget": {"element": {"id": ""}}}),
+            serde_json::json!({"kind": "Create", "widget": {"element": {"id": "c", "parent": "nope"}}}),
+            serde_json::json!({"kind": "Create", "widget": {"element": {"id": "c"}, "world_actor": "x"}}),
+            serde_json::json!({"kind": "Delete", "id": "nope"}),
+            serde_json::json!({"kind": "Duplicate", "id": "menu", "new_id": "a"}),
+            serde_json::json!({"kind": "Duplicate", "id": "b", "new_id": "b2", "offset": [1, 1]}),
+        ] {
+            let before = doc.clone();
+            assert!(doc.apply_edit(&parse(value)).is_err());
+            assert_eq!(doc, before);
+        }
+        doc.apply_edit(&parse(serde_json::json!({"kind": "Duplicate", "id": "menu", "new_id": "menu2", "offset": [21, 22]}))).unwrap();
+        assert_eq!(
+            ids(&doc),
+            [
+                "canvas",
+                "flow",
+                "menu",
+                "list",
+                "bar",
+                "menu2",
+                "menu2.list",
+                "menu2.bar",
+                "outside",
+                "a",
+                "b"
+            ]
+        );
+        assert_eq!(doc.widgets[5].element.offset, [21., 22.]);
+        assert_eq!(doc.widgets[2].element.offset, [5., 6.]);
+        assert_eq!(doc.widgets[6].element.parent, "menu2");
+        assert_eq!(doc.widgets[6].scroll_target, "menu2.bar");
+        assert_eq!(doc.widgets[7].scroll_target, "outside");
+        assert_eq!(doc.widgets[3].scroll_target, "bar");
+        doc.apply_edit(&parse(serde_json::json!({"kind": "Delete", "id": "bar"})))
+            .unwrap();
+        assert_eq!(doc.widgets[3].scroll_target, "");
+        doc.apply_edit(&parse(serde_json::json!({"kind": "Delete", "id": "menu"})))
+            .unwrap();
+        assert_eq!(
+            ids(&doc),
+            [
+                "canvas",
+                "flow",
+                "menu2",
+                "menu2.list",
+                "menu2.bar",
+                "outside",
+                "a",
+                "b"
+            ]
+        );
+    }
+
+    #[test]
     fn typed_edits_preserve_layout_and_reject_invalid_dimensions() {
         let mut document = UiDocument::default();
         document.widgets = vec![
@@ -844,6 +2574,350 @@ mod tests {
         d.widgets[0].element.parent.clear();
         assert!(d.validate().is_ok());
     }
+    fn row(id: &str, parent: &str, content: &str) -> UiWidget {
+        let mut w = UiWidget::default();
+        w.element.id = id.into();
+        w.element.parent = parent.into();
+        w.element.content = content.into();
+        w
+    }
+
+    #[test]
+    fn image_fit_round_trips_inherits_and_rejects_bad_borders() {
+        let mut doc = UiDocument::default();
+        doc.widgets = vec![row("pic", "", "a.png")];
+        let mut styles = UiStyles::default();
+        styles.normal.image_fit = Some(UiImageFit::Sliced {
+            border: [4., 4., 6., 6.],
+        });
+        doc.apply_edit(&UiEdit::SetProperty {
+            id: "pic".into(),
+            property: UiPropertyEdit::Style(Box::new(styles.clone())),
+        })
+        .unwrap();
+        let json = serde_json::to_string(&doc).unwrap();
+        let back: UiDocument = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.widgets[0].style, styles);
+        let over = UiPaint::default().over(&styles.normal);
+        assert_eq!(over.image_fit, styles.normal.image_fit);
+        styles.normal.image_fit = Some(UiImageFit::Sliced {
+            border: [-1., 0., 0., 0.],
+        });
+        assert!(
+            doc.apply_edit(&UiEdit::SetProperty {
+                id: "pic".into(),
+                property: UiPropertyEdit::Style(Box::new(styles)),
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn prefab_instances_follow_the_source_and_keep_overrides() {
+        let mut doc = UiDocument::default();
+        doc.widgets = vec![
+            row("row", "", "Row"),
+            row("label", "row", "Volume"),
+            row("hint", "row", "Hint"),
+        ];
+        doc.apply_edit(&UiEdit::SavePrefab {
+            name: "setting".into(),
+            root: "row".into(),
+            update_instances: false,
+        })
+        .unwrap();
+        for prefix in ["a.", "b."] {
+            doc.apply_edit(&UiEdit::InstantiatePrefab {
+                name: "setting".into(),
+                prefix: prefix.into(),
+                parent: String::new(),
+            })
+            .unwrap();
+        }
+        let a = doc.find("a.row").unwrap();
+        assert_eq!(doc.widgets[a].instance_of, "setting");
+        // Override one widget in instance a.
+        let label = doc.find("a.label").unwrap();
+        doc.widgets[label].element.content = "Music".into();
+        // Change the source and push the update.
+        let src = doc.find("label").unwrap();
+        doc.widgets[src].element.content = "Sound".into();
+        let hint = doc.find("hint").unwrap();
+        doc.widgets.remove(hint);
+        doc.apply_edit(&UiEdit::SavePrefab {
+            name: "setting".into(),
+            root: "row".into(),
+            update_instances: true,
+        })
+        .unwrap();
+        let content =
+            |d: &UiDocument, id: &str| d.widgets[d.find(id).unwrap()].element.content.clone();
+        assert_eq!(content(&doc, "a.label"), "Music");
+        assert_eq!(content(&doc, "b.label"), "Sound");
+        assert!(doc.find("a.hint").is_none() && doc.find("b.hint").is_none());
+        // Deleting the prefab detaches instances; a dangling tag is refused.
+        doc.apply_edit(&UiEdit::DeletePrefab {
+            name: "setting".into(),
+        })
+        .unwrap();
+        assert!(doc.widgets.iter().all(|w| w.instance_of.is_empty()));
+        doc.widgets[0].instance_of = "gone".into();
+        assert!(doc.validate().is_err());
+    }
+
+    #[test]
+    fn instances_set_exposed_properties_and_fill_slots() {
+        let mut doc = UiDocument::default();
+        let mut body = row("body", "card", "");
+        body.element.kind = UiKind::VerticalBox;
+        doc.widgets = vec![row("card", "", "Card"), row("title", "card", "Title"), body];
+        doc.apply_edit(&UiEdit::SavePrefab {
+            name: "card".into(),
+            root: "card".into(),
+            update_instances: false,
+        })
+        .unwrap();
+        let expose = |doc: &mut UiDocument, edit: serde_json::Value| {
+            doc.apply_edit(&serde_json::from_value(edit).unwrap())
+        };
+        expose(&mut doc, serde_json::json!({"kind": "ExposeProperty", "prefab": "card", "name": "title", "widget": "title", "path": "element.content"})).unwrap();
+        expose(&mut doc, serde_json::json!({"kind": "ExposeSlot", "prefab": "card", "name": "body", "widget": "body"})).unwrap();
+        // Bad exposures are refused.
+        assert!(expose(&mut doc, serde_json::json!({"kind": "ExposeProperty", "prefab": "card", "name": "x", "widget": "nope", "path": "tooltip"})).is_err());
+        assert!(expose(&mut doc, serde_json::json!({"kind": "ExposeProperty", "prefab": "card", "name": "x", "widget": "title", "path": "bogus"})).is_err());
+        assert!(expose(&mut doc, serde_json::json!({"kind": "ExposeProperty", "prefab": "card", "name": "title", "widget": "title", "path": "tooltip"})).is_err());
+        doc.apply_edit(&UiEdit::InstantiatePrefab {
+            name: "card".into(),
+            prefix: "a.".into(),
+            parent: String::new(),
+        })
+        .unwrap();
+        expose(&mut doc, serde_json::json!({"kind": "SetExposed", "instance": "a.card", "name": "title", "value": "Hello"})).unwrap();
+        assert_eq!(
+            doc.widgets[doc.find("a.title").unwrap()].element.content,
+            "Hello"
+        );
+        assert_eq!(
+            doc.exposed_values("a.card").unwrap(),
+            vec![("title".to_string(), serde_json::json!("Hello"))]
+        );
+        // The wrong type, an unknown name and a slot used as a property fail.
+        assert!(expose(&mut doc, serde_json::json!({"kind": "SetExposed", "instance": "a.card", "name": "title", "value": 5})).is_err());
+        assert!(expose(&mut doc, serde_json::json!({"kind": "SetExposed", "instance": "a.card", "name": "body", "value": "x"})).is_err());
+        // A loose widget moves into the slot.
+        doc.widgets.push(row("extra", "", "Extra"));
+        expose(&mut doc, serde_json::json!({"kind": "FillSlot", "instance": "a.card", "slot": "body", "widget": "extra"})).unwrap();
+        assert_eq!(
+            doc.widgets[doc.find("extra").unwrap()].element.parent,
+            "a.body"
+        );
+        assert!(doc.validate().is_ok());
+        // Unexposing and deleting the prefab clean up.
+        expose(
+            &mut doc,
+            serde_json::json!({"kind": "Unexpose", "prefab": "card", "name": "title"}),
+        )
+        .unwrap();
+        assert!(
+            expose(
+                &mut doc,
+                serde_json::json!({"kind": "Unexpose", "prefab": "card", "name": "title"})
+            )
+            .is_err()
+        );
+        expose(
+            &mut doc,
+            serde_json::json!({"kind": "DeletePrefab", "name": "card"}),
+        )
+        .unwrap();
+        assert!(doc.exports.is_empty());
+        assert!(doc.validate().is_ok());
+    }
+
+    #[test]
+    fn animations_sample_ease_validate_and_edit() {
+        let mut doc = UiDocument::default();
+        doc.widgets = vec![row("bar", "", "")];
+        let animation: UiAnimation = serde_json::from_value(serde_json::json!({
+            "duration": 2.0, "looping": true,
+            "tracks": [
+                {"widget": "bar", "property": "Width", "keys": [
+                    {"time": 0.0, "value": 100.0}, {"time": 1.0, "value": 200.0, "ease": "EaseIn"}, {"time": 2.0, "value": 100.0}]},
+                {"widget": "bar", "property": "Background", "keys": [
+                    {"time": 0.0, "value": "#000000"}, {"time": 2.0, "value": "#ffffff80"}]}
+            ]
+        }))
+        .unwrap();
+        let sample = |t: f32, i: usize| animation.tracks[i].sample(t).unwrap();
+        assert_eq!(sample(0.5, 0), UiKeyValue::Number(150.));
+        assert_eq!(sample(-1., 0), UiKeyValue::Number(100.));
+        assert_eq!(sample(9., 0), UiKeyValue::Number(100.));
+        assert_eq!(sample(1.0, 0), UiKeyValue::Number(200.));
+        assert_eq!(sample(1.0, 1), UiKeyValue::Color("#808080c0".into()));
+        let named = |a: Option<UiAnimation>| UiEdit::SetAnimation {
+            name: "pulse".into(),
+            animation: a,
+        };
+        doc.apply_edit(&named(Some(animation.clone()))).unwrap();
+        let back: UiDocument = serde_json::from_str(&serde_json::to_string(&doc).unwrap()).unwrap();
+        assert_eq!(back.animations["pulse"], animation);
+        let mut bad = animation.clone();
+        bad.tracks[0].keys[1].time = 0.0;
+        assert!(doc.apply_edit(&named(Some(bad))).is_err());
+        let mut bad = animation.clone();
+        bad.tracks[0].property = UiProp::Text;
+        assert!(doc.apply_edit(&named(Some(bad))).is_err());
+        let mut bad = animation.clone();
+        bad.tracks[1].keys[0].value = UiKeyValue::Number(1.);
+        assert!(doc.apply_edit(&named(Some(bad))).is_err());
+        let mut bad = animation.clone();
+        bad.tracks[0].widget = "ghost".into();
+        assert!(doc.apply_edit(&named(Some(bad))).is_err());
+        assert_eq!(doc.animations.len(), 1);
+        doc.apply_edit(&named(None)).unwrap();
+        assert!(doc.apply_edit(&named(None)).is_err());
+        // Actions can start and stop one by name.
+        let play = [UiAction {
+            on: UiEventKind::Click,
+            run: UiDo::PlayAnimation {
+                name: "pulse".into(),
+            },
+        }];
+        assert!(check_actions(&play).is_ok());
+        let empty = [UiAction {
+            on: UiEventKind::Click,
+            run: UiDo::StopAnimation { name: " ".into() },
+        }];
+        assert!(check_actions(&empty).is_err());
+    }
+
+    #[test]
+    fn variants_pick_the_first_matching_breakpoint_and_validate() {
+        let mut doc = UiDocument::default();
+        doc.widgets = vec![row("menu", "", "Menu")];
+        let value = serde_json::json!([
+            {"when": {"max_width": 600.0}, "layout": {"width": {"Percent": 100.0}}, "visible": true},
+            {"when": {"min_width": 601.0, "max_width": 1200.0}, "visible": false}
+        ]);
+        let edit = |value: serde_json::Value| UiEdit::SetProperty {
+            id: "menu".into(),
+            property: serde_json::from_value(
+                serde_json::json!({"path": "variants", "value": value}),
+            )
+            .unwrap(),
+        };
+        doc.apply_edit(&edit(value)).unwrap();
+        let w = &doc.widgets[0];
+        assert_eq!(w.variant_for(400., 800.), Some(0));
+        assert_eq!(w.variant_for(900., 800.), Some(1));
+        assert_eq!(w.variant_for(1920., 1080.), None);
+        let back: UiDocument = serde_json::from_str(&serde_json::to_string(&doc).unwrap()).unwrap();
+        assert_eq!(back.widgets[0].variants, w.variants);
+        let before = doc.clone();
+        assert!(
+            doc.apply_edit(&edit(
+                serde_json::json!([{"when": {"min_width": 900.0, "max_width": 300.0}}])
+            ))
+            .is_err()
+        );
+        assert!(
+            doc.apply_edit(&edit(serde_json::json!([{"when": {"min_height": -1.0}}])))
+                .is_err()
+        );
+        assert_eq!(doc, before);
+    }
+
+    #[test]
+    fn widget_actions_edit_validate_and_round_trip() {
+        let mut doc = UiDocument::default();
+        doc.widgets = vec![row("play", "", "Play")];
+        let good = serde_json::json!([
+            {"on": "Click", "run": {"Broadcast": {"message": "start"}}},
+            {"on": "Change", "run": {"SetVariable": {"name": "volume", "value": "$value"}}}
+        ]);
+        let edit = |value: serde_json::Value| UiEdit::SetProperty {
+            id: "play".into(),
+            property: serde_json::from_value(
+                serde_json::json!({"path": "actions", "value": value}),
+            )
+            .unwrap(),
+        };
+        doc.apply_edit(&edit(good)).unwrap();
+        assert_eq!(doc.widgets[0].actions.len(), 2);
+        let back: UiDocument = serde_json::from_str(&serde_json::to_string(&doc).unwrap()).unwrap();
+        assert_eq!(back.widgets[0].actions, doc.widgets[0].actions);
+        let before = doc.clone();
+        assert!(
+            doc.apply_edit(&edit(
+                serde_json::json!([{"on": "Click", "run": {"Broadcast": {"message": " "}}}])
+            ))
+            .is_err()
+        );
+        assert_eq!(doc, before);
+        assert!(UiDocument::default().widgets.is_empty());
+        doc.widgets[0].actions[0].run = UiDo::SetVariable {
+            actor: String::new(),
+            name: String::new(),
+            value: "1".into(),
+        };
+        assert!(doc.validate().is_err());
+    }
+
+    #[test]
+    fn overrides_merge_per_field_and_can_be_listed_and_reset() {
+        let mut doc = UiDocument::default();
+        doc.widgets = vec![row("row", "", "Row"), row("label", "row", "Volume")];
+        doc.widgets[1].tooltip = "Old tip".into();
+        doc.apply_edit(&UiEdit::SavePrefab {
+            name: "setting".into(),
+            root: "row".into(),
+            update_instances: false,
+        })
+        .unwrap();
+        doc.apply_edit(&UiEdit::InstantiatePrefab {
+            name: "setting".into(),
+            prefix: "a.".into(),
+            parent: String::new(),
+        })
+        .unwrap();
+        assert!(doc.instance_overrides("a.row").unwrap().is_empty());
+        // The instance changes the caption only.
+        let label = doc.find("a.label").unwrap();
+        doc.widgets[label].element.content = "Music".into();
+        assert_eq!(
+            doc.instance_overrides("a.row").unwrap(),
+            vec!["a.label: element.content".to_string()]
+        );
+        // The prefab changes the tooltip and the caption; the tooltip flows in,
+        // the instance's caption stays.
+        let src = doc.find("label").unwrap();
+        doc.widgets[src].tooltip = "New tip".into();
+        doc.widgets[src].element.content = "Sound".into();
+        doc.apply_edit(&UiEdit::SavePrefab {
+            name: "setting".into(),
+            root: "row".into(),
+            update_instances: true,
+        })
+        .unwrap();
+        let label = &doc.widgets[doc.find("a.label").unwrap()];
+        assert_eq!(label.element.content, "Music");
+        assert_eq!(label.tooltip, "New tip");
+        // Resetting brings the prefab's caption back.
+        doc.apply_edit(&UiEdit::ResetInstance { id: "a.row".into() })
+            .unwrap();
+        assert_eq!(
+            doc.widgets[doc.find("a.label").unwrap()].element.content,
+            "Sound"
+        );
+        assert!(doc.instance_overrides("a.row").unwrap().is_empty());
+        assert!(
+            doc.apply_edit(&UiEdit::ResetInstance {
+                id: "a.label".into()
+            })
+            .is_err()
+        );
+    }
+
     #[test]
     fn prefabs_repoint_internal_scroll_targets_and_roundtrip() {
         let mut document = UiDocument::default();

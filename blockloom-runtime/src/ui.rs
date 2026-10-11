@@ -14,8 +14,8 @@
 use bevy::prelude::*;
 use blockloom_core::sense::UiSense;
 use blockloom_core::ui::{
-    UiAllow, UiAnchor, UiBinding, UiDocument, UiElement, UiKind, UiLayout, UiPaint, UiProp,
-    UiStyles, UiTheme, UiWidget,
+    TextCaret, UiAllow, UiAnchor, UiBinding, UiDocument, UiElement, UiFx, UiKind, UiLayout,
+    UiPaint, UiProp, UiStyles, UiTheme, UiWidget,
 };
 use blockloom_core::value::Evaluated;
 use std::collections::HashMap;
@@ -118,6 +118,17 @@ pub struct UiNode {
     pub collection_range: Option<(usize, usize)>,
     pub collection_dirty: bool,
     pub expanded: bool,
+    /// Where typing lands while this input holds the keyboard.
+    pub caret: TextCaret,
+    /// An IME composition not yet committed, drawn at the caret.
+    pub preedit: String,
+    /// The responsive variant of its widget in force, by index.
+    pub variant: Option<usize>,
+    /// Opacity, offset and rotation as authored, then as animations and
+    /// blocks have moved them. Visual only.
+    pub fx: UiFx,
+    /// The rotation still has to reach the entity's transform.
+    pub fx_dirty: bool,
 }
 
 impl UiNode {
@@ -155,6 +166,8 @@ pub struct UiManager {
     dropped: Vec<Entity>,
     theme: UiTheme,
     pub navigation: Option<String>,
+    /// Document animations running, with how long each has played.
+    playing: Vec<(String, f32)>,
     pub binding_writes: Vec<(UiBinding, Evaluated)>,
     pub document: UiDocument,
     pub canvas_scale: f32,
@@ -176,6 +189,116 @@ impl UiManager {
             self.show_widget(widget.clone());
         }
     }
+    /// Puts each authored widget's responsive variant for a viewport this
+    /// size in force, redrawing only those whose variant changed. Visibility
+    /// is written only by a variant that sets it, and given back when one
+    /// that did stops applying.
+    pub fn apply_variants(&mut self, width: f32, height: f32) {
+        for widget in &self.document.widgets {
+            if widget.variants.is_empty() {
+                continue;
+            }
+            let Some(node) = self.nodes.get_mut(&widget.element.id) else {
+                continue;
+            };
+            let pick = widget.variant_for(width, height);
+            if node.variant == pick {
+                continue;
+            }
+            let (old, new) = (
+                node.variant.and_then(|i| widget.variants[i].visible),
+                pick.and_then(|i| widget.variants[i].visible),
+            );
+            node.layout = pick
+                .and_then(|i| widget.variants[i].layout.clone())
+                .or_else(|| widget.layout.clone());
+            if old.is_some() || new.is_some() {
+                node.visible = new.unwrap_or(true);
+            }
+            node.variant = pick;
+            node.dirty = true;
+        }
+    }
+
+    /// Starts a document animation over, or ignores a name nothing has.
+    pub fn play_animation(&mut self, name: &str) {
+        if !self.document.animations.contains_key(name) {
+            return;
+        }
+        self.playing.retain(|(n, _)| n != name);
+        self.playing.push((name.to_string(), 0.));
+    }
+
+    /// Stops one where it stands; what it set stays set.
+    pub fn stop_animation(&mut self, name: &str) {
+        self.playing.retain(|(n, _)| n != name);
+    }
+
+    pub fn animating(&self) -> bool {
+        !self.playing.is_empty()
+    }
+
+    /// Writes what an animation's tracks hold at `time` (wrapped when it
+    /// loops, held at the end otherwise), through the same `set` blocks use.
+    pub fn sample_animation(&mut self, name: &str, time: f32) {
+        let Some(animation) = self.document.animations.get(name) else {
+            return;
+        };
+        let at = Self::position_in(animation, time).0;
+        let writes = Self::sample(animation, at);
+        for (id, prop, value) in writes {
+            self.set(&id, prop, &value);
+        }
+    }
+
+    /// Where `time` falls in an animation, and whether it is still running.
+    fn position_in(animation: &blockloom_core::ui::UiAnimation, time: f32) -> (f32, bool) {
+        if animation.looping {
+            (time % animation.duration, true)
+        } else if time >= animation.duration {
+            (animation.duration, false)
+        } else {
+            (time, true)
+        }
+    }
+
+    fn sample(
+        animation: &blockloom_core::ui::UiAnimation,
+        at: f32,
+    ) -> Vec<(String, UiProp, Evaluated)> {
+        use blockloom_core::ui::UiKeyValue;
+        animation
+            .tracks
+            .iter()
+            .filter_map(|track| {
+                let value = match track.sample(at)? {
+                    UiKeyValue::Number(n) => Evaluated::Number(n),
+                    UiKeyValue::Color(c) => Evaluated::Text(c),
+                };
+                Some((track.widget.clone(), track.property, value))
+            })
+            .collect()
+    }
+
+    /// Advances every running animation by `dt` seconds and writes what its
+    /// tracks sample to, through the same `set` the blocks use.
+    pub fn step_animations(&mut self, dt: f32) {
+        let mut writes: Vec<(String, UiProp, Evaluated)> = Vec::new();
+        let animations = &self.document.animations;
+        self.playing.retain_mut(|(name, time)| {
+            let Some(animation) = animations.get(name) else {
+                return false;
+            };
+            *time += dt.max(0.);
+            let (at, running) = Self::position_in(animation, *time);
+            writes.extend(Self::sample(animation, at));
+            running
+        });
+        for (id, prop, value) in writes {
+            self.set(&id, prop, &value);
+        }
+    }
+
     pub fn show_widget(&mut self, mut widget: UiWidget) {
         widget.element.value = UiElement::initial_value(widget.element.kind, &widget.element.value);
         let id = widget.element.id.clone();
@@ -202,6 +325,8 @@ impl UiManager {
             n.scroll_target = widget.scroll_target;
             n.tab_index = widget.tab_index;
             n.transition = widget.transition.max(0.);
+            n.fx = widget.fx;
+            n.fx_dirty = true;
         }
     }
     pub fn bubble(&self, id: &str) -> Vec<String> {
@@ -366,6 +491,11 @@ impl UiManager {
                         collection_range: None,
                         collection_dirty: true,
                         expanded: false,
+                        caret: TextCaret::default(),
+                        preedit: String::new(),
+                        variant: None,
+                        fx: UiFx::default(),
+                        fx_dirty: true,
                     },
                 );
                 self.pending.push(id);
@@ -645,8 +775,50 @@ impl UiManager {
             UiProp::Height => node.style.height = Some(number(value)),
             UiProp::CornerRadius => node.style.corner_radius = Some(number(value).max(0.0)),
             UiProp::Padding => node.style.padding = Some(number(value).max(0.0)),
+            UiProp::Opacity => node.fx.opacity = number(value).clamp(0., 1.),
+            UiProp::OffsetX => node.fx.offset[0] = number(value),
+            UiProp::OffsetY => node.fx.offset[1] = number(value),
+            UiProp::Rotation => {
+                node.fx.rotation = number(value);
+                node.fx_dirty = true;
+            }
+        }
+        // A fade is inherited, so the children repaint with it.
+        if prop == UiProp::Opacity {
+            for child in self.subtree(id).into_iter().skip(1) {
+                if let Some(node) = self.nodes.get_mut(&child) {
+                    node.dirty = true;
+                }
+            }
         }
         true
+    }
+
+    /// An element's own opacity times each ancestor's.
+    pub fn opacity_of(&self, id: &str) -> f32 {
+        let mut opacity = 1.0;
+        let mut current = self.nodes.get(id);
+        for _ in 0..self.order.len() {
+            let Some(node) = current else { break };
+            opacity *= node.fx.opacity;
+            current = self.nodes.get(&node.parent);
+        }
+        opacity
+    }
+
+    /// Drawn elements whose rotation still has to reach their transform.
+    pub fn fx_pending(&self) -> Vec<(String, Entity, f32)> {
+        self.nodes
+            .iter()
+            .filter(|(_, n)| n.fx_dirty && n.entity != Entity::PLACEHOLDER)
+            .map(|(id, n)| (id.clone(), n.entity, n.fx.rotation))
+            .collect()
+    }
+
+    pub fn fx_done(&mut self, id: &str) {
+        if let Some(node) = self.nodes.get_mut(id) {
+            node.fx_dirty = false;
+        }
     }
 
     /// Records what a person just did to an input, and answers what it is
@@ -683,6 +855,24 @@ impl UiManager {
 
     /// Gives the keyboard to a text input, or takes it back. Anything that
     /// isn't one drops focus instead, so clicking away releases the keys.
+    /// Puts the caret of input `id` at a byte offset of the text it shows,
+    /// extending the selection from where it stood when `extend`. A held
+    /// composition keeps the caret where it is.
+    pub fn place_caret(&mut self, id: &str, byte: usize, extend: bool) {
+        let Some(node) = self.nodes.get_mut(id) else {
+            return;
+        };
+        if node.kind != UiKind::Input || !node.preedit.is_empty() {
+            return;
+        }
+        let text = node.value.as_text();
+        let at = blockloom_core::ui::char_at_byte(&text, byte).min(text.chars().count());
+        if node.caret.at != at || (!extend && node.caret.anchor.is_some()) {
+            node.caret.go(at, extend);
+            node.dirty = true;
+        }
+    }
+
     pub fn focus_on(&mut self, id: Option<&str>) {
         let next = match id {
             Some(id)
@@ -702,6 +892,11 @@ impl UiManager {
         // different from an idle one and nothing else would say so.
         for id in [self.focus.clone(), next.clone()].into_iter().flatten() {
             self.mark_dirty(&id);
+        }
+        // A fresh focus starts typing at the end, with no composition held.
+        if let Some(node) = next.as_ref().and_then(|id| self.nodes.get_mut(id)) {
+            node.caret = TextCaret::end_of(&node.value.as_text());
+            node.preedit.clear();
         }
         self.focus = next;
     }
@@ -1033,6 +1228,18 @@ pub fn text_of(node: &UiNode) -> String {
     }
 }
 
+/// What an element draws as its text. An input that holds the keyboard shows
+/// its composition spliced in; the caret and selection are drawn over it.
+pub fn display_text(node: &UiNode, focused: bool) -> String {
+    shown_input(node, focused).map_or_else(|| text_of(node), |shown| shown.text)
+}
+
+/// The caret, selection and composition marks of a focused input.
+pub fn shown_input(node: &UiNode, focused: bool) -> Option<blockloom_core::ui::ShownText> {
+    (focused && node.kind == UiKind::Input)
+        .then(|| node.caret.compose(&node.value.as_text(), &node.preedit))
+}
+
 pub fn layout_node(element: &UiNode, canvas: bool) -> Node {
     use blockloom_core::ui::{UiAlign, UiLength};
     let mut node = node_for(&element.spec, !element.parent.is_empty() && !canvas);
@@ -1092,6 +1299,23 @@ pub fn layout_node(element: &UiNode, canvas: bool) -> Node {
     }
     if let Some(padding) = element.style.padding {
         node.padding = UiRect::all(Val::Px(padding));
+    }
+    // The visual shift rides on the same insets layout already sets, so
+    // the anchor's own transform is left alone.
+    let [dx, dy] = element.fx.offset;
+    if dx != 0. || dy != 0. {
+        if node.position_type == PositionType::Absolute {
+            if let (Val::Px(x), Val::Px(y)) = (node.left, node.top) {
+                node.left = Val::Px(x + dx);
+                node.top = Val::Px(y + dy);
+            } else if let (Val::Px(x), Val::Px(y)) = (node.margin.left, node.margin.top) {
+                node.margin.left = Val::Px(x + dx);
+                node.margin.top = Val::Px(y + dy);
+            }
+        } else {
+            node.left = Val::Px(dx);
+            node.top = Val::Px(dy);
+        }
     }
     if !element.visible || !element.projected || !element.tab_active {
         node.display = Display::None;
@@ -1500,5 +1724,143 @@ mod tests {
         assert_eq!(text_of(manager.get("name").unwrap()), "your name");
         manager.changed("name", Evaluated::Text("Ada".to_string()));
         assert_eq!(text_of(manager.get("name").unwrap()), "Ada");
+    }
+    #[test]
+    fn a_viewport_picks_a_widgets_variant_and_gives_it_back() {
+        let document: UiDocument = serde_json::from_value(serde_json::json!({"widgets": [{
+            "element": {"id": "menu", "kind": "Panel"},
+            "layout": {"width": {"Px": 300.0}},
+            "variants": [
+                {"when": {"max_width": 600.0}, "layout": {"width": {"Percent": 100.0}}},
+                {"when": {"min_width": 1200.0}, "visible": false}
+            ]
+        }]}))
+        .unwrap();
+        let mut manager = UiManager::default();
+        manager.load(&document);
+        let width = |m: &UiManager| m.get("menu").unwrap().layout.as_ref().map(|l| l.width);
+        manager.apply_variants(400., 800.);
+        assert_eq!(
+            width(&manager),
+            Some(blockloom_core::ui::UiLength::Percent(100.))
+        );
+        manager.apply_variants(900., 800.);
+        assert_eq!(
+            width(&manager),
+            Some(blockloom_core::ui::UiLength::Px(300.))
+        );
+        assert!(manager.get("menu").unwrap().visible);
+        manager.apply_variants(1600., 800.);
+        assert!(!manager.get("menu").unwrap().visible);
+        // Leaving the variant that hid it brings it back.
+        manager.apply_variants(900., 800.);
+        assert!(manager.get("menu").unwrap().visible);
+        // Nothing changes while the same variant stays in force.
+        manager.get_mut("menu").unwrap().dirty = false;
+        manager.apply_variants(950., 800.);
+        assert!(!manager.get("menu").unwrap().dirty);
+    }
+    #[test]
+    fn a_played_animation_drives_properties_then_ends_or_loops() {
+        let document: UiDocument = serde_json::from_value(serde_json::json!({
+            "widgets": [{"element": {"id": "bar", "kind": "Panel"}}],
+            "animations": {
+                "grow": {"duration": 2.0, "tracks": [{"widget": "bar", "property": "Width",
+                    "keys": [{"time": 0.0, "value": 100.0}, {"time": 2.0, "value": 200.0}]}]},
+                "blink": {"duration": 1.0, "looping": true, "tracks": [{"widget": "bar", "property": "Height",
+                    "keys": [{"time": 0.0, "value": 0.0}, {"time": 1.0, "value": 10.0}]}]}
+            }
+        }))
+        .unwrap();
+        let mut manager = UiManager::default();
+        manager.load(&document);
+        manager.play_animation("missing");
+        assert!(!manager.animating());
+        manager.play_animation("grow");
+        manager.step_animations(1.0);
+        assert_eq!(manager.get("bar").unwrap().style.width, Some(150.));
+        manager.step_animations(5.0);
+        assert_eq!(manager.get("bar").unwrap().style.width, Some(200.));
+        assert!(!manager.animating());
+        manager.play_animation("blink");
+        manager.step_animations(1.25);
+        assert_eq!(manager.get("bar").unwrap().style.height, Some(2.5));
+        assert!(manager.animating());
+        manager.stop_animation("blink");
+        assert!(!manager.animating());
+    }
+    #[test]
+    fn fx_shifts_without_touching_the_anchor_and_fades_down_the_tree() {
+        let document: UiDocument = serde_json::from_value(serde_json::json!({
+            "widgets": [
+                {"element": {"id": "hud", "kind": "Panel", "anchor": "TopRight", "offset": [-20, 15]},
+                 "fx": {"opacity": 0.5, "offset": [4, 6], "rotation": 30}},
+                {"element": {"id": "row", "kind": "Label", "parent": "hud"}},
+                {"element": {"id": "free", "kind": "Panel", "offset": [10, 10]},
+                 "layout": {"absolute": true}, "fx": {"offset": [1, 2]}}
+            ],
+            "animations": {
+                "fade": {"duration": 1.0, "tracks": [{"widget": "hud", "property": "Opacity",
+                    "keys": [{"time": 0.0, "value": 1.0}, {"time": 1.0, "value": 0.0}]},
+                    {"widget": "hud", "property": "Rotation",
+                    "keys": [{"time": 0.0, "value": 0.0}, {"time": 1.0, "value": 90.0}]}]}
+            }
+        }))
+        .unwrap();
+        let mut manager = UiManager::default();
+        manager.load(&document);
+        // An anchored element moves through its margin, so the self shift stays.
+        let hud = layout_node(manager.get("hud").unwrap(), false);
+        assert_eq!(hud.left, Val::Percent(100.));
+        assert_eq!(hud.margin.left, Val::Px(-16.));
+        assert_eq!(hud.margin.top, Val::Px(21.));
+        // An absolute one through its insets; a flow child gets relative ones.
+        let free = layout_node(manager.get("free").unwrap(), false);
+        assert_eq!((free.left, free.top), (Val::Px(11.), Val::Px(12.)));
+        let row = layout_node(manager.get("row").unwrap(), false);
+        assert_eq!((row.left, row.top), (Val::Auto, Val::Auto));
+        // Opacity multiplies down the tree.
+        assert_eq!(manager.opacity_of("row"), 0.5);
+        manager.play_animation("fade");
+        manager.step_animations(0.75);
+        assert_eq!(manager.opacity_of("row"), 0.25);
+        assert_eq!(manager.get("hud").unwrap().fx.rotation, 67.5);
+        // A fade repaints the children, and rotation waits for a drawn entity.
+        manager.get_mut("row").unwrap().dirty = false;
+        manager.set("hud", UiProp::Opacity, &Evaluated::Number(0.25));
+        assert!(manager.get("row").unwrap().dirty);
+        assert!(manager.fx_pending().is_empty());
+        drawn(&mut manager);
+        assert!(
+            manager
+                .fx_pending()
+                .iter()
+                .any(|(id, _, deg)| id == "hud" && *deg == 67.5)
+        );
+        manager.fx_done("hud");
+        assert!(manager.fx_pending().iter().all(|(id, ..)| id != "hud"));
+    }
+
+    #[test]
+    fn a_click_puts_the_caret_on_a_character_and_a_composition_holds_it() {
+        let mut manager = UiManager::default();
+        manager.show(UiElement {
+            id: "name".into(),
+            kind: UiKind::Input,
+            value: Evaluated::Text("héllo".into()),
+            ..Default::default()
+        });
+        drawn(&mut manager);
+        manager.focus_on(Some("name"));
+        // Byte 3 is the start of the first l; a drag then extends from there.
+        manager.place_caret("name", 3, false);
+        assert_eq!(manager.get("name").unwrap().caret.at, 2);
+        manager.place_caret("name", 6, true);
+        assert_eq!(manager.get("name").unwrap().caret.selection(), Some((2, 5)));
+        manager.place_caret("name", 0, false);
+        assert_eq!(manager.get("name").unwrap().caret.selection(), None);
+        manager.get_mut("name").unwrap().preedit = "ni".into();
+        manager.place_caret("name", 6, false);
+        assert_eq!(manager.get("name").unwrap().caret.at, 0);
     }
 }

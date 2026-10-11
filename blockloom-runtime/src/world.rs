@@ -18,6 +18,7 @@ use crate::engine::{
     PendingEffects, PhysicsPose, PrevPose, TweeningColor, TweeningRotation, TweeningScale,
 };
 use crate::{bridge, dim2, dim3};
+use bevy::ecs::message::MessageCursor;
 use bevy::input::ButtonState;
 use bevy::input::gamepad::{
     Gamepad, GamepadAxis, GamepadButton, GamepadRumbleIntensity, GamepadRumbleRequest,
@@ -28,9 +29,7 @@ use bevy::input::touch::Touches;
 use bevy::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::CursorGrabMode;
-#[cfg(target_os = "android")]
-use bevy::window::Ime;
-use bevy::window::{CursorOptions, PrimaryWindow, WindowFocused};
+use bevy::window::{CursorOptions, Ime, PrimaryWindow, WindowFocused};
 use blockloom_core::input::{ActionSense, LiveInput, normalize_pad_axis, normalize_pad_button};
 use blockloom_core::nav;
 use blockloom_core::project::Actor;
@@ -2269,8 +2268,10 @@ pub fn back_button(
 }
 
 /// Types into whichever text input holds the keyboard. Escape lets go of
-/// it, Backspace rubs a character out, and every other key that means a
-/// character adds one. `changed` fires per keystroke, as the spec has it.
+/// it, Backspace and Delete rub characters out around the caret, the arrows,
+/// Home and End move it (Shift selects, Ctrl or Cmd with A selects all), and
+/// every other key that means a character adds one at the caret. `changed`
+/// fires per keystroke, as the spec has it.
 ///
 /// While an input holds the keyboard, `publish_sensors` hands the game no
 /// keys at all, so nothing else sees this typing.
@@ -2278,14 +2279,28 @@ pub fn type_into_focused_input(
     mut engine: NonSendMut<Engine>,
     mut manager: ResMut<crate::ui::UiManager>,
     mut typed: MessageReader<KeyboardInput>,
-    #[cfg(target_os = "android")] mut imes: MessageReader<Ime>,
+    // Optional so a world without a window (or a test) needs neither.
+    ime_messages: Option<Res<Messages<Ime>>>,
+    mut ime_cursor: Local<MessageCursor<Ime>>,
+    held: Option<Res<ButtonInput<KeyCode>>>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    let Some(focused) = manager.focus().map(str::to_string) else {
+    let mut imes: Vec<Ime> = ime_messages
+        .map(|m| ime_cursor.read(&m).cloned().collect())
+        .unwrap_or_default();
+    let focused = manager.focus().map(str::to_string);
+    // The window asks the platform for composition only while an input holds
+    // the keyboard, so a game's own keys never open an input method.
+    for mut window in &mut windows {
+        let wanted = focused.is_some();
+        if window.ime_enabled != wanted {
+            window.ime_enabled = wanted;
+        }
+    }
+    let Some(focused) = focused else {
         // Nothing has the keyboard, but the queue still has to be drained:
         // otherwise a burst arrives the moment an input is clicked.
         typed.clear();
-        #[cfg(target_os = "android")]
-        imes.clear();
         return;
     };
     if !engine.running {
@@ -2293,23 +2308,23 @@ pub fn type_into_focused_input(
     }
     let Some(node) = manager.get(&focused) else {
         typed.clear();
-        #[cfg(target_os = "android")]
-        imes.clear();
         return;
     };
     let (allow, ceiling) = (node.allow(), node.max_length());
     let mut text = node.value.as_text();
     let before = text.clone();
+    let mut caret = node.caret;
+    caret.clamp(&text);
+    let (caret_before, mut preedit) = (caret, node.preedit.clone());
     let mut release = false;
+    let down = |keys: [KeyCode; 2]| held.as_ref().is_some_and(|h| h.any_pressed(keys));
+    let shift = down([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let command = down([KeyCode::ControlLeft, KeyCode::ControlRight])
+        || down([KeyCode::SuperLeft, KeyCode::SuperRight]);
     // Every character goes through the input's own rules, one at a time:
     // a full field takes no more, and a numeric one takes no letters. What
     // is refused is simply not there - a rubbed-out keystroke rather than
     // an error, since a person holding a key down means no harm by it.
-    let write = |text: &mut String, ch: char| {
-        if let Some(next) = blockloom_core::ui::typed(text, ch, allow, ceiling) {
-            *text = next;
-        }
-    };
     for key in typed.read() {
         if key.state != ButtonState::Pressed {
             continue;
@@ -2320,31 +2335,68 @@ pub fn type_into_focused_input(
             // hands the keyboard back rather than typing anything.
             Key::BrowserBack => release = true,
             Key::Backspace => {
-                text.pop();
+                caret.backspace(&mut text);
             }
-            Key::Space => write(&mut text, ' '),
+            Key::Delete => {
+                caret.delete(&mut text);
+            }
+            Key::ArrowLeft => caret.step(&text, -1, shift),
+            Key::ArrowRight => caret.step(&text, 1, shift),
+            Key::Home => caret.home(shift),
+            Key::End => caret.end(&text, shift),
+            Key::Space => {
+                caret.insert(&mut text, ' ', allow, ceiling);
+            }
             Key::Enter => release = true,
+            Key::Character(written) if command => {
+                if written.eq_ignore_ascii_case("a") {
+                    caret.select_all(&text);
+                }
+            }
             Key::Character(written) => {
                 for ch in written.chars() {
-                    write(&mut text, ch);
+                    caret.insert(&mut text, ch, allow, ceiling);
                 }
             }
             _ => {}
         }
     }
-    // The soft keyboard commits whole runs instead of keys: same rules, one
-    // at a time. Only on Android, where the keyboard raises it.
-    #[cfg(target_os = "android")]
-    for ime in imes.read() {
-        if let Ime::Commit { value, .. } = ime {
-            for ch in value.chars() {
-                write(&mut text, ch);
+    // An input method commits whole runs instead of keys: same rules, one
+    // character at a time. Until it does, its composition is only shown.
+    for ime in imes.drain(..) {
+        match ime {
+            Ime::Preedit { value, cursor, .. } => {
+                preedit = if cursor.is_some() {
+                    value
+                } else {
+                    String::new()
+                };
             }
+            Ime::Commit { value, .. } => {
+                preedit.clear();
+                for ch in value.chars() {
+                    caret.insert(&mut text, ch, allow, ceiling);
+                }
+            }
+            Ime::Disabled { .. } => preedit.clear(),
+            Ime::Enabled { .. } => {}
         }
     }
-    if text != before
-        && let Some(value) = manager.changed(&focused, Evaluated::Text(text))
+    let changed = text != before;
+    let moved = caret != caret_before;
+    let shown = manager.get(&focused).map(|n| n.preedit.clone());
+    if (moved || changed || shown.as_ref() != Some(&preedit))
+        && let Some(node) = manager.get_mut(&focused)
     {
+        node.caret = caret;
+        node.preedit = preedit;
+        node.dirty = true;
+    }
+    if changed && let Some(value) = manager.changed(&focused, Evaluated::Text(text)) {
+        if let Some(node) = manager.get_mut(&focused) {
+            let settled = node.value.as_text();
+            node.caret.clamp(&settled);
+        }
         engine.fire(Event::UiChanged {
             id: focused.clone(),
             value,
@@ -2371,6 +2423,13 @@ pub fn detect_clicks(
     cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     actors: Query<(&ActorId, &Transform)>,
     laid_out: Query<(&ComputedNode, &UiGlobalTransform)>,
+    words: Query<(
+        &crate::ui::UiElementText,
+        &bevy::text::ComputedTextBlock,
+        &ComputedNode,
+        &UiGlobalTransform,
+    )>,
+    keys: Option<Res<ButtonInput<KeyCode>>>,
     preview_pointer: Option<Res<crate::preview::PreviewPointer>>,
 ) {
     if !engine.running || !buttons.just_pressed(MouseButton::Left) {
@@ -2421,6 +2480,16 @@ pub fn detect_clicks(
         } else {
             None
         });
+        // A click on a focused input puts the caret under the pointer.
+        if kind == UiKind::Input
+            && let Some((_, block, node, at)) = words.iter().find(|(owner, ..)| owner.0 == id)
+            && let Some(byte) = crate::input_caret::byte_at(block, node, at, cursor)
+        {
+            let shift = keys
+                .as_ref()
+                .is_some_and(|k| k.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]));
+            manager.place_caret(&id, byte, shift);
+        }
         // A drag on a slider and a press on a toggle are changes, not
         // clicks - though both also count as a click on the element.
         let changed = match kind {
@@ -2575,6 +2644,49 @@ fn world_takes_clicks(engine: &Engine, manager: &crate::ui::UiManager) -> bool {
 
 /// Where one interface element's box ended up on screen, from the layout
 /// Bevy computed this frame. `None` for an element nothing has drawn yet.
+/// Holding the button down on a focused input drags its selection.
+pub fn drag_input_selection(
+    engine: NonSend<Engine>,
+    mut manager: ResMut<crate::ui::UiManager>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    words: Query<(
+        &crate::ui::UiElementText,
+        &bevy::text::ComputedTextBlock,
+        &ComputedNode,
+        &UiGlobalTransform,
+    )>,
+    preview_pointer: Option<Res<crate::preview::PreviewPointer>>,
+) {
+    if !engine.running
+        || !buttons.pressed(MouseButton::Left)
+        || buttons.just_pressed(MouseButton::Left)
+    {
+        return;
+    }
+    let Some(id) = manager.focus().map(str::to_string) else {
+        return;
+    };
+    let window = windows.iter().next();
+    let Some(cursor) = preview_pointer
+        .as_ref()
+        .and_then(|pointer| {
+            pointer
+                .pos
+                .filter(|_| crate::preview::pointer_live(pointer))
+        })
+        .or_else(|| window.and_then(Window::cursor_position))
+    else {
+        return;
+    };
+    let cursor = cursor * window.map_or(1.0, Window::scale_factor);
+    if let Some((_, block, node, at)) = words.iter().find(|(owner, ..)| owner.0 == id)
+        && let Some(byte) = crate::input_caret::byte_at(block, node, at, cursor)
+    {
+        manager.place_caret(&id, byte, true);
+    }
+}
+
 pub(crate) fn screen_rect(
     laid_out: &Query<(&ComputedNode, &UiGlobalTransform)>,
     entity: Entity,
@@ -7855,6 +7967,66 @@ mod tests {
         let mut app = typing_harness(|_| {});
         type_word(&mut app, "Ada 7!");
         assert_eq!(typed_text(&app), "Ada 7!");
+    }
+
+    fn press(app: &mut App, logical_key: Key) {
+        app.world_mut()
+            .resource_mut::<Messages<KeyboardInput>>()
+            .write(KeyboardInput {
+                key_code: KeyCode::KeyA,
+                logical_key,
+                state: ButtonState::Pressed,
+                text: None,
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            });
+        app.update();
+    }
+
+    #[test]
+    fn arrows_home_delete_and_composition_edit_around_the_caret() {
+        let mut app = typing_harness(|_| {});
+        type_word(&mut app, "held");
+        press(&mut app, Key::ArrowLeft);
+        press(&mut app, Key::ArrowLeft);
+        type_word(&mut app, "x");
+        assert_eq!(typed_text(&app), "hexld");
+        press(&mut app, Key::Delete);
+        assert_eq!(typed_text(&app), "hexd");
+        press(&mut app, Key::Home);
+        press(&mut app, Key::Delete);
+        assert_eq!(typed_text(&app), "exd");
+        press(&mut app, Key::End);
+        press(&mut app, Key::Backspace);
+        assert_eq!(typed_text(&app), "ex");
+        // The caret is drawn only while the input holds the keyboard.
+        let shown = |app: &App, focused| {
+            let manager = app.world().resource::<crate::ui::UiManager>();
+            crate::ui::display_text(manager.get("name").unwrap(), focused)
+        };
+        assert_eq!(shown(&app, true), "ex");
+        assert_eq!(shown(&app, false), "ex");
+        // An input method's composition is shown at the caret, then committed.
+        app.init_resource::<Messages<Ime>>();
+        app.world_mut()
+            .resource_mut::<Messages<Ime>>()
+            .write(Ime::Preedit {
+                window: Entity::PLACEHOLDER,
+                value: "ni".into(),
+                cursor: Some((2, 2)),
+            });
+        app.update();
+        assert_eq!(shown(&app, true), "exni");
+        assert_eq!(typed_text(&app), "ex");
+        app.world_mut()
+            .resource_mut::<Messages<Ime>>()
+            .write(Ime::Commit {
+                window: Entity::PLACEHOLDER,
+                value: "你".into(),
+            });
+        app.update();
+        assert_eq!(typed_text(&app), "ex你");
+        assert_eq!(shown(&app, true), "ex你");
     }
 
     #[test]

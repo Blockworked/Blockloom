@@ -59,6 +59,16 @@ impl DesignSession {
                 }
             }
         }
+        for id in &request.hidden {
+            manager.set(
+                id,
+                blockloom_core::ui::UiProp::Visible,
+                &blockloom_core::value::Evaluated::Bool(false),
+            );
+        }
+        if let Some(preview) = &request.animation {
+            manager.sample_animation(&preview.name, preview.time);
+        }
         self.request = Some(request);
         self.last = None;
         Ok(())
@@ -172,6 +182,8 @@ mod tests {
     fn fixture(revision: u64) -> InterfaceDesign {
         InterfaceDesign {
             screen: None,
+            hidden: vec![],
+            animation: None,
             viewport: Some([960, 720]),
             revision,
             generation: 1,
@@ -258,6 +270,76 @@ mod tests {
         assert_eq!(manager.document, document);
         assert!(manager.shown(manager.get("image").unwrap()));
         assert!(manager.shown(manager.get("other").unwrap()));
+        let mut hide = session.request.clone().unwrap();
+        hide.revision = 3;
+        hide.hidden = vec!["missing".into()];
+        assert!(
+            session
+                .apply(Some(hide.clone()), &engine, &mut manager)
+                .is_err()
+        );
+        assert!(manager.shown(manager.get("image").unwrap()));
+        hide.hidden = vec!["image".into()];
+        session.apply(Some(hide), &engine, &mut manager).unwrap();
+        assert!(!manager.shown(manager.get("image").unwrap()));
+        assert!(manager.shown(manager.get("other").unwrap()));
+        assert_eq!(manager.document, document);
+    }
+
+    #[test]
+    fn design_previews_an_animation_frozen_at_a_time() {
+        use blockloom_core::ui::{UiAnimation, UiEase, UiKey, UiKeyValue, UiProp, UiTrack};
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let engine = Engine::new(receiver, Mode::TwoD);
+        let mut manager = UiManager::default();
+        let mut session = DesignSession::default();
+        let mut design = fixture(1);
+        let key = |time, value| UiKey {
+            time,
+            value: UiKeyValue::Number(value),
+            ease: UiEase::Linear,
+        };
+        design.document.animations.insert(
+            "fade".into(),
+            UiAnimation {
+                duration: 2.,
+                looping: false,
+                tracks: vec![UiTrack {
+                    widget: "image".into(),
+                    property: UiProp::Opacity,
+                    keys: vec![key(0., 1.), key(2., 0.)],
+                }],
+            },
+        );
+        design.animation = Some(blockloom_protocol::InterfaceAnimationPreview {
+            name: "fade".into(),
+            time: 0.5,
+        });
+        session
+            .apply(Some(design.clone()), &engine, &mut manager)
+            .unwrap();
+        assert_eq!(manager.get("image").unwrap().fx.opacity, 0.75);
+        let saved = design.document.clone();
+        assert_eq!(manager.document, saved);
+        // Past the end it holds the last key; an unknown name or a bad time refuses.
+        design.revision = 2;
+        design.animation.as_mut().unwrap().time = 9.;
+        session
+            .apply(Some(design.clone()), &engine, &mut manager)
+            .unwrap();
+        assert_eq!(manager.get("image").unwrap().fx.opacity, 0.);
+        for bad in [("missing", 1.), ("fade", -1.), ("fade", f32::NAN)] {
+            design.revision += 1;
+            design.animation = Some(blockloom_protocol::InterfaceAnimationPreview {
+                name: bad.0.into(),
+                time: bad.1,
+            });
+            assert!(
+                session
+                    .apply(Some(design.clone()), &engine, &mut manager)
+                    .is_err()
+            );
+        }
     }
 
     #[test]

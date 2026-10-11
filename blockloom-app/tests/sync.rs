@@ -492,6 +492,20 @@ fn interface_preview_never_saves_a_draft_and_cancel_uses_the_same_runtime() {
     );
     assert_eq!(std::fs::read(dir.join("project.blockloom")).unwrap(), saved);
     assert_eq!(blockloom_core::sync::read_revision(&dir), revision);
+    // Committing while a session is open saves once without reloading the world.
+    let token = backend
+        .dispatch("begin_interface_edit", json!({"revision": revision}))
+        .unwrap();
+    backend
+        .dispatch(
+            "update_interface_edit",
+            json!({"token": token, "edit": {"kind": "Create", "widget": {"element": {"id": "fresh"}}}}),
+        )
+        .unwrap();
+    backend
+        .dispatch("commit_interface_edit", json!({"token": token}))
+        .unwrap();
+    assert_eq!(blockloom_core::sync::read_revision(&dir), revision + 1);
     backend.dispatch("preview_interface", json!({})).unwrap();
     let receiver = host.0.lock().unwrap().take().unwrap();
     let messages: Vec<_> = receiver.try_iter().collect();
@@ -684,6 +698,17 @@ fn interface_property_and_parent_transactions_round_trip_and_undo() {
         json!({"kind": "Reparent", "id": "child", "parent": "", "placement": {"mode": "Free", "offset": [40,60], "size": [80,30]}}),
         json!({"kind": "SetProperty", "id": "child", "property": {"path": "layout", "value": null}}),
         json!({"kind": "Reorder", "id": "canvas", "index": 1}),
+        json!({"kind": "Create", "widget": {"element": {"id": "fresh", "parent": "canvas"}}}),
+        json!({"kind": "Duplicate", "id": "canvas", "new_id": "canvas2"}),
+        json!({"kind": "SavePrefab", "name": "pad", "root": "canvas2", "update_instances": true}),
+        json!({"kind": "InstantiatePrefab", "name": "pad", "prefix": "p.", "parent": ""}),
+        json!({"kind": "DetachInstance", "id": "p.canvas2"}),
+        json!({"kind": "DeletePrefab", "name": "pad"}),
+        json!({"kind": "Delete", "id": "canvas"}),
+        json!({"kind": "Batch", "edits": [
+            {"kind": "SetProperty", "id": "child", "property": {"path": "element.content", "value": "b"}},
+            {"kind": "Create", "widget": {"element": {"id": "x"}}}
+        ]}),
     ] {
         let before =
             backend.dispatch("get_state", json!({})).unwrap()["project"]["world"]["interface"]

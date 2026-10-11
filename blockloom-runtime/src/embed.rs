@@ -1869,6 +1869,8 @@ mod tests {
                 vec![EditorMessage::InterfaceDesign {
                     design: Some(blockloom_protocol::InterfaceDesign {
                         screen: None,
+                        hidden: vec![],
+                        animation: None,
                         revision: 1,
                         generation: 1,
                         viewport: None,
@@ -1894,6 +1896,95 @@ mod tests {
                     .collect::<Vec<_>>()
             );
             assert!(reports.iter().any(|r| matches!(r, RuntimeMessage::InterfaceLayout(l) if l.viewport == [set.width, set.height] && l.widgets[0].id == "panel")));
+        }
+    }
+
+    #[test]
+    #[ignore = "needs Vulkan and dma-buf export"]
+    fn interface_design_geometry_follows_viewport_dpi_and_safe_area() {
+        // (scale mode, safe area, viewport in physical pixels, DPI scale)
+        let cases: [(&str, [f32; 4], [u32; 2], f32); 6] = [
+            ("ConstantPixel", [0.; 4], [960, 720], 1.0),
+            ("ConstantPixel", [0.; 4], [1280, 800], 2.0),
+            ("ConstantPixel", [40., 20., 0., 60.], [960, 720], 1.0),
+            ("ScaleWithSize", [0.; 4], [1920, 1440], 1.0),
+            ("ScaleWithSize", [48., 0., 48., 0.], [1600, 720], 1.0),
+            ("ScaleWithSize", [0., 30., 0., 30.], [1440, 1080], 1.5),
+        ];
+        for (mode, safe, viewport, dpi) in cases {
+            let document: blockloom_core::ui::UiDocument =
+                serde_json::from_value(serde_json::json!({
+                    "scale": mode, "safe_area": safe, "reference_size": [960, 720],
+                    "widgets": [{
+                        "element": {"id": "panel", "kind": "Panel", "anchor": "Center", "size": [200, 160]},
+                        "style": {"normal": {"background": "#ff0000"}}
+                    }]
+                }))
+                .unwrap();
+            let project = blockloom_core::project::Project::starter(
+                "Interface",
+                blockloom_core::scene::Mode::TwoD,
+            );
+            let (set, _, reports) = run_world_reporting(
+                project,
+                |exchange| exchange.resize(viewport[0], viewport[1], dpi),
+                SceneView {
+                    enabled: false,
+                    ..Default::default()
+                },
+                40,
+                |_| false,
+                vec![EditorMessage::InterfaceDesign {
+                    design: Some(blockloom_protocol::InterfaceDesign {
+                        screen: None,
+                        hidden: vec![],
+                        animation: None,
+                        revision: 1,
+                        generation: 1,
+                        viewport: None,
+                        document,
+                    }),
+                }],
+            );
+            let set = set.expect("interface frame");
+            let layout = reports
+                .iter()
+                .rev()
+                .find_map(|r| match r {
+                    RuntimeMessage::InterfaceLayout(l) => Some(l.clone()),
+                    _ => None,
+                })
+                .expect("a layout report");
+            let panel = &layout.widgets[0];
+            // Logical room inside the safe area, then the canvas scale.
+            let logical = [set.width as f32 / dpi, set.height as f32 / dpi];
+            let room = [
+                logical[0] - safe[0] - safe[2],
+                logical[1] - safe[1] - safe[3],
+            ];
+            let scale = if mode == "ScaleWithSize" {
+                (room[0] / 960.).min(room[1] / 720.)
+            } else {
+                1.0
+            };
+            let width = panel.size[0] * panel.transform[0].abs();
+            let height = panel.size[1] * panel.transform[3].abs();
+            let centre = [panel.transform[4], panel.transform[5]];
+            let want_centre = [
+                (safe[0] + room[0] / 2.) * dpi,
+                (safe[1] + room[1] / 2.) * dpi,
+            ];
+            let near = |a: f32, b: f32| (a - b).abs() < 1.5;
+            assert!(
+                near(width, 200. * scale * dpi)
+                    && near(height, 160. * scale * dpi)
+                    && near(centre[0], want_centre[0])
+                    && near(centre[1], want_centre[1]),
+                "{mode} {safe:?} {viewport:?} x{dpi}: got size {width}x{height} at {centre:?}, \
+                 want {}x{} at {want_centre:?}",
+                200. * scale * dpi,
+                160. * scale * dpi
+            );
         }
     }
 

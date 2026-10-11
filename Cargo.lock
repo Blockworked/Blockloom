@@ -2718,6 +2718,7 @@ dependencies = [
  "libc",
  "libloading 0.9.0",
  "naga",
+ "parley",
  "polyanya",
  "serde",
  "serde_json",

@@ -529,6 +529,7 @@ pub fn canvas(
     manager.canvas_scale = scale * ui_scale.0.max(0.01);
     manager.canvas_origin = Vec2::new(left, top) * ui_scale.0.max(0.01);
     let logical = available / scale;
+    manager.apply_variants(logical.x, logical.y);
     for (mut node, mut transform) in &mut roots {
         let wanted = Node {
             position_type: PositionType::Absolute,
@@ -558,6 +559,25 @@ pub struct UiTween {
     pub hide: bool,
     pub show: bool,
 }
+/// Plays and steps the document's interface animations on the wall clock, so
+/// a paused world still animates its menus.
+pub fn play_animations(
+    mut engine: NonSendMut<crate::engine::Engine>,
+    mut manager: ResMut<UiManager>,
+    time: Res<Time<Real>>,
+) {
+    for (name, play) in engine.ui_animations.drain(..) {
+        if play {
+            manager.play_animation(&name);
+        } else {
+            manager.stop_animation(&name);
+        }
+    }
+    if manager.animating() {
+        manager.step_animations(time.delta_secs());
+    }
+}
+
 pub fn animate(
     mut commands: Commands,
     time: Res<Time>,

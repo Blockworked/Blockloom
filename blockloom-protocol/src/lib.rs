@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 35;
+pub const PROTOCOL_VERSION: u32 = 37;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -93,9 +93,22 @@ pub struct InterfaceDesign {
     /// Preview only this top-level widget tree without editing the document.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screen: Option<String>,
+    /// Widgets hidden in the preview only (editor hide); their subtrees go with them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden: Vec<String>,
+    /// Show a document animation frozen at one time, without playing it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animation: Option<InterfaceAnimationPreview>,
     pub revision: u64,
     pub generation: u64,
     pub document: blockloom_core::ui::UiDocument,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InterfaceAnimationPreview {
+    pub name: String,
+    /// Seconds into the animation; held at the end past its duration.
+    pub time: f32,
 }
 
 impl InterfaceDesign {
@@ -107,6 +120,14 @@ impl InterfaceDesign {
         {
             return Err("Interface viewport dimensions must be between 16 and 8192 pixels".into());
         }
+        if let Some(preview) = &self.animation {
+            if !preview.time.is_finite() || preview.time < 0. {
+                return Err("Animation preview time must be finite and not negative".into());
+            }
+            if !self.document.animations.contains_key(&preview.name) {
+                return Err(format!("Unknown animation: {}", preview.name));
+            }
+        }
         if let Some(screen) = &self.screen
             && !self
                 .document
@@ -115,6 +136,15 @@ impl InterfaceDesign {
                 .any(|widget| widget.element.id == *screen && widget.element.parent.is_empty())
         {
             return Err("Interface screen must name a top-level widget".into());
+        }
+        if let Some(missing) = self.hidden.iter().find(|id| {
+            !self
+                .document
+                .widgets
+                .iter()
+                .any(|widget| widget.element.id == **id)
+        }) {
+            return Err(format!("Interface hides an unknown widget: {missing}"));
         }
         Ok(())
     }
@@ -770,6 +800,8 @@ mod tests {
         let message = EditorMessage::InterfaceDesign {
             design: Some(InterfaceDesign {
                 screen: Some("screen".into()),
+                hidden: vec![],
+                animation: None,
                 viewport: Some([960, 720]),
                 revision: 4,
                 generation: 2,
@@ -783,6 +815,10 @@ mod tests {
         let legacy: InterfaceDesign =
             serde_json::from_str(r#"{"revision":1,"generation":1,"document":{}}"#).unwrap();
         assert_eq!(legacy.screen, None);
+        assert!(legacy.hidden.is_empty());
+        let mut hidden = legacy.clone();
+        hidden.hidden = vec!["missing".into()];
+        assert!(hidden.validate().is_err());
         assert!(legacy.validate().is_ok());
         let message = RuntimeMessage::InterfaceLayout(InterfaceLayout {
             viewport: [960, 720],

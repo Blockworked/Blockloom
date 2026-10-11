@@ -553,6 +553,7 @@ impl Scene {
     }
 
     fn normalize_scene(&mut self) {
+        self.world.interface.migrate();
         self.migrate_camera_follow();
         self.prune_parents();
         let known: std::collections::HashSet<String> =

@@ -24,13 +24,27 @@ TestCase {
         property string previewLayout: ""
         function invoke(command, args, done, failed) {
             test.calls.push({command: command, args: args});
-            if (command === "begin_interface_edit") {
+            if (command === "interface_properties") {
+                if (done) done([{path: "element.modal", kinds: ["Panel"]}, {path: "items", kinds: ["List", "Select"]}]);
+            } else if (command === "begin_interface_edit") {
                 test.draft = JSON.parse(JSON.stringify(appState.project.world.interface));
                 if (test.deferBegin) test.pendingBegin = done;
                 else if (done) done("draft-token");
             } else if (command === "update_interface_edit") {
                 const next = JSON.parse(JSON.stringify(test.draft));
                 const w = next.widgets.find(w => w.element.id === args.edit.id);
+                const structural = edit => {
+                    const target = next.widgets.find(item => item.element.id === edit.id);
+                    if (edit.kind === "Create") next.widgets.push(edit.widget);
+                    if (edit.kind === "Delete") next.widgets = next.widgets.filter(item => item.element.id !== edit.id);
+                    if (edit.kind === "Duplicate") {
+                        const copy = JSON.parse(JSON.stringify(target));
+                        copy.element.id = edit.new_id;
+                        if (edit.offset) copy.element.offset = edit.offset;
+                        next.widgets.push(copy);
+                    }
+                };
+                if (args.edit.kind === "Batch") args.edit.edits.forEach(structural); else structural(args.edit);
                 if (args.edit.kind === "Move" || args.edit.kind === "Resize") w.element.offset = args.edit.offset;
                 if (args.edit.kind === "Resize") w.element.size = args.edit.size;
                 if (args.edit.kind === "SetProperty") {
@@ -316,6 +330,270 @@ TestCase {
         keyRelease(Qt.Key_Right);
         compare(calls.filter(c=>c.command === "commit_interface_edit").length,1);
     }
+    function test_create_duplicate_and_delete_use_typed_transactions_and_select_the_result() {
+        panel.add("Button", 20, 20);
+        let edit = calls.find(c=>c.command === "update_interface_edit").args.edit;
+        compare(edit.kind, "Create");
+        compare(edit.widget.element.id, "button1");
+        compare(panel.selectedId, "button1");
+        compare(panel.document.widgets.length, 3);
+        panel.selectedId = "back";
+        panel.duplicateSelected();
+        edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit, {kind:"Duplicate", id:"back", new_id:"back-copy", offset:[216,216]});
+        compare(panel.selectedId, "back-copy");
+        panel.removeSelected();
+        compare(panel.selectedId, "");
+        compare(panel.document.widgets.map(w=>w.element.id), ["back","front","button1"]);
+        compare(calls.filter(c=>c.command === "commit_interface_edit").length, 3);
+        verify(!calls.some(c=>c.command === "set_interface"));
+    }
+    function test_hierarchy_is_a_searchable_collapsible_tree() {
+        const d = {widgets:[{element:{id:"menu"}}, {element:{id:"title",parent:"menu",content:"Hello"}}, {element:{id:"play",parent:"menu"}}, {element:{id:"hud"}}]};
+        panel.document = d;
+        compare(panel.treeRows.map(r=>r.id+":"+r.depth), ["menu:0","title:1","play:1","hud:0"]);
+        panel.toggleCollapsed("menu");
+        compare(panel.treeRows.map(r=>r.id), ["menu","hud"]);
+        panel.search = "hello";
+        compare(panel.treeRows.map(r=>r.id), ["menu","title"]);
+        panel.search = "";
+        panel.toggleCollapsed("menu");
+        compare(panel.treeRows.length, 4);
+    }
+    function test_editor_hide_is_sent_with_the_preview_and_never_saved() {
+        calls = [];
+        panel.toggleHidden("front");
+        tryVerify(() => calls.some(c => c.command === "preview_interface" && !!c.args.design));
+        const design = calls.filter(c => c.command === "preview_interface").pop().args.design;
+        compare(design.hidden, ["front"]);
+        compare(design.document.widgets.map(w => w.element.id), ["back", "front"]);
+        panel.toggleHidden("front");
+        compare(panel.hiddenList, []);
+        verify(!calls.some(c => c.command === "set_interface"));
+    }
+    function test_multiselection_deletes_and_duplicates_as_one_batch() {
+        panel.selectOnly("back");
+        panel.toggleSelected("front");
+        compare(panel.selectionIds, ["back", "front"]);
+        panel.duplicateSelected();
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.kind, "Batch");
+        compare(edit.edits.map(e=>e.id+">"+e.new_id), ["back>back-copy", "front>front-copy"]);
+        compare(calls.filter(c=>c.command === "commit_interface_edit").length, 1);
+        panel.removeSelected();
+        edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.kind, "Batch");
+        verify(edit.edits.every(e=>e.kind === "Delete"));
+        panel.toggleSelected("front");
+        panel.toggleSelected("front");
+        compare(panel.selectionIds, panel.selectedId ? [panel.selectedId] : []);
+    }
+    function test_marquee_selects_unlocked_widgets_whose_centers_fall_inside() {
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision, panel.generation)));
+        panel.toggleLock("front");
+        panel.finishMarquee({x0: 0, y0: 0, x1: 960, y1: 720});
+        compare(panel.selectionIds, ["back"]);
+        panel.toggleLock("front");
+        panel.finishMarquee({x0: 0, y0: 0, x1: 960, y1: 720});
+        compare(panel.selectionIds.length, 2);
+        panel.finishMarquee({x0: 0, y0: 0, x1: 10, y1: 10});
+        compare(panel.selectionIds, []);
+    }
+    function test_align_and_distribute_send_one_batch_of_moves() {
+        const d = {widgets: [
+            {element: {id: "a", kind: "Panel", offset: [0,0], size: [100,50], anchor: "TopLeft"}},
+            {element: {id: "b", kind: "Panel", offset: [200,30], size: [100,50], anchor: "TopLeft"}},
+            {element: {id: "c", kind: "Panel", offset: [300,60], size: [100,50], anchor: "TopLeft"}}]};
+        panel.document = d; backend.appState.project.world.interface = d;
+        const box = (id, x, y) => ({id: id, size: [100,50], transform: [1,0,0,1,x+50,y+25], visible: true, paint_order: 1, clips: []});
+        panel.receiveLayout(JSON.stringify({revision: panel.revision, generation: panel.generation, viewport: [960,720], widgets: [box("a",0,0), box("b",200,30), box("c",300,60)]}));
+        panel.selectOnly("a"); panel.toggleSelected("b"); panel.toggleSelected("c");
+        verify(panel.arrange("top"));
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.kind, "Batch");
+        compare(edit.edits.map(e=>e.id+":"+e.offset[1]), ["b:0", "c:0"]);
+        compare(calls.filter(c=>c.command === "commit_interface_edit").length, 1);
+        panel.receiveLayout(JSON.stringify({revision: panel.revision, generation: panel.generation, viewport: [960,720], widgets: [box("a",0,0), box("b",200,0), box("c",300,0)]}));
+        verify(panel.arrange("hdist"));
+        edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.kind, "Move");
+        compare(edit.id, "b"); compare(edit.offset[0], 150);
+    }
+    function test_content_style_and_document_options_use_typed_transactions() {
+        panel.selectedId = "front";
+        panel.extra("tooltip", "Hi");
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit, {kind:"SetProperty", id:"front", property:{path:"tooltip", value:"Hi"}});
+        panel.extra("bindings", []);
+        panel.structuralEdit({kind:"SetDocument", theme:"Light"}, panel.selectedId, []);
+        edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.kind, "SetDocument");
+        compare(panel.selectedId, "front");
+        verify(!calls.some(c=>c.command === "set_interface"));
+    }
+    function test_style_classes_are_saved_and_deleted_as_one_batch() {
+        const d = {styles: {}, widgets: [{element: {id: "a"}, style: {normal: {background: "#102030"}}}, {element: {id: "b"}, class: "title"}]};
+        panel.document = d; backend.appState.project.world.interface = d;
+        panel.selectedId = "a";
+        panel.saveClass("title");
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.kind, "Batch");
+        compare(edit.edits[0], {kind:"SetClass", name:"title", styles:{normal:{background:"#102030"}}});
+        compare(edit.edits[1].property, {path:"class", value:"title"});
+        panel.deleteClass("title");
+        edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.edits.map(e=>e.kind), ["SetClass", "SetProperty"]);
+        compare(edit.edits[1].id, "b");
+        verify(!calls.some(c=>c.command === "set_interface"));
+    }
+    function test_safe_area_and_reference_overlays_are_editor_only_toggles() {
+        verify(!panel.showSafeArea && !panel.showReference);
+        mouseClick(findChild(panel, "interfaceSafeArea"));
+        verify(panel.showSafeArea);
+        panel.showReference = true;
+        verify(!calls.some(c => c.command === "set_interface" || c.command === "begin_interface_edit"));
+    }
+    function test_events_and_bindings_edit_through_typed_properties() {
+        panel.selectedId = "front";
+        panel.addAction({on: "Click", run: {Broadcast: {message: "start"}}});
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit, {kind:"SetProperty", id:"front", property:{path:"actions", value:[{on:"Click", run:{Broadcast:{message:"start"}}}]}});
+        compare(panel.describeAction({on:"Change", run:{SetVariable:{actor:"", name:"vol", value:"$value"}}}), "Change: set vol to $value");
+        compare(panel.describeBinding({property:"Text", source:{Variable:{actor:"", name:"score"}}, two_way:false}), "Text <- score");
+        panel.removeBinding(0);
+        verify(!calls.some(c=>c.command === "set_interface"));
+    }
+    function test_exposed_properties_and_slots_read_and_write_through_typed_edits() {
+        const d = {widgets:[{element:{id:"a.card",content:"Card"}, instance_of:"card"}, {element:{id:"a.title",parent:"a.card",content:"Hello"}}],
+            prefabs:{card:[{element:{id:"card"}}, {element:{id:"title",parent:"card"}}]},
+            exports:{card:[{name:"title",widget:"title",path:"element.content",slot:false},{name:"body",widget:"card",path:"",slot:true}]}};
+        panel.document = d; backend.appState.project.world.interface = d; panel.selectedId = "a.card";
+        compare(panel.exposedRows().map(r => r.name + ":" + r.slot + ":" + r.value), ["title:false:Hello", "body:true:"]);
+        panel.setExposed("title", "Bye");
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit, {kind:"SetExposed", instance:"a.card", name:"title", value:"Bye"});
+        verify(!calls.some(c=>c.command === "set_interface"));
+    }
+    function test_zoom_keeps_the_point_under_the_pointer_and_fit_restores_the_view() {
+        panel.fitView();
+        const fit = panel.zoom;
+        const before = panel.stageToCanvas(0, 200);
+        panel.zoomAt(200, 150, 2);
+        fuzzyCompare(panel.zoom, Math.min(8, fit * 2), 0.0001);
+        fuzzyCompare(panel.stageToCanvas(0, 200), before, 0.001);
+        panel.actualSize();
+        compare(panel.zoom, 1);
+        compare(panel.panX, 0);
+        panel.fitView();
+        fuzzyCompare(panel.zoom, fit, 0.0001);
+        verify(!calls.some(c => c.command === "set_interface" || c.command === "begin_interface_edit"));
+    }
+    function test_variants_edit_through_typed_properties() {
+        panel.selectedId = "front";
+        panel.addVariant({min_width: null, max_width: 600, min_height: null, max_height: null}, false, false);
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.property.path, "variants");
+        compare(edit.property.value[0].visible, false);
+        compare(panel.describeVariant({when:{max_width:600}, visible:false}), "w <= 600: hidden");
+        compare(panel.describeVariant({when:{}, layout:{}}), "any size: own layout");
+        verify(!calls.some(c=>c.command === "set_interface"));
+    }
+    function test_animations_edit_whole_through_set_animation() {
+        panel.selectedId = "front";
+        const d = panel.copy(panel.document);
+        d.animations = {pulse: {duration: 1, looping: false, tracks: []}};
+        panel.document = d; backend.appState.project.world.interface = d;
+        compare(panel.animationNames(), ["pulse"]);
+        panel.addKey("pulse", "front", "Width", "0.5", "120", "EaseIn");
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.kind, "SetAnimation");
+        compare(edit.name, "pulse");
+        compare(edit.animation.tracks, [{widget:"front", property:"Width", keys:[{time:0.5, value:120, ease:"EaseIn"}]}]);
+        // A color track keeps its text, and a key past the end stretches the animation.
+        panel.cancelEdit();
+        panel.addKey("pulse", "front", "Background", "2", "#ff000080", "Linear");
+        edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.animation.duration, 2);
+        compare(edit.animation.tracks[0].keys[0].value, "#ff000080");
+        compare(panel.describeTrack({widget:"front", property:"Width", keys:[{}, {}]}), "front Width (2 keys)");
+        compare(panel.describeAction({on:"Click", run:{PlayAnimation:{name:"pulse"}}}), "Click: play pulse");
+        verify(!calls.some(c=>c.command === "set_interface"));
+    }
+    function test_animation_preview_scrubs_in_the_runtime_and_pauses_editing() {
+        panel.selectedId = "front";
+        const d = panel.copy(panel.document);
+        d.animations = {fade: {duration: 2, looping: false, tracks: []}};
+        panel.document = d; backend.appState.project.world.interface = d;
+        verify(panel.editable(panel.widget));
+        compare(panel.animatableProps.indexOf("Opacity") >= 0, true);
+        compare(panel.animatableProps.indexOf("Rotation") >= 0, true);
+        panel.previewAnimation("fade", 0.5);
+        verify(panel.animPreviewing);
+        verify(!panel.editable(panel.widget));
+        panel.requestPreview();
+        let design = calls.filter(c => c.command === "preview_interface").pop().args.design;
+        compare(design.animation, {name: "fade", time: 0.5});
+        panel.previewAnimation("fade", 1.5);
+        panel.requestPreview();
+        design = calls.filter(c => c.command === "preview_interface").pop().args.design;
+        compare(design.animation.time, 1.5);
+        panel.stopAnimationPreview();
+        panel.requestPreview();
+        design = calls.filter(c => c.command === "preview_interface").pop().args.design;
+        compare(design.animation, null);
+        verify(panel.editable(panel.widget));
+        verify(!calls.some(c => c.command === "set_interface" || c.command === "begin_interface_edit"));
+    }
+    function test_generated_property_form_formats_and_parses_by_type() {
+        compare(panel.formatProperty("range", [0, 100]), "0, 100");
+        compare(panel.parseProperty("range", "5, 10"), [5, 10]);
+        compare(panel.formatProperty("lines", ["a", "b"]), "a\nb");
+        compare(panel.parseProperty("lines", "a\nb"), ["a", "b"]);
+        compare(panel.parseProperty("lines", ""), []);
+        compare(panel.parseProperty("int", " 3 "), 3);
+        compare(panel.parseProperty("int", ""), null);
+        compare(panel.formatProperty("layout", null), "null");
+        compare(panel.parseProperty("layout", "null"), null);
+        compare(panel.parseProperty("actions", '[{"on":"Click"}]'), [{on: "Click"}]);
+        let failed = false;
+        try { panel.parseProperty("range", "1"); } catch (e) { failed = true; }
+        verify(failed);
+        panel.selectedId = "front";
+        compare(panel.propertyValue("element.id"), "front");
+        panel.propertyEdit("element.content", "Hi");
+        const edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.property, {path: "element.content", value: "Hi"});
+    }
+    function test_guides_are_editor_only_and_snap_targets_follow_the_frame() {
+        compare(panel.guides.length, 0);
+        const a = panel.addGuide(0, 100);
+        const b = panel.addGuide(1, 40);
+        compare(panel.guides.length, 2);
+        panel.moveGuide(a, 120);
+        compare(panel.guides[a].pos, 120);
+        // Frame: scale 2 at an origin of (10, 20); guides land in frame units.
+        compare(panel.guideTargets([2, 0, 0, 2, 10, 20], 0), [55]);
+        compare(panel.guideTargets([2, 0, 0, 2, 10, 20], 1), [10]);
+        // A rotated frame gets none.
+        compare(panel.guideTargets([0, 1, -1, 0, 0, 0], 0), []);
+        compare(panel.stageToCanvas(0, panel.canvasToStage(0, 300)), 300);
+        panel.removeGuide(b);
+        compare(panel.guides.length, 1);
+        mouseClick(findChild(panel, "interfaceRulers"));
+        verify(panel.showRulers);
+        verify(!calls.some(c => c.command === "set_interface" || c.command === "begin_interface_edit"));
+    }
+    function test_locked_widgets_are_not_picked_or_edited_but_nothing_is_saved() {
+        panel.selectedId = "back";
+        verify(panel.editable(panel.widget));
+        panel.toggleLock("back");
+        verify(!panel.editable(panel.widget));
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision, panel.generation)));
+        compare(panel.pickable.map(b=>b.id), ["front"]);
+        panel.toggleLock("back");
+        verify(panel.editable(panel.widget));
+        verify(!calls.some(c=>c.command === "set_interface" || c.command === "begin_interface_edit"));
+    }
     function test_flow_sibling_reorder_keeps_other_tree_slots() {
         const d = {widgets:[{element:{id:"root",kind:"VerticalBox"}}, {element:{id:"a",parent:"root"}}, {element:{id:"other"}}, {element:{id:"b",parent:"root"}}]};
         panel.document = d; backend.appState.project.world.interface = d; panel.selectedId = "a";
@@ -555,6 +833,40 @@ TestCase {
         compare(panel.gesture,null);
         verify(calls.some(c => c.command === "cancel_interface_edit" && c.args.token === "late-token"));
         compare(calls.filter(c => c.command === "commit_interface_edit").length,1);
+    }
+
+    function test_inspector_rows_follow_property_metadata() {
+        panel.loadPropertyKinds();
+        const next = panel.copy(panel.document);
+        next.widgets[0].element.kind = "Label";
+        panel.document = next;
+        panel.selectedId = "back";
+        verify(!panel.applies("element.modal"));
+        verify(!panel.applies("items"));
+        verify(panel.applies("tooltip"));
+        const again = panel.copy(panel.document);
+        again.widgets[0].element.kind = "Panel";
+        panel.document = again;
+        verify(panel.applies("element.modal"));
+    }
+
+    function test_components_send_prefab_edits() {
+        panel.selectedId = "back";
+        const before = test.calls.length;
+        panel.saveComponent("pad", true);
+        const sent = test.calls.slice(before).filter(c => c.command === "update_interface_edit").map(c => c.args.edit.kind);
+        verify(sent.indexOf("SavePrefab") >= 0);
+    }
+
+    function test_image_fit_encodes_serde_shapes() {
+        panel.selectedId = "back";
+        const before = test.calls.length;
+        panel.setImageFit("sliced", [1,2,3,4]);
+        panel.setImageFit("tiled");
+        const kinds = test.calls.slice(before).filter(c => c.command === "update_interface_edit");
+        verify(kinds.length >= 1);
+        const fit = kinds[0].args.edit.property.value.normal.image_fit;
+        compare(JSON.stringify(fit), JSON.stringify({Sliced: {border: [1,2,3,4]}}));
     }
 
     function test_moves_use_canvas_scale_and_parent_transform() {

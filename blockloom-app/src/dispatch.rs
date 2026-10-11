@@ -322,6 +322,7 @@ impl Backend {
                 arg(&args, "token")?,
             )?),
             "interface_layout" => to_json(commands::interface_layout(state)?),
+            "interface_properties" => to_json(commands::interface_properties()),
             "set_interface" => to_json(commands::set_interface(
                 state,
                 app,
