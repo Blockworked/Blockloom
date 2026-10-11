@@ -519,6 +519,26 @@ TestCase {
         compare(panel.describeAction({on:"Click", run:{PlayAnimation:{name:"pulse"}}}), "Click: play pulse");
         verify(!calls.some(c=>c.command === "set_interface"));
     }
+    function test_generated_property_form_formats_and_parses_by_type() {
+        compare(panel.formatProperty("range", [0, 100]), "0, 100");
+        compare(panel.parseProperty("range", "5, 10"), [5, 10]);
+        compare(panel.formatProperty("lines", ["a", "b"]), "a\nb");
+        compare(panel.parseProperty("lines", "a\nb"), ["a", "b"]);
+        compare(panel.parseProperty("lines", ""), []);
+        compare(panel.parseProperty("int", " 3 "), 3);
+        compare(panel.parseProperty("int", ""), null);
+        compare(panel.formatProperty("layout", null), "null");
+        compare(panel.parseProperty("layout", "null"), null);
+        compare(panel.parseProperty("actions", '[{"on":"Click"}]'), [{on: "Click"}]);
+        let failed = false;
+        try { panel.parseProperty("range", "1"); } catch (e) { failed = true; }
+        verify(failed);
+        panel.selectedId = "front";
+        compare(panel.propertyValue("element.id"), "front");
+        panel.propertyEdit("element.content", "Hi");
+        const edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.property, {path: "element.content", value: "Hi"});
+    }
     function test_guides_are_editor_only_and_snap_targets_follow_the_frame() {
         compare(panel.guides.length, 0);
         const a = panel.addGuide(0, 100);

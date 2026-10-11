@@ -458,6 +458,29 @@ Item {
     readonly property var widget: selected >= 0 && selected < document.widgets.length ? document.widgets[selected] : null
     // Kinds each property applies to, from the backend's metadata; empty until loaded.
     property var propertyKinds: ({})
+    // The backend's property table, in its order: every editable path with label, group and type.
+    property var propertyInfo: []
+    function propertyValue(path) {
+        let value = widget;
+        for (const step of path.split(".")) value = value === undefined || value === null ? undefined : value[step];
+        return value;
+    }
+    // Text shown for a property in the generated form, and its inverse.
+    function formatProperty(ty, value) {
+        if (value === undefined || value === null) return ty === "layout" ? "null" : "";
+        if (ty === "range") return value[0] + ", " + value[1];
+        if (ty === "lines") return value.join("\n");
+        if (ty === "layout" || ty === "style" || ty === "bindings" || ty === "actions" || ty === "variants") return JSON.stringify(value, null, 2);
+        return String(value);
+    }
+    function parseProperty(ty, text) {
+        if (ty === "range") { const p = text.split(",").map(t => Number(t.trim())); if (p.length !== 2 || p.some(isNaN)) throw "Range is two numbers, like 0, 100"; return p; }
+        if (ty === "lines") return text === "" ? [] : text.split("\n");
+        if (ty === "int") return text.trim() === "" ? null : Math.round(Number(text));
+        if (ty === "number") { const n = Number(text); if (isNaN(n)) throw "Not a number"; return n; }
+        if (ty === "layout" || ty === "style" || ty === "bindings" || ty === "actions" || ty === "variants") return JSON.parse(text);
+        return text;
+    }
     function applies(path) {
         const ks = propertyKinds[path];
         return !ks || ks.length === 0 || !widget || ks.indexOf(widget.element.kind) >= 0;
@@ -467,6 +490,7 @@ Item {
             const m = {};
             for (const p of (list || [])) m[p.path] = p.kinds || [];
             root.propertyKinds = m;
+            root.propertyInfo = list || [];
         });
     }
     readonly property var kinds: ["Panel","Label","Button","Image","Input","Slider","Toggle","List","VerticalBox","HorizontalBox","Grid","Canvas","WrapBox","SizeBox","Spacer","Progress","RadialProgress","ListView","Tabs","Select","Scrollbar","RichText","Tooltip"]
@@ -1464,15 +1488,44 @@ Item {
                         root.addVariant(when, varLayout.checked, [undefined, true, false][varVisible.currentIndex]);
                     }
                 }
-                Label { text: "Advanced properties"; font.bold: true }
+                Label { text: "All properties"; font.bold: true }
+                Label { text: "Every property of the selected widget, straight from the backend's table."; color: Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
                 Repeater {
-                    model: ["layout","style","bindings"]
+                    model: root.propertyInfo
                     delegate: ColumnLayout {
-                        required property string modelData
+                        id: field
+                        required property var modelData
+                        readonly property string ty: modelData.ty
+                        // Re-read whenever the widget changes.
+                        readonly property var current: root.widget ? root.propertyValue(modelData.path) : undefined
+                        visible: !!root.widget && root.applies(modelData.path)
                         Layout.fillWidth: true
-                        Label { text: modelData + " (JSON)" }
-                        TextArea { Layout.fillWidth: true; Layout.preferredHeight: 100; wrapMode: TextEdit.Wrap; text: root.widget ? JSON.stringify(root.widget[modelData] || (modelData === "bindings" ? [] : {}),null,2) : "";
-                            onActiveFocusChanged: if(!activeFocus && root.widget) { try { root.extra(modelData,JSON.parse(text)); } catch(e) { root.error=String(e); } } }
+                        Label { text: modelData.group + ": " + modelData.label; color: Theme.textDim }
+                        ComboBox {
+                            objectName: "interfaceField_" + modelData.path
+                            visible: field.ty === "choice"; Layout.fillWidth: true
+                            model: modelData.choices || []
+                            currentIndex: model.indexOf(field.current)
+                            onActivated: root.propertyEdit(modelData.path, currentText)
+                        }
+                        CheckBox {
+                            objectName: "interfaceField_" + modelData.path
+                            visible: field.ty === "bool"
+                            checked: !!field.current
+                            onToggled: root.propertyEdit(modelData.path, checked)
+                        }
+                        TextArea {
+                            objectName: "interfaceField_" + modelData.path
+                            visible: field.ty !== "choice" && field.ty !== "bool"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: ["layout","style","bindings","actions","variants","lines"].indexOf(field.ty) >= 0 ? 90 : implicitHeight
+                            wrapMode: TextEdit.Wrap
+                            text: root.formatProperty(field.ty, field.current)
+                            onActiveFocusChanged: if (!activeFocus && root.widget && text !== root.formatProperty(field.ty, field.current)) {
+                                try { root.propertyEdit(modelData.path, root.parseProperty(field.ty, text)); }
+                                catch (e) { root.error = String(e); }
+                            }
+                        }
                     }
                 }
                 Label { text: "Interface assets"; font.bold: true }
