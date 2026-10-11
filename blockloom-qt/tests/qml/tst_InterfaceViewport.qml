@@ -498,6 +498,27 @@ TestCase {
         compare(panel.describeVariant({when:{}, layout:{}}), "any size: own layout");
         verify(!calls.some(c=>c.command === "set_interface"));
     }
+    function test_animations_edit_whole_through_set_animation() {
+        panel.selectedId = "front";
+        const d = panel.copy(panel.document);
+        d.animations = {pulse: {duration: 1, looping: false, tracks: []}};
+        panel.document = d; backend.appState.project.world.interface = d;
+        compare(panel.animationNames(), ["pulse"]);
+        panel.addKey("pulse", "front", "Width", "0.5", "120", "EaseIn");
+        let edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.kind, "SetAnimation");
+        compare(edit.name, "pulse");
+        compare(edit.animation.tracks, [{widget:"front", property:"Width", keys:[{time:0.5, value:120, ease:"EaseIn"}]}]);
+        // A color track keeps its text, and a key past the end stretches the animation.
+        panel.cancelEdit();
+        panel.addKey("pulse", "front", "Background", "2", "#ff000080", "Linear");
+        edit = calls.filter(c=>c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.animation.duration, 2);
+        compare(edit.animation.tracks[0].keys[0].value, "#ff000080");
+        compare(panel.describeTrack({widget:"front", property:"Width", keys:[{}, {}]}), "front Width (2 keys)");
+        compare(panel.describeAction({on:"Click", run:{PlayAnimation:{name:"pulse"}}}), "Click: play pulse");
+        verify(!calls.some(c=>c.command === "set_interface"));
+    }
     function test_guides_are_editor_only_and_snap_targets_follow_the_frame() {
         compare(panel.guides.length, 0);
         const a = panel.addGuide(0, 100);

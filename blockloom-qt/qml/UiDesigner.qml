@@ -634,6 +634,8 @@ Item {
     function describeAction(a) {
         const run = a.run || {};
         if (run.Broadcast) return a.on + ": broadcast " + run.Broadcast.message;
+        if (run.PlayAnimation) return a.on + ": play " + run.PlayAnimation.name;
+        if (run.StopAnimation) return a.on + ": stop " + run.StopAnimation.name;
         const v = run.SetVariable || {};
         return a.on + ": set " + (v.actor ? v.actor + "." : "") + v.name + " to " + v.value;
     }
@@ -649,6 +651,49 @@ Item {
         if (!widget) return;
         propertyEdit("actions", (widget.actions || []).filter((a, i) => i !== index));
     }
+    // Animations: edited whole through SetAnimation so every change is one undo step.
+    readonly property var animatableProps: ["Width","Height","TextSize","CornerRadius","Padding","Value","Background","TextColor"]
+    function isColorProp(p) { return p === "Background" || p === "TextColor"; }
+    function animationNames() { return Object.keys(document.animations || {}); }
+    function saveAnimation(name, animation) {
+        structuralEdit({kind: "SetAnimation", name: name, animation: animation}, selectedId, extraIds.slice());
+    }
+    function newAnimation(name) {
+        if (!name || (document.animations || {})[name]) return;
+        saveAnimation(name, {duration: 1, looping: false, tracks: []});
+    }
+    function deleteAnimation(name) {
+        if ((document.animations || {})[name]) saveAnimation(name, null);
+    }
+    function withAnimation(name, change) {
+        const current = (document.animations || {})[name];
+        if (!current) return;
+        const next = copy(current);
+        change(next);
+        saveAnimation(name, next);
+    }
+    function addKey(name, widgetId, property, time, rawValue, ease) {
+        const value = isColorProp(property) ? String(rawValue) : Number(rawValue);
+        withAnimation(name, a => {
+            let track = a.tracks.find(t => t.widget === widgetId && t.property === property);
+            if (!track) { track = {widget: widgetId, property: property, keys: []}; a.tracks.push(track); }
+            track.keys = track.keys.filter(k => k.time !== Number(time));
+            track.keys.push({time: Number(time), value: value, ease: ease});
+            track.keys.sort((x, y) => x.time - y.time);
+            if (Number(time) > a.duration) a.duration = Number(time);
+        });
+    }
+    function removeTrack(name, index) {
+        withAnimation(name, a => { a.tracks.splice(index, 1); });
+    }
+    function removeKey(name, trackIndex, keyIndex) {
+        withAnimation(name, a => {
+            const track = a.tracks[trackIndex];
+            track.keys.splice(keyIndex, 1);
+            if (!track.keys.length) a.tracks.splice(trackIndex, 1);
+        });
+    }
+    function describeTrack(t) { return t.widget + " " + t.property + " (" + t.keys.length + " keys)"; }
     function describeVariant(v) {
         const w = v.when || {};
         const parts = [];
@@ -1301,21 +1346,93 @@ Item {
                 }
                 RowLayout {
                     ComboBox { id: actionOn; objectName: "interfaceActionOn"; model: ["Click","Change"] }
-                    ComboBox { id: actionKind; objectName: "interfaceActionKind"; model: ["Broadcast","Set variable"] }
+                    ComboBox { id: actionKind; objectName: "interfaceActionKind"; model: ["Broadcast","Set variable","Play animation","Stop animation"] }
                 }
-                TextField { id: actionMessage; objectName: "interfaceActionMessage"; Layout.fillWidth: true; visible: actionKind.currentIndex === 0; placeholderText: "Message to broadcast" }
+                TextField { id: actionMessage; objectName: "interfaceActionMessage"; Layout.fillWidth: true; visible: actionKind.currentIndex === 0 || actionKind.currentIndex >= 2; placeholderText: actionKind.currentIndex === 0 ? "Message to broadcast" : "Animation name" }
                 TextField { id: actionActor; Layout.fillWidth: true; visible: actionKind.currentIndex === 1; placeholderText: "Actor id (blank for global)" }
                 TextField { id: actionVariable; objectName: "interfaceActionVariable"; Layout.fillWidth: true; visible: actionKind.currentIndex === 1; placeholderText: "Variable name" }
                 TextField { id: actionValue; objectName: "interfaceActionValue"; Layout.fillWidth: true; visible: actionKind.currentIndex === 1; placeholderText: "Value ($value is the new value on Change)" }
                 Button {
                     objectName: "interfaceAddAction"; text: "Add event"
-                    enabled: !!root.widget && !root.gesture && (actionKind.currentIndex === 0 ? !!actionMessage.text.trim() : !!actionVariable.text.trim())
+                    enabled: !!root.widget && !root.gesture && (actionKind.currentIndex === 1 ? !!actionVariable.text.trim() : !!actionMessage.text.trim())
                     onClicked: {
-                        root.addAction({on: actionOn.currentText, run: actionKind.currentIndex === 0
-                            ? {Broadcast: {message: actionMessage.text.trim()}}
-                            : {SetVariable: {actor: actionActor.text.trim(), name: actionVariable.text.trim(), value: actionValue.text}}});
+                        const text = actionMessage.text.trim();
+                        root.addAction({on: actionOn.currentText, run: [
+                            {Broadcast: {message: text}},
+                            {SetVariable: {actor: actionActor.text.trim(), name: actionVariable.text.trim(), value: actionValue.text}},
+                            {PlayAnimation: {name: text}},
+                            {StopAnimation: {name: text}}][actionKind.currentIndex]});
                     }
                 }
+                Label { text: "Animations"; font.bold: true }
+                RowLayout {
+                    ComboBox { id: animationPick; objectName: "interfaceAnimationPick"; Layout.fillWidth: true; model: root.animationNames() }
+                    Button { objectName: "interfaceDeleteAnimation"; text: "Delete"; enabled: animationPick.currentIndex >= 0 && !root.gesture; onClicked: root.deleteAnimation(animationPick.currentText) }
+                }
+                RowLayout {
+                    TextField { id: animationName; objectName: "interfaceAnimationName"; Layout.fillWidth: true; placeholderText: "New animation name" }
+                    Button { objectName: "interfaceNewAnimation"; text: "New"; enabled: !!animationName.text.trim() && !root.gesture; onClicked: { root.newAnimation(animationName.text.trim()); animationName.text = ""; } }
+                }
+                RowLayout {
+                    visible: animationPick.currentIndex >= 0
+                    Label { text: "Seconds" }
+                    TextField {
+                        id: animationLength; objectName: "interfaceAnimationLength"; Layout.preferredWidth: 60
+                        text: animationPick.currentIndex >= 0 ? String(((root.document.animations || {})[animationPick.currentText] || {}).duration || 1) : ""
+                        validator: DoubleValidator { bottom: 0.05 }
+                        onEditingFinished: { const n = Number(text); if (n > 0) root.withAnimation(animationPick.currentText, a => { a.duration = n; a.tracks.forEach(t => { t.keys = t.keys.filter(k => k.time <= n); }); a.tracks = a.tracks.filter(t => t.keys.length); }); }
+                    }
+                    CheckBox {
+                        objectName: "interfaceAnimationLoop"; text: "Loop"
+                        checked: animationPick.currentIndex >= 0 && !!((root.document.animations || {})[animationPick.currentText] || {}).looping
+                        onToggled: root.withAnimation(animationPick.currentText, a => { a.looping = checked; })
+                    }
+                }
+                Repeater {
+                    model: animationPick.currentIndex >= 0 ? (((root.document.animations || {})[animationPick.currentText] || {}).tracks || []) : []
+                    delegate: ColumnLayout {
+                        required property var modelData
+                        required property int index
+                        Layout.fillWidth: true
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { Layout.fillWidth: true; elide: Text.ElideRight; text: root.describeTrack(modelData); color: Theme.textDim }
+                            Button { text: "Remove track"; enabled: !root.gesture; onClicked: root.removeTrack(animationPick.currentText, index) }
+                        }
+                        // The timeline: each key sits at its time along the animation.
+                        Rectangle {
+                            id: strip
+                            objectName: "interfaceTimeline" + index
+                            Layout.fillWidth: true; Layout.preferredHeight: 18; color: "#1d222c"; radius: 3
+                            readonly property real total: Math.max(0.05, ((root.document.animations || {})[animationPick.currentText] || {}).duration || 1)
+                            Repeater {
+                                model: modelData.keys
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    required property int index
+                                    x: Math.min(strip.width - width, modelData.time / strip.total * (strip.width - width))
+                                    y: 4; width: 10; height: 10; rotation: 45; color: "#70baff"
+                                    MouseArea { anchors.fill: parent; onClicked: root.removeKey(animationPick.currentText, trackIndexOf(strip), index) }
+                                    function trackIndexOf(item) { return parseInt(item.objectName.replace("interfaceTimeline", "")); }
+                                }
+                            }
+                        }
+                    }
+                }
+                RowLayout {
+                    visible: animationPick.currentIndex >= 0
+                    ComboBox { id: keyProperty; objectName: "interfaceKeyProperty"; model: root.animatableProps }
+                    TextField { id: keyTime; objectName: "interfaceKeyTime"; Layout.preferredWidth: 50; placeholderText: "time"; validator: DoubleValidator { bottom: 0 } }
+                    TextField { id: keyValue; objectName: "interfaceKeyValue"; Layout.fillWidth: true; placeholderText: root.isColorProp(keyProperty.currentText) ? "#rrggbbaa" : "value" }
+                    ComboBox { id: keyEase; objectName: "interfaceKeyEase"; model: ["Linear","EaseIn","EaseOut","EaseInOut"] }
+                }
+                Button {
+                    objectName: "interfaceAddKey"; text: "Key selected widget"
+                    visible: animationPick.currentIndex >= 0
+                    enabled: !!root.widget && !root.gesture && keyTime.text !== "" && keyValue.text !== ""
+                    onClicked: root.addKey(animationPick.currentText, root.widget.element.id, keyProperty.currentText, keyTime.text, keyValue.text, keyEase.currentText)
+                }
+                Label { text: "Run it from Events: add an event whose action plays the animation."; color: Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true; visible: animationPick.currentIndex >= 0 }
                 Label { text: "Responsive variants"; font.bold: true }
                 Repeater {
                     model: root.widget ? root.widget.variants || [] : []

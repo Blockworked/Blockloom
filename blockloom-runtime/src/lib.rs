@@ -623,6 +623,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     ui_systems::navigation,
                     ui_systems::touch,
                     ui_systems::project_widgets.run_if(ui_design::inactive),
+                    ui_systems::play_animations,
                     overlay::draw_ui,
                     ui_systems::animate,
                     ui_systems::atlas,

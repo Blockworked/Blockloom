@@ -287,6 +287,164 @@ impl UiWidget {
     }
 }
 
+/// How a key eases into the next one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum UiEase {
+    #[default]
+    Linear,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+}
+
+impl UiEase {
+    pub fn apply(self, t: f32) -> f32 {
+        let t = t.clamp(0., 1.);
+        match self {
+            UiEase::Linear => t,
+            UiEase::EaseIn => t * t,
+            UiEase::EaseOut => 1. - (1. - t) * (1. - t),
+            UiEase::EaseInOut => t * t * (3. - 2. * t),
+        }
+    }
+}
+
+/// A keyed value: a number, or a `#rrggbb[aa]` color for the color tracks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum UiKeyValue {
+    Number(f64),
+    Color(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiKey {
+    pub time: f32,
+    pub value: UiKeyValue,
+    /// How it eases from this key to the next.
+    #[serde(default)]
+    pub ease: UiEase,
+}
+
+/// One property of one widget over time.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiTrack {
+    pub widget: String,
+    pub property: UiProp,
+    pub keys: Vec<UiKey>,
+}
+
+/// The properties a track can drive: the sizes and colors an element is
+/// restyled by, and a value.
+pub const ANIMATABLE_NUMBERS: [UiProp; 6] = [
+    UiProp::Width,
+    UiProp::Height,
+    UiProp::TextSize,
+    UiProp::CornerRadius,
+    UiProp::Padding,
+    UiProp::Value,
+];
+pub const ANIMATABLE_COLORS: [UiProp; 2] = [UiProp::Background, UiProp::TextColor];
+
+fn parse_hex(text: &str) -> Option<[f32; 4]> {
+    let hex = text.trim().strip_prefix('#')?;
+    if !(hex.len() == 6 || hex.len() == 8) || !hex.is_ascii() {
+        return None;
+    }
+    let byte = |i: usize| {
+        u8::from_str_radix(&hex[i..i + 2], 16)
+            .ok()
+            .map(|b| b as f32)
+    };
+    Some([
+        byte(0)?,
+        byte(2)?,
+        byte(4)?,
+        if hex.len() == 8 { byte(6)? } else { 255. },
+    ])
+}
+
+impl UiTrack {
+    /// The value at `time`, holding the first key before it and the last after.
+    pub fn sample(&self, time: f32) -> Option<UiKeyValue> {
+        let first = self.keys.first()?;
+        let last = self.keys.last()?;
+        if time <= first.time {
+            return Some(first.value.clone());
+        }
+        if time >= last.time {
+            return Some(last.value.clone());
+        }
+        let at = self.keys.iter().rposition(|k| k.time <= time)?;
+        let (a, b) = (&self.keys[at], &self.keys[at + 1]);
+        let span = (b.time - a.time).max(f32::EPSILON);
+        let f = a.ease.apply((time - a.time) / span);
+        match (&a.value, &b.value) {
+            (UiKeyValue::Number(x), UiKeyValue::Number(y)) => {
+                Some(UiKeyValue::Number(x + (y - x) * f as f64))
+            }
+            (UiKeyValue::Color(x), UiKeyValue::Color(y)) => {
+                let (x, y) = (parse_hex(x)?, parse_hex(y)?);
+                let c: Vec<u8> = (0..4)
+                    .map(|i| (x[i] + (y[i] - x[i]) * f).round().clamp(0., 255.) as u8)
+                    .collect();
+                Some(UiKeyValue::Color(format!(
+                    "#{:02x}{:02x}{:02x}{:02x}",
+                    c[0], c[1], c[2], c[3]
+                )))
+            }
+            _ => Some(a.value.clone()),
+        }
+    }
+
+    fn validate(&self, duration: f32) -> Result<(), String> {
+        let color = ANIMATABLE_COLORS.contains(&self.property);
+        if !color && !ANIMATABLE_NUMBERS.contains(&self.property) {
+            return Err(format!("{:?} cannot be animated", self.property));
+        }
+        if self.keys.is_empty() {
+            return Err(format!("A track on {} needs a key", self.widget));
+        }
+        let mut last = -1.;
+        for key in &self.keys {
+            if !key.time.is_finite() || key.time < 0. || key.time > duration || key.time <= last {
+                return Err("Keys must be in strictly increasing time inside the animation".into());
+            }
+            last = key.time;
+            match &key.value {
+                UiKeyValue::Number(n) if !color && n.is_finite() => {}
+                UiKeyValue::Color(c) if color && parse_hex(c).is_some() => {}
+                _ => {
+                    return Err(format!(
+                        "A key on {} holds the wrong kind of value",
+                        self.widget
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiAnimation {
+    pub duration: f32,
+    #[serde(default)]
+    pub looping: bool,
+    pub tracks: Vec<UiTrack>,
+}
+
+impl UiAnimation {
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.duration.is_finite() || self.duration <= 0. || self.duration > 3600. {
+            return Err("An animation's duration must be above zero".into());
+        }
+        self.tracks
+            .iter()
+            .try_for_each(|t| t.validate(self.duration))
+    }
+}
+
 /// What a widget reports to the game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UiEventKind {
@@ -300,6 +458,13 @@ pub enum UiEventKind {
 pub enum UiDo {
     Broadcast {
         message: String,
+    },
+    /// Starts (or restarts) a document animation.
+    PlayAnimation {
+        name: String,
+    },
+    StopAnimation {
+        name: String,
     },
     SetVariable {
         #[serde(default)]
@@ -363,6 +528,9 @@ pub struct UiDocument {
     /// What each prefab lets an instance set by name: properties and slots.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub exports: BTreeMap<String, Vec<UiExport>>,
+    /// Named property animations the document's actions (or blocks) can play.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub animations: BTreeMap<String, UiAnimation>,
 }
 
 /// A named handle on a prefab: one property of one widget inside it, or a
@@ -398,6 +566,7 @@ impl Default for UiDocument {
             safe_area: [0.; 4],
             prefabs: BTreeMap::new(),
             exports: BTreeMap::new(),
+            animations: BTreeMap::new(),
         }
     }
 }
@@ -756,6 +925,11 @@ pub enum UiEdit {
     ResetInstance {
         id: String,
     },
+    /// Stores (or with `None`, removes) the animation `name`.
+    SetAnimation {
+        name: String,
+        animation: Option<UiAnimation>,
+    },
     /// Lets instances of `prefab` set `path` of its widget `widget` as `name`.
     ExposeProperty {
         prefab: String,
@@ -870,6 +1044,30 @@ impl UiDocument {
                 return Ok(());
             }
             UiEdit::ResetInstance { id } => return self.reset_instance(id),
+            UiEdit::SetAnimation { name, animation } => {
+                if name.trim().is_empty() {
+                    return Err("An animation needs a name".into());
+                }
+                match animation {
+                    Some(animation) => {
+                        animation.validate()?;
+                        if let Some(missing) = animation
+                            .tracks
+                            .iter()
+                            .find(|t| self.find(&t.widget).is_none())
+                        {
+                            return Err(format!("Unknown widget: {}", missing.widget));
+                        }
+                        self.animations.insert(name.clone(), animation.clone());
+                    }
+                    None => {
+                        if self.animations.remove(name).is_none() {
+                            return Err(format!("No UI animation named {name}"));
+                        }
+                    }
+                }
+                return Ok(());
+            }
             UiEdit::ExposeProperty {
                 prefab,
                 name,
@@ -963,6 +1161,7 @@ impl UiDocument {
             | UiEdit::InstantiatePrefab { .. }
             | UiEdit::DetachInstance { .. }
             | UiEdit::ResetInstance { .. }
+            | UiEdit::SetAnimation { .. }
             | UiEdit::ExposeProperty { .. }
             | UiEdit::ExposeSlot { .. }
             | UiEdit::Unexpose { .. }
@@ -1569,6 +1768,21 @@ impl UiDocument {
             return Err("An interface supports at most 10000 widgets".into());
         }
         let mut ids = HashSet::new();
+        for (name, animation) in &self.animations {
+            animation
+                .validate()
+                .map_err(|e| format!("Animation {name}: {e}"))?;
+            if let Some(t) = animation
+                .tracks
+                .iter()
+                .find(|t| !self.widgets.iter().any(|w| w.element.id == t.widget))
+            {
+                return Err(format!(
+                    "Animation {name} animates a missing widget: {}",
+                    t.widget
+                ));
+            }
+        }
         for (prefab, list) in &self.exports {
             let members = self
                 .prefabs
@@ -1698,6 +1912,11 @@ fn check_actions(actions: &[UiAction]) -> Result<(), String> {
         match &action.run {
             UiDo::Broadcast { message } if message.trim().is_empty() => {
                 return Err("A broadcast needs a message".into());
+            }
+            UiDo::PlayAnimation { name } | UiDo::StopAnimation { name }
+                if name.trim().is_empty() =>
+            {
+                return Err("An animation action needs a name".into());
             }
             UiDo::SetVariable { name, .. } if name.trim().is_empty() => {
                 return Err("Set variable needs a variable name".into());
@@ -2409,6 +2628,63 @@ mod tests {
         .unwrap();
         assert!(doc.exports.is_empty());
         assert!(doc.validate().is_ok());
+    }
+
+    #[test]
+    fn animations_sample_ease_validate_and_edit() {
+        let mut doc = UiDocument::default();
+        doc.widgets = vec![row("bar", "", "")];
+        let animation: UiAnimation = serde_json::from_value(serde_json::json!({
+            "duration": 2.0, "looping": true,
+            "tracks": [
+                {"widget": "bar", "property": "Width", "keys": [
+                    {"time": 0.0, "value": 100.0}, {"time": 1.0, "value": 200.0, "ease": "EaseIn"}, {"time": 2.0, "value": 100.0}]},
+                {"widget": "bar", "property": "Background", "keys": [
+                    {"time": 0.0, "value": "#000000"}, {"time": 2.0, "value": "#ffffff80"}]}
+            ]
+        }))
+        .unwrap();
+        let sample = |t: f32, i: usize| animation.tracks[i].sample(t).unwrap();
+        assert_eq!(sample(0.5, 0), UiKeyValue::Number(150.));
+        assert_eq!(sample(-1., 0), UiKeyValue::Number(100.));
+        assert_eq!(sample(9., 0), UiKeyValue::Number(100.));
+        assert_eq!(sample(1.0, 0), UiKeyValue::Number(200.));
+        assert_eq!(sample(1.0, 1), UiKeyValue::Color("#808080c0".into()));
+        let named = |a: Option<UiAnimation>| UiEdit::SetAnimation {
+            name: "pulse".into(),
+            animation: a,
+        };
+        doc.apply_edit(&named(Some(animation.clone()))).unwrap();
+        let back: UiDocument = serde_json::from_str(&serde_json::to_string(&doc).unwrap()).unwrap();
+        assert_eq!(back.animations["pulse"], animation);
+        let mut bad = animation.clone();
+        bad.tracks[0].keys[1].time = 0.0;
+        assert!(doc.apply_edit(&named(Some(bad))).is_err());
+        let mut bad = animation.clone();
+        bad.tracks[0].property = UiProp::Text;
+        assert!(doc.apply_edit(&named(Some(bad))).is_err());
+        let mut bad = animation.clone();
+        bad.tracks[1].keys[0].value = UiKeyValue::Number(1.);
+        assert!(doc.apply_edit(&named(Some(bad))).is_err());
+        let mut bad = animation.clone();
+        bad.tracks[0].widget = "ghost".into();
+        assert!(doc.apply_edit(&named(Some(bad))).is_err());
+        assert_eq!(doc.animations.len(), 1);
+        doc.apply_edit(&named(None)).unwrap();
+        assert!(doc.apply_edit(&named(None)).is_err());
+        // Actions can start and stop one by name.
+        let play = [UiAction {
+            on: UiEventKind::Click,
+            run: UiDo::PlayAnimation {
+                name: "pulse".into(),
+            },
+        }];
+        assert!(check_actions(&play).is_ok());
+        let empty = [UiAction {
+            on: UiEventKind::Click,
+            run: UiDo::StopAnimation { name: " ".into() },
+        }];
+        assert!(check_actions(&empty).is_err());
     }
 
     #[test]

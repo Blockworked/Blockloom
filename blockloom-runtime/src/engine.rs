@@ -454,6 +454,8 @@ pub struct Engine {
     pub scripts_started: HashSet<(String, String)>,
     /// Events fired since scripts last ran, for their `event` entry points.
     pub script_events: Vec<blockloom_core::vm::Event>,
+    /// Interface animations asked for since the last frame: (name, play or stop).
+    pub ui_animations: Vec<(String, bool)>,
     /// Which components each actor is carrying right now. Seeded from the
     /// project on every rebuild and moved by `attach`/`detach`, so it - not
     /// the document - is what a mid-run question about a component answers.
@@ -625,6 +627,7 @@ impl Engine {
             scripts: HashMap::new(),
             scripts_started: HashSet::new(),
             script_events: Vec::new(),
+            ui_animations: Vec::new(),
             // Smoothed milliseconds per script path, for the profiler's
             // `script/*` rows. Timed around each entry's callbacks so one
             // heavy file stands out from a busy project.
@@ -857,6 +860,8 @@ impl Engine {
                 UiDo::Broadcast { message } => {
                     self.fire(Event::Message(message.trim().to_string()));
                 }
+                UiDo::PlayAnimation { name } => self.ui_animations.push((name, true)),
+                UiDo::StopAnimation { name } => self.ui_animations.push((name, false)),
                 UiDo::SetVariable { actor, name, value } => {
                     let value = match (value.trim(), changed) {
                         ("$value", Some(v)) => v.clone(),

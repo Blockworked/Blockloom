@@ -559,6 +559,25 @@ pub struct UiTween {
     pub hide: bool,
     pub show: bool,
 }
+/// Plays and steps the document's interface animations on the wall clock, so
+/// a paused world still animates its menus.
+pub fn play_animations(
+    mut engine: NonSendMut<crate::engine::Engine>,
+    mut manager: ResMut<UiManager>,
+    time: Res<Time<Real>>,
+) {
+    for (name, play) in engine.ui_animations.drain(..) {
+        if play {
+            manager.play_animation(&name);
+        } else {
+            manager.stop_animation(&name);
+        }
+    }
+    if manager.animating() {
+        manager.step_animations(time.delta_secs());
+    }
+}
+
 pub fn animate(
     mut commands: Commands,
     time: Res<Time>,

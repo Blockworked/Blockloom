@@ -161,6 +161,8 @@ pub struct UiManager {
     dropped: Vec<Entity>,
     theme: UiTheme,
     pub navigation: Option<String>,
+    /// Document animations running, with how long each has played.
+    playing: Vec<(String, f32)>,
     pub binding_writes: Vec<(UiBinding, Evaluated)>,
     pub document: UiDocument,
     pub canvas_scale: f32,
@@ -210,6 +212,61 @@ impl UiManager {
             }
             node.variant = pick;
             node.dirty = true;
+        }
+    }
+
+    /// Starts a document animation over, or ignores a name nothing has.
+    pub fn play_animation(&mut self, name: &str) {
+        if !self.document.animations.contains_key(name) {
+            return;
+        }
+        self.playing.retain(|(n, _)| n != name);
+        self.playing.push((name.to_string(), 0.));
+    }
+
+    /// Stops one where it stands; what it set stays set.
+    pub fn stop_animation(&mut self, name: &str) {
+        self.playing.retain(|(n, _)| n != name);
+    }
+
+    pub fn animating(&self) -> bool {
+        !self.playing.is_empty()
+    }
+
+    /// Advances every running animation by `dt` seconds and writes what its
+    /// tracks sample to, through the same `set` the blocks use.
+    pub fn step_animations(&mut self, dt: f32) {
+        use blockloom_core::ui::UiKeyValue;
+        let mut writes: Vec<(String, UiProp, Evaluated)> = Vec::new();
+        let animations = &self.document.animations;
+        self.playing.retain_mut(|(name, time)| {
+            let Some(animation) = animations.get(name) else {
+                return false;
+            };
+            *time += dt.max(0.);
+            let mut at = *time;
+            let mut running = true;
+            if animation.looping {
+                at %= animation.duration;
+            } else if at >= animation.duration {
+                at = animation.duration;
+                running = false;
+            }
+            for track in &animation.tracks {
+                match track.sample(at) {
+                    Some(UiKeyValue::Number(n)) => {
+                        writes.push((track.widget.clone(), track.property, Evaluated::Number(n)));
+                    }
+                    Some(UiKeyValue::Color(c)) => {
+                        writes.push((track.widget.clone(), track.property, Evaluated::Text(c)));
+                    }
+                    None => {}
+                }
+            }
+            running
+        });
+        for (id, prop, value) in writes {
+            self.set(&id, prop, &value);
         }
     }
 
@@ -1589,5 +1646,34 @@ mod tests {
         manager.get_mut("menu").unwrap().dirty = false;
         manager.apply_variants(950., 800.);
         assert!(!manager.get("menu").unwrap().dirty);
+    }
+    #[test]
+    fn a_played_animation_drives_properties_then_ends_or_loops() {
+        let document: UiDocument = serde_json::from_value(serde_json::json!({
+            "widgets": [{"element": {"id": "bar", "kind": "Panel"}}],
+            "animations": {
+                "grow": {"duration": 2.0, "tracks": [{"widget": "bar", "property": "Width",
+                    "keys": [{"time": 0.0, "value": 100.0}, {"time": 2.0, "value": 200.0}]}]},
+                "blink": {"duration": 1.0, "looping": true, "tracks": [{"widget": "bar", "property": "Height",
+                    "keys": [{"time": 0.0, "value": 0.0}, {"time": 1.0, "value": 10.0}]}]}
+            }
+        }))
+        .unwrap();
+        let mut manager = UiManager::default();
+        manager.load(&document);
+        manager.play_animation("missing");
+        assert!(!manager.animating());
+        manager.play_animation("grow");
+        manager.step_animations(1.0);
+        assert_eq!(manager.get("bar").unwrap().style.width, Some(150.));
+        manager.step_animations(5.0);
+        assert_eq!(manager.get("bar").unwrap().style.width, Some(200.));
+        assert!(!manager.animating());
+        manager.play_animation("blink");
+        manager.step_animations(1.25);
+        assert_eq!(manager.get("bar").unwrap().style.height, Some(2.5));
+        assert!(manager.animating());
+        manager.stop_animation("blink");
+        assert!(!manager.animating());
     }
 }
