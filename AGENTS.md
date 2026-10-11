@@ -3184,7 +3184,7 @@ lands.
   key`), edited through `set-locale` and friends; scripts drive both through
   ABI 47 (`switch_save_slot`, `save_slot`/`save_slots`, `set_language`,
   `language`, `text_for`).
-- A text input has a caret, shift-selection and IME composition (no pointer placement or drawn selection yet). Backspace rubs out,
+- A text input has a caret, shift-selection, IME composition, pointer placement and drag selection. The caret, selection and composition underline are drawn by `input_caret.rs` from the text layout's glyph geometry (parley, via `ComputedTextBlock::buffer`); the shown text only splices the composition in. Backspace rubs out,
   Escape and Enter let go, and every other character key appends - subject to
   the input's own `allow` and `max length`, which is all the validation there
   is. Backspace ignores both, so a rule written after the typing doesn't trap
@@ -3220,3 +3220,20 @@ lands.
   path attachments draw nothing. A rig's or stack's outline is one
   silhouette per piece, so a translucent outline color darkens where pieces'
   silhouettes overlap.
+
+### Interface effects and animation preview
+
+`UiFx` (opacity, offset, rotation) is visual state laid over an element after
+layout: `UiWidget.fx` holds the authored start (typed edit path `fx`), and the
+`Opacity`/`OffsetX`/`OffsetY`/`Rotation` `UiProp`s write it at run time and are
+animatable tracks. It composes with the anchor without touching its
+`UiTransform` translation: offset adds to the margin (anchored), insets
+(absolute) or relative insets (flow child) in `layout_node`, rotation sets the
+same transform's rotation (`overlay::apply_fx_rotation`), and opacity
+multiplies down the tree (`UiManager::opacity_of`) into background, border,
+shadow, image and text colours. Not faded yet: slider tracks and fills.
+`InterfaceDesign.animation` (`{name, time}`, `PROTOCOL_VERSION` 37) freezes a
+document animation at a time in the design session through
+`UiManager::sample_animation`; the editor's timeline Preview/scrub uses it and
+pauses editing while it is on. Nothing is saved.
+
