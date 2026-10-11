@@ -448,7 +448,7 @@ TestCase {
     }
     function test_safe_area_and_reference_overlays_are_editor_only_toggles() {
         verify(!panel.showSafeArea && !panel.showReference);
-        findChild(panel, "interfaceSafeArea").toggle();
+        mouseClick(findChild(panel, "interfaceSafeArea"));
         verify(panel.showSafeArea);
         panel.showReference = true;
         verify(!calls.some(c => c.command === "set_interface" || c.command === "begin_interface_edit"));
@@ -519,6 +519,31 @@ TestCase {
         compare(panel.describeAction({on:"Click", run:{PlayAnimation:{name:"pulse"}}}), "Click: play pulse");
         verify(!calls.some(c=>c.command === "set_interface"));
     }
+    function test_animation_preview_scrubs_in_the_runtime_and_pauses_editing() {
+        panel.selectedId = "front";
+        const d = panel.copy(panel.document);
+        d.animations = {fade: {duration: 2, looping: false, tracks: []}};
+        panel.document = d; backend.appState.project.world.interface = d;
+        verify(panel.editable(panel.widget));
+        compare(panel.animatableProps.indexOf("Opacity") >= 0, true);
+        compare(panel.animatableProps.indexOf("Rotation") >= 0, true);
+        panel.previewAnimation("fade", 0.5);
+        verify(panel.animPreviewing);
+        verify(!panel.editable(panel.widget));
+        panel.requestPreview();
+        let design = calls.filter(c => c.command === "preview_interface").pop().args.design;
+        compare(design.animation, {name: "fade", time: 0.5});
+        panel.previewAnimation("fade", 1.5);
+        panel.requestPreview();
+        design = calls.filter(c => c.command === "preview_interface").pop().args.design;
+        compare(design.animation.time, 1.5);
+        panel.stopAnimationPreview();
+        panel.requestPreview();
+        design = calls.filter(c => c.command === "preview_interface").pop().args.design;
+        compare(design.animation, null);
+        verify(panel.editable(panel.widget));
+        verify(!calls.some(c => c.command === "set_interface" || c.command === "begin_interface_edit"));
+    }
     function test_generated_property_form_formats_and_parses_by_type() {
         compare(panel.formatProperty("range", [0, 100]), "0, 100");
         compare(panel.parseProperty("range", "5, 10"), [5, 10]);
@@ -554,7 +579,7 @@ TestCase {
         compare(panel.stageToCanvas(0, panel.canvasToStage(0, 300)), 300);
         panel.removeGuide(b);
         compare(panel.guides.length, 1);
-        findChild(panel, "interfaceRulers").toggle();
+        mouseClick(findChild(panel, "interfaceRulers"));
         verify(panel.showRulers);
         verify(!calls.some(c => c.command === "set_interface" || c.command === "begin_interface_edit"));
     }

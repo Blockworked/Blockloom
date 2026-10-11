@@ -165,7 +165,7 @@ Item {
         }).filter(line => line !== null);
     }
     function editable(w) {
-        if (!w || w.world_actor || isLocked(w.element.id)) return false;
+        if (!w || w.world_actor || isLocked(w.element.id) || animPreviewing) return false;
         const parent = document.widgets.find(p => p.element.id === w.element.parent);
         return !w.element.parent || (w.layout && w.layout.absolute) || (parent && parent.element.kind === "Canvas");
     }
@@ -414,11 +414,12 @@ Item {
         ++revision;
         frameLayout = null;
         app.invoke("preview_interface", {design: {revision: revision, generation: generation,
-            viewport: [previewWidth, previewHeight], screen: screenId || null, hidden: hiddenList, document: copy(document)}},
+            viewport: [previewWidth, previewHeight], screen: screenId || null, hidden: hiddenList,
+            animation: animPreviewing ? {name: animPreviewName, time: animPreviewTime} : null, document: copy(document)}},
             function() { root.error = ""; }, function(e) { root.error = String(e); });
     }
     function updateSession() {
-        if (!designing) cancelEdit();
+        if (!designing) { cancelEdit(); animPreviewName = ""; }
         frameLayout = null;
         if (designing) {
             if (!embedded && !app.appState.preview_enabled) {
@@ -470,7 +471,7 @@ Item {
         if (value === undefined || value === null) return ty === "layout" ? "null" : "";
         if (ty === "range") return value[0] + ", " + value[1];
         if (ty === "lines") return value.join("\n");
-        if (ty === "layout" || ty === "style" || ty === "bindings" || ty === "actions" || ty === "variants") return JSON.stringify(value, null, 2);
+        if (ty === "layout" || ty === "style" || ty === "bindings" || ty === "actions" || ty === "variants" || ty === "fx") return JSON.stringify(value, null, 2);
         return String(value);
     }
     function parseProperty(ty, text) {
@@ -478,7 +479,7 @@ Item {
         if (ty === "lines") return text === "" ? [] : text.split("\n");
         if (ty === "int") return text.trim() === "" ? null : Math.round(Number(text));
         if (ty === "number") { const n = Number(text); if (isNaN(n)) throw "Not a number"; return n; }
-        if (ty === "layout" || ty === "style" || ty === "bindings" || ty === "actions" || ty === "variants") return JSON.parse(text);
+        if (ty === "layout" || ty === "style" || ty === "bindings" || ty === "actions" || ty === "variants" || ty === "fx") return JSON.parse(text);
         return text;
     }
     function applies(path) {
@@ -676,7 +677,18 @@ Item {
         propertyEdit("actions", (widget.actions || []).filter((a, i) => i !== index));
     }
     // Animations: edited whole through SetAnimation so every change is one undo step.
-    readonly property var animatableProps: ["Width","Height","TextSize","CornerRadius","Padding","Value","Background","TextColor"]
+    readonly property var animatableProps: ["Width","Height","TextSize","CornerRadius","Padding","Value","Opacity","OffsetX","OffsetY","Rotation","Background","TextColor"]
+    // Scrubbing shows an animation frozen at a time in the runtime preview; nothing is saved.
+    property string animPreviewName: ""
+    property real animPreviewTime: 0
+    readonly property bool animPreviewing: animPreviewName !== "" && !!(document.animations || {})[animPreviewName]
+    function previewAnimation(name, time) {
+        cancelEdit();
+        animPreviewName = name; animPreviewTime = Math.max(0, time);
+        ++revision; frameLayout = null;
+        if (designing) previewDelay.restart();
+    }
+    function stopAnimationPreview() { if (animPreviewName !== "") previewAnimation("", 0); }
     function isColorProp(p) { return p === "Background" || p === "TextColor"; }
     function animationNames() { return Object.keys(document.animations || {}); }
     function saveAnimation(name, animation) {
@@ -877,7 +889,7 @@ Item {
                     required property var modelData
                     width: ListView.view.width; height: 30
                     highlighted: root.selectionIds.indexOf(modelData.id) >= 0
-                    onClicked: mouse => { if (mouse && (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier))) root.toggleSelected(modelData.id); else root.selectOnly(modelData.id); root.forceActiveFocus(); }
+                    onClicked: { if (Qt.application.keyboardModifiers & (Qt.ControlModifier | Qt.ShiftModifier)) root.toggleSelected(modelData.id); else root.selectOnly(modelData.id); root.forceActiveFocus(); }
                     contentItem: RowLayout {
                         spacing: 2
                         Item { Layout.preferredWidth: 10 + modelData.depth * 14 }
@@ -1390,7 +1402,7 @@ Item {
                 }
                 Label { text: "Animations"; font.bold: true }
                 RowLayout {
-                    ComboBox { id: animationPick; objectName: "interfaceAnimationPick"; Layout.fillWidth: true; model: root.animationNames() }
+                    ComboBox { id: animationPick; objectName: "interfaceAnimationPick"; Layout.fillWidth: true; model: root.animationNames(); onCurrentIndexChanged: root.stopAnimationPreview() }
                     Button { objectName: "interfaceDeleteAnimation"; text: "Delete"; enabled: animationPick.currentIndex >= 0 && !root.gesture; onClicked: root.deleteAnimation(animationPick.currentText) }
                 }
                 RowLayout {
@@ -1456,6 +1468,26 @@ Item {
                     enabled: !!root.widget && !root.gesture && keyTime.text !== "" && keyValue.text !== ""
                     onClicked: root.addKey(animationPick.currentText, root.widget.element.id, keyProperty.currentText, keyTime.text, keyValue.text, keyEase.currentText)
                 }
+                RowLayout {
+                    visible: animationPick.currentIndex >= 0
+                    Button {
+                        objectName: "interfacePreviewAnimation"
+                        text: root.animPreviewing ? "Stop preview" : "Preview"
+                        enabled: !root.gesture && root.designing
+                        onClicked: root.animPreviewing ? root.stopAnimationPreview() : root.previewAnimation(animationPick.currentText, 0)
+                    }
+                    Slider {
+                        objectName: "interfaceAnimationScrub"
+                        Layout.fillWidth: true
+                        enabled: root.animPreviewing
+                        from: 0
+                        to: animationPick.currentIndex >= 0 ? Math.max(0.05, ((root.document.animations || {})[animationPick.currentText] || {}).duration || 1) : 1
+                        value: root.animPreviewTime
+                        onMoved: root.previewAnimation(root.animPreviewName, value)
+                    }
+                    Label { text: root.animPreviewTime.toFixed(2) + "s"; color: Theme.textDim }
+                }
+                Label { visible: root.animPreviewing; text: "Previewing: editing is paused and nothing is saved."; color: Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
                 Label { text: "Run it from Events: add an event whose action plays the animation."; color: Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true; visible: animationPick.currentIndex >= 0 }
                 Label { text: "Responsive variants"; font.bold: true }
                 Repeater {
@@ -1518,7 +1550,7 @@ Item {
                             objectName: "interfaceField_" + modelData.path
                             visible: field.ty !== "choice" && field.ty !== "bool"
                             Layout.fillWidth: true
-                            Layout.preferredHeight: ["layout","style","bindings","actions","variants","lines"].indexOf(field.ty) >= 0 ? 90 : implicitHeight
+                            Layout.preferredHeight: ["layout","style","bindings","actions","variants","lines","fx"].indexOf(field.ty) >= 0 ? 90 : implicitHeight
                             wrapMode: TextEdit.Wrap
                             text: root.formatProperty(field.ty, field.current)
                             onActiveFocusChanged: if (!activeFocus && root.widget && text !== root.formatProperty(field.ty, field.current)) {
