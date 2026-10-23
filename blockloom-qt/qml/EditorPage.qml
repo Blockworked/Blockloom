@@ -79,76 +79,23 @@ Item {
             invoke("paste_instructions", { x: x, y: y, instructions: copied.map(i => Blocks.regenerateIds(i)) });
     }
 
-    // ─── Dragging a palette entry (or a header's parameter) onto the canvas ─
-    property var paletteDrag: null   // { spec, offsetX, offsetY }
-    function beginPaletteDrag(spec, ox, oy, sx, sy) {
-        paletteDrag = { spec: spec, offsetX: ox, offsetY: oy };
-        ghost.spec = spec;
-        movePaletteDrag(sx, sy);
-        ghost.visible = true;
-    }
-    function movePaletteDrag(sx, sy) {
-        if (!paletteDrag) return;
-        const p = ghostLayer.mapFromItem(null, sx, sy);
-        ghost.x = p.x - paletteDrag.offsetX; ghost.y = p.y - paletteDrag.offsetY;
-        const spec = paletteDrag.spec;
-        if (spec.kind === "value") {
-            canvas.clearSnap();
-            const g1 = ghostLayer.mapToItem(null, ghost.x, ghost.y);
-            const g2 = ghostLayer.mapToItem(null, ghost.x + ghost.width, ghost.y + ghost.height);
-            canvas.updatePaletteValueTargetRect(g1.x, g1.y, g2.x, g2.y, sx, sy);
-            return;
-        }
-        canvas.updatePaletteValueTarget(null, null);
-        const at = canvas.workspacePoint(sx, sy);
-        if (at && spec.instruction) canvas.updatePaletteSnap(at.x - paletteDrag.offsetX / canvas.zoom, at.y - paletteDrag.offsetY / canvas.zoom, spec.instruction, ghost.width, ghost.height);
-        else canvas.clearSnap();
-    }
-    function endPaletteDrag(sx, sy) {
-        const drag = paletteDrag;
-        const snapValid = canvas.paletteSnapValid, snapTargetId = canvas.paletteSnapTargetId;
-        const snapPath = JSON.parse(JSON.stringify(canvas.paletteSnapPath || []));
-        const valueTarget = canvas.paletteValueTarget ? JSON.parse(JSON.stringify(canvas.paletteValueTarget)) : null;
-        cancelPaletteDrag();
-        if (!drag) return;
-        const spec = drag.spec;
-        if (spec.kind === "value" && valueTarget) { invoke("put_value", { location: valueTarget, value: spec.value }); return; }
-        const at = canvas.workspacePoint(sx, sy);
-        if (!at) return;
-        const x = Math.round(at.x - drag.offsetX / canvas.zoom), y = Math.round(at.y - drag.offsetY / canvas.zoom);
-        if (spec.kind === "value") {
-            invoke("create_floating_value", { x: x, y: y, value: spec.value, originBlockId: spec.originBlockId || null });
-            return;
-        }
-        const instruction = JSON.parse(JSON.stringify(spec.instruction));
-        instruction.id = Blocks.uuid();
-        if (snapValid && snapTargetId) invoke("add_instruction", { strandId: snapTargetId, path: snapPath, instruction: instruction });
-        else invoke("add_strand", { x: x, y: y, instruction: instruction });
-    }
-    function cancelPaletteDrag() { paletteDrag = null; ghost.visible = false; ghost.spec = null; canvas.clearSnap(); canvas.updatePaletteValueTarget(null, null); }
-    // A double-click on a palette entry drops it near the top of the view.
-    function addAtView(spec) {
-        const at = canvas.workspacePoint(canvas.mapToItem(null, 80, 80).x, canvas.mapToItem(null, 80, 80).y) || { x: 0, y: 0 };
-        if (spec.kind === "value") invoke("create_floating_value", { x: Math.round(at.x), y: Math.round(at.y), value: spec.value, originBlockId: null });
-        else { const i = JSON.parse(JSON.stringify(spec.instruction)); i.id = Blocks.uuid(); invoke("add_strand", { x: Math.round(at.x), y: Math.round(at.y), instruction: i }); }
-    }
-    // A canvas block dropped on the sidebar deletes it and everything below it.
-    function trashDraggedBlocks(strandId, path, tailCount, sx, sy) {
-        if (!sidebar.contains(sidebar.mapFromItem(null, sx, sy))) return;
-        if (path.length === 1 && path[0].index === 0) { invoke("remove_strand", { strandId: strandId }); return; }
-        invoke("remove_instruction", { strandId: strandId, path: path, count: tailCount });
+    // ─── Palette drops: the shared controller's edits as backend commands ──
+    function submitEdit(edit, reply) {
+        const call = (command, args) => invoke(command, args, () => reply(true), error => { app.showError(error); reply(false, error); });
+        if (edit.kind === "insert_instruction") call("add_instruction", { strandId: edit.strandId, path: edit.path, instruction: edit.instruction });
+        else if (edit.kind === "add_strand") call("add_strand", { x: edit.x, y: edit.y, instruction: edit.instruction });
+        else if (edit.kind === "put_value") call("put_value", { location: edit.location, value: edit.value });
+        else if (edit.kind === "create_floating_value") call("create_floating_value", { x: edit.x, y: edit.y, value: edit.value, originBlockId: edit.originBlockId || null });
+        else if (edit.kind === "remove_instructions") call("remove_instruction", { strandId: edit.strandId, path: edit.path, count: edit.count });
+        else if (edit.kind === "remove_strand") call("remove_strand", { strandId: edit.strandId });
+        else if (edit.kind === "take_value") call("take_value", { location: edit.location });
+        else if (edit.kind === "remove_floating_value") call("remove_floating_value", { floatingId: edit.floatingId });
+        else reply(false, "Unknown edit " + edit.kind);
     }
     // A value drag is one move and one undo step.
     function moveValue(from, to, x, y, originBlockId) {
         invoke("move_value", { from: from, to: to || null, x: Math.round(x || 0), y: Math.round(y || 0), originBlockId: originBlockId || null });
     }
-    // A value dropped on the sidebar resets its slot, or deletes a whole floating block.
-    function trashDraggedValue(location, value, sx, sy) {
-        if (!sidebar.contains(sidebar.mapFromItem(null, sx, sy))) return;
-        if (location.kind === "Floating" && !(location.path && location.path.length)) invoke("remove_floating_value", { floatingId: location.floating_id });
-        else invoke("take_value", { location: location });
-    }
-
     ColumnLayout {
         anchors.fill: parent; spacing: 0
         TopBar { Layout.fillWidth: true; app: root.app }
@@ -227,11 +174,11 @@ Item {
                                 trashArmed: canvas.dragging && sidebar.contains(sidebar.mapFromItem(null, canvas.dragSceneX, canvas.dragSceneY))
                                 onOpenRequested: open => panels.blocksOpen = open
                                 onResizeRequested: w => panels.blocksWidth = Math.max(220, Math.min(640, w))
-                                onDragStarted: (spec, sx, sy, ox, oy) => root.beginPaletteDrag(spec, ox, oy, sx, sy)
-                                onDragMoved: (sx, sy) => root.movePaletteDrag(sx, sy)
-                                onDragEnded: (sx, sy) => root.endPaletteDrag(sx, sy)
-                                onDragCanceled: root.cancelPaletteDrag()
-                                onEntryActivated: spec => root.addAtView(spec)
+                                onDragStarted: (spec, sx, sy, ox, oy) => dragController.begin(spec, sx, sy, ox, oy)
+                                onDragMoved: (sx, sy) => dragController.move(sx, sy)
+                                onDragEnded: (sx, sy) => dragController.end(sx, sy)
+                                onDragCanceled: dragController.cancel()
+                                onEntryActivated: spec => dragController.addAtView(spec)
                                 onDetailsRequested: (name, identifier, explainer) => details.show(name, identifier, explainer)
                             }
                             BlockCanvas {
@@ -249,7 +196,6 @@ Item {
                                 onInstructionSplit: (strandId, path, x, y) => root.invoke("split_strand", { strandId: strandId, path: path, x: x, y: y })
                                 onStrandsMerged: (draggedId, targetId, path) => root.invoke("merge_strand", { draggedId: draggedId, targetId: targetId, path: path })
                                 onTailMerged: (strandId, path, targetId, targetPath) => root.invoke("merge_tail", { strandId: strandId, path: path, targetId: targetId, targetPath: targetPath })
-                                onBlockDragOutside: (strandId, path, tailCount, sx, sy) => root.trashDraggedBlocks(strandId, path, tailCount, sx, sy)
                                 onInstructionRemoved: (strandId, path) => {
                                     const strand = root.strandById(strandId);
                                     root.invoke("delete_instruction", { strandId: strandId, path: path, x: strand ? strand.x + 40 : 0, y: strand ? strand.y + 40 : 0 });
@@ -261,7 +207,6 @@ Item {
                                 onValuePutRequested: (location, value) => root.invoke("put_value", { location: location, value: value })
                                 onValueCreateRequested: (x, y, value) => root.invoke("create_floating_value", { x: x, y: y, value: value, originBlockId: null })
                                 onValueMoveRequested: (from, to, x, y, originBlockId) => root.moveValue(from, to, x, y, originBlockId)
-                                onValueDragOutside: (location, value, sx, sy) => root.trashDraggedValue(location, value, sx, sy)
                                 onCommentForInstructionRequested: instruction => root.onBlockMenu("note", "", [], instruction)
                                 onDetailsRequested: type => details.show(Blocks.labels[type] || type, type, "")
                                 onCanvasNoteRequested: (x, y) => root.invoke("create_comment", { x: x, y: y, text: "" })
@@ -277,10 +222,6 @@ Item {
                                 onDictEditorStateChanged: (name, visible, x, y) => root.invoke("set_dict_editor_state", { name: name, visible: visible, x: x, y: y })
                                 onBlockMenuAction: (action, strandId, path, instruction) => root.onBlockMenu(action, strandId, path, instruction)
                                 onCanvasMenuAction: (action, x, y) => root.onCanvasMenu(action, x, y)
-                                onPaletteDragStarted: (spec, sx, sy, ox, oy) => root.beginPaletteDrag(spec, ox, oy, sx, sy)
-                                onPaletteDragMoved: (sx, sy) => root.movePaletteDrag(sx, sy)
-                                onPaletteDragEnded: (sx, sy) => root.endPaletteDrag(sx, sy)
-                                onPaletteDragCanceled: root.cancelPaletteDrag()
                             }
                         }
                         Item {
@@ -334,34 +275,17 @@ Item {
         }
     }
 
-    // Follows the pointer while a palette entry is dragged.
-    Item {
-        id: ghostLayer
-        anchors.fill: parent; z: 500; enabled: false
-        Item {
-            id: ghost
-            property var spec: null
-            visible: false; opacity: 0.92
-            width: ghostBlock.active ? ghostBlock.item.width : (ghostValue.active ? ghostValue.item.width : 0)
-            height: ghostBlock.active ? ghostBlock.item.height : (ghostValue.active ? ghostValue.item.height : 0)
-            Loader {
-                id: ghostBlock
-                active: ghost.visible && !!ghost.spec && ghost.spec.kind !== "value"
-                sourceComponent: InstructionBlock {
-                    instruction: ghost.spec.instruction; paletteMode: true; locked: true
-                    blockColor: ghost.spec.color || Theme.block
-                    blockDefinitions: root.actor ? root.actor.block_defs : []
-                }
-            }
-            Loader {
-                id: ghostValue
-                active: ghost.visible && !!ghost.spec && ghost.spec.kind === "value"
-                sourceComponent: ValueChip {
-                    valueData: ghost.spec.value; boxed: true; editable: false
-                    forceBoolean: !!ghost.spec.forceBoolean; callDisplayLabel: ghost.spec.label || "custom block"
-                    blockDefinitions: root.actor ? root.actor.block_defs : []
-                }
-            }
-        }
+    PaletteDragController {
+        id: dragController
+        anchors.fill: parent
+        canvas: canvas
+        variables: Blocks.variableNames()
+        lists: root.lists
+        blockDefinitions: root.actor ? root.actor.block_defs : []
+        // Switching actors cancels a drag and drops a held ghost.
+        documentId: root.actor ? root.actor.id : ""
+        document: root.actor ? [root.actor.strands, root.actor.floating_values] : null
+        trashContains: (sx, sy) => sidebar.contains(sidebar.mapFromItem(null, sx, sy))
+        submit: (edit, reply) => root.submitEdit(edit, reply)
     }
 }

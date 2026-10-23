@@ -2757,7 +2757,7 @@ dependencies = [
 [[package]]
 name = "blockstitch-core"
 version = "0.1.0"
-source = "git+https://github.com/Blockworked/blockstitch?rev=448b329a#448b329ad5ac96dfcc7aaa57e3756e0adac4c96b"
+source = "git+https://github.com/Blockworked/blockstitch?rev=30cade9a#30cade9a28ae1899d2a0f23aeae96f93ba59c077"
 dependencies = [
  "chrono",
  "rand 0.10.3",
@@ -2769,12 +2769,13 @@ dependencies = [
 [[package]]
 name = "blockstitch-qml"
 version = "0.1.0"
-source = "git+https://github.com/Blockworked/blockstitch?rev=448b329a#448b329ad5ac96dfcc7aaa57e3756e0adac4c96b"
+source = "git+https://github.com/Blockworked/blockstitch?rev=30cade9a#30cade9a28ae1899d2a0f23aeae96f93ba59c077"
 dependencies = [
  "cxx-qt",
  "cxx-qt-build",
  "qt-build-utils",
  "qt-version",
+ "serde_json",
 ]
 
 [[package]]
