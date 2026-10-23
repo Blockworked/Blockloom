@@ -42,7 +42,6 @@ Item {
 
     function invoke(command, args, done, failed) { app.invoke(command, args, done, failed); }
     function strandById(id) { return actor ? (actor.strands.find(s => s.id === id) || null) : null; }
-    function nextPath(path) { const p = JSON.parse(JSON.stringify(path)); p[p.length - 1].index++; return p; }
     function instructionAt(strand, path) {
         let list = strand ? strand.instructions : [];
         for (let i = 0; i < path.length; ++i) {
@@ -52,22 +51,12 @@ Item {
         }
         return null;
     }
-    function listAt(strand, path) {
-        let list = strand ? strand.instructions : [];
-        for (let i = 0; i < path.length - 1; ++i) {
-            const block = list[path[i].index];
-            if (!block) return [];
-            list = BlockRegistry.body(block, path[i].slot || 0);
-        }
-        return list;
-    }
-
     // ─── The editor's own copy buffer for blocks (not the OS clipboard) ────
+    // A fragment from copy_instructions: the blocks plus the notes on them.
     property var copied: null
     function onBlockMenu(action, strandId, path, instruction) {
-        const strand = strandById(strandId);
-        if (action === "copy") { if (instruction) copied = [instruction]; }
-        else if (action === "copy-stack") { copied = listAt(strand, path).slice(path[path.length - 1].index); }
+        if (action === "copy" || action === "copy-stack")
+            invoke("copy_instructions", { strandId: strandId, path: path, count: action === "copy" ? 1 : null }, fragment => copied = fragment);
         else if (action === "note") {
             const note = actor.comments.find(c => c.attached_to === instruction.id);
             if (note) invoke("set_comment_collapsed", { commentId: note.id, collapsed: false });
@@ -75,8 +64,8 @@ Item {
         }
     }
     function onCanvasMenu(action, x, y) {
-        if (action === "paste" && copied && copied.length)
-            invoke("paste_instructions", { x: x, y: y, instructions: copied.map(i => Blocks.regenerateIds(i)) });
+        if (action === "paste" && copied && copied.instructions.length)
+            invoke("paste_fragment", { x: x, y: y, fragment: copied });
     }
 
     // ─── Dragging a palette entry (or a header's parameter) onto the canvas ─
@@ -254,7 +243,7 @@ Item {
                                     const strand = root.strandById(strandId);
                                     root.invoke("delete_instruction", { strandId: strandId, path: path, x: strand ? strand.x + 40 : 0, y: strand ? strand.y + 40 : 0 });
                                 }
-                                onInstructionDuplicated: (strandId, path, instruction) => root.invoke("add_instruction", { strandId: strandId, path: root.nextPath(path), instruction: Blocks.regenerateIds(instruction) })
+                                onInstructionDuplicated: (strandId, path) => root.invoke("duplicate_instruction", { strandId: strandId, path: path })
                                 onInstructionEdited: (strandId, path, instruction) => root.invoke("edit_instruction", { strandId: strandId, path: path, instruction: instruction })
                                 onValueEdited: (location, text) => root.invoke("edit_value_field", { location: location, text: text })
                                 onValueTakeRequested: location => root.invoke("take_value", { location: location })

@@ -181,7 +181,7 @@ impl EmitterDial {
 
 pub use blockstitch_core::graph::{
     BlockDef, BlockGraph, BlockKind, BlockPiece, BlockShape, Comment, DictDef, DictEntry, DictItem,
-    FloatingValue, InputValueType, ListDef, ListItem, RefKind, VariableDef, default_block_color,
+    FloatingValue, IdMap, InputValueType, ListDef, ListItem, RefKind, VariableDef, default_block_color,
     dict_lookup, dict_remove, dict_set, dict_to_json, is_dict_reporter, is_list_reporter,
     list_index, list_to_json, normalize_block_color, parse_json_array, parse_json_object,
     rename_dict_in_value, rename_list_in_value, resolve_dict_reporter, resolve_dict_reporters,
@@ -195,6 +195,8 @@ pub type Instruction = blockstitch_core::graph::Instruction<InstructionKind>;
 pub type Strand = blockstitch_core::graph::Strand<InstructionKind>;
 /// Everything on one actor's canvas - see [`crate::project::Actor`].
 pub type ActorGraph = BlockGraph<InstructionKind>;
+/// Copied blocks and the notes pinned to them, for the editor's copy buffer.
+pub type Fragment = blockstitch_core::graph::Fragment<InstructionKind>;
 
 /// Serialized internally-tagged, so an instruction is the flat
 /// `{"type": "Move", "steps": ...}` object the frontend already speaks (see
@@ -1945,6 +1947,13 @@ impl BlockKind for InstructionKind {
 
     fn calls_block(&self, block_id: &str) -> bool {
         matches!(self, InstructionKind::CallBlock { block_id: id, .. } if id == block_id)
+    }
+
+    fn called_block(&self) -> Option<&str> {
+        match self {
+            InstructionKind::CallBlock { block_id, .. } => Some(block_id),
+            _ => None,
+        }
     }
 
     fn call_args_mut(&mut self, block_id: &str) -> Option<&mut Vec<Value>> {

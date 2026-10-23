@@ -12,7 +12,7 @@ use crate::{AppHandle, Backend};
 use blockloom_core::android;
 use blockloom_core::assets;
 use blockloom_core::blocks::{
-    ActorGraph, BlockPiece, BlockShape, DictEntry, Instruction, InstructionKind, ListItem,
+    ActorGraph, BlockPiece, BlockShape, DictEntry, Fragment, Instruction, InstructionKind, ListItem,
     normalize_block_color, resolve_dict_reporters, resolve_list_reporters,
 };
 use blockloom_core::build;
@@ -37,7 +37,7 @@ use blockloom_core::sync::LockInfo;
 use blockloom_core::value::{Evaluated, Value};
 use blockloom_core::wind::Wind;
 use blockstitch_core::editor::{
-    EditCommand, EditContext, EditError, EditOutcome, ValueDestination, apply_buffer_effects,
+    Created, EditCommand, EditContext, EditError, EditOutcome, ValueDestination, apply_buffer_effects,
     prune_value_buffers,
 };
 use blockstitch_core::value::operator_kind;
@@ -4745,6 +4745,46 @@ pub(crate) fn delete_instruction(
     result
 }
 
+/// `count` blocks from `path` (the rest of that list when absent), with
+/// their bodies and the notes pinned to them, for the editor's copy buffer.
+pub(crate) fn copy_instructions(
+    state: &SharedState,
+    strand_id: String,
+    path: InstrPath,
+    count: Option<usize>,
+) -> Result<Fragment, String> {
+    let s = lock(state)?;
+    let id = s.actor_id().ok_or("No actor is open")?;
+    let actor = s
+        .project()
+        .and_then(|project| project.actor(&id))
+        .ok_or("No actor is open")?;
+    Ok(actor.graph.copy_fragment(&strand_id, &path, count)?)
+}
+
+/// Drops a copied fragment at `(x, y)` as a new strand, with fresh ids, as
+/// one step. Returns that strand's id.
+pub(crate) fn paste_fragment(
+    state: &SharedState,
+    app: &AppHandle,
+    x: i32,
+    y: i32,
+    fragment: Fragment,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    let outcome = run_edit(&mut s, EditCommand::PasteFragment { fragment, x, y });
+    emit(app, &s);
+    outcome?
+        .created
+        .into_iter()
+        .find_map(|created| match created {
+            Created::Strand(id) => Some(id),
+            _ => None,
+        })
+        .ok_or_else(|| "Nothing was pasted".to_string())
+}
+
+/// [`paste_fragment`] for bare instructions, without notes.
 pub(crate) fn paste_instructions(
     state: &SharedState,
     app: &AppHandle,
@@ -4752,15 +4792,24 @@ pub(crate) fn paste_instructions(
     y: i32,
     instructions: Vec<Instruction>,
 ) -> Result<String, String> {
+    paste_fragment(state, app, x, y, Fragment::new(instructions))
+}
+
+/// Copies the block at `path` (bodies and notes included) in right after
+/// it, as one step.
+pub(crate) fn duplicate_instruction(
+    state: &SharedState,
+    app: &AppHandle,
+    strand_id: String,
+    path: InstrPath,
+) -> Result<(), String> {
     let mut s = lock(state)?;
-    push_undo(&mut s);
-    let id = match graph_mut(&mut s) {
-        Some(graph) => graph.add_strand(x, y, instructions),
-        None => return Err("No actor is open".to_string()),
-    };
-    auto_save(&s);
+    let outcome = run_edit(
+        &mut s,
+        EditCommand::DuplicateInstruction { strand_id, path },
+    );
     emit(app, &s);
-    Ok(id)
+    outcome.map(|_| ()).map_err(String::from)
 }
 
 // ─── Canvas: strands ───────────────────────────────────────────────────────

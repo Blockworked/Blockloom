@@ -2,66 +2,26 @@
 //!
 //! blockstitch stores an instruction as `{"id": _, "kind": {"type": _, ...}}`
 //! but its canvas wants the flat `{"id": _, "type": _, ...}` a `BlockNode` is.
-//! Rather than hand-writing a DTO per block, these two functions flatten and
-//! unflatten that one nesting generically, so adding a block to
-//! [`crate::blocks::InstructionKind`] needs no wire code at all.
+//! blockstitch's typed codec flattens exactly the [`Instruction`] positions a
+//! value holds, so adding a block to [`crate::blocks::InstructionKind`] needs
+//! no wire code, and plugin payloads and other host JSON pass through as
+//! they are. A kind field may not be called `id`.
+//!
+//! [`Instruction`]: crate::blocks::Instruction
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-/// Serializes `value` and flattens every instruction in it.
+/// Serializes `value` with every instruction in it flattened.
 pub fn to_wire<T: Serialize>(value: &T) -> Result<Value, String> {
-    let mut json = serde_json::to_value(value).map_err(|e| e.to_string())?;
-    flatten(&mut json);
-    Ok(json)
+    blockstitch_core::graph::to_frontend(value).map_err(|e| e.to_string())
 }
 
-/// Unflattens every instruction in `json` and deserializes it.
-pub fn from_wire<T: DeserializeOwned>(mut json: Value) -> Result<T, String> {
-    unflatten(&mut json);
-    serde_json::from_value(json).map_err(|e| e.to_string())
-}
-
-/// `{"id": _, "kind": {...}}` -> `{"id": _, ...}`, innermost first so a
-/// wrap block's body is already flat when its own turn comes.
-fn flatten(json: &mut Value) {
-    match json {
-        Value::Array(items) => items.iter_mut().for_each(flatten),
-        Value::Object(map) => {
-            map.values_mut().for_each(flatten);
-            let is_instruction = map.len() == 2
-                && map.contains_key("id")
-                && map.get("kind").is_some_and(Value::is_object);
-            if is_instruction {
-                let Some(Value::Object(kind)) = map.remove("kind") else {
-                    return;
-                };
-                for (key, value) in kind {
-                    map.insert(key, value);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-/// The inverse of [`flatten`]: an object carrying both an `id` and a `type` is
-/// an instruction, so everything but the `id` moves back under `kind`.
-fn unflatten(json: &mut Value) {
-    match json {
-        Value::Array(items) => items.iter_mut().for_each(unflatten),
-        Value::Object(map) => {
-            map.values_mut().for_each(unflatten);
-            if map.contains_key("id") && map.contains_key("type") {
-                let id = map.remove("id").unwrap_or(Value::Null);
-                let kind = Value::Object(std::mem::take(map));
-                map.insert("id".to_string(), id);
-                map.insert("kind".to_string(), kind);
-            }
-        }
-        _ => {}
-    }
+/// Deserializes `json`, reading every instruction in it as flat (the stored
+/// `{id, kind}` shape is accepted too).
+pub fn from_wire<T: DeserializeOwned>(json: Value) -> Result<T, String> {
+    blockstitch_core::graph::from_frontend(json).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -113,5 +73,37 @@ mod tests {
         let json = to_wire(&before).unwrap();
         let after: crate::project::Project = from_wire(json).unwrap();
         assert_eq!(after, before);
+    }
+
+    #[test]
+    fn plugin_payloads_keep_their_id_kind_and_type_keys() {
+        use blockloom_plugin_api::record::PluginRecord;
+        let payload = serde_json::json!({
+            "id": "cell",
+            "kind": {"solid": true},
+            "nested": [{"id": "a", "type": "Move", "steps": 3}],
+        });
+        let mut before = crate::project::Project::starter("p", crate::scene::Mode::ThreeD);
+        before.plugin_resources.push(PluginRecord::new(
+            "com.example.test",
+            "grid",
+            1,
+            payload.clone(),
+        ));
+        let json = to_wire(&before).unwrap();
+        let wired = json["plugin_resources"][0]["payload"].clone();
+        assert_eq!(wired, payload);
+        let after: crate::project::Project = from_wire(json).unwrap();
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn the_stored_nested_shape_is_still_accepted() {
+        let before = nested();
+        let stored = serde_json::to_value(&before).unwrap();
+        assert!(stored["kind"].is_object());
+        let after: Instruction = from_wire(stored).unwrap();
+        assert_eq!(after.id, before.id);
+        assert_eq!(after.kind, before.kind);
     }
 }

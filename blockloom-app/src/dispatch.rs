@@ -35,11 +35,15 @@ fn arg<T: DeserializeOwned>(args: &Value, name: &str) -> Result<T, String> {
 /// An instruction comes in flat (`{"id": _, "type": _, ...}`) and has to be
 /// folded back into blockstitch's `{id, kind}` shape - see [`wire`].
 fn instruction_arg(args: &Value, name: &str) -> Result<Instruction, String> {
-    let value = args.get(name).cloned().unwrap_or(Value::Null);
-    wire::from_wire(value).map_err(|e| format!("invalid argument '{name}': {e}"))
+    wire_arg(args, name)
 }
 
 fn instructions_arg(args: &Value, name: &str) -> Result<Vec<Instruction>, String> {
+    wire_arg(args, name)
+}
+
+/// Anything holding instructions in the frontend's flat shape.
+fn wire_arg<T: DeserializeOwned>(args: &Value, name: &str) -> Result<T, String> {
     let value = args.get(name).cloned().unwrap_or(Value::Null);
     wire::from_wire(value).map_err(|e| format!("invalid argument '{name}': {e}"))
 }
@@ -1126,6 +1130,25 @@ impl Backend {
                 arg(&args, "x")?,
                 arg(&args, "y")?,
                 instructions_arg(&args, "instructions")?,
+            )?),
+            "copy_instructions" => wire::to_wire(&commands::copy_instructions(
+                state,
+                arg(&args, "strandId")?,
+                arg::<InstrPath>(&args, "path")?,
+                arg(&args, "count")?,
+            )?),
+            "paste_fragment" => to_json(commands::paste_fragment(
+                state,
+                app,
+                arg(&args, "x")?,
+                arg(&args, "y")?,
+                wire_arg(&args, "fragment")?,
+            )?),
+            "duplicate_instruction" => to_json(commands::duplicate_instruction(
+                state,
+                app,
+                arg(&args, "strandId")?,
+                arg::<InstrPath>(&args, "path")?,
             )?),
 
             // ── Strands ────────────────────────────────────────────────────

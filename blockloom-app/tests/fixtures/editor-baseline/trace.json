@@ -50,7 +50,7 @@
     { "command": "rename_variable", "args": { "oldName": "score", "newName": "points" } },
     { "command": "undo", "args": {} },
     { "command": "redo", "args": {} },
-    { "note": "pasting reuses the frontend's ids as sent",
+    { "note": "pasting gives the copy fresh ids",
       "command": "paste_instructions", "args": { "x": 600, "y": 300, "instructions": ["$graph:/strands/0/instructions/1"] } },
     { "command": "split_strand", "args": { "strandId": "$main", "path": [{ "index": 3, "slot": null }], "x": 0, "y": 400 } },
     { "command": "remove_instruction", "args": { "strandId": "$main", "path": [{ "index": 1, "slot": 0 }, { "index": 0, "slot": null }] } },
@@ -71,6 +71,13 @@
       "command": "edit_value_field", "args": { "location": { "kind": "Field", "strand_id": "$main", "index": [{ "index": 1, "slot": null }], "field_id": "RepeatCount", "path": [0] }, "text": "-" } },
     { "note": "a tail dropped on the trash is one remove",
       "command": "remove_instruction", "args": { "strandId": "$main", "path": [{ "index": 1, "slot": null }], "count": 5 } },
+    { "command": "undo", "args": {} },
+    { "note": "copying a stack carries the note pinned to it",
+      "command": "copy_instructions", "args": { "strandId": "$main", "path": [{ "index": 1, "slot": null }], "count": null }, "save": "fragment" },
+    { "note": "a pasted fragment gets fresh ids and its note follows the clone",
+      "command": "paste_fragment", "args": { "x": 600, "y": 600, "fragment": "$fragment" } },
+    { "note": "duplicating copies the block, its body and its note right after it",
+      "command": "duplicate_instruction", "args": { "strandId": "$main", "path": [{ "index": 1, "slot": null }] } },
     { "command": "undo", "args": {} }
   ]
 }

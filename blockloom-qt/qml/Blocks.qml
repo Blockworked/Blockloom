@@ -669,16 +669,6 @@ QtObject {
     function uuid() { return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === "x" ? r : (r & 3 | 8)).toString(16); }); }
     // A fresh block of `type`, with the defaults that make it useful straight away.
     function fresh(type) { return Object.assign({ id: uuid(), type: type }, defaults(type)); }
-    // A copy with new ids all the way down, for duplicating and pasting.
-    function regenerateIds(ins) {
-        const copy = JSON.parse(JSON.stringify(ins));
-        const walk = i => {
-            i.id = uuid();
-            for (const key of ["body", "then_body", "else_body"]) if (Array.isArray(i[key])) i[key].forEach(walk);
-        };
-        walk(copy);
-        return copy;
-    }
 
     // ─── Sensing reporters, registered in blockloom-core/src/value.rs ───────
     readonly property var sensing: ({

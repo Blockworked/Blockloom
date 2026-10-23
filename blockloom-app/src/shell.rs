@@ -2846,7 +2846,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "paste-instructions",
         cmd: "paste_instructions",
         aliases: &["paste_instructions"],
-        summary: "Drop a stack of blocks at (x, y) as a new strand.",
+        summary: "Drop a stack of blocks at (x, y) as a new strand, with fresh ids.",
         args: &[
             ArgSpec {
                 name: "x",
@@ -2861,6 +2861,70 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             ArgSpec {
                 name: "instructions",
                 ty: "[block objects]",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "copy-instructions",
+        cmd: "copy_instructions",
+        aliases: &["copy_instructions"],
+        summary: "Copy count blocks from path (the rest of that stack if left out) with their notes, as a fragment for paste-fragment.",
+        args: &[
+            ArgSpec {
+                name: "strandId",
+                ty: "id",
+                required: true,
+            },
+            ArgSpec {
+                name: "path",
+                ty: "[{index, slot?}] address",
+                required: true,
+            },
+            ArgSpec {
+                name: "count",
+                ty: "number",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "paste-fragment",
+        cmd: "paste_fragment",
+        aliases: &["paste_fragment"],
+        summary: "Drop a copied fragment at (x, y) as a new strand with fresh ids and its notes, as one undo step.",
+        args: &[
+            ArgSpec {
+                name: "x",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "y",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "fragment",
+                ty: "object {...}",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "duplicate-instruction",
+        cmd: "duplicate_instruction",
+        aliases: &["duplicate_instruction"],
+        summary: "Copy the block at path, with its bodies and notes, in right after it as one undo step.",
+        args: &[
+            ArgSpec {
+                name: "strandId",
+                ty: "id",
+                required: true,
+            },
+            ArgSpec {
+                name: "path",
+                ty: "[{index, slot?}] address",
                 required: true,
             },
         ],
