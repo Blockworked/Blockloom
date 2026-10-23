@@ -2402,6 +2402,11 @@ bound to it. `Main.qml`'s `reuse` swaps every unchanged part of a new
 snapshot for the old object, and `Blocks.qml` bumps `BlockRegistry.revision`
 only when `optionSource` (the names its dropdowns list) changes.
 
+`MakeBlockDialog.qml` is blockstitch's shared `BlockDefinitionEditor` in a
+dialog, with branches turned off (a call here has none); the backend's
+`create_block`/`edit_block` take its draft as is, icon, identifier and
+description included.
+
 The asset tray along the bottom (`AssetTray.qml`) is a file manager
 over the project folder: it lists, makes, imports, renames, moves and deletes
 files, and an asset dragged out of it lands on any
