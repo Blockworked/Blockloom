@@ -40,14 +40,21 @@ Rectangle {
     readonly property var listNames: Blocks.listNames()
     readonly property var dictNames: Blocks.dictNames()
 
+    // A fresh call's arguments: each input's default, else its typed blank.
+    function callArgs(def) {
+        return (def.pieces || []).filter(p => p.kind === "Input").map(p => {
+            const d = p.default_value, bool = p.value_type === "Bool";
+            if (d && bool && d.kind === "Bool" && typeof d.value === "boolean") return { kind: "Op", op: d.value ? "True" : "False", args: [], saved: { kind: "Number", value: 0 } };
+            if (d && !bool && ((d.kind === "Number" && isFinite(d.value)) || (d.kind === "Text" && typeof d.value === "string"))) return { kind: d.kind, value: d.value };
+            return bool ? { kind: "Bool" } : { kind: "Number", value: 0 };
+        });
+    }
     // The block a custom definition's palette entry drops.
     function callInstruction(def) {
-        const args = (def.pieces || []).filter(p => p.kind === "Input").map(p => p.value_type === "Bool" ? { kind: "Bool" } : { kind: "Number", value: 0 });
-        return { id: "palette-call-" + def.id, type: "CallBlock", block_id: def.id, args: args };
+        return { id: "palette-call-" + def.id, type: "CallBlock", block_id: def.id, args: callArgs(def) };
     }
     function callValue(def) {
-        const args = (def.pieces || []).filter(p => p.kind === "Input").map(p => p.value_type === "Bool" ? { kind: "Bool" } : { kind: "Number", value: 0 });
-        return { kind: "Call", block_id: def.id, args: args, branches: [], saved: { kind: "Number", value: 0 } };
+        return { kind: "Call", block_id: def.id, args: callArgs(def), branches: [], saved: { kind: "Number", value: 0 } };
     }
     function isReporter(def) { return def.shape === "ReturnsValue" || def.shape === "ReturnsBool"; }
     function defLabel(def) { return (def.pieces || []).map(p => p.kind === "Label" ? p.text : "(" + p.name + ")").join(" "); }
