@@ -181,7 +181,7 @@ impl EmitterDial {
 
 pub use blockstitch_core::graph::{
     BlockDef, BlockGraph, BlockKind, BlockPiece, BlockShape, Comment, DictDef, DictEntry, DictItem,
-    FloatingValue, InputValueType, ListDef, ListItem, VariableDef, default_block_color,
+    FloatingValue, InputValueType, ListDef, ListItem, RefKind, VariableDef, default_block_color,
     dict_lookup, dict_remove, dict_set, dict_to_json, is_dict_reporter, is_list_reporter,
     list_index, list_to_json, normalize_block_color, parse_json_array, parse_json_object,
     rename_dict_in_value, rename_list_in_value, resolve_dict_reporter, resolve_dict_reporters,
@@ -1329,6 +1329,32 @@ pub enum InstructionKind {
 /// Blockloom's half of the block-editor contract: where its instructions
 /// keep values and bodies, which are headers, and how field ids map onto
 /// their slots. Every traversal built on this lives in blockstitch.
+/// Every variable, list and dict name a kind holds as text, for
+/// [`BlockKind::visit_refs_mut`] and [`BlockKind::visit_refs`] alike.
+macro_rules! for_each_ref {
+    ($kind:expr, $f:expr) => {
+        match $kind {
+            InstructionKind::SetVariable { name, .. }
+            | InstructionKind::ChangeVariable { name, .. }
+            | InstructionKind::SaveVariable { name }
+            | InstructionKind::ClearSavedVariable { name } => $f(RefKind::Variable, name),
+            InstructionKind::AddToList { name, .. }
+            | InstructionKind::DeleteOfList { name, .. }
+            | InstructionKind::DeleteAllOfList { name }
+            | InstructionKind::ShiftList { name, .. }
+            | InstructionKind::InsertIntoList { name, .. }
+            | InstructionKind::ReplaceItemOfList { name, .. }
+            | InstructionKind::ReverseList { name }
+            | InstructionKind::LoadJsonIntoList { name, .. } => $f(RefKind::List, name),
+            InstructionKind::SetDictValue { name, .. }
+            | InstructionKind::DeleteDictKey { name, .. }
+            | InstructionKind::DeleteAllOfDict { name }
+            | InstructionKind::LoadJsonIntoDict { name, .. } => $f(RefKind::Dict, name),
+            _ => {}
+        }
+    };
+}
+
 impl BlockKind for InstructionKind {
     const HEADER_LABEL: &'static str = "event/block definition";
 
@@ -1909,36 +1935,12 @@ impl BlockKind for InstructionKind {
         }
     }
 
-    fn variable_target_mut(&mut self) -> Option<&mut String> {
-        match self {
-            InstructionKind::SetVariable { name, .. }
-            | InstructionKind::ChangeVariable { name, .. } => Some(name),
-            _ => None,
-        }
+    fn visit_refs_mut(&mut self, f: &mut dyn FnMut(RefKind, &mut String)) {
+        for_each_ref!(self, f);
     }
 
-    fn list_target_mut(&mut self) -> Option<&mut String> {
-        match self {
-            InstructionKind::AddToList { name, .. }
-            | InstructionKind::DeleteOfList { name, .. }
-            | InstructionKind::DeleteAllOfList { name }
-            | InstructionKind::ShiftList { name, .. }
-            | InstructionKind::InsertIntoList { name, .. }
-            | InstructionKind::ReplaceItemOfList { name, .. }
-            | InstructionKind::ReverseList { name }
-            | InstructionKind::LoadJsonIntoList { name, .. } => Some(name),
-            _ => None,
-        }
-    }
-
-    fn dict_target_mut(&mut self) -> Option<&mut String> {
-        match self {
-            InstructionKind::SetDictValue { name, .. }
-            | InstructionKind::DeleteDictKey { name, .. }
-            | InstructionKind::DeleteAllOfDict { name }
-            | InstructionKind::LoadJsonIntoDict { name, .. } => Some(name),
-            _ => None,
-        }
+    fn visit_refs(&self, f: &mut dyn FnMut(RefKind, &str)) {
+        for_each_ref!(self, f);
     }
 
     fn calls_block(&self, block_id: &str) -> bool {

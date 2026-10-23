@@ -3634,6 +3634,56 @@ mod tests {
     }
 
     #[test]
+    fn renaming_a_shared_variable_follows_nested_save_blocks_except_where_shadowed() {
+        let mut project = Project::starter("p", Mode::TwoD);
+        project.create_global("score").unwrap();
+        project.create_global("lives").unwrap();
+        let shadowing = project.actors[1].id.clone();
+        project
+            .actor_mut(&shadowing)
+            .unwrap()
+            .graph
+            .create_variable("score")
+            .unwrap();
+        for index in 0..2 {
+            let body = ["score", "lives"]
+                .into_iter()
+                .flat_map(|name| {
+                    [
+                        InstructionKind::SaveVariable { name: name.into() },
+                        InstructionKind::ClearSavedVariable { name: name.into() },
+                    ]
+                })
+                .map(Instruction::new)
+                .collect();
+            let repeat = Instruction::new(InstructionKind::Repeat {
+                count: crate::value::Value::number(2.0),
+                body,
+            });
+            project.actors[index]
+                .graph
+                .strands
+                .push(crate::blocks::Strand::with_instructions(0, 0, vec![repeat]));
+        }
+        project.rename_global("score", "points").unwrap();
+
+        let names_of = |actor: &Actor| {
+            let mut out = Vec::new();
+            actor.graph.strands[0].instructions[0]
+                .walk_refs(&mut |_, name| out.push(name.to_string()));
+            out
+        };
+        assert_eq!(
+            names_of(&project.actors[0]),
+            ["points", "points", "lives", "lives"]
+        );
+        assert_eq!(
+            names_of(&project.actors[1]),
+            ["score", "score", "lives", "lives"]
+        );
+    }
+
+    #[test]
     fn shared_dicts_are_created_renamed_and_removed() {
         let mut project = Project::starter("p", Mode::TwoD);
         assert!(project.create_global_dict("  ").is_err());
