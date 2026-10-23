@@ -36,7 +36,10 @@ use blockloom_core::sync;
 use blockloom_core::sync::LockInfo;
 use blockloom_core::value::{Evaluated, Value};
 use blockloom_core::wind::Wind;
-use blockstitch_core::editor::{ValueEdit, prune_value_buffers};
+use blockstitch_core::editor::{
+    EditCommand, EditContext, EditError, EditOutcome, ValueDestination, apply_buffer_effects,
+    prune_value_buffers,
+};
 use blockstitch_core::value::operator_kind;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -183,6 +186,28 @@ fn emit(app: &AppHandle, s: &AppState) {
 fn graph_mut(s: &mut AppState) -> Option<&mut ActorGraph> {
     let id = s.actor_id()?;
     Some(&mut s.project_mut()?.actor_mut(&id)?.graph)
+}
+
+/// Runs one typed edit on the open actor's canvas. Only an accepted,
+/// changing edit checkpoints the project and saves; buffers follow the
+/// outcome either way.
+fn run_edit(
+    s: &mut AppState,
+    command: EditCommand<InstructionKind>,
+) -> Result<EditOutcome, EditError> {
+    let missing = EditError::Missing("No actor is open");
+    let prepared = graph_mut(s)
+        .ok_or(missing.clone())?
+        .prepare_edit(command, &EditContext::default())?;
+    if prepared.changes() {
+        push_undo_for(s, prepared.coalesce().cloned());
+    }
+    let outcome = graph_mut(s).ok_or(missing)?.commit_edit(prepared);
+    apply_buffer_effects(&mut s.invalid_field_buffers, &outcome.buffers);
+    if outcome.changed {
+        auto_save(s);
+    }
+    Ok(outcome)
 }
 
 /// The variable values a reporter or a dropped value block is evaluated
@@ -4677,18 +4702,24 @@ pub(crate) fn edit_instruction(
     Ok(())
 }
 
+/// Removes `count` blocks from `path` down (a tail dropped on the trash) as
+/// one step. A path that addresses nothing is quietly ignored.
 pub(crate) fn remove_instruction(
     state: &SharedState,
     app: &AppHandle,
     strand_id: String,
     path: InstrPath,
+    count: usize,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
-    push_undo(&mut s);
-    if let Some(graph) = graph_mut(&mut s) {
-        graph.remove_instruction(&strand_id, &path);
-    }
-    auto_save(&s);
+    let _ = run_edit(
+        &mut s,
+        EditCommand::RemoveInstructions {
+            strand_id,
+            path,
+            count,
+        },
+    );
     emit(app, &s);
     Ok(())
 }
@@ -4857,23 +4888,9 @@ pub(crate) fn edit_value_field(
     text: String,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
-    // Coalesce a run of keystrokes into this field into a single undo step.
-    push_undo_for(&mut s, Some(EditSession::Value(location.clone())));
-    if let Some(graph) = graph_mut(&mut s) {
-        match graph.edit_value_text(&location, text.clone()) {
-            // Text slots are always valid - no invalid-buffer bookkeeping.
-            ValueEdit::Text => auto_save(&s),
-            // A numeric field keeps the raw text either way, so a half-written
-            // number doesn't snap back mid-edit.
-            ValueEdit::Number { parsed } => {
-                s.invalid_field_buffers.insert(location, text);
-                if parsed {
-                    auto_save(&s);
-                }
-            }
-            ValueEdit::Missing => {}
-        }
-    }
+    // Keystrokes into one field coalesce into one undo step; a half-written
+    // number is kept as raw text without touching the project.
+    let _ = run_edit(&mut s, EditCommand::EditFieldText { location, text });
     emit(app, &s);
     Ok(())
 }
@@ -4926,6 +4943,31 @@ pub(crate) fn put_value(
     auto_save(&s);
     emit(app, &s);
     Ok(())
+}
+
+/// Moves a value block in one step: into the slot `to`, or parked on open
+/// canvas at `(x, y)` when `to` is none.
+pub(crate) fn move_value(
+    state: &SharedState,
+    app: &AppHandle,
+    from: ValueLocation,
+    to: Option<ValueLocation>,
+    x: i32,
+    y: i32,
+    origin_block_id: Option<String>,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let to = match to {
+        Some(to) => ValueDestination::Slot(to),
+        None => ValueDestination::Canvas {
+            x,
+            y,
+            origin_block_id,
+        },
+    };
+    let result = run_edit(&mut s, EditCommand::MoveValue { from, to });
+    emit(app, &s);
+    result.map(|_| ()).map_err(String::from)
 }
 
 /// What a value block would report right now, for the canvas's hover preview.
@@ -5602,12 +5644,34 @@ pub(crate) fn set_dict_editor_state(
     result
 }
 
+/// A custom block's identifier, description and icon. Left out of a command,
+/// an edit keeps what the block already had.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct BlockDetails {
+    pub(crate) identifier: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) icon: Option<String>,
+}
+
+fn apply_block_details(
+    graph: &mut ActorGraph,
+    block_id: &str,
+    details: BlockDetails,
+) -> Result<(), String> {
+    let def = graph.block_def(block_id).ok_or("Unknown block")?;
+    let identifier = details.identifier.unwrap_or_else(|| def.identifier.clone());
+    let description = details.description.unwrap_or_else(|| def.description.clone());
+    let icon = details.icon.unwrap_or_else(|| def.icon.clone());
+    graph.set_block_details(block_id, &identifier, &description, &icon)
+}
+
 pub(crate) fn create_block(
     state: &SharedState,
     app: &AppHandle,
     pieces: Vec<BlockPiece>,
     shape: BlockShape,
     color: String,
+    details: BlockDetails,
 ) -> Result<String, String> {
     blockloom_core::blocks::BlockDef::validate_pieces(&pieces)?;
     let color = normalize_block_color(&color).ok_or("Choose a valid block color")?;
@@ -5616,11 +5680,13 @@ pub(crate) fn create_block(
     let id = match graph_mut(&mut s) {
         Some(graph) => {
             let (x, y) = graph.next_strand_position();
-            graph.create_block(pieces, shape, color, x, y, |block_id| {
+            let id = graph.create_block(pieces, shape, color, x, y, |block_id| {
                 InstructionKind::BlockHeader {
                     block_id: block_id.to_string(),
                 }
-            })
+            });
+            apply_block_details(graph, &id, details)?;
+            id
         }
         None => return Err("No actor is open".to_string()),
     };
@@ -5636,11 +5702,14 @@ pub(crate) fn edit_block(
     pieces: Vec<BlockPiece>,
     shape: BlockShape,
     color: String,
+    details: BlockDetails,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     push_undo(&mut s);
     let result = match graph_mut(&mut s) {
-        Some(graph) => graph.update_block(&block_id, pieces, shape, &color),
+        Some(graph) => graph
+            .update_block(&block_id, pieces, shape, &color)
+            .and_then(|()| apply_block_details(graph, &block_id, details)),
         None => Ok(()),
     };
     auto_save(&s);

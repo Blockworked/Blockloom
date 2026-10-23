@@ -18,6 +18,15 @@ use serde_json::Value;
 
 use crate::Backend;
 
+/// A custom block's optional identifier, description and icon.
+fn block_details(args: &Value) -> Result<commands::BlockDetails, String> {
+    Ok(commands::BlockDetails {
+        identifier: arg(args, "identifier")?,
+        description: arg(args, "description")?,
+        icon: arg(args, "icon")?,
+    })
+}
+
 fn arg<T: DeserializeOwned>(args: &Value, name: &str) -> Result<T, String> {
     let value = args.get(name).cloned().unwrap_or(Value::Null);
     serde_json::from_value(value).map_err(|e| format!("invalid argument '{name}': {e}"))
@@ -1101,6 +1110,7 @@ impl Backend {
                 app,
                 arg(&args, "strandId")?,
                 arg::<InstrPath>(&args, "path")?,
+                arg::<Option<usize>>(&args, "count")?.unwrap_or(1),
             )?),
             "delete_instruction" => to_json(commands::delete_instruction(
                 state,
@@ -1191,6 +1201,15 @@ impl Backend {
                 app,
                 arg::<ValueLocation>(&args, "location")?,
                 arg::<BlockValue>(&args, "value")?,
+            )?),
+            "move_value" => to_json(commands::move_value(
+                state,
+                app,
+                arg::<ValueLocation>(&args, "from")?,
+                arg::<Option<ValueLocation>>(&args, "to")?,
+                arg::<Option<i32>>(&args, "x")?.unwrap_or(0),
+                arg::<Option<i32>>(&args, "y")?.unwrap_or(0),
+                arg(&args, "originBlockId")?,
             )?),
             "preview_value" => to_json(commands::preview_value(
                 state,
@@ -1369,6 +1388,7 @@ impl Backend {
                     pieces,
                     shape,
                     arg(&args, "color")?,
+                    block_details(&args)?,
                 )?)
             }
             "edit_block" => {
@@ -1381,6 +1401,7 @@ impl Backend {
                     pieces,
                     shape,
                     arg(&args, "color")?,
+                    block_details(&args)?,
                 )?)
             }
             "delete_block" => to_json(commands::delete_block(state, app, arg(&args, "blockId")?)?),

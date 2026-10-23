@@ -57,6 +57,20 @@
     { "note": "a rejected edit: a header below the first block",
       "command": "add_instruction", "args": { "strandId": "$main", "path": [{ "index": 1, "slot": null }], "instruction": { "type": "WhenStarted" } } },
     { "command": "undo", "args": {} },
+    { "command": "undo", "args": {} },
+    { "command": "create_floating_value", "args": { "x": 200, "y": 200, "value": { "kind": "Op", "op": "Add", "args": [{ "kind": "Number", "value": 4 }, { "kind": "Number", "value": 2 }], "saved": { "kind": "Number", "value": 0 } }, "originBlockId": null }, "save": "f3" },
+    { "note": "a value drag is one move_value: it shadows what the slot held",
+      "command": "move_value", "args": { "from": { "kind": "Floating", "floating_id": "$f3", "path": [] }, "to": { "kind": "Field", "strand_id": "$main", "index": [{ "index": 1, "slot": null }], "field_id": "RepeatCount", "path": [] } } },
+    { "note": "one gesture, one undo step", "command": "undo", "args": {} },
+    { "command": "redo", "args": {} },
+    { "note": "a move into its own argument is refused and costs no undo step",
+      "command": "move_value", "args": { "from": { "kind": "Field", "strand_id": "$main", "index": [{ "index": 1, "slot": null }], "field_id": "RepeatCount", "path": [] }, "to": { "kind": "Field", "strand_id": "$main", "index": [{ "index": 1, "slot": null }], "field_id": "RepeatCount", "path": [0] } } },
+    { "note": "dragging an argument out onto the canvas leaves its blank",
+      "command": "move_value", "args": { "from": { "kind": "Field", "strand_id": "$main", "index": [{ "index": 1, "slot": null }], "field_id": "RepeatCount", "path": [1] }, "to": null, "x": 40, "y": 500, "originBlockId": null } },
+    { "note": "a not-yet-number is buffered without an undo step",
+      "command": "edit_value_field", "args": { "location": { "kind": "Field", "strand_id": "$main", "index": [{ "index": 1, "slot": null }], "field_id": "RepeatCount", "path": [0] }, "text": "-" } },
+    { "note": "a tail dropped on the trash is one remove",
+      "command": "remove_instruction", "args": { "strandId": "$main", "path": [{ "index": 1, "slot": null }], "count": 5 } },
     { "command": "undo", "args": {} }
   ]
 }

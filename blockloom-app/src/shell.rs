@@ -2795,7 +2795,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "remove-instruction",
         cmd: "remove_instruction",
         aliases: &["remove_instruction"],
-        summary: "Take one block out, closing the gap behind whatever was below it.",
+        summary: "Take blocks out (one, or count of them from path down), closing the gap.",
         args: &[
             ArgSpec {
                 name: "strandId",
@@ -2806,6 +2806,11 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 name: "path",
                 ty: "[{index, slot?}] address",
                 required: true,
+            },
+            ArgSpec {
+                name: "count",
+                ty: "number",
+                required: false,
             },
         ],
     },
@@ -3060,6 +3065,39 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 name: "value",
                 ty: "value object {\"kind\", ...}",
                 required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "move-value",
+        cmd: "move_value",
+        aliases: &["move_value"],
+        summary: "Drag a value block into another slot, or onto the canvas at x, y, as one undo step.",
+        args: &[
+            ArgSpec {
+                name: "from",
+                ty: "value location object",
+                required: true,
+            },
+            ArgSpec {
+                name: "to",
+                ty: "value location object",
+                required: false,
+            },
+            ArgSpec {
+                name: "x",
+                ty: "number",
+                required: false,
+            },
+            ArgSpec {
+                name: "y",
+                ty: "number",
+                required: false,
+            },
+            ArgSpec {
+                name: "originBlockId",
+                ty: "id",
+                required: false,
             },
         ],
     },
@@ -3577,6 +3615,21 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 ty: "#RRGGBB",
                 required: true,
             },
+            ArgSpec {
+                name: "identifier",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "description",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "icon",
+                ty: "string",
+                required: false,
+            },
         ],
     },
     CommandSpec {
@@ -3604,6 +3657,21 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 name: "color",
                 ty: "#RRGGBB",
                 required: true,
+            },
+            ArgSpec {
+                name: "identifier",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "description",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "icon",
+                ty: "string",
+                required: false,
             },
         ],
     },

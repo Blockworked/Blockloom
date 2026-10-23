@@ -1,7 +1,7 @@
 {
   "saved_document": {
     "project": {
-      "active_scene": "id#21",
+      "active_scene": "id#23",
       "android": {
         "application_id": "",
         "key_alias": "",
@@ -9,16 +9,16 @@
         "version_code": 1,
         "version_name": "1.0.0"
       },
-      "default_scene": "id#21",
+      "default_scene": "id#23",
       "global_dicts": [],
       "global_lists": [],
       "globals": [],
       "icon": "",
-      "id": "id#22",
+      "id": "id#24",
       "name": "Baseline",
       "scenes": [
         {
-          "id": "id#21",
+          "id": "id#23",
           "mode": "TwoD",
           "name": "Scene 1",
           "path": "assets/scenes/Scene 1.blockscene"
@@ -83,7 +83,7 @@
           ],
           "dicts": [],
           "floating_values": [],
-          "id": "id#23",
+          "id": "id#25",
           "lists": [],
           "name": "Player",
           "strands": [],
@@ -145,7 +145,7 @@
           ],
           "dicts": [],
           "floating_values": [],
-          "id": "id#24",
+          "id": "id#26",
           "lists": [],
           "name": "Ground",
           "strands": [],
@@ -271,6 +271,16 @@
               },
               "x": 300,
               "y": 120
+            },
+            {
+              "id": "id#22",
+              "origin_block_id": null,
+              "value": {
+                "kind": "Number",
+                "value": 2.0
+              },
+              "x": 40,
+              "y": 500
             }
           ],
           "id": "id#1",
@@ -319,8 +329,22 @@
                       }
                     ],
                     "count": {
-                      "kind": "Number",
-                      "value": 3.0
+                      "args": [
+                        {
+                          "kind": "Number",
+                          "value": 4.0
+                        },
+                        {
+                          "kind": "Number",
+                          "value": 0.0
+                        }
+                      ],
+                      "kind": "Op",
+                      "op": "Add",
+                      "saved": {
+                        "kind": "Number",
+                        "value": 3.0
+                      }
                     },
                     "type": "Repeat"
                   }
@@ -1226,7 +1250,7 @@
         }
       ],
       "format": 1,
-      "id": "id#21",
+      "id": "id#23",
       "name": "Scene 1"
     }
   },
@@ -9188,6 +9212,3019 @@
       "ok": true,
       "result": null,
       "step": 38
+    },
+    {
+      "after": {
+        "can_redo": false,
+        "can_undo": true,
+        "graph": {
+          "block_defs": [
+            {
+              "color": "#4C97FF",
+              "description": "",
+              "icon": "",
+              "id": "id#11",
+              "identifier": "",
+              "pieces": [
+                {
+                  "id": "l1",
+                  "kind": "Label",
+                  "text": "double"
+                },
+                {
+                  "id": "in1",
+                  "kind": "Input",
+                  "name": "value",
+                  "value_type": "Any"
+                },
+                {
+                  "id": "in2",
+                  "kind": "Input",
+                  "name": "flag",
+                  "value_type": "Bool"
+                }
+              ],
+              "shape": "ReturnsValue"
+            }
+          ],
+          "comments": [
+            {
+              "attached_to": null,
+              "collapsed": false,
+              "id": "id#17",
+              "text": "loose note",
+              "x": 500,
+              "y": 0
+            },
+            {
+              "attached_to": "id#4",
+              "collapsed": false,
+              "id": "id#18",
+              "text": "attached note",
+              "x": 0,
+              "y": 0
+            }
+          ],
+          "dicts": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "entries": [
+                {
+                  "key": "hp",
+                  "value": {
+                    "kind": "Number",
+                    "value": 3.0
+                  }
+                }
+              ],
+              "name": "stats"
+            }
+          ],
+          "floating_values": [
+            {
+              "id": "id#10",
+              "origin_block_id": null,
+              "value": {
+                "args": [
+                  {
+                    "kind": "Text",
+                    "value": "a"
+                  },
+                  {
+                    "kind": "Var",
+                    "name": "points"
+                  }
+                ],
+                "kind": "Op",
+                "op": "Join",
+                "saved": {
+                  "kind": "Text",
+                  "value": "high"
+                }
+              },
+              "x": 300,
+              "y": 120
+            },
+            {
+              "id": "id#21",
+              "origin_block_id": null,
+              "value": {
+                "args": [
+                  {
+                    "kind": "Number",
+                    "value": 4.0
+                  },
+                  {
+                    "kind": "Number",
+                    "value": 2.0
+                  }
+                ],
+                "kind": "Op",
+                "op": "Add",
+                "saved": {
+                  "kind": "Number",
+                  "value": 0.0
+                }
+              },
+              "x": 200,
+              "y": 200
+            }
+          ],
+          "lists": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "items": [
+                {
+                  "kind": "Number",
+                  "value": 1.0
+                },
+                {
+                  "kind": "Text",
+                  "value": "two"
+                }
+              ],
+              "name": "items"
+            }
+          ],
+          "strands": [
+            {
+              "id": "id#2",
+              "instructions": [
+                {
+                  "id": "id#3",
+                  "type": "WhenStarted"
+                },
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "kind": "Number",
+                    "value": 3.0
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                },
+                {
+                  "condition": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 0.0
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 9.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Gt",
+                    "saved": {
+                      "kind": "Bool"
+                    }
+                  },
+                  "else_body": [
+                    {
+                      "id": "id#6",
+                      "name": "points",
+                      "type": "SetVariable",
+                      "value": {
+                        "kind": "Number",
+                        "value": 0.0
+                      }
+                    }
+                  ],
+                  "id": "id#7",
+                  "then_body": [
+                    {
+                      "id": "id#8",
+                      "text": {
+                        "kind": "Text",
+                        "value": "high"
+                      },
+                      "type": "Say"
+                    }
+                  ],
+                  "type": "IfElse"
+                }
+              ],
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "id#12",
+              "instructions": [
+                {
+                  "block_id": "id#11",
+                  "id": "id#13",
+                  "type": "BlockHeader"
+                },
+                {
+                  "id": "id#14",
+                  "type": "Return",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Param",
+                        "name": "value"
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 2.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Mul",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                }
+              ],
+              "x": 260,
+              "y": 0
+            },
+            {
+              "id": "id#19",
+              "instructions": [
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "kind": "Number",
+                    "value": 3.0
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                }
+              ],
+              "x": 600,
+              "y": 300
+            },
+            {
+              "id": "id#20",
+              "instructions": [
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
+                }
+              ],
+              "x": 0,
+              "y": 400
+            }
+          ],
+          "variables": [
+            {
+              "name": "points",
+              "value": {
+                "kind": "Number",
+                "value": 0.0
+              }
+            }
+          ]
+        },
+        "invalid_field_buffers": []
+      },
+      "args": {
+        "originBlockId": null,
+        "value": {
+          "args": [
+            {
+              "kind": "Number",
+              "value": 4
+            },
+            {
+              "kind": "Number",
+              "value": 2
+            }
+          ],
+          "kind": "Op",
+          "op": "Add",
+          "saved": {
+            "kind": "Number",
+            "value": 0
+          }
+        },
+        "x": 200,
+        "y": 200
+      },
+      "command": "create_floating_value",
+      "error": null,
+      "ok": true,
+      "result": "id#21",
+      "step": 39
+    },
+    {
+      "after": {
+        "can_redo": false,
+        "can_undo": true,
+        "graph": {
+          "block_defs": [
+            {
+              "color": "#4C97FF",
+              "description": "",
+              "icon": "",
+              "id": "id#11",
+              "identifier": "",
+              "pieces": [
+                {
+                  "id": "l1",
+                  "kind": "Label",
+                  "text": "double"
+                },
+                {
+                  "id": "in1",
+                  "kind": "Input",
+                  "name": "value",
+                  "value_type": "Any"
+                },
+                {
+                  "id": "in2",
+                  "kind": "Input",
+                  "name": "flag",
+                  "value_type": "Bool"
+                }
+              ],
+              "shape": "ReturnsValue"
+            }
+          ],
+          "comments": [
+            {
+              "attached_to": null,
+              "collapsed": false,
+              "id": "id#17",
+              "text": "loose note",
+              "x": 500,
+              "y": 0
+            },
+            {
+              "attached_to": "id#4",
+              "collapsed": false,
+              "id": "id#18",
+              "text": "attached note",
+              "x": 0,
+              "y": 0
+            }
+          ],
+          "dicts": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "entries": [
+                {
+                  "key": "hp",
+                  "value": {
+                    "kind": "Number",
+                    "value": 3.0
+                  }
+                }
+              ],
+              "name": "stats"
+            }
+          ],
+          "floating_values": [
+            {
+              "id": "id#10",
+              "origin_block_id": null,
+              "value": {
+                "args": [
+                  {
+                    "kind": "Text",
+                    "value": "a"
+                  },
+                  {
+                    "kind": "Var",
+                    "name": "points"
+                  }
+                ],
+                "kind": "Op",
+                "op": "Join",
+                "saved": {
+                  "kind": "Text",
+                  "value": "high"
+                }
+              },
+              "x": 300,
+              "y": 120
+            }
+          ],
+          "lists": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "items": [
+                {
+                  "kind": "Number",
+                  "value": 1.0
+                },
+                {
+                  "kind": "Text",
+                  "value": "two"
+                }
+              ],
+              "name": "items"
+            }
+          ],
+          "strands": [
+            {
+              "id": "id#2",
+              "instructions": [
+                {
+                  "id": "id#3",
+                  "type": "WhenStarted"
+                },
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 2.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Add",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 3.0
+                    }
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                },
+                {
+                  "condition": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 0.0
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 9.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Gt",
+                    "saved": {
+                      "kind": "Bool"
+                    }
+                  },
+                  "else_body": [
+                    {
+                      "id": "id#6",
+                      "name": "points",
+                      "type": "SetVariable",
+                      "value": {
+                        "kind": "Number",
+                        "value": 0.0
+                      }
+                    }
+                  ],
+                  "id": "id#7",
+                  "then_body": [
+                    {
+                      "id": "id#8",
+                      "text": {
+                        "kind": "Text",
+                        "value": "high"
+                      },
+                      "type": "Say"
+                    }
+                  ],
+                  "type": "IfElse"
+                }
+              ],
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "id#12",
+              "instructions": [
+                {
+                  "block_id": "id#11",
+                  "id": "id#13",
+                  "type": "BlockHeader"
+                },
+                {
+                  "id": "id#14",
+                  "type": "Return",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Param",
+                        "name": "value"
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 2.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Mul",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                }
+              ],
+              "x": 260,
+              "y": 0
+            },
+            {
+              "id": "id#19",
+              "instructions": [
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "kind": "Number",
+                    "value": 3.0
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                }
+              ],
+              "x": 600,
+              "y": 300
+            },
+            {
+              "id": "id#20",
+              "instructions": [
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
+                }
+              ],
+              "x": 0,
+              "y": 400
+            }
+          ],
+          "variables": [
+            {
+              "name": "points",
+              "value": {
+                "kind": "Number",
+                "value": 0.0
+              }
+            }
+          ]
+        },
+        "invalid_field_buffers": []
+      },
+      "args": {
+        "from": {
+          "floating_id": "$f3",
+          "kind": "Floating",
+          "path": []
+        },
+        "to": {
+          "field_id": "RepeatCount",
+          "index": [
+            {
+              "index": 1,
+              "slot": null
+            }
+          ],
+          "kind": "Field",
+          "path": [],
+          "strand_id": "$main"
+        }
+      },
+      "command": "move_value",
+      "error": null,
+      "ok": true,
+      "result": null,
+      "step": 40
+    },
+    {
+      "after": {
+        "can_redo": true,
+        "can_undo": true,
+        "graph": {
+          "block_defs": [
+            {
+              "color": "#4C97FF",
+              "description": "",
+              "icon": "",
+              "id": "id#11",
+              "identifier": "",
+              "pieces": [
+                {
+                  "id": "l1",
+                  "kind": "Label",
+                  "text": "double"
+                },
+                {
+                  "id": "in1",
+                  "kind": "Input",
+                  "name": "value",
+                  "value_type": "Any"
+                },
+                {
+                  "id": "in2",
+                  "kind": "Input",
+                  "name": "flag",
+                  "value_type": "Bool"
+                }
+              ],
+              "shape": "ReturnsValue"
+            }
+          ],
+          "comments": [
+            {
+              "attached_to": null,
+              "collapsed": false,
+              "id": "id#17",
+              "text": "loose note",
+              "x": 500,
+              "y": 0
+            },
+            {
+              "attached_to": "id#4",
+              "collapsed": false,
+              "id": "id#18",
+              "text": "attached note",
+              "x": 0,
+              "y": 0
+            }
+          ],
+          "dicts": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "entries": [
+                {
+                  "key": "hp",
+                  "value": {
+                    "kind": "Number",
+                    "value": 3.0
+                  }
+                }
+              ],
+              "name": "stats"
+            }
+          ],
+          "floating_values": [
+            {
+              "id": "id#10",
+              "origin_block_id": null,
+              "value": {
+                "args": [
+                  {
+                    "kind": "Text",
+                    "value": "a"
+                  },
+                  {
+                    "kind": "Var",
+                    "name": "points"
+                  }
+                ],
+                "kind": "Op",
+                "op": "Join",
+                "saved": {
+                  "kind": "Text",
+                  "value": "high"
+                }
+              },
+              "x": 300,
+              "y": 120
+            },
+            {
+              "id": "id#21",
+              "origin_block_id": null,
+              "value": {
+                "args": [
+                  {
+                    "kind": "Number",
+                    "value": 4.0
+                  },
+                  {
+                    "kind": "Number",
+                    "value": 2.0
+                  }
+                ],
+                "kind": "Op",
+                "op": "Add",
+                "saved": {
+                  "kind": "Number",
+                  "value": 0.0
+                }
+              },
+              "x": 200,
+              "y": 200
+            }
+          ],
+          "lists": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "items": [
+                {
+                  "kind": "Number",
+                  "value": 1.0
+                },
+                {
+                  "kind": "Text",
+                  "value": "two"
+                }
+              ],
+              "name": "items"
+            }
+          ],
+          "strands": [
+            {
+              "id": "id#2",
+              "instructions": [
+                {
+                  "id": "id#3",
+                  "type": "WhenStarted"
+                },
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "kind": "Number",
+                    "value": 3.0
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                },
+                {
+                  "condition": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 0.0
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 9.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Gt",
+                    "saved": {
+                      "kind": "Bool"
+                    }
+                  },
+                  "else_body": [
+                    {
+                      "id": "id#6",
+                      "name": "points",
+                      "type": "SetVariable",
+                      "value": {
+                        "kind": "Number",
+                        "value": 0.0
+                      }
+                    }
+                  ],
+                  "id": "id#7",
+                  "then_body": [
+                    {
+                      "id": "id#8",
+                      "text": {
+                        "kind": "Text",
+                        "value": "high"
+                      },
+                      "type": "Say"
+                    }
+                  ],
+                  "type": "IfElse"
+                }
+              ],
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "id#12",
+              "instructions": [
+                {
+                  "block_id": "id#11",
+                  "id": "id#13",
+                  "type": "BlockHeader"
+                },
+                {
+                  "id": "id#14",
+                  "type": "Return",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Param",
+                        "name": "value"
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 2.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Mul",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                }
+              ],
+              "x": 260,
+              "y": 0
+            },
+            {
+              "id": "id#19",
+              "instructions": [
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "kind": "Number",
+                    "value": 3.0
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                }
+              ],
+              "x": 600,
+              "y": 300
+            },
+            {
+              "id": "id#20",
+              "instructions": [
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
+                }
+              ],
+              "x": 0,
+              "y": 400
+            }
+          ],
+          "variables": [
+            {
+              "name": "points",
+              "value": {
+                "kind": "Number",
+                "value": 0.0
+              }
+            }
+          ]
+        },
+        "invalid_field_buffers": []
+      },
+      "args": {},
+      "command": "undo",
+      "error": null,
+      "ok": true,
+      "result": null,
+      "step": 41
+    },
+    {
+      "after": {
+        "can_redo": false,
+        "can_undo": true,
+        "graph": {
+          "block_defs": [
+            {
+              "color": "#4C97FF",
+              "description": "",
+              "icon": "",
+              "id": "id#11",
+              "identifier": "",
+              "pieces": [
+                {
+                  "id": "l1",
+                  "kind": "Label",
+                  "text": "double"
+                },
+                {
+                  "id": "in1",
+                  "kind": "Input",
+                  "name": "value",
+                  "value_type": "Any"
+                },
+                {
+                  "id": "in2",
+                  "kind": "Input",
+                  "name": "flag",
+                  "value_type": "Bool"
+                }
+              ],
+              "shape": "ReturnsValue"
+            }
+          ],
+          "comments": [
+            {
+              "attached_to": null,
+              "collapsed": false,
+              "id": "id#17",
+              "text": "loose note",
+              "x": 500,
+              "y": 0
+            },
+            {
+              "attached_to": "id#4",
+              "collapsed": false,
+              "id": "id#18",
+              "text": "attached note",
+              "x": 0,
+              "y": 0
+            }
+          ],
+          "dicts": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "entries": [
+                {
+                  "key": "hp",
+                  "value": {
+                    "kind": "Number",
+                    "value": 3.0
+                  }
+                }
+              ],
+              "name": "stats"
+            }
+          ],
+          "floating_values": [
+            {
+              "id": "id#10",
+              "origin_block_id": null,
+              "value": {
+                "args": [
+                  {
+                    "kind": "Text",
+                    "value": "a"
+                  },
+                  {
+                    "kind": "Var",
+                    "name": "points"
+                  }
+                ],
+                "kind": "Op",
+                "op": "Join",
+                "saved": {
+                  "kind": "Text",
+                  "value": "high"
+                }
+              },
+              "x": 300,
+              "y": 120
+            }
+          ],
+          "lists": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "items": [
+                {
+                  "kind": "Number",
+                  "value": 1.0
+                },
+                {
+                  "kind": "Text",
+                  "value": "two"
+                }
+              ],
+              "name": "items"
+            }
+          ],
+          "strands": [
+            {
+              "id": "id#2",
+              "instructions": [
+                {
+                  "id": "id#3",
+                  "type": "WhenStarted"
+                },
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 2.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Add",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 3.0
+                    }
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                },
+                {
+                  "condition": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 0.0
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 9.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Gt",
+                    "saved": {
+                      "kind": "Bool"
+                    }
+                  },
+                  "else_body": [
+                    {
+                      "id": "id#6",
+                      "name": "points",
+                      "type": "SetVariable",
+                      "value": {
+                        "kind": "Number",
+                        "value": 0.0
+                      }
+                    }
+                  ],
+                  "id": "id#7",
+                  "then_body": [
+                    {
+                      "id": "id#8",
+                      "text": {
+                        "kind": "Text",
+                        "value": "high"
+                      },
+                      "type": "Say"
+                    }
+                  ],
+                  "type": "IfElse"
+                }
+              ],
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "id#12",
+              "instructions": [
+                {
+                  "block_id": "id#11",
+                  "id": "id#13",
+                  "type": "BlockHeader"
+                },
+                {
+                  "id": "id#14",
+                  "type": "Return",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Param",
+                        "name": "value"
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 2.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Mul",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                }
+              ],
+              "x": 260,
+              "y": 0
+            },
+            {
+              "id": "id#19",
+              "instructions": [
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "kind": "Number",
+                    "value": 3.0
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                }
+              ],
+              "x": 600,
+              "y": 300
+            },
+            {
+              "id": "id#20",
+              "instructions": [
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
+                }
+              ],
+              "x": 0,
+              "y": 400
+            }
+          ],
+          "variables": [
+            {
+              "name": "points",
+              "value": {
+                "kind": "Number",
+                "value": 0.0
+              }
+            }
+          ]
+        },
+        "invalid_field_buffers": []
+      },
+      "args": {},
+      "command": "redo",
+      "error": null,
+      "ok": true,
+      "result": null,
+      "step": 42
+    },
+    {
+      "after": {
+        "can_redo": false,
+        "can_undo": true,
+        "graph": {
+          "block_defs": [
+            {
+              "color": "#4C97FF",
+              "description": "",
+              "icon": "",
+              "id": "id#11",
+              "identifier": "",
+              "pieces": [
+                {
+                  "id": "l1",
+                  "kind": "Label",
+                  "text": "double"
+                },
+                {
+                  "id": "in1",
+                  "kind": "Input",
+                  "name": "value",
+                  "value_type": "Any"
+                },
+                {
+                  "id": "in2",
+                  "kind": "Input",
+                  "name": "flag",
+                  "value_type": "Bool"
+                }
+              ],
+              "shape": "ReturnsValue"
+            }
+          ],
+          "comments": [
+            {
+              "attached_to": null,
+              "collapsed": false,
+              "id": "id#17",
+              "text": "loose note",
+              "x": 500,
+              "y": 0
+            },
+            {
+              "attached_to": "id#4",
+              "collapsed": false,
+              "id": "id#18",
+              "text": "attached note",
+              "x": 0,
+              "y": 0
+            }
+          ],
+          "dicts": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "entries": [
+                {
+                  "key": "hp",
+                  "value": {
+                    "kind": "Number",
+                    "value": 3.0
+                  }
+                }
+              ],
+              "name": "stats"
+            }
+          ],
+          "floating_values": [
+            {
+              "id": "id#10",
+              "origin_block_id": null,
+              "value": {
+                "args": [
+                  {
+                    "kind": "Text",
+                    "value": "a"
+                  },
+                  {
+                    "kind": "Var",
+                    "name": "points"
+                  }
+                ],
+                "kind": "Op",
+                "op": "Join",
+                "saved": {
+                  "kind": "Text",
+                  "value": "high"
+                }
+              },
+              "x": 300,
+              "y": 120
+            }
+          ],
+          "lists": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "items": [
+                {
+                  "kind": "Number",
+                  "value": 1.0
+                },
+                {
+                  "kind": "Text",
+                  "value": "two"
+                }
+              ],
+              "name": "items"
+            }
+          ],
+          "strands": [
+            {
+              "id": "id#2",
+              "instructions": [
+                {
+                  "id": "id#3",
+                  "type": "WhenStarted"
+                },
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 2.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Add",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 3.0
+                    }
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                },
+                {
+                  "condition": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 0.0
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 9.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Gt",
+                    "saved": {
+                      "kind": "Bool"
+                    }
+                  },
+                  "else_body": [
+                    {
+                      "id": "id#6",
+                      "name": "points",
+                      "type": "SetVariable",
+                      "value": {
+                        "kind": "Number",
+                        "value": 0.0
+                      }
+                    }
+                  ],
+                  "id": "id#7",
+                  "then_body": [
+                    {
+                      "id": "id#8",
+                      "text": {
+                        "kind": "Text",
+                        "value": "high"
+                      },
+                      "type": "Say"
+                    }
+                  ],
+                  "type": "IfElse"
+                }
+              ],
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "id#12",
+              "instructions": [
+                {
+                  "block_id": "id#11",
+                  "id": "id#13",
+                  "type": "BlockHeader"
+                },
+                {
+                  "id": "id#14",
+                  "type": "Return",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Param",
+                        "name": "value"
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 2.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Mul",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                }
+              ],
+              "x": 260,
+              "y": 0
+            },
+            {
+              "id": "id#19",
+              "instructions": [
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "kind": "Number",
+                    "value": 3.0
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                }
+              ],
+              "x": 600,
+              "y": 300
+            },
+            {
+              "id": "id#20",
+              "instructions": [
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
+                }
+              ],
+              "x": 0,
+              "y": 400
+            }
+          ],
+          "variables": [
+            {
+              "name": "points",
+              "value": {
+                "kind": "Number",
+                "value": 0.0
+              }
+            }
+          ]
+        },
+        "invalid_field_buffers": []
+      },
+      "args": {
+        "from": {
+          "field_id": "RepeatCount",
+          "index": [
+            {
+              "index": 1,
+              "slot": null
+            }
+          ],
+          "kind": "Field",
+          "path": [],
+          "strand_id": "$main"
+        },
+        "to": {
+          "field_id": "RepeatCount",
+          "index": [
+            {
+              "index": 1,
+              "slot": null
+            }
+          ],
+          "kind": "Field",
+          "path": [
+            0
+          ],
+          "strand_id": "$main"
+        }
+      },
+      "command": "move_value",
+      "error": "Can't drop a block inside itself",
+      "ok": false,
+      "result": null,
+      "step": 43
+    },
+    {
+      "after": {
+        "can_redo": false,
+        "can_undo": true,
+        "graph": {
+          "block_defs": [
+            {
+              "color": "#4C97FF",
+              "description": "",
+              "icon": "",
+              "id": "id#11",
+              "identifier": "",
+              "pieces": [
+                {
+                  "id": "l1",
+                  "kind": "Label",
+                  "text": "double"
+                },
+                {
+                  "id": "in1",
+                  "kind": "Input",
+                  "name": "value",
+                  "value_type": "Any"
+                },
+                {
+                  "id": "in2",
+                  "kind": "Input",
+                  "name": "flag",
+                  "value_type": "Bool"
+                }
+              ],
+              "shape": "ReturnsValue"
+            }
+          ],
+          "comments": [
+            {
+              "attached_to": null,
+              "collapsed": false,
+              "id": "id#17",
+              "text": "loose note",
+              "x": 500,
+              "y": 0
+            },
+            {
+              "attached_to": "id#4",
+              "collapsed": false,
+              "id": "id#18",
+              "text": "attached note",
+              "x": 0,
+              "y": 0
+            }
+          ],
+          "dicts": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "entries": [
+                {
+                  "key": "hp",
+                  "value": {
+                    "kind": "Number",
+                    "value": 3.0
+                  }
+                }
+              ],
+              "name": "stats"
+            }
+          ],
+          "floating_values": [
+            {
+              "id": "id#10",
+              "origin_block_id": null,
+              "value": {
+                "args": [
+                  {
+                    "kind": "Text",
+                    "value": "a"
+                  },
+                  {
+                    "kind": "Var",
+                    "name": "points"
+                  }
+                ],
+                "kind": "Op",
+                "op": "Join",
+                "saved": {
+                  "kind": "Text",
+                  "value": "high"
+                }
+              },
+              "x": 300,
+              "y": 120
+            },
+            {
+              "id": "id#22",
+              "origin_block_id": null,
+              "value": {
+                "kind": "Number",
+                "value": 2.0
+              },
+              "x": 40,
+              "y": 500
+            }
+          ],
+          "lists": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "items": [
+                {
+                  "kind": "Number",
+                  "value": 1.0
+                },
+                {
+                  "kind": "Text",
+                  "value": "two"
+                }
+              ],
+              "name": "items"
+            }
+          ],
+          "strands": [
+            {
+              "id": "id#2",
+              "instructions": [
+                {
+                  "id": "id#3",
+                  "type": "WhenStarted"
+                },
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 0.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Add",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 3.0
+                    }
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                },
+                {
+                  "condition": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 0.0
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 9.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Gt",
+                    "saved": {
+                      "kind": "Bool"
+                    }
+                  },
+                  "else_body": [
+                    {
+                      "id": "id#6",
+                      "name": "points",
+                      "type": "SetVariable",
+                      "value": {
+                        "kind": "Number",
+                        "value": 0.0
+                      }
+                    }
+                  ],
+                  "id": "id#7",
+                  "then_body": [
+                    {
+                      "id": "id#8",
+                      "text": {
+                        "kind": "Text",
+                        "value": "high"
+                      },
+                      "type": "Say"
+                    }
+                  ],
+                  "type": "IfElse"
+                }
+              ],
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "id#12",
+              "instructions": [
+                {
+                  "block_id": "id#11",
+                  "id": "id#13",
+                  "type": "BlockHeader"
+                },
+                {
+                  "id": "id#14",
+                  "type": "Return",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Param",
+                        "name": "value"
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 2.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Mul",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                }
+              ],
+              "x": 260,
+              "y": 0
+            },
+            {
+              "id": "id#19",
+              "instructions": [
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "kind": "Number",
+                    "value": 3.0
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                }
+              ],
+              "x": 600,
+              "y": 300
+            },
+            {
+              "id": "id#20",
+              "instructions": [
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
+                }
+              ],
+              "x": 0,
+              "y": 400
+            }
+          ],
+          "variables": [
+            {
+              "name": "points",
+              "value": {
+                "kind": "Number",
+                "value": 0.0
+              }
+            }
+          ]
+        },
+        "invalid_field_buffers": []
+      },
+      "args": {
+        "from": {
+          "field_id": "RepeatCount",
+          "index": [
+            {
+              "index": 1,
+              "slot": null
+            }
+          ],
+          "kind": "Field",
+          "path": [
+            1
+          ],
+          "strand_id": "$main"
+        },
+        "originBlockId": null,
+        "to": null,
+        "x": 40,
+        "y": 500
+      },
+      "command": "move_value",
+      "error": null,
+      "ok": true,
+      "result": null,
+      "step": 44
+    },
+    {
+      "after": {
+        "can_redo": false,
+        "can_undo": true,
+        "graph": {
+          "block_defs": [
+            {
+              "color": "#4C97FF",
+              "description": "",
+              "icon": "",
+              "id": "id#11",
+              "identifier": "",
+              "pieces": [
+                {
+                  "id": "l1",
+                  "kind": "Label",
+                  "text": "double"
+                },
+                {
+                  "id": "in1",
+                  "kind": "Input",
+                  "name": "value",
+                  "value_type": "Any"
+                },
+                {
+                  "id": "in2",
+                  "kind": "Input",
+                  "name": "flag",
+                  "value_type": "Bool"
+                }
+              ],
+              "shape": "ReturnsValue"
+            }
+          ],
+          "comments": [
+            {
+              "attached_to": null,
+              "collapsed": false,
+              "id": "id#17",
+              "text": "loose note",
+              "x": 500,
+              "y": 0
+            },
+            {
+              "attached_to": "id#4",
+              "collapsed": false,
+              "id": "id#18",
+              "text": "attached note",
+              "x": 0,
+              "y": 0
+            }
+          ],
+          "dicts": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "entries": [
+                {
+                  "key": "hp",
+                  "value": {
+                    "kind": "Number",
+                    "value": 3.0
+                  }
+                }
+              ],
+              "name": "stats"
+            }
+          ],
+          "floating_values": [
+            {
+              "id": "id#10",
+              "origin_block_id": null,
+              "value": {
+                "args": [
+                  {
+                    "kind": "Text",
+                    "value": "a"
+                  },
+                  {
+                    "kind": "Var",
+                    "name": "points"
+                  }
+                ],
+                "kind": "Op",
+                "op": "Join",
+                "saved": {
+                  "kind": "Text",
+                  "value": "high"
+                }
+              },
+              "x": 300,
+              "y": 120
+            },
+            {
+              "id": "id#22",
+              "origin_block_id": null,
+              "value": {
+                "kind": "Number",
+                "value": 2.0
+              },
+              "x": 40,
+              "y": 500
+            }
+          ],
+          "lists": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "items": [
+                {
+                  "kind": "Number",
+                  "value": 1.0
+                },
+                {
+                  "kind": "Text",
+                  "value": "two"
+                }
+              ],
+              "name": "items"
+            }
+          ],
+          "strands": [
+            {
+              "id": "id#2",
+              "instructions": [
+                {
+                  "id": "id#3",
+                  "type": "WhenStarted"
+                },
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 0.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Add",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 3.0
+                    }
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                },
+                {
+                  "condition": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 0.0
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 9.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Gt",
+                    "saved": {
+                      "kind": "Bool"
+                    }
+                  },
+                  "else_body": [
+                    {
+                      "id": "id#6",
+                      "name": "points",
+                      "type": "SetVariable",
+                      "value": {
+                        "kind": "Number",
+                        "value": 0.0
+                      }
+                    }
+                  ],
+                  "id": "id#7",
+                  "then_body": [
+                    {
+                      "id": "id#8",
+                      "text": {
+                        "kind": "Text",
+                        "value": "high"
+                      },
+                      "type": "Say"
+                    }
+                  ],
+                  "type": "IfElse"
+                }
+              ],
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "id#12",
+              "instructions": [
+                {
+                  "block_id": "id#11",
+                  "id": "id#13",
+                  "type": "BlockHeader"
+                },
+                {
+                  "id": "id#14",
+                  "type": "Return",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Param",
+                        "name": "value"
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 2.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Mul",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                }
+              ],
+              "x": 260,
+              "y": 0
+            },
+            {
+              "id": "id#19",
+              "instructions": [
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "kind": "Number",
+                    "value": 3.0
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                }
+              ],
+              "x": 600,
+              "y": 300
+            },
+            {
+              "id": "id#20",
+              "instructions": [
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
+                }
+              ],
+              "x": 0,
+              "y": 400
+            }
+          ],
+          "variables": [
+            {
+              "name": "points",
+              "value": {
+                "kind": "Number",
+                "value": 0.0
+              }
+            }
+          ]
+        },
+        "invalid_field_buffers": [
+          {
+            "location": {
+              "field_id": "RepeatCount",
+              "index": [
+                {
+                  "index": 1,
+                  "slot": null
+                }
+              ],
+              "kind": "Field",
+              "path": [
+                0
+              ],
+              "strand_id": "id#2"
+            },
+            "text": "-"
+          }
+        ]
+      },
+      "args": {
+        "location": {
+          "field_id": "RepeatCount",
+          "index": [
+            {
+              "index": 1,
+              "slot": null
+            }
+          ],
+          "kind": "Field",
+          "path": [
+            0
+          ],
+          "strand_id": "$main"
+        },
+        "text": "-"
+      },
+      "command": "edit_value_field",
+      "error": null,
+      "ok": true,
+      "result": null,
+      "step": 45
+    },
+    {
+      "after": {
+        "can_redo": false,
+        "can_undo": true,
+        "graph": {
+          "block_defs": [
+            {
+              "color": "#4C97FF",
+              "description": "",
+              "icon": "",
+              "id": "id#11",
+              "identifier": "",
+              "pieces": [
+                {
+                  "id": "l1",
+                  "kind": "Label",
+                  "text": "double"
+                },
+                {
+                  "id": "in1",
+                  "kind": "Input",
+                  "name": "value",
+                  "value_type": "Any"
+                },
+                {
+                  "id": "in2",
+                  "kind": "Input",
+                  "name": "flag",
+                  "value_type": "Bool"
+                }
+              ],
+              "shape": "ReturnsValue"
+            }
+          ],
+          "comments": [
+            {
+              "attached_to": null,
+              "collapsed": false,
+              "id": "id#17",
+              "text": "loose note",
+              "x": 500,
+              "y": 0
+            },
+            {
+              "attached_to": "id#4",
+              "collapsed": false,
+              "id": "id#18",
+              "text": "attached note",
+              "x": 0,
+              "y": 0
+            }
+          ],
+          "dicts": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "entries": [
+                {
+                  "key": "hp",
+                  "value": {
+                    "kind": "Number",
+                    "value": 3.0
+                  }
+                }
+              ],
+              "name": "stats"
+            }
+          ],
+          "floating_values": [
+            {
+              "id": "id#10",
+              "origin_block_id": null,
+              "value": {
+                "args": [
+                  {
+                    "kind": "Text",
+                    "value": "a"
+                  },
+                  {
+                    "kind": "Var",
+                    "name": "points"
+                  }
+                ],
+                "kind": "Op",
+                "op": "Join",
+                "saved": {
+                  "kind": "Text",
+                  "value": "high"
+                }
+              },
+              "x": 300,
+              "y": 120
+            },
+            {
+              "id": "id#22",
+              "origin_block_id": null,
+              "value": {
+                "kind": "Number",
+                "value": 2.0
+              },
+              "x": 40,
+              "y": 500
+            }
+          ],
+          "lists": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "items": [
+                {
+                  "kind": "Number",
+                  "value": 1.0
+                },
+                {
+                  "kind": "Text",
+                  "value": "two"
+                }
+              ],
+              "name": "items"
+            }
+          ],
+          "strands": [
+            {
+              "id": "id#2",
+              "instructions": [
+                {
+                  "id": "id#3",
+                  "type": "WhenStarted"
+                }
+              ],
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "id#12",
+              "instructions": [
+                {
+                  "block_id": "id#11",
+                  "id": "id#13",
+                  "type": "BlockHeader"
+                },
+                {
+                  "id": "id#14",
+                  "type": "Return",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Param",
+                        "name": "value"
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 2.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Mul",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                }
+              ],
+              "x": 260,
+              "y": 0
+            },
+            {
+              "id": "id#19",
+              "instructions": [
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "kind": "Number",
+                    "value": 3.0
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                }
+              ],
+              "x": 600,
+              "y": 300
+            },
+            {
+              "id": "id#20",
+              "instructions": [
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
+                }
+              ],
+              "x": 0,
+              "y": 400
+            }
+          ],
+          "variables": [
+            {
+              "name": "points",
+              "value": {
+                "kind": "Number",
+                "value": 0.0
+              }
+            }
+          ]
+        },
+        "invalid_field_buffers": []
+      },
+      "args": {
+        "count": 5,
+        "path": [
+          {
+            "index": 1,
+            "slot": null
+          }
+        ],
+        "strandId": "$main"
+      },
+      "command": "remove_instruction",
+      "error": null,
+      "ok": true,
+      "result": null,
+      "step": 46
+    },
+    {
+      "after": {
+        "can_redo": true,
+        "can_undo": true,
+        "graph": {
+          "block_defs": [
+            {
+              "color": "#4C97FF",
+              "description": "",
+              "icon": "",
+              "id": "id#11",
+              "identifier": "",
+              "pieces": [
+                {
+                  "id": "l1",
+                  "kind": "Label",
+                  "text": "double"
+                },
+                {
+                  "id": "in1",
+                  "kind": "Input",
+                  "name": "value",
+                  "value_type": "Any"
+                },
+                {
+                  "id": "in2",
+                  "kind": "Input",
+                  "name": "flag",
+                  "value_type": "Bool"
+                }
+              ],
+              "shape": "ReturnsValue"
+            }
+          ],
+          "comments": [
+            {
+              "attached_to": null,
+              "collapsed": false,
+              "id": "id#17",
+              "text": "loose note",
+              "x": 500,
+              "y": 0
+            },
+            {
+              "attached_to": "id#4",
+              "collapsed": false,
+              "id": "id#18",
+              "text": "attached note",
+              "x": 0,
+              "y": 0
+            }
+          ],
+          "dicts": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "entries": [
+                {
+                  "key": "hp",
+                  "value": {
+                    "kind": "Number",
+                    "value": 3.0
+                  }
+                }
+              ],
+              "name": "stats"
+            }
+          ],
+          "floating_values": [
+            {
+              "id": "id#10",
+              "origin_block_id": null,
+              "value": {
+                "args": [
+                  {
+                    "kind": "Text",
+                    "value": "a"
+                  },
+                  {
+                    "kind": "Var",
+                    "name": "points"
+                  }
+                ],
+                "kind": "Op",
+                "op": "Join",
+                "saved": {
+                  "kind": "Text",
+                  "value": "high"
+                }
+              },
+              "x": 300,
+              "y": 120
+            },
+            {
+              "id": "id#22",
+              "origin_block_id": null,
+              "value": {
+                "kind": "Number",
+                "value": 2.0
+              },
+              "x": 40,
+              "y": 500
+            }
+          ],
+          "lists": [
+            {
+              "editor_visible": false,
+              "editor_x": 36,
+              "editor_y": 36,
+              "items": [
+                {
+                  "kind": "Number",
+                  "value": 1.0
+                },
+                {
+                  "kind": "Text",
+                  "value": "two"
+                }
+              ],
+              "name": "items"
+            }
+          ],
+          "strands": [
+            {
+              "id": "id#2",
+              "instructions": [
+                {
+                  "id": "id#3",
+                  "type": "WhenStarted"
+                },
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 0.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Add",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 3.0
+                    }
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                },
+                {
+                  "condition": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 0.0
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 9.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Gt",
+                    "saved": {
+                      "kind": "Bool"
+                    }
+                  },
+                  "else_body": [
+                    {
+                      "id": "id#6",
+                      "name": "points",
+                      "type": "SetVariable",
+                      "value": {
+                        "kind": "Number",
+                        "value": 0.0
+                      }
+                    }
+                  ],
+                  "id": "id#7",
+                  "then_body": [
+                    {
+                      "id": "id#8",
+                      "text": {
+                        "kind": "Text",
+                        "value": "high"
+                      },
+                      "type": "Say"
+                    }
+                  ],
+                  "type": "IfElse"
+                }
+              ],
+              "x": 0,
+              "y": 0
+            },
+            {
+              "id": "id#12",
+              "instructions": [
+                {
+                  "block_id": "id#11",
+                  "id": "id#13",
+                  "type": "BlockHeader"
+                },
+                {
+                  "id": "id#14",
+                  "type": "Return",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Param",
+                        "name": "value"
+                      },
+                      {
+                        "kind": "Number",
+                        "value": 2.0
+                      }
+                    ],
+                    "kind": "Op",
+                    "op": "Mul",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                }
+              ],
+              "x": 260,
+              "y": 0
+            },
+            {
+              "id": "id#19",
+              "instructions": [
+                {
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
+                  "count": {
+                    "kind": "Number",
+                    "value": 3.0
+                  },
+                  "id": "id#4",
+                  "type": "Repeat"
+                }
+              ],
+              "x": 600,
+              "y": 300
+            },
+            {
+              "id": "id#20",
+              "instructions": [
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
+                }
+              ],
+              "x": 0,
+              "y": 400
+            }
+          ],
+          "variables": [
+            {
+              "name": "points",
+              "value": {
+                "kind": "Number",
+                "value": 0.0
+              }
+            }
+          ]
+        },
+        "invalid_field_buffers": []
+      },
+      "args": {},
+      "command": "undo",
+      "error": null,
+      "ok": true,
+      "result": null,
+      "step": 47
     }
   ]
 }

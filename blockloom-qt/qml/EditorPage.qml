@@ -136,16 +136,13 @@ Item {
     function trashDraggedBlocks(strandId, path, tailCount, sx, sy) {
         if (!sidebar.contains(sidebar.mapFromItem(null, sx, sy))) return;
         if (path.length === 1 && path[0].index === 0) { invoke("remove_strand", { strandId: strandId }); return; }
-        for (let i = 0; i < tailCount; ++i) invoke("remove_instruction", { strandId: strandId, path: path });
+        invoke("remove_instruction", { strandId: strandId, path: path, count: tailCount });
+    }
+    // A value drag is one move and one undo step.
+    function moveValue(from, to, x, y, originBlockId) {
+        invoke("move_value", { from: from, to: to || null, x: Math.round(x || 0), y: Math.round(y || 0), originBlockId: originBlockId || null });
     }
     // A value dropped on the sidebar resets its slot, or deletes a whole floating block.
-    // The canvas sends a value drag as one move; the backend still takes then puts.
-    function moveValue(from, to, x, y, originBlockId) {
-        invoke("take_value", { location: from }, value => {
-            if (to) invoke("put_value", { location: to, value: value });
-            else invoke("create_floating_value", { x: x, y: y, value: value, originBlockId: originBlockId || null });
-        });
-    }
     function trashDraggedValue(location, value, sx, sy) {
         if (!sidebar.contains(sidebar.mapFromItem(null, sx, sy))) return;
         if (location.kind === "Floating" && !(location.path && location.path.length)) invoke("remove_floating_value", { floatingId: location.floating_id });
