@@ -2757,7 +2757,7 @@ dependencies = [
 [[package]]
 name = "blockstitch-core"
 version = "0.1.0"
-source = "git+https://github.com/Blockworked/blockstitch?rev=3f5517f0#3f5517f025d1c0630cb94308b8dcea9f1206eaf4"
+source = "git+https://github.com/Blockworked/blockstitch?rev=54b1a41be6fd9e7ae178d84aeb30fed7fe076856#54b1a41be6fd9e7ae178d84aeb30fed7fe076856"
 dependencies = [
  "chrono",
  "rand 0.10.3",
@@ -2769,7 +2769,7 @@ dependencies = [
 [[package]]
 name = "blockstitch-qml"
 version = "0.1.0"
-source = "git+https://github.com/Blockworked/blockstitch?rev=3f5517f0#3f5517f025d1c0630cb94308b8dcea9f1206eaf4"
+source = "git+https://github.com/Blockworked/blockstitch?rev=54b1a41be6fd9e7ae178d84aeb30fed7fe076856#54b1a41be6fd9e7ae178d84aeb30fed7fe076856"
 dependencies = [
  "cxx-qt",
  "cxx-qt-build",
@@ -7189,7 +7189,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]
