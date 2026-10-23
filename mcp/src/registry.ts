@@ -40,6 +40,8 @@ function proseToSchema(ty: string): z.ZodType {
     return z.enum(ty.split("|").map((choice) => choice.trim()) as [string, ...string[]]);
   }
   if (STRING_KINDS.has(ty)) return z.string();
+  // A lone kebab-case word is a dropdown with one choice so far ("physics-playground").
+  if (/^[a-z]+(-[a-z]+)+$/.test(ty)) return z.enum([ty]);
   if (ty === "number") return z.number();
   if (ty === "bool" || ty.startsWith("boolean")) return z.boolean();
   if (ty === "#RRGGBB") return z.string().regex(/^#[0-9a-fA-F]{6}$/);
