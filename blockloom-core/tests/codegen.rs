@@ -1805,12 +1805,16 @@ fn project_with_headers(
             id: format!("{}-{name}", block.id),
             name: name.to_string(),
             value_type: InputValueType::Any,
+            default_value: None,
         }));
         actor.graph.block_defs.push(BlockDef {
             id: block.id.to_string(),
             pieces,
             shape: BlockShape::Normal,
             color: blockloom_core::blocks::default_block_color(),
+            identifier: String::new(),
+            description: String::new(),
+            icon: String::new(),
         });
     }
 

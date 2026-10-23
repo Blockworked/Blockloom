@@ -664,10 +664,14 @@ fn a_reporter_block_returns_a_value_into_the_slot_that_called_it() {
                 id: "i".to_string(),
                 name: "n".to_string(),
                 value_type: Default::default(),
+                default_value: None,
             },
         ],
         shape: BlockShape::ReturnsValue,
         color: "#4C97FF".to_string(),
+        identifier: String::new(),
+        description: String::new(),
+        icon: String::new(),
     };
     let call = Value::Call {
         block_id: "b1".to_string(),
@@ -713,6 +717,9 @@ fn a_command_block_runs_inline_and_comes_back() {
         }],
         shape: BlockShape::Normal,
         color: "#4C97FF".to_string(),
+        identifier: String::new(),
+        description: String::new(),
+        icon: String::new(),
     };
     let mut project = project_with(vec![
         started(vec![
@@ -751,6 +758,9 @@ fn a_wait_inside_a_reporter_suspends_its_caller() {
         }],
         shape: BlockShape::ReturnsValue,
         color: "#4C97FF".to_string(),
+        identifier: String::new(),
+        description: String::new(),
+        icon: String::new(),
     };
     let call = Value::Call {
         block_id: "b1".to_string(),

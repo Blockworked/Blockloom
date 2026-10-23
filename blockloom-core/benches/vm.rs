@@ -67,6 +67,7 @@ fn block(id: &str, shape: BlockShape, inputs: &[&str]) -> BlockDef {
             id: format!("i{i}"),
             name: name.to_string(),
             value_type: Default::default(),
+            default_value: None,
         });
     }
     BlockDef {
@@ -74,6 +75,9 @@ fn block(id: &str, shape: BlockShape, inputs: &[&str]) -> BlockDef {
         pieces,
         shape,
         color: "#4C97FF".to_string(),
+        identifier: String::new(),
+        description: String::new(),
+        icon: String::new(),
     }
 }
 

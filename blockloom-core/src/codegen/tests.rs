@@ -61,10 +61,14 @@ fn with_block(body: Vec<K>, block: Vec<Instruction>) -> Project {
                 id: "p1".to_string(),
                 name: "distance".to_string(),
                 value_type: Default::default(),
+                default_value: None,
             },
         ],
         shape: BlockShape::Normal,
         color: blockstitch_core::graph::default_block_color(),
+        identifier: String::new(),
+        description: String::new(),
+        icon: String::new(),
     });
     project
 }

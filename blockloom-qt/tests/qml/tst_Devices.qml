@@ -248,6 +248,8 @@ TestCase {
         panel.manageAvd();
         compare(matching("android_rename_avd")[0].args.newName, "renamed");
         tryCompare(dialog, "opened", false);
+        // The dialog's exit animation still covers the panel.
+        tryCompare(dialog, "visible", false);
         mouseClick(menu);
         mouseClick(findChild(test.Window.window.contentItem, "delete_test-device"));
         tryCompare(dialog, "opened", true);

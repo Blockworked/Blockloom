@@ -139,6 +139,13 @@ Item {
         for (let i = 0; i < tailCount; ++i) invoke("remove_instruction", { strandId: strandId, path: path });
     }
     // A value dropped on the sidebar resets its slot, or deletes a whole floating block.
+    // The canvas sends a value drag as one move; the backend still takes then puts.
+    function moveValue(from, to, x, y, originBlockId) {
+        invoke("take_value", { location: from }, value => {
+            if (to) invoke("put_value", { location: to, value: value });
+            else invoke("create_floating_value", { x: x, y: y, value: value, originBlockId: originBlockId || null });
+        });
+    }
     function trashDraggedValue(location, value, sx, sy) {
         if (!sidebar.contains(sidebar.mapFromItem(null, sx, sy))) return;
         if (location.kind === "Floating" && !(location.path && location.path.length)) invoke("remove_floating_value", { floatingId: location.floating_id });
@@ -256,6 +263,7 @@ Item {
                                 onValueTakeRequested: location => root.invoke("take_value", { location: location })
                                 onValuePutRequested: (location, value) => root.invoke("put_value", { location: location, value: value })
                                 onValueCreateRequested: (x, y, value) => root.invoke("create_floating_value", { x: x, y: y, value: value, originBlockId: null })
+                                onValueMoveRequested: (from, to, x, y, originBlockId) => root.moveValue(from, to, x, y, originBlockId)
                                 onValueDragOutside: (location, value, sx, sy) => root.trashDraggedValue(location, value, sx, sy)
                                 onCommentForInstructionRequested: instruction => root.onBlockMenu("note", "", [], instruction)
                                 onDetailsRequested: type => details.show(Blocks.labels[type] || type, type, "")
