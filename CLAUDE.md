@@ -2394,7 +2394,10 @@ registered with blockstitch's `BlockRegistry`, which both the canvas and the
 palette read. **Adding a block means adding a variant to `InstructionKind`, a
 row and an icon in `Blocks.qml`'s `buildRows()`, a label in its `labels`, a
 field id if it has value slots, and a `Step`/`Effect` if it does something
-new** - not a new QML file. `BlockHeader` and `CallBlock` take their row from
+new** - not a new QML file. A new sensing reporter's fresh value comes from its `default_args` in
+`blockloom-core/src/value.rs`: `Blocks.qml` carries those as a generated
+`hostDescriptors` table, so rerun `BLESS=1 cargo test -p blockloom-core --test
+operator_descriptors` after adding or changing one. `BlockHeader` and `CallBlock` take their row from
 a `BlockDef` rather than their type, which blockstitch draws itself.
 
 Keep the canvas's inputs identity-stable, since any change rebuilds what is

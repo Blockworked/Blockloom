@@ -149,7 +149,7 @@ static OPERATORS: &[ExtOperator] = &[
         kind: "MouseButtonDown",
         op: "MouseButtonDown",
         arity: 1,
-        default_args: || vec![text("right")],
+        default_args: || vec![text("left")],
         // Which mouse button is down: left, right or middle. Left is what
         // `mouse down?` has always meant.
         eval: |args| {
@@ -241,7 +241,7 @@ static OPERATORS: &[ExtOperator] = &[
         kind: "TouchX",
         op: "TouchX",
         arity: 1,
-        default_args: || vec![text("1")],
+        default_args: || vec![number(1.0)],
         // The 1-based touch point's world x. Out of range reads as zero
         // rather than an error, since fingers come and go every frame.
         eval: |args| {
@@ -259,7 +259,7 @@ static OPERATORS: &[ExtOperator] = &[
         kind: "TouchY",
         op: "TouchY",
         arity: 1,
-        default_args: || vec![text("1")],
+        default_args: || vec![number(1.0)],
         eval: |args| {
             let index = args[0].as_number().unwrap_or(0.0) as usize;
             Ok(Evaluated::Number(sense::read(|s| {
@@ -353,7 +353,7 @@ static OPERATORS: &[ExtOperator] = &[
         kind: "ParticleEventCount",
         op: "ParticleEventCount",
         arity: 1,
-        default_args: || vec![text("Die")],
+        default_args: || vec![text("Spawn")],
         // How many of my particles spawned, died or collided this frame:
         // what a `when my particles` hat fired for.
         eval: |args| {
@@ -366,7 +366,7 @@ static OPERATORS: &[ExtOperator] = &[
         kind: "ParticleEventPosition",
         op: "ParticleEventPosition",
         arity: 2,
-        default_args: || vec![text("Collide"), text("X")],
+        default_args: || vec![text("Spawn"), text("X")],
         // Where the last of my particles spawned, died or collided. Before
         // any has, where I stand: that is where they come from.
         eval: |args| {
@@ -486,7 +486,7 @@ static OPERATORS: &[ExtOperator] = &[
         kind: "MyRotation",
         op: "MyRotation",
         arity: 1,
-        default_args: || vec![text("Z")],
+        default_args: || vec![text("X")],
         eval: |args| {
             let axis = axis_of(args.first());
             with_me(|me| Evaluated::Number(me.rotation[axis.index()] as f64))
@@ -692,7 +692,7 @@ static OPERATORS: &[ExtOperator] = &[
         kind: "AngularVelocity",
         op: "AngularVelocity",
         arity: 2,
-        default_args: || vec![text(""), text("Z")],
+        default_args: || vec![text(""), text("X")],
         // Spin in radians a second about an axis. A 2D body turns about z
         // only. Empty names the running actor itself; zero with no body.
         eval: |args| {
@@ -770,7 +770,7 @@ static OPERATORS: &[ExtOperator] = &[
         kind: "BusVolume",
         op: "BusVolume",
         arity: 1,
-        default_args: || vec![text("Sfx")],
+        default_args: || vec![text("Master")],
         // The live gain of a mixing bus in 0-100, as the play blocks speak
         // it. An unknown bus is a mistake worth reporting, not a silent zero.
         eval: |args| {
@@ -860,7 +860,7 @@ static OPERATORS: &[ExtOperator] = &[
         kind: "Atmosphere",
         op: "Atmosphere",
         arity: 1,
-        default_args: || vec![text("wind speed")],
+        default_args: || vec![text("sun x")],
         // One reading of the air as of this fixed tick. An unknown name is
         // reported rather than read as calm.
         eval: |args| {
