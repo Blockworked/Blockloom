@@ -2295,7 +2295,10 @@ mod tests {
         };
         project.actors[0]
             .components
-            .insert(ActorComponent::Material { material });
+            .insert(ActorComponent::Material {
+                material,
+                source: None,
+            });
         let out = root.join("out");
 
         let error = build(

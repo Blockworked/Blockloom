@@ -2291,6 +2291,7 @@ mod tests {
             room.world.sky.gradient.middle = "#FF0000".into();
             room.world.sky.gradient.bottom = "#FF0000".into();
             room.actors[0].components.insert(ActorComponent::Material {
+                source: None,
                 material: SurfaceMaterial {
                     metallic: 1.0,
                     roughness: 0.2,
@@ -2944,6 +2945,7 @@ mod tests {
         project.actors[0]
             .components
             .insert(ActorComponent::Material {
+                source: None,
                 material: SurfaceMaterial {
                     albedo_texture: "assets/red.png".to_string(),
                     box_projection: true,
@@ -3111,6 +3113,7 @@ mod tests {
         );
         probe.components.placement_mut().position = [0.0, 1.0, 0.0];
         probe.components.insert(ActorComponent::Material {
+            source: None,
             material: blockloom_core::material::SurfaceMaterial {
                 double_sided: true,
                 ..Default::default()
@@ -3676,6 +3679,7 @@ mod tests {
         );
         wall.components.placement_mut().position = [0.0, 6.0, -10.0];
         wall.components.insert(ActorComponent::Material {
+            source: None,
             material: SurfaceMaterial {
                 emissive: "#FF0000".to_string(),
                 emissive_energy: 200.0,

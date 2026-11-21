@@ -47,6 +47,9 @@ pub const BUILT_IN_SCENE_NAMES: &[&str] = &[
     "Vfx",
     "Cutscenes",
     "Interface",
+    "Lighting2d",
+    "Post2d",
+    "Camera2d",
 ];
 
 /// One setting on a scene. Serialized internally-tagged, so a component reads
@@ -59,101 +62,71 @@ pub enum SceneComponent {
     /// Quality, Sound, Input and Display are project settings now
     /// ([`crate::settings::GameSettings`]); these four are only read, from
     /// older scene files, and moved there on load.
-    Quality {
-        settings: crate::quality::Settings,
-    },
+    Quality { settings: crate::quality::Settings },
     /// Which dimension the scene runs in.
-    Dimension {
-        mode: Mode,
-    },
+    Dimension { mode: Mode },
     /// The clear color behind everything.
-    Background {
-        color: String,
-    },
+    Background { color: String },
     /// Gravity and the fixed tick rate physics and blocks advance on.
-    Physics {
-        gravity: [f32; 3],
-        fixed_rate: f32,
-    },
+    Physics { gravity: [f32; 3], fixed_rate: f32 },
     /// Where the camera stands when nothing holds it.
-    Camera {
-        camera: Camera,
-    },
+    Camera { camera: Camera },
     /// The project-wide presentation of `say` bubbles.
-    SpeechBubble {
-        style: SpeechBubbleStyle,
-    },
+    SpeechBubble { style: SpeechBubbleStyle },
     /// Sun, ambient, shadows and ray tracing.
-    Lighting {
-        lighting: Lighting,
-    },
+    Lighting { lighting: Lighting },
     /// One gain per sound bus.
-    Sound {
-        mixer: SoundMixer,
-    },
+    Sound { mixer: SoundMixer },
     /// Weather loops, ducking, reverb, occlusion and the underwater muffle.
     Soundscape {
         soundscape: crate::soundscape::Soundscape,
     },
     /// Named input actions and their bindings.
-    Input {
-        config: InputConfig,
-    },
+    Input { config: InputConfig },
     /// The post chain, exposure to grain.
-    Post {
-        post: PostProcess,
-    },
+    Post { post: PostProcess },
     /// The output signal, peak brightness and paper white.
-    Display {
-        display: DisplayOutput,
-    },
+    Display { display: DisplayOutput },
     /// Cost regions and explicit links in the navigation plane.
-    Navigation {
-        settings: NavSettings,
-    },
+    Navigation { settings: NavSettings },
     /// Background, ambient light and reflections, 3D only.
-    Sky {
-        sky: Sky,
-    },
+    Sky { sky: Sky },
     /// Height fog, volumetric fog and aerial perspective, 3D only.
-    Fog {
-        fog: Fog,
-    },
+    Fog { fog: Fog },
     /// Volumetric clouds.
-    Clouds {
-        clouds: Clouds,
-    },
+    Clouds { clouds: Clouds },
     /// Planar cloud layers, 3D only.
-    CloudLayers {
-        layers: Vec<CloudLayer>,
-    },
+    CloudLayers { layers: Vec<CloudLayer> },
     /// Strikes and the storm that throws them.
-    Lightning {
-        lightning: Lightning,
-    },
+    Lightning { lightning: Lightning },
     /// The wind everything that moves with the air reads.
-    Wind {
-        wind: Wind,
-    },
+    Wind { wind: Wind },
     /// The 24h clock, curve tracks and weather presets.
-    Director {
-        director: Director,
-    },
+    Director { director: Director },
     /// Snow cover and wetness, which surface masks scale by.
-    Surface {
-        surface: SurfaceWeather,
-    },
+    Surface { surface: SurfaceWeather },
     /// The particle budget and where emitters simulate.
-    Vfx {
-        settings: VfxSettings,
-    },
+    Vfx { settings: VfxSettings },
     /// Named camera reels that `play cutscene` runs.
     Cutscenes {
         cutscenes: Vec<crate::cinematic::Cutscene>,
     },
     /// The screen-space interface document.
-    Interface {
-        document: UiDocument,
+    Interface { document: UiDocument },
+    /// The 2D lit look: ambient, its ramp and where lighting stops.
+    Lighting2d {
+        lighting2d: crate::light2d::Lighting2d,
+    },
+    /// 2D post: pixelation, palette, outline and CRT looks.
+    Post2d { post2d: crate::post2d::Post2d },
+    /// 2D camera finishing: locks, bounds, zoom, pixel snap, shake.
+    Camera2d {
+        camera2d: crate::camera2d::Camera2dSettings,
+    },
+    /// The `.blockenv` this scene's look follows, and what it overrides.
+    /// Only carried while there is one.
+    Environment {
+        environment: crate::linked::AssetLink,
     },
 }
 
@@ -197,6 +170,10 @@ impl SceneComponent {
             SceneComponent::Vfx { .. } => "Vfx",
             SceneComponent::Cutscenes { .. } => "Cutscenes",
             SceneComponent::Interface { .. } => "Interface",
+            SceneComponent::Lighting2d { .. } => "Lighting2d",
+            SceneComponent::Post2d { .. } => "Post2d",
+            SceneComponent::Camera2d { .. } => "Camera2d",
+            SceneComponent::Environment { .. } => "Environment",
         }
     }
 }
@@ -213,7 +190,7 @@ impl SceneComponents {
     /// from this always carries the whole list, so an old file missing one
     /// simply reads as its default.
     pub fn from_world(world: &World) -> Self {
-        Self(vec![
+        let mut list = vec![
             SceneComponent::Dimension { mode: world.mode },
             SceneComponent::Background {
                 color: world.background.clone(),
@@ -273,7 +250,22 @@ impl SceneComponents {
             SceneComponent::Interface {
                 document: world.interface.clone(),
             },
-        ])
+            SceneComponent::Lighting2d {
+                lighting2d: world.lighting2d.clone(),
+            },
+            SceneComponent::Post2d {
+                post2d: world.post2d.clone(),
+            },
+            SceneComponent::Camera2d {
+                camera2d: world.camera2d.clone(),
+            },
+        ];
+        if let Some(environment) = &world.environment {
+            list.push(SceneComponent::Environment {
+                environment: environment.clone(),
+            });
+        }
+        Self(list)
     }
 
     /// A `World` with every carried component laid over the default. A
@@ -303,7 +295,9 @@ impl SceneComponents {
     pub fn apply_to_world(&self, world: &mut World) {
         for component in &self.0 {
             match component {
-                SceneComponent::Quality { settings } => world.legacy_quality = Some(settings.clone()),
+                SceneComponent::Quality { settings } => {
+                    world.legacy_quality = Some(settings.clone())
+                }
                 SceneComponent::Dimension { mode } => world.mode = *mode,
                 SceneComponent::Background { color } => world.background.clone_from(color),
                 SceneComponent::Physics {
@@ -341,6 +335,14 @@ impl SceneComponents {
                 SceneComponent::Vfx { settings } => world.vfx.clone_from(settings),
                 SceneComponent::Cutscenes { cutscenes } => world.cutscenes.clone_from(cutscenes),
                 SceneComponent::Interface { document } => world.interface.clone_from(document),
+                SceneComponent::Lighting2d { lighting2d } => {
+                    world.lighting2d.clone_from(lighting2d)
+                }
+                SceneComponent::Post2d { post2d } => world.post2d.clone_from(post2d),
+                SceneComponent::Camera2d { camera2d } => world.camera2d.clone_from(camera2d),
+                SceneComponent::Environment { environment } => {
+                    world.environment = Some(environment.clone());
+                }
             }
         }
     }
@@ -380,14 +382,20 @@ mod tests {
 
     #[test]
     fn a_world_round_trips_through_components() {
-        let world = World {
+        let mut world = World {
             background: "#102030".to_string(),
             fixed_rate: 120.0,
             ..World::default()
         };
+        // The 2D look survives a save too.
+        world.camera2d.lock_x = true;
         let components = SceneComponents::from_world(&world);
         assert_eq!(components.0.len(), BUILT_IN_SCENE_NAMES.len());
         assert_eq!(components.to_world(), world);
+        world.environment = Some(Default::default());
+        let linked = SceneComponents::from_world(&world);
+        assert_eq!(linked.0.len(), BUILT_IN_SCENE_NAMES.len() + 1);
+        assert_eq!(linked.to_world(), world);
     }
 
     #[test]

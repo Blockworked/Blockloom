@@ -53,7 +53,10 @@ pub struct LegacySettings {
 
 impl LegacySettings {
     pub fn is_empty(&self) -> bool {
-        self.quality.is_none() && self.input.is_none() && self.sound.is_none() && self.display.is_none()
+        self.quality.is_none()
+            && self.input.is_none()
+            && self.sound.is_none()
+            && self.display.is_none()
     }
 
     /// Lays every value this scene carried over `settings`.

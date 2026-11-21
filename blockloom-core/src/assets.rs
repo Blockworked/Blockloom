@@ -46,6 +46,10 @@ pub enum AssetKind {
     Lighting,
     /// An actor saved to place again (`.blockprefab`).
     Prefab,
+    /// A surface several actors share (`.blockmaterial`).
+    Material,
+    /// A scene look several scenes share (`.blockenv`).
+    Environment,
     Other,
 }
 
@@ -167,6 +171,8 @@ pub fn kind_of(name: &str) -> AssetKind {
         "blockscene" => AssetKind::Scene,
         "blocklighting" => AssetKind::Lighting,
         "blockprefab" => AssetKind::Prefab,
+        "blockmaterial" => AssetKind::Material,
+        "blockenv" => AssetKind::Environment,
         _ => AssetKind::Other,
     }
 }
@@ -233,7 +239,10 @@ fn modified_at(metadata: &std::fs::Metadata) -> u64 {
 /// same-named file deeper in the tree is still listed.
 fn is_hidden_at_root(relative: &str, name: &str) -> bool {
     relative.is_empty()
-        && matches!(name, "Cargo.toml" | "Cargo.lock" | "target" | crate::resources::INDEX_FILE)
+        && matches!(
+            name,
+            "Cargo.toml" | "Cargo.lock" | "target" | crate::resources::INDEX_FILE
+        )
 }
 
 /// Everything in one folder of a project: folders first, then files, each run

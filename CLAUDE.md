@@ -275,6 +275,24 @@ actor list has Make prefab and the tray Place in scene. One actor per
 prefab so far: children, nested prefabs and a prefab editing mode are not
 done.
 
+### Material and environment assets
+
+`blockloom-core/src/linked.rs` is what prefabs, materials and environments
+share: an `AssetLink` (source `ResourceRef`, sorted override paths), `mark`
+(a changed path that differs from the file becomes an override, one put back
+stops being one) and `merge` over JSON, paths at most two keys deep.
+A `.blockmaterial` (`material_asset.rs`) is one `SurfaceMaterial`; an actor's
+`Material` component carries `source` while it follows one, and keeps its own
+copy so the runtime never reads the file. A `.blockenv`
+(`environment_asset.rs`) is a scene's look, the `World` fields in `KEYS`; a
+scene follows one through `World.environment`, saved as an `Environment`
+scene component only while there is one. `commands/materials.rs` and
+`commands/environments.rs` mirror `prefabs.rs`: create, assign, apply (file
+then every follower), revert, unlink, `mark_overrides` before every commit
+and `sync_*` on open, so a file edited outside the editor reaches its
+followers. `.blocklighting` still links just a scene's lighting. The 2D look
+(`Lighting2d`, `Post2d`, `Camera2d`) is a scene component too.
+
 ### Game settings
 
 Quality, input actions, the sound buses and the display output hold for the

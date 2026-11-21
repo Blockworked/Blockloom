@@ -17,14 +17,20 @@ fn a_renamed_asset_keeps_its_id_and_its_users() {
     std::fs::write(&source, b"not really a png").unwrap();
     let backend = Backend::start(AppHandle::new(|_| {}));
     let run = |command: &str, args: Value| backend.dispatch(command, args).unwrap();
-    run("create_project", json!({"name": "Res", "location": projects}));
+    run(
+        "create_project",
+        json!({"name": "Res", "location": projects}),
+    );
     let made = run(
         "import_assets",
         json!({"parent": "assets", "paths": [source.to_string_lossy()]}),
     );
     let path = made[0].as_str().unwrap().to_string();
     let index = run("resource_index", json!({}));
-    let id = index["resources"][&path]["id"].as_str().unwrap().to_string();
+    let id = index["resources"][&path]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let actor = run("add_actor", json!({"shape": "Rect", "name": "Hero"}));
     let actor = actor.as_str().map(str::to_string).unwrap_or_else(|| {
@@ -67,7 +73,11 @@ fn a_renamed_asset_keeps_its_id_and_its_users() {
     assert_eq!(index["resources"][&moved]["id"], id.as_str());
     assert!(index["resources"].get(&path).is_none());
     let used = run("asset_used_by", json!({"path": moved}));
-    assert_eq!(used.as_array().unwrap().len(), 1, "the actor followed: {used}");
+    assert_eq!(
+        used.as_array().unwrap().len(),
+        1,
+        "the actor followed: {used}"
+    );
 
     run("close_project", json!({}));
     let _ = std::fs::remove_dir_all(&data);

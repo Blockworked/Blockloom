@@ -200,6 +200,29 @@ Item {
                 text: root.lightingError || "Loading lighting..."
             }
             Section {
+                id: envSection
+                heading: "Environment"; available: !!root.world && root.activeScene && !root.lightingPath
+                readonly property var link: root.world ? root.world.environment || null : null
+                readonly property var overrides: link ? (link.overrides || []) : []
+                AssetField { objectName: "scene-environment-field"; Layout.fillWidth: true; app: root.app; accept: ["environment"]
+                    value: envSection.link && envSection.link.source ? envSection.link.source.path : ""
+                    placeholderText: "None (Environment) - drag asset here"
+                    onCommitted: p => p ? root.invoke("assign_environment", { path: p }) : root.invoke("unlink_environment", {}) }
+                Note { text: !envSection.link ? "Save this scene's sky, lighting, fog, clouds, wind and post as an asset other scenes can follow."
+                    : envSection.overrides.length ? "This scene sets " + envSection.overrides.join(", ") + " itself. The rest follows the asset."
+                    : "Follows the asset. A change here becomes an override until you apply it." }
+                RowLayout { spacing: 6
+                    StitchButton { visible: !envSection.link; objectName: "scene-environment-save"; text: "Save as asset"; iconName: "save"; implicitHeight: 28
+                        onClicked: root.invoke("create_environment_asset", {}) }
+                    StitchButton { visible: !!envSection.link; text: "Apply to asset"; iconName: "upload"; implicitHeight: 28
+                        onClicked: root.invoke("apply_environment", {}) }
+                    StitchButton { visible: envSection.overrides.length > 0; text: "Revert"; implicitHeight: 28
+                        onClicked: root.invoke("revert_environment", {}) }
+                    StitchButton { visible: !!envSection.link; text: "Detach"; implicitHeight: 28
+                        onClicked: root.invoke("unlink_environment", {}) }
+                }
+            }
+            Section {
                 heading: "Lighting"; available: !!root.world && root.is3d
                 RowLayout { Layout.fillWidth: true; spacing: 6
                     AssetField { objectName: "scene-lighting-field"; app: root.app; accept: ["lighting"]; value: root.world ? root.world.lighting.asset || "" : "";

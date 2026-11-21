@@ -110,9 +110,19 @@ fn new_prefab_path(dir: &Path, name: &str) -> Result<String, String> {
     std::fs::create_dir_all(dir.join(folder)).map_err(|e| e.to_string())?;
     let stem: String = name
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
-    let stem = if stem.trim().is_empty() { "Prefab".to_string() } else { stem.trim().to_string() };
+    let stem = if stem.trim().is_empty() {
+        "Prefab".to_string()
+    } else {
+        stem.trim().to_string()
+    };
     for n in 1.. {
         let file = if n == 1 {
             format!("{stem}.{}", prefab::EXTENSION)
@@ -143,7 +153,10 @@ pub(crate) fn create_prefab(
         .cloned()
         .ok_or("Actor not found")?;
     if prefab::link(&actor).is_some() {
-        return Err(format!("\"{}\" is already an instance of a prefab", actor.name));
+        return Err(format!(
+            "\"{}\" is already an instance of a prefab",
+            actor.name
+        ));
     }
     let path = match path.filter(|p| !p.trim().is_empty()) {
         Some(path) => {
@@ -226,7 +239,9 @@ pub(crate) fn apply_prefab(
         .and_then(|p| p.actor(&actor_id))
         .cloned()
         .ok_or("Actor not found")?;
-    let link = prefab::link(&actor).cloned().ok_or("That actor isn't a prefab instance")?;
+    let link = prefab::link(&actor)
+        .cloned()
+        .ok_or("That actor isn't a prefab instance")?;
     let path = source_path(&ResourceIndex::load(&dir), &link);
     let mut source = actor.clone();
     // The prefab keeps its own place and name; the rest is the instance's.

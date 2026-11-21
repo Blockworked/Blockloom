@@ -11,7 +11,6 @@ use crate::state::{
 use crate::{AppHandle, Backend};
 use blockloom_core::android;
 use blockloom_core::assets;
-use blockloom_core::resources::{self, ResourceIndex};
 use blockloom_core::blocks::{
     ActorGraph, BlockPiece, BlockShape, DictEntry, Fragment, Instruction, InstructionKind,
     ListItem, normalize_block_color, resolve_dict_reporters, resolve_list_reporters,
@@ -26,6 +25,7 @@ use blockloom_core::material::GraphEffect;
 use blockloom_core::nav::NavSettings;
 use blockloom_core::pipeline;
 use blockloom_core::project::{self, Actor, Project};
+use blockloom_core::resources::{self, ResourceIndex};
 use blockloom_core::scene::{
     Camera, DisplayOutput, Lighting, Mode, Physics, Placement, PostProcess, Visual,
 };
@@ -47,6 +47,8 @@ use std::path::{Path, PathBuf};
 use std::sync::MutexGuard;
 use std::sync::atomic::Ordering;
 
+pub(crate) mod environments;
+pub(crate) mod materials;
 pub(crate) mod physics;
 pub(crate) mod plugins;
 pub(crate) mod prefabs;
@@ -77,6 +79,8 @@ fn push_undo_for(s: &mut AppState, session: Option<EditSession>) {
 /// never has to.
 fn commit(s: &mut AppState) {
     prefabs::mark_overrides(s);
+    materials::mark_overrides(s);
+    environments::mark_overrides(s);
     if let Some(open) = &mut s.open {
         open.tracker.commit(&open.project);
     }
@@ -518,7 +522,11 @@ pub(crate) fn open_project(
             let changed = s
                 .open
                 .as_mut()
-                .map(|open| prefabs::sync_instances(&mut open.project, &dir, None))
+                .map(|open| {
+                    prefabs::sync_instances(&mut open.project, &dir, None)
+                        + materials::sync_instances(&mut open.project, &dir, None)
+                        + environments::sync_scenes(&mut open.project, &dir, None)
+                })
                 .unwrap_or(0);
             if changed > 0 {
                 auto_save(&mut s);
@@ -2472,7 +2480,7 @@ pub(crate) fn set_actor_component(
     }
     let mut s = lock(state)?;
     check_parent(s.project(), &actor_id, &component)?;
-    if let ActorComponent::Material { material } = &mut component {
+    if let ActorComponent::Material { material, .. } = &mut component {
         material.normalize();
     }
     if let ActorComponent::Terrain { terrain } = &mut component {
@@ -3791,7 +3799,11 @@ pub(crate) fn asset_used_by(
     let dir = project_dir(&s)?;
     let project = s.project().ok_or("No project is open")?;
     let path = assets::normalize(&path).ok_or("That isn't a path in this project")?;
-    Ok(resources::uses_of(project, &ResourceIndex::load(&dir), &path))
+    Ok(resources::uses_of(
+        project,
+        &ResourceIndex::load(&dir),
+        &path,
+    ))
 }
 
 /// `resource-index`: every indexed file's id, by path.
@@ -4402,9 +4414,10 @@ pub(crate) fn export_shader(
     effect.source = path.clone();
     push_undo(&mut s);
     if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
+        let source = blockloom_core::material_asset::link(actor).cloned();
         actor
             .components
-            .insert(ActorComponent::Material { material });
+            .insert(ActorComponent::Material { material, source });
     }
     auto_save(&mut s);
     sync_runtime(&mut s);

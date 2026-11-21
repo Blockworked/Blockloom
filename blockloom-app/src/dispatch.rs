@@ -525,6 +525,55 @@ impl Backend {
                 app,
                 arg(&args, "actorId")?,
             )?),
+            "create_environment_asset" => {
+                to_json(commands::environments::create_environment_asset(
+                    state,
+                    app,
+                    arg::<Option<String>>(&args, "path")?,
+                )?)
+            }
+            "assign_environment" => to_json(commands::environments::assign_environment(
+                state,
+                app,
+                arg(&args, "path")?,
+            )?),
+            "apply_environment" => to_json(commands::environments::apply_environment(state, app)?),
+            "revert_environment" => to_json(commands::environments::revert_environment(
+                state,
+                app,
+                arg::<Option<String>>(&args, "path")?,
+            )?),
+            "unlink_environment" => {
+                to_json(commands::environments::unlink_environment(state, app)?)
+            }
+            "create_material_asset" => to_json(commands::materials::create_material_asset(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg::<Option<String>>(&args, "path")?,
+            )?),
+            "assign_material" => to_json(commands::materials::assign_material(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "path")?,
+            )?),
+            "apply_material" => to_json(commands::materials::apply_material(
+                state,
+                app,
+                arg(&args, "actorId")?,
+            )?),
+            "revert_material" => to_json(commands::materials::revert_material(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg::<Option<String>>(&args, "path")?,
+            )?),
+            "unlink_material" => to_json(commands::materials::unlink_material(
+                state,
+                app,
+                arg(&args, "actorId")?,
+            )?),
             "duplicate_actor" => to_json(commands::duplicate_actor(
                 state,
                 app,

@@ -1398,6 +1398,58 @@
             "version": 1,
             "widgets": []
           }
+        },
+        {
+          "component": "Lighting2d",
+          "lighting2d": {
+            "ambient": 0.3,
+            "ambient_color": "#FFFFFF",
+            "enabled": false,
+            "ramp": [],
+            "sunrise": 6.0,
+            "sunset": 18.0,
+            "unlit_above": 100
+          }
+        },
+        {
+          "component": "Post2d",
+          "post2d": {
+            "crt": {
+              "curvature": 0.0,
+              "mask": 0.0,
+              "scanlines": 0.0,
+              "vignette": 0.0
+            },
+            "dither": 0.0,
+            "levels": 0,
+            "outline": {
+              "color": "#000000",
+              "strength": 0.0,
+              "threshold": 0.2
+            },
+            "palette": [],
+            "pixelation": 0,
+            "split": 0.0
+          }
+        },
+        {
+          "camera2d": {
+            "bounds": null,
+            "lock_x": false,
+            "lock_y": false,
+            "pixel_snap": false,
+            "rotation": 0.0,
+            "shake": {
+              "decay": 1.5,
+              "frequency": 25.0,
+              "max_angle": 3.0,
+              "max_offset": 24.0
+            },
+            "soft_edge": 0.0,
+            "zoom": null,
+            "zoom_height": 0.0
+          },
+          "component": "Camera2d"
         }
       ],
       "format": 1,

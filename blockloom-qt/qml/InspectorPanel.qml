@@ -304,7 +304,7 @@ Rectangle {
     function writeVisual(c, next) { write("Look", { component: "Look", visual: merged(c.visual, next) }); }
     function writePhysics(c, next) { write("Body", { component: "Body", physics: merged(physicsOf(c), next) }); }
     function writeCamera(c, next) { write("Camera", { component: "Camera", camera: merged(cameraOf(c), next) }); }
-    function writeMaterial(c, next) { write("Material", { component: "Material", material: merged(materialOf(c), next) }); }
+    function writeMaterial(c, next) { write("Material", { component: "Material", material: merged(materialOf(c), next), source: c.source }); }
     function writeShader(c, next) { writeMaterial(c, { shader: merged(materialOf(c).shader || { mode: "Solid", speed: 1, strength: 0.5, color: "#FFFFFF" }, next) }); }
     function writeLight2d(c, next) { write("Light2d", { component: "Light2d", light2d: merged(light2dOf(c), next) }); }
     function writeConveyor(c, next) { write("Conveyor", { component: "Conveyor", conveyor: merged(conveyorOf(c), next) }); }
@@ -1182,7 +1182,25 @@ Rectangle {
             id: mat
             readonly property var c: parent.c
             readonly property var m: root.materialOf(c)
+            readonly property var link: c.source || null
+            readonly property var overrides: link ? (link.overrides || []) : []
             spacing: 6
+            InspectorRow { label: "Asset"; Layout.fillWidth: true
+                AssetField { objectName: "material-asset"; Layout.fillWidth: true; app: root.app; accept: ["material"]; value: mat.link && mat.link.source ? mat.link.source.path : ""
+                    onCommitted: p => p ? root.app.invoke("assign_material", { actorId: root.actor.id, path: p }) : root.app.invoke("unlink_material", { actorId: root.actor.id }) } }
+            Text { visible: !!mat.link; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: mat.overrides.length ? "Sets " + mat.overrides.join(", ") + " itself. The rest follows the file." : "Follows the file. A change here becomes an override until you apply it." }
+            RowLayout {
+                spacing: 6
+                StitchButton { visible: !mat.link; objectName: "material-save"; text: "Save as asset"; iconName: "save"; implicitHeight: 28
+                    onClicked: root.app.invoke("create_material_asset", { actorId: root.actor.id }) }
+                StitchButton { visible: !!mat.link; text: "Apply to asset"; iconName: "upload"; implicitHeight: 28
+                    onClicked: root.app.invoke("apply_material", { actorId: root.actor.id }) }
+                StitchButton { visible: mat.overrides.length > 0; text: "Revert"; implicitHeight: 28
+                    onClicked: root.app.invoke("revert_material", { actorId: root.actor.id }) }
+                StitchButton { visible: !!mat.link; text: "Detach"; implicitHeight: 28
+                    onClicked: root.app.invoke("unlink_material", { actorId: root.actor.id }) }
+            }
             InspectorRow { label: "Metallic"; Layout.fillWidth: true; NumberField { value: mat.m.metallic; onCommitted: n => root.writeMaterial(mat.c, { metallic: n }) } }
             InspectorRow { label: "Rough"; Layout.fillWidth: true; NumberField { value: mat.m.roughness; fallback: 0.6; onCommitted: n => root.writeMaterial(mat.c, { roughness: n }) } }
             readonly property string source: {

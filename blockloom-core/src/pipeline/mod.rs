@@ -1261,7 +1261,9 @@ pub fn load_manifest(project_dir: &Path) -> PipelineManifest {
             manifest.roles.insert(path.clone(), role);
         }
         if entry.exposure_bias != 0.0 {
-            manifest.exposure_bias.insert(path.clone(), entry.exposure_bias);
+            manifest
+                .exposure_bias
+                .insert(path.clone(), entry.exposure_bias);
         }
     }
     manifest

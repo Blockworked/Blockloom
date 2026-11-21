@@ -569,7 +569,7 @@ impl Scene {
         }
         self.world.soundscape.normalize();
         for actor in &mut self.actors {
-            if let Some(ActorComponent::Material { material }) =
+            if let Some(ActorComponent::Material { material, .. }) =
                 actor.components.get_mut("Material")
             {
                 material.normalize();
@@ -1467,7 +1467,9 @@ impl Project {
 
     /// The active scene beside the game settings, for edits that touch both
     /// (a player preset writes the actor and the input actions).
-    pub fn active_scene_and_settings(&mut self) -> (&mut Scene, &mut crate::settings::GameSettings) {
+    pub fn active_scene_and_settings(
+        &mut self,
+    ) -> (&mut Scene, &mut crate::settings::GameSettings) {
         self.ensure_scene_invariants();
         let active = self.active_scene.clone();
         let i = self.scenes.iter().position(|s| s.id == active).unwrap_or(0);
@@ -2191,12 +2193,12 @@ impl Project {
                     }
                     None => false,
                 },
-                serde_json::Value::Array(items) => {
-                    items.iter_mut().fold(false, |hit, item| walk(item, from, to) | hit)
-                }
-                serde_json::Value::Object(map) => {
-                    map.values_mut().fold(false, |hit, item| walk(item, from, to) | hit)
-                }
+                serde_json::Value::Array(items) => items
+                    .iter_mut()
+                    .fold(false, |hit, item| walk(item, from, to) | hit),
+                serde_json::Value::Object(map) => map
+                    .values_mut()
+                    .fold(false, |hit, item| walk(item, from, to) | hit),
                 _ => false,
             }
         }
@@ -2735,9 +2737,20 @@ mod tests {
             actions: vec![action("Forward"), action("Jump")],
         });
         project.adopt_scene_settings(false);
-        let names: Vec<&str> = project.settings.input.actions.iter().map(|a| a.name.as_str()).collect();
+        let names: Vec<&str> = project
+            .settings
+            .input
+            .actions
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect();
         assert_eq!(names, ["Forward", "Jump"]);
-        assert!(project.scenes.iter().all(|s| s.world.legacy_input.is_none()));
+        assert!(
+            project
+                .scenes
+                .iter()
+                .all(|s| s.world.legacy_input.is_none())
+        );
     }
 
     #[test]
@@ -2764,7 +2777,10 @@ mod tests {
         assert!(loaded.settings.input.find("Fire").is_some());
         save_project(&loaded, &dir).unwrap();
         let scene = std::fs::read_to_string(&scene_path).unwrap();
-        assert!(!scene.contains("\"Sound\"") && !scene.contains("\"Fire\""), "{scene}");
+        assert!(
+            !scene.contains("\"Sound\"") && !scene.contains("\"Fire\""),
+            "{scene}"
+        );
         let again = read_project_dir(&dir).unwrap();
         assert_eq!(again.settings, loaded.settings);
     }
@@ -3383,6 +3399,7 @@ mod tests {
             path: "assets/scripts/player.rs".to_string(),
         });
         actor.components.insert(ActorComponent::Material {
+            source: None,
             material: crate::material::SurfaceMaterial {
                 albedo_texture: "assets/sprites/player.png".to_string(),
                 normal_texture: "assets/sprites/normal.png".to_string(),

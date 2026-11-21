@@ -655,7 +655,9 @@ mod tests {
         let (mut scene, id) = scene(Mode::ThreeD);
         let before = scene.clone();
         let err = scene
-            .apply_player_preset(&mut input, &id,
+            .apply_player_preset(
+                &mut input,
+                &id,
                 PlayerPreset::Platformer2d,
                 false,
                 &MaterialLibrary::default(),
@@ -752,7 +754,6 @@ mod tests {
 
     #[test]
     fn preset_names_round_trip() {
-        
         for preset in PlayerPreset::ALL {
             assert_eq!(PlayerPreset::parse(preset.name()), Some(preset));
             assert_eq!(PlayerPreset::parse(preset.label()), Some(preset));
@@ -765,8 +766,14 @@ mod tests {
         let mut input = InputConfig::default();
         let library = MaterialLibrary::default();
         let (mut from, id) = scene(Mode::ThreeD);
-        from.apply_player_preset(&mut input, &id, PlayerPreset::ThirdPerson3d, false, &library)
-            .unwrap();
+        from.apply_player_preset(
+            &mut input,
+            &id,
+            PlayerPreset::ThirdPerson3d,
+            false,
+            &library,
+        )
+        .unwrap();
         let profile = PlayerProfile::capture(&from, &input, &id, "Hero").unwrap();
         let text = serde_json::to_string(&profile).unwrap();
         let loaded: PlayerProfile = serde_json::from_str(&text).unwrap();
@@ -775,7 +782,9 @@ mod tests {
         let (mut to, other) = scene(Mode::ThreeD);
         let mut input = InputConfig::default();
         assert!(loaded.preview(&to, &input, &other).blocked.is_none());
-        loaded.apply(&mut to, &mut input, &other, false, &library).unwrap();
+        loaded
+            .apply(&mut to, &mut input, &other, false, &library)
+            .unwrap();
         let c = &to.actors[1].components;
         assert!(c.character_controller().is_some());
         assert!(c.character_motor().is_some());
@@ -789,7 +798,13 @@ mod tests {
         let library = MaterialLibrary::default();
         let (mut scene, id) = scene(Mode::ThreeD);
         scene
-            .apply_player_preset(&mut input, &id, PlayerPreset::FirstPerson3d, false, &library)
+            .apply_player_preset(
+                &mut input,
+                &id,
+                PlayerPreset::FirstPerson3d,
+                false,
+                &library,
+            )
             .unwrap();
         let mut profile = PlayerProfile::capture(&scene, &input, &id, "Future").unwrap();
         profile.version = PlayerProfile::VERSION + 1;

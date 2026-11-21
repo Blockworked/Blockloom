@@ -61,7 +61,10 @@ fn new_id() -> String {
 
 /// `path` itself or anything under it when it is a folder.
 fn under(path: &str, root: &str) -> bool {
-    path == root || path.strip_prefix(root).is_some_and(|rest| rest.starts_with('/'))
+    path == root
+        || path
+            .strip_prefix(root)
+            .is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// Whether a file belongs in the index: under `assets/`, not a scene
@@ -372,7 +375,9 @@ pub fn uses(project: &Project, index: &ResourceIndex) -> BTreeMap<String, Vec<Us
         actor: None,
         at: format!("project.{at}"),
     };
-    record(&Value::String(project.icon.clone()), &|_| project_use("icon".into()));
+    record(&Value::String(project.icon.clone()), &|_| {
+        project_use("icon".into())
+    });
     if let Ok(settings) = serde_json::to_value(&project.settings) {
         record(&settings, &|at| project_use(format!("settings.{at}")));
     }
@@ -467,7 +472,10 @@ mod tests {
         let mut reference = ResourceRef::to(&index, "assets/art/a.png");
         index.moved("assets/art", "assets/pictures");
         assert_eq!(index.id_of("assets/pictures/a.png"), Some(id.as_str()));
-        assert!(index.id_of("assets/artwork.png").is_some(), "only the folder moved");
+        assert!(
+            index.id_of("assets/artwork.png").is_some(),
+            "only the folder moved"
+        );
         assert!(reference.resolve(&index));
         assert_eq!(reference.path, "assets/pictures/a.png");
         index.removed("assets/pictures");

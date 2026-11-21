@@ -1507,6 +1507,10 @@ pub struct World {
     /// Named camera reels that `play cutscene` runs on the wall clock.
     #[serde(default)]
     pub cutscenes: Vec<crate::cinematic::Cutscene>,
+    /// The `.blockenv` the look follows, where it follows one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(skip)]
+    pub environment: Option<crate::linked::AssetLink>,
 }
 
 fn default_background() -> String {
@@ -1583,6 +1587,7 @@ impl Default for World {
             surface: crate::material::SurfaceWeather::default(),
             vfx: crate::vfx::VfxSettings::default(),
             cutscenes: Vec::new(),
+            environment: None,
         }
     }
 }

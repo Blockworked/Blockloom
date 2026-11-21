@@ -11,8 +11,6 @@
 
 use crate::components::ActorComponent;
 use crate::project::Actor;
-use crate::resources::ResourceRef;
-use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -22,16 +20,7 @@ pub const EXTENSION: &str = "blockprefab";
 const FORMAT: u32 = 1;
 
 /// What an instance knows about its prefab.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Schema)]
-pub struct PrefabLink {
-    /// The `.blockprefab` it was placed from.
-    #[serde(default)]
-    pub source: ResourceRef,
-    /// Property paths this instance sets itself, sorted.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[schema(skip)]
-    pub overrides: Vec<String>,
-}
+pub type PrefabLink = crate::linked::AssetLink;
 
 #[derive(Serialize, Deserialize)]
 struct PrefabFile {
@@ -50,8 +39,7 @@ pub fn read(dir: &Path, relative: &str) -> Result<Actor, String> {
     let full = crate::assets::resolve(dir, relative)
         .ok_or_else(|| format!("\"{relative}\" isn't a path in this project"))?;
     let text = crate::vfs::read_to_string(&full).map_err(|e| format!("{relative}: {e}"))?;
-    let file: PrefabFile =
-        serde_json::from_str(&text).map_err(|e| format!("{relative}: {e}"))?;
+    let file: PrefabFile = serde_json::from_str(&text).map_err(|e| format!("{relative}: {e}"))?;
     if file.format > FORMAT {
         return Err(format!(
             "{relative} was saved by a newer Blockloom (prefab format {})",
@@ -66,7 +54,10 @@ pub fn write(dir: &Path, relative: &str, actor: &Actor) -> Result<(), String> {
     let full = crate::assets::resolve(dir, relative)
         .ok_or_else(|| format!("\"{relative}\" isn't a path in this project"))?;
     let mut actor = actor.clone();
-    actor.components.0.retain(|c| !matches!(c, ActorComponent::Prefab { .. }));
+    actor
+        .components
+        .0
+        .retain(|c| !matches!(c, ActorComponent::Prefab { .. }));
     let file = PrefabFile {
         format: FORMAT,
         kind: "prefab".into(),
@@ -94,7 +85,11 @@ pub fn link_mut(actor: &mut Actor) -> Option<&mut PrefabLink> {
 
 /// Paths that are always the instance's own.
 fn own(path: &str) -> bool {
-    path == "name" || path.split('.').next().is_some_and(|base| base == "Place" || base == "Parent")
+    path == "name"
+        || path
+            .split('.')
+            .next()
+            .is_some_and(|base| base == "Place" || base == "Parent")
 }
 
 /// One component's slot: its path base and its JSON tag.
@@ -183,7 +178,9 @@ pub fn mark(before: &Actor, now: &Actor, prefab: &Actor, overrides: &mut Vec<Str
 /// The instance as `prefab` says now, keeping its own id, link, place and
 /// every overridden path.
 pub fn rebuild(instance: &Actor, prefab: &Actor) -> Result<Actor, String> {
-    let overrides = link(instance).map(|l| l.overrides.clone()).unwrap_or_default();
+    let overrides = link(instance)
+        .map(|l| l.overrides.clone())
+        .unwrap_or_default();
     let keep = |key: &str| own(key) || overrides.binary_search(&key.to_string()).is_ok();
     let (mine, my_slots) = fields(instance);
     let (theirs, their_slots) = fields(prefab);
@@ -238,10 +235,17 @@ pub fn rebuild(instance: &Actor, prefab: &Actor) -> Result<Actor, String> {
         }
     }
     object.insert("components".into(), Value::Array(components));
-    let mut actor: Actor = serde_json::from_value(Value::Object(object))
-        .map_err(|e| format!("couldn't rebuild \"{}\" from its prefab: {e}", instance.name))?;
+    let mut actor: Actor = serde_json::from_value(Value::Object(object)).map_err(|e| {
+        format!(
+            "couldn't rebuild \"{}\" from its prefab: {e}",
+            instance.name
+        )
+    })?;
     if let Some(own_link) = link(instance).cloned() {
-        actor.components.0.push(ActorComponent::Prefab { prefab: own_link });
+        actor
+            .components
+            .0
+            .push(ActorComponent::Prefab { prefab: own_link });
     }
     Ok(actor)
 }
@@ -299,7 +303,12 @@ mod tests {
         let rebuilt = rebuild(&instance, &next).unwrap();
         assert_eq!(rebuilt.id, "instance");
         assert_eq!(color(&rebuilt), "#00FF00", "the override stays");
-        assert!(rebuilt.components.iter().any(|c| matches!(c, ActorComponent::Persist)));
+        assert!(
+            rebuilt
+                .components
+                .iter()
+                .any(|c| matches!(c, ActorComponent::Persist))
+        );
         assert_eq!(link(&rebuilt).unwrap().overrides, overrides);
 
         // Without the override the prefab's look comes through.

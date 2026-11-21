@@ -71,7 +71,11 @@ fn with_scene<R>(
 /// `with_scene`, with the project's input actions beside the scene.
 fn with_scene_input<R>(
     project: &mut Project,
-    f: impl FnOnce(&mut Scene, &mut blockloom_core::input::InputConfig, &MaterialLibrary) -> Result<R, String>,
+    f: impl FnOnce(
+        &mut Scene,
+        &mut blockloom_core::input::InputConfig,
+        &MaterialLibrary,
+    ) -> Result<R, String>,
 ) -> Result<R, String> {
     let library = project.physics.materials.clone();
     let (scene, settings) = project.active_scene_and_settings();
@@ -603,9 +607,10 @@ pub(crate) fn preview_player_preset(
     let preset = preset_named(&preset)?;
     let s = lock(state)?;
     let project = s.project().ok_or("No project is open")?;
-    let preview = project
-        .active_scene()
-        .preview_player_preset(&project.settings.input, &actor_id, preset);
+    let preview =
+        project
+            .active_scene()
+            .preview_player_preset(&project.settings.input, &actor_id, preset);
     serde_json::to_value(preview).map_err(|e| e.to_string())
 }
 
@@ -664,7 +669,12 @@ pub(crate) fn save_player_profile(
     let profile = {
         let s = lock(state)?;
         let project = s.project().ok_or("No project is open")?;
-        PlayerProfile::capture(project.active_scene(), &project.settings.input, &actor_id, name.trim())?
+        PlayerProfile::capture(
+            project.active_scene(),
+            &project.settings.input,
+            &actor_id,
+            name.trim(),
+        )?
     };
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;

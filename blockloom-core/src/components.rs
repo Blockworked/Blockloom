@@ -428,7 +428,13 @@ pub enum ActorComponent {
     },
     /// What the surface is made of: PBR properties and optional custom
     /// shader effect. Absent means flat color or plain image.
-    Material { material: SurfaceMaterial },
+    Material {
+        material: SurfaceMaterial,
+        /// The `.blockmaterial` this one follows, when it is an instance.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schema(skip)]
+        source: Option<crate::linked::AssetLink>,
+    },
     Fracture {
         fracture: crate::destruction::FractureSpec,
     },
@@ -485,9 +491,7 @@ pub enum ActorComponent {
     /// Placed from a `.blockprefab`: which one, and what this copy overrides.
     /// The editor rebuilds the actor when the prefab changes; the runtime
     /// ignores it.
-    Prefab {
-        prefab: crate::prefab::PrefabLink,
-    },
+    Prefab { prefab: crate::prefab::PrefabLink },
     /// A component a plugin owns. The document stores its payload as the
     /// plugin's schema describes it and never interprets it, so a project
     /// whose plugin is missing still opens, saves and round-trips it intact.
@@ -966,7 +970,7 @@ impl Components {
     /// The surface material, if the actor carries one.
     pub fn material(&self) -> Option<&SurfaceMaterial> {
         match self.get("Material") {
-            Some(ActorComponent::Material { material }) => Some(material),
+            Some(ActorComponent::Material { material, .. }) => Some(material),
             _ => None,
         }
     }

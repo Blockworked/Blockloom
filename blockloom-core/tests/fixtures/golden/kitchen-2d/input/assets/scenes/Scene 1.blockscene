@@ -597,6 +597,58 @@
         ],
         "prefabs": {}
       }
+    },
+    {
+      "component": "Lighting2d",
+      "lighting2d": {
+        "enabled": false,
+        "ambient_color": "#FFFFFF",
+        "ambient": 0.3,
+        "unlit_above": 100,
+        "ramp": [],
+        "sunrise": 6.0,
+        "sunset": 18.0
+      }
+    },
+    {
+      "component": "Post2d",
+      "post2d": {
+        "pixelation": 0,
+        "levels": 0,
+        "palette": [],
+        "dither": 0.0,
+        "outline": {
+          "strength": 0.0,
+          "color": "#000000",
+          "threshold": 0.2
+        },
+        "crt": {
+          "scanlines": 0.0,
+          "curvature": 0.0,
+          "vignette": 0.0,
+          "mask": 0.0
+        },
+        "split": 0.0
+      }
+    },
+    {
+      "component": "Camera2d",
+      "camera2d": {
+        "lock_x": false,
+        "lock_y": false,
+        "bounds": null,
+        "soft_edge": 0.0,
+        "zoom_height": 0.0,
+        "zoom": null,
+        "pixel_snap": false,
+        "rotation": 0.0,
+        "shake": {
+          "max_offset": 24.0,
+          "max_angle": 3.0,
+          "frequency": 25.0,
+          "decay": 1.5
+        }
+      }
     }
   ],
   "actors": [

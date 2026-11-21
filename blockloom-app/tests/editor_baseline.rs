@@ -278,6 +278,11 @@ fn saved_project_round_trips() {
                 serde_json::from_value(components.remove(soundscape)["soundscape"].take())
                     .expect("valid soundscape");
             assert_eq!(added, Soundscape::default());
+            // The 2D look is saved as components now too.
+            components.retain(|c| {
+                !["Lighting2d", "Post2d", "Camera2d"]
+                    .contains(&c["component"].as_str().unwrap_or(""))
+            });
         }
         assert_preserved(&old, &new, rel);
     }
