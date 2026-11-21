@@ -141,12 +141,12 @@ Rectangle {
         Item { visible: root.appState.library.length === 0; Layout.fillHeight: true }
     }
 
-    Menu {
+    StitchMenu {
         id: projectMenu
         property var entry: null
-        MenuItem { text: "Remove from list"; onTriggered: if (projectMenu.entry) root.report("forget_project", { path: projectMenu.entry.path }) }
-        MenuSeparator {}
-        MenuItem { text: "Delete project folder…"; onTriggered: { deleteDialog.entry = projectMenu.entry; deleteDialog.open(); } }
+        StitchMenuItem { text: "Remove from list"; onTriggered: if (projectMenu.entry) root.report("forget_project", { path: projectMenu.entry.path }) }
+        MenuSeparator { palette.mid: Theme.borderSoft }
+        StitchMenuItem { text: "Delete project folder…"; danger: true; onTriggered: { deleteDialog.entry = projectMenu.entry; deleteDialog.open(); } }
     }
 
     NewProjectDialog { id: newProject; app: root.app }

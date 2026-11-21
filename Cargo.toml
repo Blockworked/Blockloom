@@ -42,9 +42,9 @@ license = "AGPL-3.0-or-later"
 # moves them together and `just blockstitch-local` overrides both.
 blockstitch-core = { git = "https://github.com/Blockworked/blockstitch", rev = "80b06c54e9c2603961b1dd847b01a4d204ef4f1a" }
 blockstitch-qml = { git = "https://github.com/Blockworked/blockstitch", rev = "80b06c54e9c2603961b1dd847b01a4d204ef4f1a" }
-bevy = "0.20.0-rc.2"
-# No 0.20 release yet: the bindings moved into the rapier monorepo, which
-# tracks Bevy's main. Patched onto the RC below until a release lands.
+bevy = "0.20.1"
+# The bindings moved into the rapier monorepo, which tracks Bevy's main.
+# Patched onto the release below until a crates.io binding lands.
 bevy_rapier2d = { git = "https://github.com/dimforge/rapier", rev = "09ca067a" }
 bevy_rapier3d = { git = "https://github.com/dimforge/rapier", rev = "09ca067a" }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -61,9 +61,9 @@ glam = "0.32"
 # accepts is one the GPU pipeline accepts too.
 naga = { version = "30", features = ["wgsl-in"] }
 # Same source as Bevy's WESL support, for validating surface shaders offline.
-wesl = { version = "0.4.4" }
+wesl = { version = "0.6.0" }
 # For the parse-error type in that validation (source snippets in reports).
-wgsl-parse = { version = "0.4.4" }
+wgsl-parse = { version = "0.6.0" }
 polyanya = { version = "0.17", default-features = false }
 libloading = "0.9.0"
 # Portable dispatch keeps the interpreter loop-based: the default tail-call
@@ -104,9 +104,9 @@ lto = "fat"
 codegen-units = 1
 strip = "symbols"
 
-# bevy_rapier's git master depends on Bevy's main; build it against the RC.
+# bevy_rapier's git master depends on Bevy's main; build it against the release.
 [patch."https://github.com/bevyengine/bevy"]
-bevy = "0.20.0-rc.2"
+bevy = "0.20.1"
 
 # Generated from pinned release archives and patches/ by
 # `just prepare-patched-deps`. See patches/README.md for the Mali workarounds.

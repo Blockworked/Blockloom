@@ -103,6 +103,7 @@ def main():
                 raise RuntimeError(f"Qt smoke test failed for {page} ({result.returncode}):\n{result.stdout}\n{result.stderr}")
             print(f"PASS: {page}")
 
+        smoke("more-menu", [], expect=("importReleaseBundle", "addLocalRepository"))
         smoke("empty", [], expect=("newProject", "emptyPrimary"), absent=("searchField",))
         # A project with no editor opens with the default one; nothing blocks it.
         hub.write_json(project / ".blockloom/hub.json", {"schema": 1, "installation": ""})

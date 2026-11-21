@@ -15,12 +15,13 @@
 
 mod app_bridge;
 mod app_icon;
+mod application;
 mod game_view;
 mod preview;
 mod qt_diagnostics;
 
 use cxx_qt::casting::Upcast;
-use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QQmlEngine, QUrl};
+use cxx_qt_lib::{QQmlApplicationEngine, QQmlEngine, QUrl};
 use std::pin::Pin;
 
 fn main() {
@@ -40,7 +41,7 @@ fn main() {
     blockstitch_qml::init();
     cxx_qt::init_qml_module!("com.blockworked.Blockloom");
 
-    let mut app = QGuiApplication::new();
+    let mut app = application::new();
     app_icon::apply();
     let mut engine = QQmlApplicationEngine::new();
     if let Some(mut engine) = engine.as_mut() {

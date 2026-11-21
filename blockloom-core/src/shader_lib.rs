@@ -61,7 +61,7 @@ pub fn module(name: &str) -> Option<&'static str> {
 /// deciding its `@if`s (anything unnamed is off). Only `blockloom::` imports
 /// resolve here; Bevy's modules exist on the GPU side alone.
 pub fn link(source: &str, features: &[(&str, bool)]) -> Result<String, String> {
-    let mut resolver = wesl::VirtualResolver::new();
+    let mut resolver = wesl::resolver::VirtualResolver::new();
     let root = ModulePath::new(PathOrigin::Absolute, vec!["root".to_string()]);
     resolver.add_module(root.clone(), Cow::Borrowed(source));
     for (name, text) in MODULES {
@@ -76,8 +76,9 @@ pub fn link(source: &str, features: &[(&str, bool)]) -> Result<String, String> {
     let options = wesl::CompileOptions {
         // Keep everything, so every function gets type-checked, called or not.
         strip: false,
-        lazy: false,
         validate: false,
+        // Bevy compiles with visibility off, so an item is as importable here as there.
+        visibility: false,
         features: wesl::Features {
             default: wesl::Feature::Disable,
             flags: features
@@ -93,7 +94,7 @@ pub fn link(source: &str, features: &[(&str, bool)]) -> Result<String, String> {
             Cow::Owned(text),
         );
     }
-    wesl::compile(&root, &resolver, &wesl::EscapeMangler, &options)
+    wesl::compile(&root, &options, &resolver)
         .map(|result| result.to_string())
         .map_err(|error| error.to_string())
 }

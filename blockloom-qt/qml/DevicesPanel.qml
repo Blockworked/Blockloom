@@ -255,10 +255,10 @@ RowLayout {
                                 iconName: "ellipsis"; tip: modelData.serial ? "Stop " + modelData.name + " to rename or delete it" : "Manage " + modelData.name
                                 enabled: !root.locked && !root.refreshing && !modelData.serial && !parent.starting
                                 onClicked: avdMenu.popup()
-                                Menu {
+                                StitchMenu {
                                     id: avdMenu
-                                    MenuItem { objectName: "rename_" + modelData.name; text: "Rename"; onTriggered: { root.editAvd = modelData.name; root.renamedAvd = modelData.name; root.deletingAvd = false; root.emulatorError = ""; manageDialog.open(); } }
-                                    MenuItem { objectName: "delete_" + modelData.name; text: "Delete"; onTriggered: { root.editAvd = modelData.name; root.deletingAvd = true; root.emulatorError = ""; manageDialog.open(); } }
+                                    StitchMenuItem { objectName: "rename_" + modelData.name; text: "Rename"; iconName: "pencil"; onTriggered: { root.editAvd = modelData.name; root.renamedAvd = modelData.name; root.deletingAvd = false; root.emulatorError = ""; manageDialog.open(); } }
+                                    StitchMenuItem { objectName: "delete_" + modelData.name; text: "Delete"; iconName: "trash-2"; danger: true; onTriggered: { root.editAvd = modelData.name; root.deletingAvd = true; root.emulatorError = ""; manageDialog.open(); } }
                                 }
                             }
                         }

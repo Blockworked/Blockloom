@@ -238,7 +238,8 @@ TestCase {
         verify(menu.enabled);
         mouseClick(menu);
         const rename = findChild(test.Window.window.contentItem, "rename_test-device");
-        tryCompare(rename, "visible", true);
+        const popup = rename.menu;
+        tryCompare(popup, "opened", true);
         mouseClick(rename);
         const dialog = findChild(panel, "manageAvdDialog");
         tryCompare(dialog, "opened", true);
@@ -251,6 +252,7 @@ TestCase {
         // The dialog's exit animation still covers the panel.
         tryCompare(dialog, "visible", false);
         mouseClick(menu);
+        tryCompare(popup, "opened", true);
         mouseClick(findChild(test.Window.window.contentItem, "delete_test-device"));
         tryCompare(dialog, "opened", true);
         verify(panel.deletingAvd);

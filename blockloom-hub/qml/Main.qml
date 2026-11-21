@@ -215,6 +215,10 @@ ApplicationWindow {
                             return
                         }
                         if (service.smokePage() === "installations") tabs.currentIndex = 1
+                        if (service.smokePage() === "more-menu") {
+                            tabs.currentIndex = 1
+                            moreButton.clicked()
+                        }
                         if (service.smokePage() === "no-match") search.text = "zzz-nothing"
                         if (service.smokePage() === "install") installDialog.open()
                         if (service.smokePage() === "version" && result.length > 0) window.choose(result[0])
@@ -422,23 +426,23 @@ ApplicationWindow {
                             acceptedButtons: Qt.RightButton
                             onTapped: if (modelData.available) rowMenu.popup()
                         }
-                        Menu {
+                        StitchMenu {
                             id: rowMenu
                             onOpened: window.installMenuOpen = true
                             onClosed: window.installMenuOpen = false
-                            MenuItem {
+                            StitchMenuItem {
                                 text: "Open"
                                 enabled: !service.busy && window.openable(modelData)
                                 onTriggered: perform("open", [modelData.path])
                             }
-                            MenuItem { text: "Show in folder"; onTriggered: window.showFolderOf(modelData) }
-                            MenuItem {
-                                text: "Backups..."
+                            StitchMenuItem { text: "Show in folder"; onTriggered: window.showFolderOf(modelData) }
+                            StitchMenuItem {
+                                text: "Backups…"
                                 enabled: !service.busy
                                 onTriggered: { window.backupsTarget = modelData; window.backupRows = []; backupsDialog.open(); perform("backups", [modelData.path]) }
                             }
-                            MenuSeparator {}
-                            MenuItem { text: "Remove from list"; enabled: !service.busy; onTriggered: perform("forget", [modelData.path]) }
+                            MenuSeparator { palette.mid: Theme.borderSoft }
+                            StitchMenuItem { text: "Remove from list"; enabled: !service.busy; onTriggered: perform("forget", [modelData.path]) }
                         }
                         RowLayout {
                             id: projectRow
@@ -529,16 +533,18 @@ ApplicationWindow {
                 RowLayout {
                     HubButton { primary: true; text: "Get a release"; enabled: !service.busy; onClicked: { releaseDialog.open(); perform("check-releases", []) } }
                     HubButton {
+                        id: moreButton
                         text: "More…"
                         enabled: !service.busy
                         onClicked: moreMenu.open()
-                        Menu {
+                        StitchMenu {
                             id: moreMenu
+                            width: 232
                             y: parent.height
                             onOpened: window.installMenuOpen = true
                             onClosed: window.installMenuOpen = false
-                            MenuItem { text: "Import release bundle…"; onTriggered: { window.selectedRelease = {}; installDialog.open() } }
-                            MenuItem { text: "Add local repository…"; onTriggered: repoFolder.open() }
+                            StitchMenuItem { objectName: "importReleaseBundle"; text: "Import release bundle…"; iconName: "download"; onTriggered: { window.selectedRelease = {}; installDialog.open() } }
+                            StitchMenuItem { objectName: "addLocalRepository"; text: "Add local repository…"; iconName: "folder-open"; onTriggered: repoFolder.open() }
                         }
                     }
                 }
@@ -628,9 +634,10 @@ ApplicationWindow {
                                             enabled: !!modelData.path
                                             onTriggered: { if (!service.showFolder(modelData.path)) window.error = "The installation folder could not be opened." }
                                         }
-                                        MenuSeparator {}
+                                        MenuSeparator { palette.mid: Theme.borderSoft }
                                         StitchMenuItem {
                                             text: "Uninstall..."
+                                            danger: true
                                             enabled: !service.busy && !modelData.running
                                             onTriggered: { window.deleteTarget = modelData; deleteDialog.open() }
                                         }

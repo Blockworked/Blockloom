@@ -81,6 +81,10 @@ fn main() {
                 "qml/IconButton.qml",
             ]),
     )
+    .file("src/application.rs")
+    .include_dir("../qt-common")
+    .cpp_file("../qt-common/blockloom_application.h")
+    .cpp_file("../qt-common/blockloom_application.cpp")
     .file("src/app_bridge.rs")
     .file("src/app_icon.rs")
     .file("src/qt_diagnostics.rs")
@@ -100,7 +104,8 @@ fn main() {
     )
     .qt_module("Quick")
     .qt_module("QuickControls2")
-    .qt_module("QuickDialogs2");
+    .qt_module("QuickDialogs2")
+    .qt_module("Widgets");
 
     // Frames arrive as dma-bufs imported through EGL, and the pointer is
     // locked through Wayland's own protocols.

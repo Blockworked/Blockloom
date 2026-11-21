@@ -3,7 +3,9 @@
     windows_subsystem = "windows"
 )]
 
-use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QUrl};
+mod application;
+
+use cxx_qt_lib::{QQmlApplicationEngine, QUrl};
 
 fn main() {
     // The Hub window runs its project and editor logic as itself with this
@@ -18,7 +20,7 @@ fn main() {
     }
     blockstitch_qml::init();
     cxx_qt::init_qml_module!("com.blockworked.BlockloomHub");
-    let mut app = QGuiApplication::new();
+    let mut app = application::new();
     let mut engine = QQmlApplicationEngine::new();
     if let Some(mut engine) = engine.as_mut() {
         engine

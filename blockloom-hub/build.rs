@@ -7,6 +7,10 @@ fn main() {
             .version(1, 0)
             .qml_files(["qml/Main.qml"]),
     )
+    .file("src/application.rs")
+    .include_dir("../qt-common")
+    .cpp_file("../qt-common/blockloom_application.h")
+    .cpp_file("../qt-common/blockloom_application.cpp")
     .cpp_file("src/hub_service.h")
     .cpp_file("src/hub_service.cpp")
     .qrc_resources(
@@ -27,6 +31,7 @@ fn main() {
     .qt_module("Quick")
     .qt_module("QuickControls2")
     .qt_module("QuickDialogs2")
+    .qt_module("Widgets")
     .build();
 }
 
