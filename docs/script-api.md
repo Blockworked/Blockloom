@@ -165,6 +165,34 @@ every slot with a file as a JSON list, so `load json into list` takes it.
 `text_for` answers the key in the run's language, falling back to the
 default language and then to the key itself, exactly like the blocks. ABI 47.
 
+## 2D look and camera
+
+`set [look] to` has one script spelling, `me.set_look_2d(dial, value)`, where
+the dial is a name the blocks use (`"zoom"`, `"zoom height"`, `"rotation"`,
+`"shake"`, `"hitstop"`, `"flash"`, `"cover"`, `"cover kind"`, `"pixelation"`,
+`"ambient light"`, ...) and the value is what the block's slot would hold.
+`set_look_2d_number` formats a number for you, and `shake_2d`, `hitstop_2d`
+and `flash_screen` are the common ones. An unknown dial logs an error. The
+reporters read the same snapshot the blocks do: `camera_zoom`,
+`camera_at_bounds`, `screen_shaking`, `screen_cover`, `light_level(x, y)` and
+`is_night`. Writes apply later and a read straight after one gives the old
+value, as everywhere else. ABI 48.
+
+## Lists, dicts, physics and effects (ABI 49-51)
+
+Everything a block can do to a list or dict, a script can too, through the
+blocks' own stores and reporters: `list_contains`/`_text`, `list_amount`,
+`list_index_of`, `list_has_index`, `list_json`, `list_set_json`,
+`list_reverse`, `list_shift`, and `dict_size`, `dict_has_key`, `dict_number`,
+`dict_text`, `dict_keys`, `dict_json`, `dict_set`/`_text`, `dict_delete`,
+`dict_clear`, `dict_set_json`. Writes land at once; bad JSON logs an error.
+Physics and effects: `set_body`, `set_gravity`, `set_density`, `set_mass`,
+`set_trail_enabled`, `glide_to`, `fracture`, `splash`, `puff_smoke`,
+`spawn_decal`, `fade_decals`. `Event::Motor(MotorEvent)` is the motor hat
+(`jump`, `land`, `leave ground`, `head hit`, `stance change`), and
+`camera_position`/`camera_direction` read the world camera. On an
+`ActorRef`, `set_body`, `set_density` and `set_mass` act for that actor.
+
 ## Driving another actor
 
 ```rust

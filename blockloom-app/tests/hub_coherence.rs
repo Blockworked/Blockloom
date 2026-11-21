@@ -91,12 +91,17 @@ fn a_project_bound_to_another_editor_is_not_opened_silently() {
         .expect_err("a bound project is not opened by another editor");
     assert!(refused.starts_with("wrong-editor:"), "{refused}");
     assert!(refused.contains("Blockloom 0.2.0"), "{refused}");
-    assert!(!refused.contains("release-0.2.0"), "ids stay out of messages: {refused}");
+    assert!(
+        !refused.contains("release-0.2.0"),
+        "ids stay out of messages: {refused}"
+    );
     // The refusal left project A open and untouched.
     let state = v1.dispatch("get_state", json!({})).unwrap();
     assert_eq!(
         state["project_path"].as_str().map(PathBuf::from),
-        Some(std::fs::canonicalize(&a).unwrap_or(a.clone())).filter(|p| p == &a).or(Some(a.clone()))
+        Some(std::fs::canonicalize(&a).unwrap_or(a.clone()))
+            .filter(|p| p == &a)
+            .or(Some(a.clone()))
     );
 
     // An explicit decision opens it, and the binding stays where it was.
@@ -217,7 +222,12 @@ fn deleting_a_project_another_editor_owns_is_refused() {
         // It went to the trash, not into thin air.
         let trashed = _data.path().join("xdg/Trash/files/Owned/project.blockloom");
         assert!(trashed.is_file(), "{}", trashed.display());
-        assert!(_data.path().join("xdg/Trash/info/Owned.trashinfo").is_file());
+        assert!(
+            _data
+                .path()
+                .join("xdg/Trash/info/Owned.trashinfo")
+                .is_file()
+        );
     }
 }
 
@@ -277,7 +287,8 @@ fn a_failed_save_blocks_navigation_until_discard() {
 
     // A read-only project file is what an unwritable folder looks like to a save.
     let file = dir.join("project.blockloom");
-    let set = |mode| std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).unwrap();
+    let set =
+        |mode| std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).unwrap();
     set(0o444);
     // Root ignores permissions; nothing to prove there.
     if std::fs::OpenOptions::new().append(true).open(&file).is_ok() {
@@ -338,7 +349,10 @@ fn a_missing_folder_stays_listed_with_recovery_and_never_prunes() {
     assert_eq!(away["available"], false);
     assert!(away["error"].as_str().unwrap().contains("missing"));
     let registry = std::fs::read_to_string(data.path().join("blockloom/projects.json")).unwrap();
-    assert!(registry.contains("Away"), "the registry keeps it: {registry}");
+    assert!(
+        registry.contains("Away"),
+        "the registry keeps it: {registry}"
+    );
 
     // Listing again (a second backend) still keeps it, and the folder coming
     // back makes it available with no action.
@@ -425,10 +439,8 @@ fn an_editor_at_its_dashboard_hands_over_the_hubs_open_request() {
         .dispatch("open_project", json!({"path": dir.to_string_lossy()}))
         .unwrap();
     backend.dispatch("hub_reply", json!({"id": "r1"})).unwrap();
-    let reply = blockloom_core::hub::reply_path(
-        &blockloom_core::hub::editors_dir(),
-        std::process::id(),
-    );
+    let reply =
+        blockloom_core::hub::reply_path(&blockloom_core::hub::editors_dir(), std::process::id());
     let reply: Value = serde_json::from_str(&std::fs::read_to_string(reply).unwrap()).unwrap();
     assert_eq!(reply["ok"], true);
     assert_eq!(reply["id"], "r1");

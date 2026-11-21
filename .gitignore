@@ -26,6 +26,7 @@ web-dist/
 mcp/node_modules/
 mcp/dist-test/
 opencode.json
+.opencode/goals/
 .mcp.json
 plans/
 .codex/

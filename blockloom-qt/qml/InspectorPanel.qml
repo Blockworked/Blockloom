@@ -28,7 +28,7 @@ Rectangle {
         Sprite: ["Place", "Parent", "Look", "Render", "Sprite", "Material"],
         Anim: ["Animation", "Emitter", "Trail"],
         Tiles: ["Look", "Parallax", "Room", "Conveyor", "Hazard"],
-        Light: ["Light2d", "Volume"],
+        Light: ["Light2d", "Volume", "SoundZone"],
         Camera: ["Camera", "PlayerCamera"]
     })
     function tabShows(component) {
@@ -309,6 +309,18 @@ Rectangle {
     function writeLight(c, next) { write("Light", { component: "Light", light: merged(lightOf(c), next) }); }
     function writeLight2d(c, next) { write("Light2d", { component: "Light2d", light2d: merged(light2dOf(c), next) }); }
     function writeConveyor(c, next) { write("Conveyor", { component: "Conveyor", conveyor: merged(conveyorOf(c), next) }); }
+    function reverbOf(z) { return Object.assign({ mix: 0, size: 0.5, decay: 1.5, damping: 0.5, excursion: 0.2 }, z.reverb || {}); }
+    function soundZoneOf(c) { return Object.assign({ enabled: true, shape: "Box", half_extents: [5, 5, 5], radius: 5, priority: 0, blend_distance: 1, reverb: { mix: 0.35, size: 0.6, decay: 2.2, damping: 0.4, excursion: 0.25 }, muffle: 0, buses: ["Sfx"], impulse: "" }, c.zone || {}); }
+    function writeSoundZone(c, next) { write("SoundZone", { component: "SoundZone", zone: merged(soundZoneOf(c), next) }); }
+    readonly property var reverbPresets: ({
+        "Off": { mix: 0, size: 0.5, decay: 1.5, damping: 0.5, excursion: 0.2 },
+        "Small room": { mix: 0.25, size: 0.2, decay: 0.6, damping: 0.6, excursion: 0.1 },
+        "Hall": { mix: 0.35, size: 0.6, decay: 2.2, damping: 0.4, excursion: 0.25 },
+        "Cave": { mix: 0.5, size: 0.8, decay: 3.5, damping: 0.3, excursion: 0.35 },
+        "Cathedral": { mix: 0.55, size: 1.0, decay: 5.5, damping: 0.35, excursion: 0.3 },
+        "Tunnel": { mix: 0.45, size: 0.45, decay: 2.8, damping: 0.5, excursion: 0.15 },
+        "Underwater": { mix: 0.5, size: 0.6, decay: 2.0, damping: 0.9, excursion: 0.6 }
+    })
     function writeHazard(c, next) { write("Hazard", { component: "Hazard", hazard: merged(hazardOf(c), next) }); }
     function writeBeam(c, next) { writeLight(c, { beam: merged(beamOf(lightOf(c)), next) }); }
     function writeMotes(c, next) { writeBeam(c, { motes: merged(beamOf(lightOf(c)).motes, next) }); }
@@ -415,11 +427,11 @@ Rectangle {
     readonly property var addable: {
         if (!actor) return [];
         const held = actor.components.map(componentName);
-        return ["Look","Render","Body","Rigidbody","Collider","Constraint","CharacterController","CharacterMotor","PlayerCamera","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Light2d","Conveyor","Hazard","Animation","Sprite","Volume","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
+        return ["Look","Render","Body","Rigidbody","Collider","Constraint","CharacterController","CharacterMotor","PlayerCamera","Joint","Brain","Camera","Script","Parent","Material","Emitter","Trail","Light","Light2d","Conveyor","Hazard","Animation","Sprite","Volume","SoundZone","Probe","Terrain","Fracture","Water","Buoyancy","Parallax","Room","Persist","Custom"]
             .filter(n => n !== "Sprite" || !is3d)
             .filter(n => n !== "Fracture" || is3d)
             .filter(n => (n !== "Light2d" && n !== "Conveyor" && n !== "Hazard") || !is3d)
-            .filter(n => n === "Custom" || n === "Collider" || n === "Constraint" || n === "Script" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : (n === "Light2d" ? "2D light" : n === "Conveyor" ? "Conveyor belt" : n === "Hazard" ? "Hurt volume" : n) }))
+            .filter(n => n === "Custom" || n === "Collider" || n === "Constraint" || n === "Script" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : (n === "Light2d" ? "2D light" : n === "Conveyor" ? "Conveyor belt" : n === "Hazard" ? "Hurt volume" : n === "SoundZone" ? "Sound zone" : n) }))
             .concat(pluginTypes.filter(t => t.kind === "component" && held.indexOf(t.name) < 0).map(t => ({ value: "plugin:" + t.name, label: t.displayName + " (" + t.pluginName + ")" })));
     }
     function blank(name) {
@@ -439,6 +451,7 @@ Rectangle {
         case "Light2d": return { component: "Light2d", light2d: light2dOf({}) };
         case "Conveyor": return { component: "Conveyor", conveyor: conveyorOf({}) };
         case "Hazard": return { component: "Hazard", hazard: hazardOf({}) };
+        case "SoundZone": return { component: "SoundZone", zone: soundZoneOf({}) };
         case "Animation": return { component: "Animation", animation: { clips: [], states: [] } };
         case "Sprite": return { component: "Sprite", sprite: spriteOf({}) };
         case "Volume": return { component: "Volume", volume: volumeOf({}) };
@@ -562,7 +575,7 @@ Rectangle {
                                 Layout.fillWidth: true
                                 readonly property var c: card.c
                                 sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Rigidbody: rigidbodyCard, Collider: colliderCard, Constraint: constraintCard, CharacterController: controllerCard, CharacterMotor: motorCard, PlayerCamera: playerCameraCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                    Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Light2d: light2dCard, Conveyor: conveyorCard, Hazard: hazardCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard, Plugin: pluginCard })[card.c.component] || null
+                                                    Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Light2d: light2dCard, Conveyor: conveyorCard, Hazard: hazardCard, SoundZone: soundZoneCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard, Plugin: pluginCard })[card.c.component] || null
                             }
                         }
                     }
@@ -1368,6 +1381,65 @@ Rectangle {
                 SwitchField { value: cv.b.enabled; onToggled: on => root.writeConveyor(cv.c, { enabled: on }) } Item { Layout.fillWidth: true } }
             InspectorRow { label: "Speed"; Layout.fillWidth: true
                 NumberField { value: cv.b.speed; fallback: 96; onCommitted: n => root.writeConveyor(cv.c, { speed: n }) } }
+        }
+    }
+    Component {
+        id: soundZoneCard
+        ColumnLayout {
+            id: sz
+            readonly property var c: parent.c
+            readonly property var zone: root.soundZoneOf(c)
+            readonly property var r: root.reverbOf(zone)
+            function writeReverb(next) { root.writeSoundZone(sz.c, { reverb: Object.assign({}, sz.r, next) }); }
+            function hasBus(b) { return (sz.zone.buses || []).indexOf(b) >= 0; }
+            function setBus(b, on) {
+                const rest = (sz.zone.buses || []).filter(x => x !== b);
+                root.writeSoundZone(sz.c, { buses: on ? rest.concat([b]) : rest });
+            }
+            spacing: 6
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: "Changes how the listener hears while the camera is inside: its own reverb and a muffle, blended in over the blend distance. Higher priority wins where zones overlap." }
+            InspectorRow { label: "Enabled"; Layout.fillWidth: true
+                SwitchField { value: sz.zone.enabled; onToggled: on => root.writeSoundZone(sz.c, { enabled: on }) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Shape"; Layout.fillWidth: true
+                ChoiceField { options: [{ value: "Box", label: root.is3d ? "Box" : "Rectangle" }, { value: "Sphere", label: root.is3d ? "Sphere" : "Circle" }, { value: "Global", label: "Everywhere" }]
+                    value: sz.zone.shape; onChosen: s => root.writeSoundZone(sz.c, { shape: s }) } }
+            InspectorRow { visible: sz.zone.shape === "Box"; label: "Half size"; Layout.fillWidth: true
+                NumberField { value: sz.zone.half_extents[0]; onCommitted: n => root.writeSoundZone(sz.c, { half_extents: root.withIndex(sz.zone.half_extents, 0, Math.max(0, n)) }) }
+                NumberField { value: sz.zone.half_extents[1]; onCommitted: n => root.writeSoundZone(sz.c, { half_extents: root.withIndex(sz.zone.half_extents, 1, Math.max(0, n)) }) }
+                NumberField { visible: root.is3d; value: sz.zone.half_extents[2]; onCommitted: n => root.writeSoundZone(sz.c, { half_extents: root.withIndex(sz.zone.half_extents, 2, Math.max(0, n)) }) } }
+            InspectorRow { visible: sz.zone.shape === "Sphere"; label: "Radius"; Layout.fillWidth: true
+                NumberField { value: sz.zone.radius; onCommitted: n => root.writeSoundZone(sz.c, { radius: Math.max(0, n) }) } }
+            InspectorRow { visible: sz.zone.shape !== "Global"; label: "Blend dist"; Layout.fillWidth: true
+                NumberField { value: sz.zone.blend_distance; onCommitted: n => root.writeSoundZone(sz.c, { blend_distance: Math.max(0, n) }) } }
+            InspectorRow { label: "Priority"; Layout.fillWidth: true
+                NumberField { value: sz.zone.priority; onCommitted: n => root.writeSoundZone(sz.c, { priority: n }) } }
+            Text { text: "Reverb"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+            InspectorRow { label: "Preset"; Layout.fillWidth: true
+                ChoiceField { options: Object.keys(root.reverbPresets).map(k => ({ value: k, label: k })); value: ""
+                    onChosen: k => sz.writeReverb(root.reverbPresets[k]) } }
+            InspectorRow { label: "Mix"; Layout.fillWidth: true
+                NumberField { value: sz.r.mix; fallback: 0; onCommitted: n => sz.writeReverb({ mix: Math.min(1, Math.max(0, n)) }) } }
+            InspectorRow { label: "Size"; Layout.fillWidth: true
+                NumberField { value: sz.r.size; fallback: 0.5; onCommitted: n => sz.writeReverb({ size: Math.min(1, Math.max(0, n)) }) } }
+            InspectorRow { label: "Decay (s)"; Layout.fillWidth: true
+                NumberField { value: sz.r.decay; fallback: 1.5; onCommitted: n => sz.writeReverb({ decay: Math.min(20, Math.max(0.1, n)) }) } }
+            InspectorRow { label: "Damping"; Layout.fillWidth: true
+                NumberField { value: sz.r.damping; fallback: 0.5; onCommitted: n => sz.writeReverb({ damping: Math.min(1, Math.max(0, n)) }) } }
+            InspectorRow { label: "Excursion"; Layout.fillWidth: true
+                NumberField { value: sz.r.excursion; fallback: 0.2; onCommitted: n => sz.writeReverb({ excursion: Math.min(1, Math.max(0, n)) }) } }
+            InspectorRow { label: "Recorded room"; Layout.fillWidth: true
+                AssetField { app: root.app; accept: ["audio"]; value: sz.zone.impulse || ""; placeholderText: "Parametric (a WAV impulse response)"
+                    onCommitted: p => root.writeSoundZone(sz.c, { impulse: p }) }
+                IconButton { iconName: "x"; tip: "Back to the parametric reverb"; enabled: !!sz.zone.impulse; onClicked: root.writeSoundZone(sz.c, { impulse: "" }) } }
+            InspectorRow { label: "Muffle"; Layout.fillWidth: true
+                NumberField { value: sz.zone.muffle; fallback: 0; onCommitted: n => root.writeSoundZone(sz.c, { muffle: Math.min(1, Math.max(0, n)) }) } }
+            InspectorRow { label: "All buses"; Layout.fillWidth: true
+                SwitchField { value: sz.hasBus("Master"); onToggled: on => sz.setBus("Master", on) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Music"; Layout.fillWidth: true
+                SwitchField { value: sz.hasBus("Music"); onToggled: on => sz.setBus("Music", on) } Item { Layout.fillWidth: true } }
+            InspectorRow { label: "Effects"; Layout.fillWidth: true
+                SwitchField { value: sz.hasBus("Sfx"); onToggled: on => sz.setBus("Sfx", on) } Item { Layout.fillWidth: true } }
         }
     }
     Component {

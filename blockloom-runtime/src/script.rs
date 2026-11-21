@@ -23,7 +23,7 @@ use blockloom_core::sound::{SoundBus, clamp_pitch, user_to_gain};
 use blockloom_core::ui::{UiAnchor, UiElement, UiKind, UiProp, UiTheme};
 use blockloom_core::value::Evaluated;
 use blockloom_core::vm::Effect;
-use blockloom_core::vm::{Lists, Variables};
+use blockloom_core::vm::{Dicts, Lists, Variables};
 use blockloom_protocol::RuntimeMessage;
 #[cfg(not(target_arch = "wasm32"))]
 use std::ffi::c_void;
@@ -387,7 +387,11 @@ impl ScriptEvent {
                 Some(actor.clone()),
                 ScriptEvent::new(abi::EVENT_COLLISION, name_of(with)).detail(with.clone()),
             ),
-            Event::Collision { .. } | Event::Motor { .. } => return None,
+            Event::Collision { .. } => return None,
+            Event::Motor { actor, event } => (
+                Some(actor.clone()),
+                ScriptEvent::new(abi::EVENT_MOTOR, event.name()),
+            ),
             Event::Particles { actor, event } => {
                 let particles = me(actor).map(|me| (me.particles, me.position));
                 let (count, at) = particles.map_or((0, [0.0; 3]), |(particles, position)| {
@@ -450,6 +454,8 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     static SCRIPT_LISTS: std::cell::RefCell<Option<Lists>> =
         const { std::cell::RefCell::new(None) };
+    static SCRIPT_DICTS: std::cell::RefCell<Option<Dicts>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Forgets every script's per-actor storage. A run starts empty.
@@ -460,12 +466,14 @@ pub fn clear_script_data() {
 /// Runs `f` with the run's variable and list stores visible to scripts.
 /// Writes through these handles land at once, the way the VM's own writes
 /// do, so a read straight after sees them.
-pub fn with_script_stores(variables: &Variables, lists: &Lists, f: impl FnOnce()) {
+pub fn with_script_stores(variables: &Variables, lists: &Lists, dicts: &Dicts, f: impl FnOnce()) {
     SCRIPT_VARS.with(|vars| vars.replace(Some(variables.clone())));
     SCRIPT_LISTS.with(|stored| stored.replace(Some(lists.clone())));
+    SCRIPT_DICTS.with(|stored| stored.replace(Some(dicts.clone())));
     f();
     SCRIPT_VARS.with(|vars| vars.replace(None));
     SCRIPT_LISTS.with(|stored| stored.replace(None));
+    SCRIPT_DICTS.with(|stored| stored.replace(None));
 }
 
 pub(crate) fn with_event_words(event: &ScriptEvent, f: impl FnOnce()) {
@@ -807,6 +815,43 @@ pub(crate) fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> 
         abi::READ_DRAW_CALLS => Some(sense::read(|s| s.performance.draw_calls) as f64),
         abi::READ_DLSS_AVAILABLE => bool_as(sense::read(|s| s.performance.dlss_available)),
         abi::READ_CUTSCENE_TIME => Some(sense::read(|s| s.cutscene_time) as f64),
+        abi::READ_CAMERA_2D => {
+            let camera = sense::read(|s| s.camera2d);
+            match a
+                .trim()
+                .to_ascii_lowercase()
+                .replace(['_', '-'], " ")
+                .as_str()
+            {
+                "zoom" => Some(camera.zoom as f64),
+                "rotation" => Some(camera.rotation as f64),
+                "at bounds" => bool_as(camera.at_bounds),
+                "shaking" => bool_as(camera.shaking),
+                "cover" => Some(camera.cover as f64),
+                _ => None,
+            }
+        }
+        abi::READ_CAMERA_POSITION | abi::READ_CAMERA_DIRECTION => {
+            let axis = match a.trim().to_ascii_lowercase().as_str() {
+                "x" => 0,
+                "y" => 1,
+                "z" => 2,
+                _ => return None,
+            };
+            Some(sense::read(|s| {
+                if what == abi::READ_CAMERA_POSITION {
+                    s.camera.position[axis]
+                } else {
+                    s.camera.forward[axis]
+                }
+            }) as f64)
+        }
+        abi::READ_LIGHT_LEVEL => {
+            let mut at = a.split_whitespace().map(|n| n.parse::<f32>().ok());
+            let (x, y) = (at.next()??, at.next()??);
+            Some(sense::read(|s| s.light2d.level_at([x, y])) as f64)
+        }
+        abi::READ_IS_NIGHT => bool_as(sense::read(|s| s.light2d.night)),
         abi::READ_ATMOSPHERE => sense::read(|sensors| sensors.atmosphere.field(a)),
         abi::READ_PLUGIN => match plugin_answer(actor, a, b)? {
             Evaluated::Number(n) => Some(n),
@@ -970,6 +1015,50 @@ pub(crate) fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> 
         abi::READ_VARIABLE => Some(script_variable_number(actor, a)),
         abi::READ_LIST_LENGTH => Some(script_list_len(actor, a) as f64),
         abi::READ_LIST_ITEM => script_list_number(actor, a, arg),
+        abi::READ_LIST_CONTAINS => script_list_report(
+            actor,
+            "ListContains",
+            vec![Evaluated::Text(a.to_string()), script_needle(b, arg)],
+        )
+        .and_then(evaluated_number),
+        abi::READ_LIST_AMOUNT | abi::READ_LIST_INDEX_OF => script_list_report(
+            actor,
+            if what == abi::READ_LIST_AMOUNT {
+                "ListAmount"
+            } else {
+                "ListItemNumber"
+            },
+            vec![script_needle(b, arg), Evaluated::Text(a.to_string())],
+        )
+        .and_then(evaluated_number),
+        abi::READ_LIST_HAS_INDEX => script_list_report(
+            actor,
+            "ListItemExists",
+            vec![Evaluated::Number(arg), Evaluated::Text(a.to_string())],
+        )
+        .and_then(evaluated_number),
+        abi::READ_DICT_SIZE => {
+            script_dict_report(actor, "DictSize", vec![Evaluated::Text(a.to_string())])
+                .and_then(evaluated_number)
+        }
+        abi::READ_DICT_HAS_KEY => script_dict_report(
+            actor,
+            "DictHasKey",
+            vec![
+                Evaluated::Text(a.to_string()),
+                Evaluated::Text(b.to_string()),
+            ],
+        )
+        .and_then(evaluated_number),
+        abi::READ_DICT_VALUE => script_dict_report(
+            actor,
+            "DictValue",
+            vec![
+                Evaluated::Text(b.to_string()),
+                Evaluated::Text(a.to_string()),
+            ],
+        )
+        .and_then(evaluated_number),
         _ => None,
     }
 }
@@ -1106,6 +1195,78 @@ fn nearest_within(actor: &str, center: [f32; 3], radius: f32) -> Option<query::Q
 
 /// Appends `item` to the block list `actor` writes. A name nobody declared
 /// is a no-op, like the add block.
+fn script_list_edit(
+    actor: &str,
+    name: &str,
+    f: impl FnOnce(&mut Vec<blockloom_core::blocks::ListItem>),
+) {
+    let name = name.trim();
+    if name.is_empty() {
+        return;
+    }
+    SCRIPT_LISTS.with(|stored| {
+        if let Some(stored) = stored.borrow().as_ref() {
+            stored.with_list_mut(actor, name, f);
+        }
+    });
+}
+
+/// Mutates the dict `actor` writes by that name; unknown names are a no-op.
+fn script_dict_edit(
+    actor: &str,
+    name: &str,
+    f: impl FnOnce(&mut Vec<blockloom_core::blocks::DictEntry>),
+) {
+    let name = name.trim();
+    if name.is_empty() {
+        return;
+    }
+    SCRIPT_DICTS.with(|stored| {
+        if let Some(stored) = stored.borrow().as_ref() {
+            stored.with_dict_mut(actor, name, f);
+        }
+    });
+}
+
+/// A list reporter answered through the shared `Lists::read`, so a script and
+/// the blocks agree on every edge. `args` follow the op's own argument order.
+fn script_list_report(actor: &str, op: &str, args: Vec<Evaluated>) -> Option<Evaluated> {
+    SCRIPT_LISTS.with(|stored| {
+        let stored = stored.borrow();
+        stored
+            .as_ref()?
+            .read(actor, op, args.into_iter().map(Ok).collect())
+            .ok()
+    })
+}
+
+fn script_dict_report(actor: &str, op: &str, args: Vec<Evaluated>) -> Option<Evaluated> {
+    SCRIPT_DICTS.with(|stored| {
+        let stored = stored.borrow();
+        stored
+            .as_ref()?
+            .read(actor, op, args.into_iter().map(Ok).collect())
+            .ok()
+    })
+}
+
+/// A NaN argument explicitly selects text, including an empty string.
+fn script_needle(text: &str, number: f64) -> Evaluated {
+    if text.is_empty() && !number.is_nan() {
+        Evaluated::Number(number)
+    } else {
+        Evaluated::Text(text.to_string())
+    }
+}
+
+fn evaluated_number(value: Evaluated) -> Option<f64> {
+    match value {
+        Evaluated::Number(n) => Some(n),
+        Evaluated::Bool(value) => Some(f64::from(value)),
+        Evaluated::Text(text) => text.trim().parse().ok(),
+    }
+}
+
 fn script_list_push(actor: &str, name: &str, item: blockloom_core::blocks::ListItem) {
     let name = name.trim();
     if name.is_empty() {
@@ -1388,6 +1549,27 @@ pub(crate) fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<Strin
             .filter(|text| !text.is_empty()),
         abi::TEXT_VARIABLE => Some(script_variable_text(actor, a)),
         abi::TEXT_LIST_ITEM => script_list_text(actor, a, b),
+        abi::TEXT_LIST_JSON => {
+            script_list_report(actor, "ListAsJson", vec![Evaluated::Text(a.to_string())])
+                .map(|v| v.as_text())
+        }
+        abi::TEXT_DICT_VALUE => script_dict_report(
+            actor,
+            "DictValue",
+            vec![
+                Evaluated::Text(b.to_string()),
+                Evaluated::Text(a.to_string()),
+            ],
+        )
+        .map(|v| v.as_text()),
+        abi::TEXT_DICT_KEYS => {
+            script_dict_report(actor, "DictKeys", vec![Evaluated::Text(a.to_string())])
+                .map(|v| v.as_text())
+        }
+        abi::TEXT_DICT_JSON => {
+            script_dict_report(actor, "DictAsJson", vec![Evaluated::Text(a.to_string())])
+                .map(|v| v.as_text())
+        }
         abi::TEXT_SAVE_SLOT => Some(sense::read(|sensors| {
             if sensors.current_save_slot.is_empty() {
                 blockloom_core::save::DEFAULT_SLOT.to_string()
@@ -1986,6 +2168,16 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
             actor,
             language: a.trim().to_string(),
         },
+        abi::ACT_SET_LOOK_2D => match blockloom_core::blocks::Look2dDial::parse(a) {
+            Some(dial) => Effect::SetLook2d {
+                dial,
+                value: b.to_string(),
+            },
+            None => Effect::Error {
+                actor,
+                message: format!("script: {a:?} is not a 2D look dial"),
+            },
+        },
         abi::ACT_SET_WATER => match blockloom_core::water::WaterProperty::parse(a) {
             Some(property) => Effect::SetWater {
                 actor,
@@ -1996,6 +2188,13 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
                 actor,
                 message: format!("there's no water dial called \"{a}\""),
             },
+        },
+        abi::ACT_SET_REVERB => Effect::SetReverb {
+            preset: a.trim().to_string(),
+        },
+        abi::ACT_MUFFLE_UNDERWATER => Effect::SetUnderwaterMuffle {
+            bus: SoundBus::parse(a).unwrap_or(SoundBus::Sfx),
+            enabled: n0 != 0.0,
         },
         abi::ACT_SET_BUS_VOLUME => Effect::SetBusVolume {
             bus: SoundBus::parse(a).unwrap_or(SoundBus::Sfx),
@@ -2121,6 +2320,145 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
             script_list_delete(&actor, a, n0);
             return;
         }
+        abi::ACT_LIST_REVERSE => {
+            script_list_edit(&actor, a, |list| list.reverse());
+            return;
+        }
+        abi::ACT_LIST_SHIFT => {
+            script_list_edit(&actor, a, |list| {
+                if !list.is_empty() {
+                    let len = list.len();
+                    let distance = n0.round() as isize;
+                    if distance >= 0 {
+                        list.rotate_right(distance as usize % len);
+                    } else {
+                        list.rotate_left(distance.unsigned_abs() % len);
+                    }
+                }
+            });
+            return;
+        }
+        abi::ACT_JSON_TO_LIST => match blockloom_core::blocks::parse_json_array(c) {
+            Ok(items) => {
+                script_list_edit(&actor, a, |list| *list = items);
+                return;
+            }
+            Err(message) => Effect::Error { actor, message },
+        },
+        abi::ACT_DICT_SET | abi::ACT_DICT_SET_TEXT => {
+            let item = if what == abi::ACT_DICT_SET {
+                blockloom_core::blocks::DictItem::Number(n0)
+            } else {
+                blockloom_core::blocks::DictItem::Text(c.to_string())
+            };
+            let key = b.to_string();
+            script_dict_edit(&actor, a, |dict| {
+                blockloom_core::blocks::dict_set(dict, key, item)
+            });
+            return;
+        }
+        abi::ACT_DICT_DELETE_KEY => {
+            let key = b.to_string();
+            script_dict_edit(&actor, a, |dict| {
+                blockloom_core::blocks::dict_remove(dict, &key);
+            });
+            return;
+        }
+        abi::ACT_DICT_CLEAR => {
+            script_dict_edit(&actor, a, Vec::clear);
+            return;
+        }
+        abi::ACT_JSON_TO_DICT => match blockloom_core::blocks::parse_json_object(c) {
+            Ok(entries) => {
+                script_dict_edit(&actor, a, |dict| *dict = entries);
+                return;
+            }
+            Err(message) => Effect::Error { actor, message },
+        },
+        abi::ACT_SET_BODY => Effect::SetBody {
+            actor,
+            body: crate::logic::body_of(a.trim()),
+        },
+        abi::ACT_SET_GRAVITY => Effect::SetGravity { gravity: vector },
+        abi::ACT_SET_DENSITY => Effect::SetDensity {
+            actor,
+            density: n0 as f32,
+        },
+        abi::ACT_SET_MASS => Effect::SetMass {
+            actor,
+            mass: n0 as f32,
+        },
+        abi::ACT_SET_BODY_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            Effect::SetBody {
+                actor: target,
+                body: crate::logic::body_of(b.trim()),
+            }
+        }
+        abi::ACT_SET_DENSITY_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            Effect::SetDensity {
+                actor: target,
+                density: n0 as f32,
+            }
+        }
+        abi::ACT_SET_MASS_OTHER => {
+            let Some(target) = target_or_error(ctx, a) else {
+                return;
+            };
+            Effect::SetMass {
+                actor: target,
+                mass: n0 as f32,
+            }
+        }
+        abi::ACT_SET_TRAIL_ENABLED => Effect::SetTrailEnabled {
+            actor,
+            enabled: n0 != 0.0,
+        },
+        abi::ACT_GLIDE => Effect::Glide {
+            actor,
+            seconds: n0 as f32,
+            target: [n1 as f32, n2 as f32, at(3) as f32],
+            easing: blockloom_core::animation::TweenEasing::parse(b)
+                .unwrap_or(blockloom_core::animation::TweenEasing::Linear),
+        },
+        abi::ACT_FRACTURE => match target_or_error(ctx, a) {
+            Some(target) => Effect::Fracture { actor: target },
+            None => return,
+        },
+        abi::ACT_SPLASH => Effect::Splash {
+            at: vector,
+            radius: at(3) as f32,
+            strength: at(4) as f32,
+        },
+        abi::ACT_PUFF_SMOKE => Effect::PuffSmoke {
+            at: vector,
+            radius: at(3) as f32,
+            strength: at(4) as f32,
+        },
+        abi::ACT_SPAWN_DECAL => match blockloom_core::decals::DecalPreset::parse(a) {
+            Some(preset) => Effect::SpawnDecal(blockloom_core::decals::Spawn {
+                preset,
+                at: vector,
+                normal: [at(3) as f32, at(4) as f32, at(5) as f32],
+                size: at(6) as f32,
+                lifetime: at(7) as f32,
+                fade: at(8) as f32,
+            }),
+            None => Effect::Error {
+                actor,
+                message: format!("script: {a:?} is not a decal preset"),
+            },
+        },
+        abi::ACT_FADE_DECALS => Effect::FadeDecals {
+            at: vector,
+            radius: at(3) as f32,
+            seconds: at(4) as f32,
+        },
         abi::ACT_LIST_CLEAR => {
             let name = a.trim();
             if !name.is_empty() {
@@ -2974,7 +3312,7 @@ blockloom::export!(tick = tick);
         lists.load(&list_project);
         publish_one("a1");
         let mut asked = Asked::default();
-        with_script_stores(&variables, &lists, || {
+        with_script_stores(&variables, &lists, &Dicts::default(), || {
             script.tick("a1", &mut asked, 0.5);
             script.tick("a1", &mut asked, 0.5);
         });
@@ -2988,7 +3326,7 @@ blockloom::export!(tick = tick);
             variables.read("a1", "mode"),
             blockloom_core::value::Evaluated::Text("hot".to_string())
         );
-        with_script_stores(&variables, &lists, || {
+        with_script_stores(&variables, &lists, &Dicts::default(), || {
             assert_eq!(
                 number_for("a1", abi::READ_LIST_LENGTH, "bag", "", 0.0),
                 Some(4.0)
@@ -3048,7 +3386,7 @@ blockloom::export!(tick = tick);
         let lists = Lists::default();
         publish_one("a1");
         let mut asked = Asked::default();
-        with_script_stores(&variables, &lists, || {
+        with_script_stores(&variables, &lists, &Dicts::default(), || {
             // Component order: `a` then `b`, like `open_scripts` loads them.
             first.tick("a1", &mut asked, 0.5);
             second.tick("a1", &mut asked, 0.5);
@@ -3133,13 +3471,13 @@ blockloom::export!(tick = tick);
         publish_one("a1");
         // Fake an action press on the first step only.
         let mut asked = Asked::default();
-        with_script_stores(&variables, &lists, || {
+        with_script_stores(&variables, &lists, &Dicts::default(), || {
             script.tick("a1", &mut asked, 0.1);
         });
         // Not yet: 0.1 of 0.3 waited, no full 0.2 beat.
         assert!(asked.effects.is_empty());
         let mut asked = Asked::default();
-        with_script_stores(&variables, &lists, || {
+        with_script_stores(&variables, &lists, &Dicts::default(), || {
             script.tick("a1", &mut asked, 0.1);
         });
         // One 0.2 beat elapsed over two 0.1 steps.
@@ -3152,7 +3490,7 @@ blockloom::export!(tick = tick);
         let mut says: Vec<String> = Vec::new();
         for _ in 0..5 {
             let mut asked = Asked::default();
-            with_script_stores(&variables, &lists, || {
+            with_script_stores(&variables, &lists, &Dicts::default(), || {
                 script.tick("a1", &mut asked, 0.1);
             });
             says.extend(asked.effects.iter().filter_map(|effect| match effect {
@@ -3600,6 +3938,377 @@ blockloom::export!(start = start, tick = tick);
     }
 
     #[test]
+    fn data_physics_and_effect_verbs_match_the_blocks() {
+        use blockloom_core::value::Evaluated;
+        let variables = Variables::default();
+        let lists = Lists::default();
+        let dicts = Dicts::default();
+        let mut project =
+            blockloom_core::project::Project::starter("data", blockloom_core::scene::Mode::TwoD);
+        project.create_global_list("bag").unwrap();
+        project.global_lists[0].items = vec![
+            blockloom_core::blocks::ListItem::Number(1.0),
+            blockloom_core::blocks::ListItem::Text("two".to_string()),
+            blockloom_core::blocks::ListItem::Number(1.0),
+        ];
+        lists.load(&project);
+        project.create_global_dict("stats").unwrap();
+        dicts.load(&project);
+        publish_one("a1");
+        with_script_stores(&variables, &lists, &dicts, || {
+            let mut asked = Asked::default();
+            let mut ctx = Ctx {
+                actor: "a1",
+                asked: &mut asked,
+            };
+            let read = |what, a: &str, b: &str, arg| number_for("a1", what, a, b, arg);
+            assert_eq!(read(abi::READ_LIST_CONTAINS, "bag", "two", 0.0), Some(1.0));
+            assert_eq!(read(abi::READ_LIST_CONTAINS, "bag", "", 1.0), Some(1.0));
+            assert_eq!(read(abi::READ_LIST_CONTAINS, "bag", "nope", 0.0), Some(0.0));
+            assert_eq!(read(abi::READ_LIST_AMOUNT, "bag", "", 1.0), Some(2.0));
+            assert_eq!(read(abi::READ_LIST_INDEX_OF, "bag", "two", 0.0), Some(2.0));
+            assert_eq!(read(abi::READ_LIST_HAS_INDEX, "bag", "", 3.0), Some(1.0));
+            assert_eq!(read(abi::READ_LIST_HAS_INDEX, "bag", "", 4.0), Some(0.0));
+            act_for(&mut ctx, abi::ACT_LIST_REVERSE, "bag", "", "", &[]);
+            assert_eq!(
+                text_for("a1", abi::TEXT_LIST_JSON, "bag", ""),
+                Some("[1.0,\"two\",1.0]".to_string())
+            );
+            act_for(&mut ctx, abi::ACT_LIST_DELETE, "bag", "", "", &[3.0]);
+            act_for(&mut ctx, abi::ACT_LIST_SHIFT, "bag", "", "", &[1.0]);
+            assert_eq!(
+                text_for("a1", abi::TEXT_LIST_ITEM, "bag", "1"),
+                Some("two".to_string())
+            );
+            act_for(&mut ctx, abi::ACT_JSON_TO_LIST, "bag", "", "[5,6]", &[]);
+            assert_eq!(read(abi::READ_LIST_LENGTH, "bag", "", 0.0), Some(2.0));
+            act_for(&mut ctx, abi::ACT_LIST_ADD_TEXT, "bag", "", "", &[]);
+            assert_eq!(
+                read(abi::READ_LIST_INDEX_OF, "bag", "", f64::NAN),
+                Some(3.0)
+            );
+            assert_eq!(read(abi::READ_LIST_AMOUNT, "bag", "", 0.0), Some(0.0));
+            act_for(&mut ctx, abi::ACT_JSON_TO_LIST, "bag", "", "{", &[]);
+            assert!(matches!(ctx.asked.effects[0], Effect::Error { .. }));
+
+            act_for(&mut ctx, abi::ACT_DICT_SET, "stats", "hp", "", &[7.0]);
+            act_for(
+                &mut ctx,
+                abi::ACT_DICT_SET_TEXT,
+                "stats",
+                "name",
+                "Ada",
+                &[],
+            );
+            assert_eq!(read(abi::READ_DICT_SIZE, "stats", "", 0.0), Some(2.0));
+            assert_eq!(read(abi::READ_DICT_HAS_KEY, "stats", "hp", 0.0), Some(1.0));
+            assert_eq!(read(abi::READ_DICT_VALUE, "stats", "hp", 0.0), Some(7.0));
+            assert_eq!(
+                text_for("a1", abi::TEXT_DICT_VALUE, "stats", "name"),
+                Some("Ada".to_string())
+            );
+            assert_eq!(
+                text_for("a1", abi::TEXT_DICT_KEYS, "stats", ""),
+                Some("[\"hp\",\"name\"]".to_string())
+            );
+            act_for(&mut ctx, abi::ACT_DICT_DELETE_KEY, "stats", "hp", "", &[]);
+            assert_eq!(read(abi::READ_DICT_SIZE, "stats", "", 0.0), Some(1.0));
+            act_for(
+                &mut ctx,
+                abi::ACT_JSON_TO_DICT,
+                "stats",
+                "",
+                "{\"a\":1}",
+                &[],
+            );
+            assert_eq!(read(abi::READ_DICT_VALUE, "stats", "a", 0.0), Some(1.0));
+            act_for(&mut ctx, abi::ACT_DICT_CLEAR, "stats", "", "", &[]);
+            assert_eq!(read(abi::READ_DICT_SIZE, "stats", "", 0.0), Some(0.0));
+            let _ = Evaluated::Number(0.0);
+        });
+
+        let mut asked = Asked::default();
+        let mut ctx = Ctx {
+            actor: "a1",
+            asked: &mut asked,
+        };
+        act_for(&mut ctx, abi::ACT_SET_BODY, "Dynamic", "", "", &[]);
+        act_for(
+            &mut ctx,
+            abi::ACT_SET_GRAVITY,
+            "",
+            "",
+            "",
+            &[0.0, -9.0, 0.0],
+        );
+        act_for(&mut ctx, abi::ACT_SET_DENSITY, "", "", "", &[2.0]);
+        act_for(&mut ctx, abi::ACT_SET_MASS, "", "", "", &[3.0]);
+        act_for(&mut ctx, abi::ACT_SET_TRAIL_ENABLED, "", "", "", &[1.0]);
+        act_for(
+            &mut ctx,
+            abi::ACT_GLIDE,
+            "",
+            "EaseIn",
+            "",
+            &[1.5, 1.0, 2.0, 3.0],
+        );
+        act_for(
+            &mut ctx,
+            abi::ACT_SPLASH,
+            "",
+            "",
+            "",
+            &[1.0, 2.0, 3.0, 4.0, 5.0],
+        );
+        act_for(
+            &mut ctx,
+            abi::ACT_FADE_DECALS,
+            "",
+            "",
+            "",
+            &[0.0, 0.0, 0.0, 2.0, 1.0],
+        );
+        act_for(
+            &mut ctx,
+            abi::ACT_SPAWN_DECAL,
+            "no such preset",
+            "",
+            "",
+            &[],
+        );
+        let effects = &asked.effects;
+        assert_eq!(
+            effects[0],
+            Effect::SetBody {
+                actor: "a1".to_string(),
+                body: blockloom_core::scene::BodyKind::Dynamic,
+            }
+        );
+        assert_eq!(
+            effects[1],
+            Effect::SetGravity {
+                gravity: [0.0, -9.0, 0.0]
+            }
+        );
+        assert_eq!(
+            effects[2],
+            Effect::SetDensity {
+                actor: "a1".to_string(),
+                density: 2.0
+            }
+        );
+        assert_eq!(
+            effects[3],
+            Effect::SetMass {
+                actor: "a1".to_string(),
+                mass: 3.0
+            }
+        );
+        assert_eq!(
+            effects[4],
+            Effect::SetTrailEnabled {
+                actor: "a1".to_string(),
+                enabled: true
+            }
+        );
+        assert_eq!(
+            effects[5],
+            Effect::Glide {
+                actor: "a1".to_string(),
+                seconds: 1.5,
+                target: [1.0, 2.0, 3.0],
+                easing: blockloom_core::animation::TweenEasing::EaseIn,
+            }
+        );
+        assert_eq!(
+            effects[6],
+            Effect::Splash {
+                at: [1.0, 2.0, 3.0],
+                radius: 4.0,
+                strength: 5.0
+            }
+        );
+        assert_eq!(
+            effects[7],
+            Effect::FadeDecals {
+                at: [0.0, 0.0, 0.0],
+                radius: 2.0,
+                seconds: 1.0
+            }
+        );
+        assert!(matches!(effects[8], Effect::Error { .. }));
+
+        // Soundscape verbs reach the same effects the blocks do.
+        let mut asked = Asked::default();
+        let mut ctx = Ctx {
+            actor: "a1",
+            asked: &mut asked,
+        };
+        act_for(&mut ctx, abi::ACT_SET_REVERB, "Cave", "", "", &[]);
+        act_for(
+            &mut ctx,
+            abi::ACT_MUFFLE_UNDERWATER,
+            "Music",
+            "",
+            "",
+            &[1.0],
+        );
+        assert_eq!(
+            asked.effects,
+            vec![
+                Effect::SetReverb {
+                    preset: "Cave".to_string()
+                },
+                Effect::SetUnderwaterMuffle {
+                    bus: SoundBus::Music,
+                    enabled: true
+                },
+            ]
+        );
+
+        // The other-actor forms resolve their target like every `_OTHER` verb.
+        let mut asked = Asked::default();
+        let mut ctx = Ctx {
+            actor: "a1",
+            asked: &mut asked,
+        };
+        act_for(&mut ctx, abi::ACT_SET_BODY_OTHER, "me", "Static", "", &[]);
+        act_for(&mut ctx, abi::ACT_SET_DENSITY_OTHER, "me", "", "", &[4.0]);
+        act_for(&mut ctx, abi::ACT_SET_MASS_OTHER, "me", "", "", &[5.0]);
+        act_for(&mut ctx, abi::ACT_SET_MASS_OTHER, "nobody", "", "", &[5.0]);
+        let effects = &asked.effects;
+        assert_eq!(
+            effects[0],
+            Effect::SetBody {
+                actor: "a1".to_string(),
+                body: blockloom_core::scene::BodyKind::Static,
+            }
+        );
+        assert_eq!(
+            effects[1],
+            Effect::SetDensity {
+                actor: "a1".to_string(),
+                density: 4.0
+            }
+        );
+        assert_eq!(
+            effects[2],
+            Effect::SetMass {
+                actor: "a1".to_string(),
+                mass: 5.0
+            }
+        );
+        assert!(matches!(effects[3], Effect::Error { .. }));
+    }
+
+    #[test]
+    fn motor_events_reach_the_owner_script() {
+        use blockloom_core::physics::motor::MotorEvent;
+        let heard = ScriptEvent::of(
+            &blockloom_core::vm::Event::Motor {
+                actor: "a1".to_string(),
+                event: MotorEvent::LeftGround,
+            },
+            |id| id.to_string(),
+        )
+        .expect("a motor event is heard");
+        assert_eq!(heard.0, Some("a1".to_string()));
+        assert_eq!(heard.1.kind, abi::EVENT_MOTOR);
+        assert_eq!(heard.1.subject, "leave ground");
+    }
+
+    #[test]
+    fn look_2d_verbs_match_the_blocks_effects_and_readers() {
+        let mut sensors = Sensors::default();
+        sensors.camera2d = blockloom_core::sense::Camera2dSense {
+            zoom: 48.0,
+            rotation: 2.5,
+            at_bounds: true,
+            shaking: false,
+            cover: 0.25,
+        };
+        sensors.light2d.night = true;
+        sensors.camera.position = [1.0, 2.0, 3.0];
+        sensors.camera.forward = [0.0, 0.0, -1.0];
+        sense::publish(sensors);
+        assert_eq!(
+            number_for("a1", abi::READ_CAMERA_POSITION, "y", "", 0.0),
+            Some(2.0)
+        );
+        assert_eq!(
+            number_for("a1", abi::READ_CAMERA_DIRECTION, "Z", "", 0.0),
+            Some(-1.0)
+        );
+        assert_eq!(
+            number_for("a1", abi::READ_CAMERA_POSITION, "w", "", 0.0),
+            None
+        );
+        assert_eq!(
+            number_for("a1", abi::READ_CAMERA_2D, "zoom", "", 0.0),
+            Some(48.0)
+        );
+        assert_eq!(
+            number_for("a1", abi::READ_CAMERA_2D, "Rotation", "", 0.0),
+            Some(2.5)
+        );
+        assert_eq!(
+            number_for("a1", abi::READ_CAMERA_2D, "at bounds", "", 0.0),
+            Some(1.0)
+        );
+        assert_eq!(
+            number_for("a1", abi::READ_CAMERA_2D, "at_bounds", "", 0.0),
+            Some(1.0)
+        );
+        assert_eq!(
+            number_for("a1", abi::READ_CAMERA_2D, "shaking", "", 0.0),
+            Some(0.0)
+        );
+        assert_eq!(
+            number_for("a1", abi::READ_CAMERA_2D, "cover", "", 0.0),
+            Some(0.25)
+        );
+        assert_eq!(number_for("a1", abi::READ_CAMERA_2D, "nope", "", 0.0), None);
+        assert_eq!(number_for("a1", abi::READ_IS_NIGHT, "", "", 0.0), Some(1.0));
+        // No 2D lighting reads 1 everywhere, as `light level at` does.
+        assert_eq!(
+            number_for("a1", abi::READ_LIGHT_LEVEL, "3 4", "", 0.0),
+            Some(1.0)
+        );
+        assert_eq!(number_for("a1", abi::READ_LIGHT_LEVEL, "3", "", 0.0), None);
+
+        let mut asked = Asked::default();
+        let mut ctx = Ctx {
+            actor: "a1",
+            asked: &mut asked,
+        };
+        act_for(&mut ctx, abi::ACT_SET_LOOK_2D, "Zoom Height", "12", "", &[]);
+        act_for(
+            &mut ctx,
+            abi::ACT_SET_LOOK_2D,
+            "cover_kind",
+            "circle",
+            "",
+            &[],
+        );
+        act_for(&mut ctx, abi::ACT_SET_LOOK_2D, "bogus", "1", "", &[]);
+        use blockloom_core::blocks::Look2dDial;
+        assert_eq!(
+            asked.effects[..2],
+            [
+                Effect::SetLook2d {
+                    dial: Look2dDial::ZoomHeight,
+                    value: "12".to_string(),
+                },
+                Effect::SetLook2d {
+                    dial: Look2dDial::CoverKind,
+                    value: "circle".to_string(),
+                },
+            ]
+        );
+        assert!(matches!(asked.effects[2], Effect::Error { .. }));
+    }
+
+    #[test]
     fn script_variables_share_the_vm_store_and_lists_follow_block_rules() {
         use blockloom_core::value::Evaluated;
         let variables = Variables::default();
@@ -3615,7 +4324,7 @@ blockloom::export!(start = start, tick = tick);
         lists.load(&project);
         variables.write("a1", "score", Evaluated::Number(1.0));
 
-        with_script_stores(&variables, &lists, || {
+        with_script_stores(&variables, &lists, &Dicts::default(), || {
             let mut asked = Asked::default();
             let mut ctx = Ctx {
                 actor: "a1",
@@ -3758,6 +4467,46 @@ blockloom::export!(start = start, tick = tick);
             text_for("a1", abi::TEXT_LOCALE_TEXT, "greeting", ""),
             Some("greeting".to_string())
         );
+    }
+
+    #[test]
+    fn a_compiled_script_drives_the_2d_look_and_reads_the_camera() {
+        let project = TempProject::new("look2d");
+        let Some(script) = project.build(
+            r#"
+use blockloom::*;
+
+fn tick(me: &Actor, _dt: f32) {
+    me.set_look_2d("cover kind", "wipe");
+    me.shake_2d(0.5);
+    me.say(&format!("{} {} {}", me.camera_zoom(), me.camera_at_bounds(), me.is_night()));
+}
+
+blockloom::export!(tick = tick);
+"#,
+        ) else {
+            return;
+        };
+        publish_one("a1");
+        let mut sensors = blockloom_core::sense::Sensors::default();
+        sensors.camera2d.zoom = 32.0;
+        sensors.camera2d.at_bounds = true;
+        sense::publish(sensors);
+        let mut asked = Asked::default();
+        script.tick("a1", &mut asked, 0.5);
+        use blockloom_core::blocks::Look2dDial;
+        assert!(asked.effects.contains(&Effect::SetLook2d {
+            dial: Look2dDial::CoverKind,
+            value: "wipe".to_string(),
+        }));
+        assert!(asked.effects.contains(&Effect::SetLook2d {
+            dial: Look2dDial::Shake,
+            value: "0.5".to_string(),
+        }));
+        assert!(asked.effects.iter().any(|e| matches!(
+            e,
+            Effect::Say { text, .. } if text == "32 true false"
+        )));
     }
 
     #[test]

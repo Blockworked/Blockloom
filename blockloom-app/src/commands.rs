@@ -12,8 +12,8 @@ use crate::{AppHandle, Backend};
 use blockloom_core::android;
 use blockloom_core::assets;
 use blockloom_core::blocks::{
-    ActorGraph, BlockPiece, BlockShape, DictEntry, Fragment, Instruction, InstructionKind, ListItem,
-    normalize_block_color, resolve_dict_reporters, resolve_list_reporters,
+    ActorGraph, BlockPiece, BlockShape, DictEntry, Fragment, Instruction, InstructionKind,
+    ListItem, normalize_block_color, resolve_dict_reporters, resolve_list_reporters,
 };
 use blockloom_core::build;
 use blockloom_core::codegen;
@@ -37,8 +37,8 @@ use blockloom_core::sync::LockInfo;
 use blockloom_core::value::{Evaluated, Value};
 use blockloom_core::wind::Wind;
 use blockstitch_core::editor::{
-    Created, EditCommand, EditContext, EditError, EditOutcome, ValueDestination, apply_buffer_effects,
-    prune_value_buffers,
+    Created, EditCommand, EditContext, EditError, EditOutcome, ValueDestination,
+    apply_buffer_effects, prune_value_buffers,
 };
 use blockstitch_core::value::operator_kind;
 use std::collections::HashMap;
@@ -573,7 +573,10 @@ pub(crate) fn locate_project(
     path: String,
     folder: String,
 ) -> Result<(), String> {
-    let (from, to) = (std::path::PathBuf::from(path), std::path::PathBuf::from(folder));
+    let (from, to) = (
+        std::path::PathBuf::from(path),
+        std::path::PathBuf::from(folder),
+    );
     if !project::is_project_dir(&to) {
         return Err(format!("{} isn't a Blockloom project folder", to.display()));
     }
@@ -871,7 +874,10 @@ pub(crate) fn take_over_lock(state: &SharedState, app: &AppHandle) -> Result<Loc
 fn close_open_project(s: &mut AppState, save: bool) -> Result<(), String> {
     if save && let Err(e) = save_open(s) {
         let name = s.project().map(|p| p.name.clone()).unwrap_or_default();
-        let folder = s.project_dir().map(|d| d.display().to_string()).unwrap_or_default();
+        let folder = s
+            .project_dir()
+            .map(|d| d.display().to_string())
+            .unwrap_or_default();
         return Err(format!(
             "{SAVE_FAILED} Couldn't save \"{name}\" to {folder}: {e}"
         ));
@@ -1158,6 +1164,7 @@ pub(crate) fn set_scene_component(
         SceneComponent::Vfx { settings } => settings.normalize(),
         SceneComponent::Post { post } => post.normalize(),
         SceneComponent::Display { display } => display.normalize(),
+        SceneComponent::Soundscape { soundscape } => soundscape.normalize(),
         SceneComponent::Sound { mixer } => {
             mixer.master_volume = blockloom_core::sound::clamp_gain(mixer.master_volume);
             mixer.music_volume = blockloom_core::sound::clamp_gain(mixer.music_volume);
@@ -2088,6 +2095,25 @@ pub(crate) fn set_sound_mixer(
     Ok(())
 }
 
+/// Sets the saved soundscape: weather loops, ducking and the underwater
+/// muffle. Normalized like a load, so a stored rule can never be unplayable.
+pub(crate) fn set_soundscape(
+    state: &SharedState,
+    app: &AppHandle,
+    mut soundscape: blockloom_core::soundscape::Soundscape,
+) -> Result<(), String> {
+    soundscape.normalize();
+    let mut s = lock(state)?;
+    push_undo(&mut s);
+    if let Some(project) = s.project_mut() {
+        project.world.soundscape = soundscape;
+    }
+    auto_save(&s);
+    sync_runtime(&mut s);
+    emit(app, &s);
+    Ok(())
+}
+
 // ─── Actors ────────────────────────────────────────────────────────────────
 
 pub(crate) fn select_actor(
@@ -2354,6 +2380,9 @@ pub(crate) fn add_actor_component(
 ) -> Result<String, String> {
     physics::refuse_generic(&component)?;
     check_player_camera(&component)?;
+    if let ActorComponent::SoundZone { zone } = &mut component {
+        zone.normalize();
+    }
     let mut s = lock(state)?;
     check_parent(s.project(), &actor_id, &component)?;
     push_undo(&mut s);
@@ -2387,6 +2416,9 @@ pub(crate) fn set_actor_component(
 ) -> Result<(), String> {
     physics::refuse_generic(&component)?;
     check_player_camera(&component)?;
+    if let ActorComponent::SoundZone { zone } = &mut component {
+        zone.normalize();
+    }
     let mut s = lock(state)?;
     check_parent(s.project(), &actor_id, &component)?;
     if let ActorComponent::Material { material } = &mut component {
@@ -5903,7 +5935,9 @@ fn apply_block_details(
 ) -> Result<(), String> {
     let def = graph.block_def(block_id).ok_or("Unknown block")?;
     let identifier = details.identifier.unwrap_or_else(|| def.identifier.clone());
-    let description = details.description.unwrap_or_else(|| def.description.clone());
+    let description = details
+        .description
+        .unwrap_or_else(|| def.description.clone());
     let icon = details.icon.unwrap_or_else(|| def.icon.clone());
     graph.set_block_details(block_id, &identifier, &description, &icon)
 }
@@ -6077,6 +6111,17 @@ pub(crate) fn interface_properties() -> Vec<blockloom_core::ui::UiPropertyInfo> 
     blockloom_core::ui::property_metadata()
 }
 
+/// The fields a component instance changed from its source, as
+/// `widget id: path`.
+pub(crate) fn interface_overrides(state: &SharedState, id: String) -> Result<Vec<String>, String> {
+    let s = lock(state)?;
+    s.project()
+        .ok_or("No project is open")?
+        .world
+        .interface
+        .instance_overrides(&id)
+}
+
 pub(crate) fn interface_layout(
     state: &SharedState,
 ) -> Result<Option<blockloom_protocol::InterfaceLayout>, String> {
@@ -6091,7 +6136,7 @@ fn check_interface_edit(s: &AppState, token: &str) -> Result<(), String> {
         .ok_or("Unknown interface transaction")?;
     let open = s.open.as_ref().ok_or("No project is open")?;
     if s.running
-        || open.project != draft.project
+        || open.project.world.interface != draft.original
         || open.loaded_revision() != draft.revision
         || sync::read_revision(&open.dir) != draft.revision
     {
@@ -6118,26 +6163,40 @@ pub(crate) fn begin_interface_edit(state: &SharedState, revision: u64) -> Result
     let token = uuid::Uuid::new_v4().to_string();
     s.interface_edit = Some(crate::state::InterfaceEditTransaction {
         token: token.clone(),
-        project: open.project.clone(),
+        original: open.project.world.interface.clone(),
         revision,
         document: open.project.world.interface.clone(),
     });
     Ok(token)
 }
 
+/// What an update answers: the whole document, or, when asked, only what
+/// changed since the draft the caller last received.
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+pub(crate) enum InterfaceUpdate {
+    Full(blockloom_core::ui::UiDocument),
+    Patch(blockloom_core::ui::UiPatch),
+}
+
 pub(crate) fn update_interface_edit(
     state: &SharedState,
     token: String,
     edit: blockloom_core::ui::UiEdit,
-) -> Result<blockloom_core::ui::UiDocument, String> {
+    patch: bool,
+) -> Result<InterfaceUpdate, String> {
     let mut s = lock(state)?;
     check_interface_edit(&s, &token)?;
     let draft = s.interface_edit.as_mut().unwrap();
-    let mut document = draft.project.world.interface.clone();
-    document.apply_edit(&edit)?;
-    document.validate()?;
-    draft.document = document.clone();
-    Ok(document)
+    // The edit is the whole gesture so far, applied to where it began.
+    let document = draft.original.with_edit(&edit)?;
+    let reply = if patch {
+        InterfaceUpdate::Patch(document.patch_from(&draft.document))
+    } else {
+        InterfaceUpdate::Full(document.clone())
+    };
+    draft.document = document;
+    Ok(reply)
 }
 
 pub(crate) fn commit_interface_edit(
@@ -6148,7 +6207,7 @@ pub(crate) fn commit_interface_edit(
     let mut s = lock(state)?;
     check_interface_edit(&s, &token)?;
     let draft = s.interface_edit.take().unwrap();
-    if draft.document == draft.project.world.interface {
+    if draft.document == draft.original {
         return Ok(());
     }
     push_undo(&mut s);

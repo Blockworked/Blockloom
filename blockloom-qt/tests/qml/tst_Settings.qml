@@ -113,6 +113,30 @@ TestCase {
         compare(call.args.component.fixed_rate, 90);
         compare(backend.appState.project.active_scene, "one");
     }
+    function test_soundscapeEditsGoOutAsOneDocument() {
+        const base = panel.soundscapeOf();
+        compare(base.weather.length, 0);
+        compare(base.occlusion.enabled, false);
+        panel.writeSoundscapePart("occlusion", { enabled: true });
+        let call = calls[calls.length - 1];
+        compare(call.command, "set_soundscape");
+        compare(call.args.soundscape.occlusion.enabled, true);
+        compare(call.args.soundscape.reverb.mix, 0);
+        panel.addSoundscapeItem("ducking", { trigger: "Paused", target: "Music", amount: 0.5, attack: 0.1, release: 0.5 });
+        call = calls[calls.length - 1];
+        compare(call.args.soundscape.ducking.length, 1);
+        compare(call.args.soundscape.ducking[0].trigger, "Paused");
+        panel.writeSoundscapePart("reverb", panel.reverbPresetValues["Cave"]);
+        call = calls[calls.length - 1];
+        compare(call.args.soundscape.reverb.decay, 3.5);
+        // Scenes edit through their own component.
+        panel.sceneId = "two";
+        panel.writeSoundscapePart("underwater", { buses: ["Sfx"] });
+        call = calls[calls.length - 1];
+        compare(call.command, "set_scene_component");
+        compare(call.args.component.component, "Soundscape");
+        compare(call.args.component.soundscape.underwater.buses[0], "Sfx");
+    }
     function test_inspectorFollowsSelection() {
         const inspector = createTemporaryObject(inspectorFactory, test, { width: 360, height: 720 });
         verify(inspector !== null);

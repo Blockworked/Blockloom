@@ -2538,7 +2538,8 @@ Slow-mo, hitstop, fade-to-black and shake blocks already exist from the
 cinematic work. The `Iris` cover kind is a ring that closes to a hole. The
 sprite dials `Pop` (area-preserving squash-and-stretch, render-only, applied
 in PostUpdate and cleared in First) and `FloatNumber` (a UI label that rises
-and fades, `floaters.rs`) finish the feedback set. Not done: a script ABI.
+and fades, `floaters.rs`) finish the feedback set. Scripts reach every `SetLook2d` dial and the camera and
+light reporters through ABI 48-51 (`set_look_2d`, `camera_zoom`, `light_level`, ...).
 
 ### 2D animation and sprites
 
@@ -3085,6 +3086,8 @@ summary in `shell.rs` and a case in `tst_InterfaceViewport.qml`'s mock backend.
 
 The designer loads `interface_properties` on start and `applies(path)` hides inspector rows that do not suit the selected widget kind (Modal, scroll target, Items).
 
+The workspace is split by view, all driven by the `designer` root in `UiDesigner.qml` (selection, gestures, snapping, typed edit helpers): `UiPalette` (grouped, searchable kinds), `UiHierarchy` (tree, hide/lock, arrow keys), `UiToolbar` (a wrapping `Flow`), `UiViewport` (frame, rulers, overlay, handles; its colours are named tokens), `UiInspector` (foldable `UiSection`s, a document panel when nothing is selected, one "Advanced (JSON)" property) and `UiTimeline`. New files are listed in `build.rs`. Side panels have min/max widths and drag handles so the designer fits 1100x700 (`test_panels_fit_a_small_window`). Fold state and the preview size persist in QML `Settings` when the app has an identity. Every inspector write is a typed `SetProperty`/structural edit (`world_actor` is typed too); `set_interface` is import only. An edit attempted during a gesture reports through `error` rather than being dropped. `interface-overrides` (`interface_overrides`) lists what a component instance changed, `ResetField` puts one of those fields back, and `Rename` changes a widget id (parents, scroll targets and animation tracks follow). `update-interface-edit` takes `patch=true` and then answers with `UiPatch` (`document` without widgets, `order`, changed `widgets`); the designer applies it with `applyUpdate`. Move, resize, snap, align and reparent arithmetic is in `UiEditMath.qml`, a plain object over `InterfaceGeometry.qml` (tested in `tst_InterfaceMath.qml`). A transaction holds only the interface document it started from; `UiDocument::with_edit` is one clone and one validate, `validate` walks each parent chain once, and `scale_tests::timings` prints the 1,000 and 10,000 widget cost. `ui_framework.rs` keeps the model and `ui_framework/` holds `animation`, `edit`, `prefabs`, `rich_text` and the tests; everything still re-exports through `ui::`.
+
 Components: `UiEdit::SavePrefab/InstantiatePrefab/DeletePrefab/DetachInstance` over `UiDocument.prefabs`; an instance root has `instance_of`, updating rebuilds instances but keeps widgets changed from the old source, and a missing prefab fails validation. Image widgets take `UiPaint.image_fit` (`Stretch`, `Sliced{border}`, `Tiled`), applied in `overlay.rs::image_node`.
 
 ### Android devices and the emulator
@@ -3236,7 +3239,7 @@ animatable tracks. It composes with the anchor without touching its
 same transform's rotation (`overlay::apply_fx_rotation`), and opacity
 multiplies down the tree (`UiManager::opacity_of`) into background, border,
 shadow, image and text colours. Not faded yet: slider tracks and fills.
-`InterfaceDesign.animation` (`{name, time}`, `PROTOCOL_VERSION` 37) freezes a
+`InterfaceDesign.world` (default true, `PROTOCOL_VERSION` 38; the toolbar's "World behind") false hides every actor for the preview only (`ui_design::hide_world`). `InterfaceDesign.animation` (`{name, time}`, `PROTOCOL_VERSION` 37) freezes a
 document animation at a time in the design session through
 `UiManager::sample_animation`; the editor's timeline Preview/scrub uses it and
 pauses editing while it is on. Nothing is saved.

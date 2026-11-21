@@ -70,6 +70,7 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "Parallax",
     "Room",
     "Persist",
+    "SoundZone",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -397,6 +398,10 @@ pub enum ActorComponent {
     },
     /// A hurt volume: knocks back the motors that touch it. 2D only.
     Hazard { hazard: crate::movers::HazardSpec },
+    /// A region that changes how the listener hears: reverb and muffle.
+    SoundZone {
+        zone: crate::soundscape::SoundZoneSpec,
+    },
     /// Sprite flipbooks and the named states over them. The runtime's player
     /// swaps the displayed frame; `play clip` changes state and `when
     /// animation ends` fires the transition.
@@ -459,6 +464,7 @@ impl ActorComponent {
             ActorComponent::Light2d { .. } => "Light2D",
             ActorComponent::Conveyor { .. } => "Conveyor",
             ActorComponent::Hazard { .. } => "Hazard",
+            ActorComponent::SoundZone { .. } => "SoundZone",
             ActorComponent::Animation { .. } => "Animation",
             ActorComponent::Volume { .. } => "Volume",
             ActorComponent::Probe { .. } => "Probe",
@@ -1006,6 +1012,14 @@ impl Components {
     pub fn conveyor(&self) -> Option<&crate::movers::ConveyorSpec> {
         match self.get("Conveyor") {
             Some(ActorComponent::Conveyor { conveyor }) => Some(conveyor),
+            _ => None,
+        }
+    }
+
+    /// The sound zone, if the actor is one.
+    pub fn sound_zone(&self) -> Option<&crate::soundscape::SoundZoneSpec> {
+        match self.get("SoundZone") {
+            Some(ActorComponent::SoundZone { zone }) => Some(zone),
             _ => None,
         }
     }

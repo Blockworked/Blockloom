@@ -21,7 +21,8 @@ fn json(path: &Path) -> Value {
 }
 
 fn scratch(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("blockloom-contract-{tag}-{}", sync::new_session()));
+    let dir =
+        std::env::temp_dir().join(format!("blockloom-contract-{tag}-{}", sync::new_session()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -31,7 +32,10 @@ fn the_editor_reads_the_hub_binding() {
     let dir = scratch("bind");
     std::fs::create_dir_all(dir.join(".blockloom")).unwrap();
     std::fs::copy(fixture("hub.json"), dir.join(".blockloom/hub.json")).unwrap();
-    assert_eq!(hub::bound_installation(&dir).as_deref(), Some("release-0.1.0"));
+    assert_eq!(
+        hub::bound_installation(&dir).as_deref(),
+        Some("release-0.1.0")
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

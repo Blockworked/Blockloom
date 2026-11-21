@@ -1446,6 +1446,10 @@ pub struct World {
     /// scale against, and what the scene inspector edits.
     #[serde(default)]
     pub sound: SoundMixer,
+    /// What the world's state does to the mix: weather loops, ducking and
+    /// the underwater muffle. Neutral by default.
+    #[serde(default)]
+    pub soundscape: crate::soundscape::Soundscape,
     /// Named input actions and the bindings that drive them. What the
     /// `action` reporters read and `when action pressed` fires on.
     #[serde(default)]
@@ -1531,6 +1535,7 @@ impl Default for World {
             speech_bubble: SpeechBubbleStyle::default(),
             lighting: Lighting::default(),
             sound: SoundMixer::default(),
+            soundscape: crate::soundscape::Soundscape::default(),
             input: InputConfig::default(),
             post: PostProcess::default(),
             display: DisplayOutput::default(),

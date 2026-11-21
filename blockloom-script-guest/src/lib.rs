@@ -54,7 +54,7 @@ pub const WIT_PACKAGE: &str = "blockloom:script@0.2.0";
 
 /// The numeric ABI this binding lowers to. Matches `abi::ABI_VERSION`; the
 /// core drift test refuses a mismatch.
-pub const ABI_VERSION: u32 = 47;
+pub const ABI_VERSION: u32 = 52;
 
 /// What a host call answered. Anything but `OK` leaves the out-parameter
 /// untouched.
@@ -271,6 +271,31 @@ impl ContactPhase {
             1 => ContactPhase::Stay,
             _ => ContactPhase::Exit,
         }
+    }
+}
+
+/// Which thing the character motor did, from an `EVENT_MOTOR` subject.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MotorEvent {
+    Jump,
+    Land,
+    LeftGround,
+    HeadHit,
+    StanceChanged,
+}
+
+impl MotorEvent {
+    /// The subject the host sends: `jump`, `land`, `leave ground`,
+    /// `head hit` or `stance change`.
+    pub fn of(subject: &str) -> Option<MotorEvent> {
+        Some(match subject {
+            "jump" => MotorEvent::Jump,
+            "land" => MotorEvent::Land,
+            "leave ground" => MotorEvent::LeftGround,
+            "head hit" => MotorEvent::HeadHit,
+            "stance change" => MotorEvent::StanceChanged,
+            _ => return None,
+        })
     }
 }
 
@@ -769,6 +794,105 @@ pub mod locale {
     }
 }
 
+/// Block lists and dicts, over the same stores the blocks use. Writes land
+/// at once; reads answer through the blocks' own reporters.
+pub mod data {
+    /// Whether list `name` holds the text `item`.
+    pub fn list_contains(name: &str, item: &str) -> bool {
+        super::read_number(super::READ_LIST_CONTAINS, name, item, 0.0).is_some_and(|v| v != 0.0)
+    }
+
+    /// The 1-based position of the number in list `name`, 0 when absent.
+    pub fn list_index_of(name: &str, value: f64) -> usize {
+        super::read_number(super::READ_LIST_INDEX_OF, name, "", value).unwrap_or(0.0) as usize
+    }
+
+    /// The list as a JSON array.
+    pub fn list_json(name: &str) -> String {
+        super::read_text(super::TEXT_LIST_JSON, name, "").unwrap_or_else(|| "[]".to_string())
+    }
+
+    /// Reverses list `name` in place.
+    pub fn list_reverse(name: &str) {
+        super::act(super::ACT_LIST_REVERSE, name, "", "", &[]);
+    }
+
+    /// Rotates list `name` by `places`, negative the other way.
+    pub fn list_shift(name: &str, places: i32) {
+        super::act(super::ACT_LIST_SHIFT, name, "", "", &[places as f64]);
+    }
+
+    /// How many distinct keys dict `name` holds.
+    pub fn dict_size(name: &str) -> usize {
+        super::read_number(super::READ_DICT_SIZE, name, "", 0.0).unwrap_or(0.0) as usize
+    }
+
+    /// Whether dict `name` has `key`.
+    pub fn dict_has_key(name: &str, key: &str) -> bool {
+        super::read_number(super::READ_DICT_HAS_KEY, name, key, 0.0).is_some_and(|v| v != 0.0)
+    }
+
+    /// The value at `key` as a number.
+    pub fn dict_number(name: &str, key: &str) -> f64 {
+        super::read_number(super::READ_DICT_VALUE, name, key, 0.0).unwrap_or(0.0)
+    }
+
+    /// The value at `key` as text.
+    pub fn dict_text(name: &str, key: &str) -> String {
+        super::read_text(super::TEXT_DICT_VALUE, name, key).unwrap_or_default()
+    }
+
+    /// Sets `key` to a number.
+    pub fn dict_set(name: &str, key: &str, value: f64) {
+        super::act(super::ACT_DICT_SET, name, key, "", &[value]);
+    }
+
+    /// Sets `key` to text.
+    pub fn dict_set_text(name: &str, key: &str, value: &str) {
+        super::act(super::ACT_DICT_SET_TEXT, name, key, value, &[]);
+    }
+
+    /// Removes `key` from dict `name`.
+    pub fn dict_delete(name: &str, key: &str) {
+        super::act(super::ACT_DICT_DELETE_KEY, name, key, "", &[]);
+    }
+
+    /// Empties dict `name`.
+    pub fn dict_clear(name: &str) {
+        super::act(super::ACT_DICT_CLEAR, name, "", "", &[]);
+    }
+}
+
+/// The 2D look and camera: what `set [look] to` writes and what the camera
+/// and light reporters read. Rides `acts.*` and `sensors.*`.
+pub mod look2d {
+    /// `set [dial] to value` for the run, spelled as the block's slot holds
+    /// it (`"zoom"`, `"2"`; `"cover kind"`, `"fade"`).
+    pub fn set(dial: &str, value: &str) {
+        super::act(super::ACT_SET_LOOK_2D, dial, value, "", &[]);
+    }
+
+    /// [`set`] for a numeric dial.
+    pub fn set_number(dial: &str, value: f64) {
+        set(dial, &value.to_string());
+    }
+
+    /// The camera's `zoom`, `rotation`, `at bounds`, `shaking` or `cover`.
+    pub fn camera(what: &str) -> Option<f64> {
+        super::read_number(super::READ_CAMERA_2D, what, "", 0.0)
+    }
+
+    /// The 2D light at a world point, 1 being the picture as drawn.
+    pub fn light_level(x: f32, y: f32) -> f64 {
+        super::read_number(super::READ_LIGHT_LEVEL, &format!("{x} {y}"), "", 0.0).unwrap_or(1.0)
+    }
+
+    /// Whether the clock is outside the project's day hours.
+    pub fn is_night() -> bool {
+        super::read_number(super::READ_IS_NIGHT, "", "", 0.0).is_some_and(|n| n != 0.0)
+    }
+}
+
 /// The long tail of world writes, under the kebab-case of their ABI names.
 pub mod acts {
     /// One world write: `what` is an `ACT_*` verb.
@@ -917,6 +1041,13 @@ mod tests {
         assert_eq!(slots_json(&[1.5.into()]), "[1.5]");
         assert_eq!(slots_json(&[f64::NAN.into()]), "[null]");
         assert_eq!(slots_json(&["a\"b\\c".into()]), "[\"a\\\"b\\\\c\"]");
+    }
+
+    #[test]
+    fn motor_events_follow_the_host_subjects() {
+        assert_eq!(MotorEvent::of("jump"), Some(MotorEvent::Jump));
+        assert_eq!(MotorEvent::of("leave ground"), Some(MotorEvent::LeftGround));
+        assert_eq!(MotorEvent::of("nope"), None);
     }
 
     #[test]

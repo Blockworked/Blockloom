@@ -2077,6 +2077,13 @@ impl Vm {
                     });
                 }
             }
+            Action::SetReverb(preset) => out.push(Effect::SetReverb {
+                preset: preset.clone(),
+            }),
+            Action::MuffleUnderwater { bus, enabled } => out.push(Effect::SetUnderwaterMuffle {
+                bus: *bus,
+                enabled: *enabled,
+            }),
             Action::SetBusVolume { bus, volume } => {
                 let volume = user_to_gain(
                     self.eval(volume, actor, params, temps, out)

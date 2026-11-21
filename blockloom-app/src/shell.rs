@@ -1010,7 +1010,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "preview-interface",
         cmd: "preview_interface",
         aliases: &["preview_interface"],
-        summary: "Preview a temporary {revision, generation, document, viewport?, screen?, hidden?, animation?} without saving or starting gameplay. Screen names a top-level widget tree; hidden lists widget ids to hide (with their subtrees) in the preview only; animation is {name, time} and shows that document animation frozen at the time. Omit design to close it.",
+        summary: "Preview a temporary {revision, generation, document, viewport?, screen?, hidden?, animation?} without saving or starting gameplay. Screen names a top-level widget tree; hidden lists widget ids to hide (with their subtrees) in the preview only; world (default true) false hides the project's actors so only the interface draws; animation is {name, time} and shows that document animation frozen at the time. Omit design to close it.",
         args: &[ArgSpec {
             name: "design",
             ty: "object",
@@ -1032,6 +1032,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[],
     },
     CommandSpec {
+        name: "interface-overrides",
+        cmd: "interface_overrides",
+        aliases: &["interface_overrides"],
+        summary: "List the fields a component instance (its root widget id) changed from its source, as `widget id: path`.",
+        args: &[ArgSpec {
+            name: "id",
+            ty: "string",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "begin-interface-edit",
         cmd: "begin_interface_edit",
         aliases: &["begin_interface_edit"],
@@ -1046,7 +1057,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "update-interface-edit",
         cmd: "update_interface_edit",
         aliases: &["update_interface_edit"],
-        summary: "Replace the draft with Move, Resize, SetProperty {id, property: {path, value}}, Reorder {id, index: zero-based sibling position}, Batch {edits: [..]} (applied in order as one, all or nothing), Create {widget: full widget; a Canvas parent makes it free, other parents flow}, Delete {id} (removes descendants), Duplicate {id, new_id, offset?} (copies the subtree as new_id and new_id.<old id>) or Reparent {id, parent, placement: {mode: Free, offset, size} or {mode: Flow}}. SetDocument {theme?, scale?}, SetClass {name, styles|null}, SavePrefab {name, root, update_instances?} (store the subtree as a component; true rebuilds its instances and keeps widgets they changed), InstantiatePrefab {name, prefix, parent?}, DeletePrefab {name}, DetachInstance {id}, ResetInstance {id: instance root; drops its changes}, SetAnimation {name, animation: {duration, looping?, tracks: [{widget, property: Width|Height|TextSize|CornerRadius|Padding|Value|Background|TextColor, keys: [{time, value: number or #rrggbb[aa], ease?: Linear|EaseIn|EaseOut|EaseInOut}]}]} or null to delete}, ExposeProperty {prefab, name, widget, path}, ExposeSlot {prefab, name, widget}, Unexpose {prefab, name}, SetExposed {instance, name, value}, FillSlot {instance, slot, widget}. Property paths (see interface-properties): element.kind/content/anchor/modal/range, layout (object or null), style, class, bindings, actions ([{on: Click|Change, run: {Broadcast: {message}} or {SetVariable: {actor?, name, value}} or {PlayAnimation|StopAnimation: {name}}}]; $value is the new value on Change), variants ([{when: {min_width?, max_width?, min_height?, max_height?}, layout?, visible?}]; the first match for the viewport wins), items, tooltip, scroll_target, tab_index, transition. Does not save.",
+        summary: "Replace the draft with Move, Resize, SetProperty {id, property: {path, value}}, Reorder {id, index: zero-based sibling position}, Batch {edits: [..]} (applied in order as one, all or nothing), Create {widget: full widget; a Canvas parent makes it free, other parents flow}, Delete {id} (removes descendants), Duplicate {id, new_id, offset?} (copies the subtree as new_id and new_id.<old id>) or Reparent {id, parent, placement: {mode: Free, offset, size} or {mode: Flow}}. SetDocument {theme?, scale?}, SetClass {name, styles|null}, SavePrefab {name, root, update_instances?} (store the subtree as a component; true rebuilds its instances and keeps widgets they changed), InstantiatePrefab {name, prefix, parent?}, DeletePrefab {name}, DetachInstance {id}, ResetInstance {id: instance root; drops its changes}, SetAnimation {name, animation: {duration, looping?, tracks: [{widget, property: Width|Height|TextSize|CornerRadius|Padding|Value|Background|TextColor, keys: [{time, value: number or #rrggbb[aa], ease?: Linear|EaseIn|EaseOut|EaseInOut}]}]} or null to delete}, ExposeProperty {prefab, name, widget, path}, ExposeSlot {prefab, name, widget}, Unexpose {prefab, name}, SetExposed {instance, name, value}, FillSlot {instance, slot, widget}, ResetField {instance, widget, path: one of interface-overrides' paths such as element.offset} and Rename {id, new_id} (follows parents, scroll targets and animation tracks in this document, not blocks or scripts). Property paths (see interface-properties): element.kind/content/anchor/modal/range, layout (object or null), style, class, bindings, actions ([{on: Click|Change, run: {Broadcast: {message}} or {SetVariable: {actor?, name, value}} or {PlayAnimation|StopAnimation: {name}}}]; $value is the new value on Change), variants ([{when: {min_width?, max_width?, min_height?, max_height?}, layout?, visible?}]; the first match for the viewport wins), items, tooltip, scroll_target, tab_index, transition, fx {opacity, offset, rotation}, world_actor. Does not save. With patch=true the reply is {document (no widgets), order (every id), widgets (new or changed)} instead of the whole document.",
         args: &[
             ArgSpec {
                 name: "token",
@@ -1057,6 +1068,11 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 name: "edit",
                 ty: "object",
                 required: true,
+            },
+            ArgSpec {
+                name: "patch",
+                ty: "bool",
+                required: false,
             },
         ],
     },
@@ -1100,6 +1116,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         summary: "Set the saved mix: master, music and effects gains, linear 0-2.",
         args: &[ArgSpec {
             name: "mixer",
+            ty: "object",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "set-soundscape",
+        cmd: "set_soundscape",
+        aliases: &["set_soundscape"],
+        summary: "Set the soundscape: weather loops (sound, source Wind/Rain/Snow/Storm, from, to, max_gain, bus), ducking rules (trigger Paused or {Sound: path}, target, amount, attack, release) and the underwater muffle (buses, amount, fade).",
+        args: &[ArgSpec {
+            name: "soundscape",
             ty: "object",
             required: true,
         }],

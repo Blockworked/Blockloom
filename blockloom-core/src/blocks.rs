@@ -181,11 +181,11 @@ impl EmitterDial {
 
 pub use blockstitch_core::graph::{
     BlockDef, BlockGraph, BlockKind, BlockPiece, BlockShape, Comment, DictDef, DictEntry, DictItem,
-    FloatingValue, IdMap, InputValueType, ListDef, ListItem, RefKind, VariableDef, default_block_color,
-    dict_lookup, dict_remove, dict_set, dict_to_json, is_dict_reporter, is_list_reporter,
-    list_index, list_to_json, normalize_block_color, parse_json_array, parse_json_object,
-    rename_dict_in_value, rename_list_in_value, resolve_dict_reporter, resolve_dict_reporters,
-    resolve_list_reporter, resolve_list_reporters,
+    FloatingValue, IdMap, InputValueType, ListDef, ListItem, RefKind, VariableDef,
+    default_block_color, dict_lookup, dict_remove, dict_set, dict_to_json, is_dict_reporter,
+    is_list_reporter, list_index, list_to_json, normalize_block_color, parse_json_array,
+    parse_json_object, rename_dict_in_value, rename_list_in_value, resolve_dict_reporter,
+    resolve_dict_reporters, resolve_list_reporter, resolve_list_reporters,
 };
 
 /// One instruction on a canvas: a [`InstructionKind`] plus the stable id
@@ -863,6 +863,17 @@ pub enum InstructionKind {
     SetBusVolume {
         bus: SoundBus,
         volume: Value,
+    },
+    /// Replaces the project's reverb for the rest of the run with a named
+    /// preset (`Off` for dry). Zones still blend over it.
+    SetReverb {
+        preset: String,
+    },
+    /// Whether a bus sinks while the camera is underwater, for the rest of
+    /// the run.
+    MuffleUnderwater {
+        bus: SoundBus,
+        enabled: bool,
     },
 
     // ─── Components ─────────────────────────────────────────────────────────
@@ -1856,6 +1867,8 @@ impl BlockKind for InstructionKind {
             | K::CaptureProbes
             | K::SetLightShadows { .. }
             | K::SetRayTracing { .. }
+            | K::SetReverb { .. }
+            | K::MuffleUnderwater { .. }
             | K::StopTweens
             | K::StopAnimation
             | K::SetHdrOutput { .. }

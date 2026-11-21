@@ -42,7 +42,10 @@ exec sleep 30
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let base = std::fs::canonicalize(dir.path()).unwrap();
-    let mut hub = Hub::new(Some(base.join("Hub")), Some(base.join("data/projects.json")));
+    let mut hub = Hub::new(
+        Some(base.join("Hub")),
+        Some(base.join("data/projects.json")),
+    );
     hub.open_timeout = Duration::from_millis(0);
     hub.focus_timeout = Duration::from_millis(0);
     hub.reuse_timeout = Duration::from_millis(300);
@@ -53,7 +56,12 @@ fn fixture() -> Fixture {
                 "active_scene": "main"})
         .to_string(),
     );
-    Fixture { _dir: dir, base, hub, project }
+    Fixture {
+        _dir: dir,
+        base,
+        hub,
+        project,
+    }
 }
 
 impl Fixture {
@@ -78,18 +86,24 @@ impl Fixture {
     fn lock(&self, pid: u32) {
         write(
             &self.project.join(".blockloom/lock.json"),
-            &json!({"pid": pid, "session": "s", "heartbeat": sync::now_secs(), "app": "blockloom"}).to_string(),
+            &json!({"pid": pid, "session": "s", "heartbeat": sync::now_secs(), "app": "blockloom"})
+                .to_string(),
         );
     }
 }
 
 fn kill(pid: u64) {
-    let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
+    let _ = std::process::Command::new("kill")
+        .arg(pid.to_string())
+        .status();
 }
 
 /// An editor stand-in: a live process with a fresh presence file.
 fn idle_editor(f: &Fixture, installation: &str) -> std::process::Child {
-    let child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+    let child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
     publish(f, child.id(), installation, None);
     child
 }
@@ -110,7 +124,11 @@ fn publish(f: &Fixture, pid: u32, installation: &str, project: Option<&str>) {
 }
 
 /// Answers the next request this editor stand-in receives.
-fn respond(f: &Fixture, pid: u32, outcome: Result<(), String>) -> std::thread::JoinHandle<contract::Request> {
+fn respond(
+    f: &Fixture,
+    pid: u32,
+    outcome: Result<(), String>,
+) -> std::thread::JoinHandle<contract::Request> {
     let editors = f.hub.editors.clone();
     std::thread::spawn(move || {
         let path = contract::request_path(&editors, pid);
@@ -175,7 +193,10 @@ fn remember_forget_and_relocate_edit_the_one_shared_list() {
     assert_eq!(rows[0]["available"], true);
     f.hub.forget(&moved).unwrap();
     assert!(f.hub.projects().unwrap().is_empty());
-    assert!(moved.join("project.blockloom").exists(), "the folder is never touched");
+    assert!(
+        moved.join("project.blockloom").exists(),
+        "the folder is never touched"
+    );
 }
 
 #[test]
@@ -213,7 +234,10 @@ fn bind_writes_the_binding_and_refuses_a_busy_project() {
     let f = fixture();
     let id = f.install("0.1.0");
     f.hub.bind(&f.project, &id, false).unwrap();
-    let written: Value = serde_json::from_str(&std::fs::read_to_string(f.project.join(".blockloom/hub.json")).unwrap()).unwrap();
+    let written: Value = serde_json::from_str(
+        &std::fs::read_to_string(f.project.join(".blockloom/hub.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(written["installation"], id);
     f.lock(std::process::id());
     let error = f.hub.bind(&f.project, &id, false).unwrap_err();
@@ -240,12 +264,23 @@ fn backups_are_listed_and_restored_keeping_what_was_there() {
     let f = fixture();
     write(&f.project.join("assets/a.txt"), "one");
     let first = f.hub.backup_project(&f.project).unwrap();
-    let name = Path::new(first["path"].as_str().unwrap()).file_name().unwrap().to_string_lossy().into_owned();
+    let name = Path::new(first["path"].as_str().unwrap())
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     write(&f.project.join("assets/a.txt"), "two");
+    write(&f.project.join(".blockloom/build/keep"), "build");
+    write(&f.project.join(".git/keep"), "metadata");
     write(&f.project.join("assets/extra.txt"), "later");
     let restored = f.hub.restore_backup(&f.project, &name).unwrap();
-    assert_eq!(std::fs::read_to_string(f.project.join("assets/a.txt")).unwrap(), "one");
+    assert_eq!(
+        std::fs::read_to_string(f.project.join("assets/a.txt")).unwrap(),
+        "one"
+    );
     assert!(!f.project.join("assets/extra.txt").exists());
+    assert!(f.project.join(".blockloom/build/keep").is_file());
+    assert!(f.project.join(".git/keep").is_file());
     assert!(Path::new(restored["previous"]["path"].as_str().unwrap()).is_file());
     assert_eq!(f.hub.backups(&f.project).unwrap().len(), 2);
 }
@@ -254,8 +289,16 @@ fn backups_are_listed_and_restored_keeping_what_was_there() {
 fn restore_refuses_a_busy_project_and_a_foreign_name() {
     let f = fixture();
     let made = f.hub.backup_project(&f.project).unwrap();
-    let name = Path::new(made["path"].as_str().unwrap()).file_name().unwrap().to_string_lossy().into_owned();
-    assert!(f.hub.restore_backup(&f.project, "../../etc/passwd").is_err());
+    let name = Path::new(made["path"].as_str().unwrap())
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert!(
+        f.hub
+            .restore_backup(&f.project, "../../etc/passwd")
+            .is_err()
+    );
     assert!(f.hub.restore_backup(&f.project, "missing.zip").is_err());
     f.lock(std::process::id());
     assert!(f.hub.restore_backup(&f.project, &name).is_err());
@@ -298,7 +341,10 @@ fn the_default_editor_is_the_newest_release() {
     f.install("0.2.0");
     f.install("0.10.0");
     f.install("0.9.0");
-    assert_eq!(f.hub.default_installation().unwrap().as_deref(), Some("release-0.10.0"));
+    assert_eq!(
+        f.hub.default_installation().unwrap().as_deref(),
+        Some("release-0.10.0")
+    );
 }
 
 #[test]
@@ -311,19 +357,30 @@ fn usage_names_the_projects_bound_to_an_installation() {
     assert_eq!(usage["bound"], json!(["Demo"]));
     assert_eq!(usage["active"], json!([]));
     f.lock(std::process::id());
-    assert_eq!(f.hub.installation_usage(&id).unwrap()["active"], json!(["Demo"]));
+    assert_eq!(
+        f.hub.installation_usage(&id).unwrap()["active"],
+        json!(["Demo"])
+    );
 }
 
 #[test]
 fn focus_needs_an_owner_and_reports_whether_it_was_heard() {
     let f = fixture();
     f.hub.remember(&f.project).unwrap();
-    assert!(f.hub.focus(&f.project).unwrap_err().message.contains("No editor"));
+    assert!(
+        f.hub
+            .focus(&f.project)
+            .unwrap_err()
+            .message
+            .contains("No editor")
+    );
     f.lock(std::process::id());
     let result = f.hub.focus(&f.project).unwrap();
     assert_eq!(result["acknowledged"], false);
-    let request: Value =
-        serde_json::from_str(&std::fs::read_to_string(f.project.join(".blockloom/focus.json")).unwrap()).unwrap();
+    let request: Value = serde_json::from_str(
+        &std::fs::read_to_string(f.project.join(".blockloom/focus.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(request["pid"], std::process::id());
     assert!(request["requested_at"].as_u64().unwrap() + 5 > sync::now_secs());
     // With a wait, an editor that takes the file is an acknowledgement, and
@@ -417,7 +474,10 @@ fn an_editor_that_is_busy_or_another_installation_is_not_reused() {
     f.hub.bind(&f.project, &id, false).unwrap();
     f.hub.open_timeout = Duration::from_secs(5);
     let mut wrong = idle_editor(&f, &other);
-    let mut busy = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+    let mut busy = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
     publish(&f, busy.id(), &id, Some("/somewhere/else"));
     let result = f.hub.launch(&f.project).unwrap();
     assert_eq!(result["reused"], false);
@@ -457,7 +517,11 @@ fn a_declined_request_is_an_error_not_a_second_editor() {
     let id = f.install("0.1.0");
     f.hub.bind(&f.project, &id, false).unwrap();
     let mut editor = idle_editor(&f, &id);
-    let answered = respond(&f, editor.id(), Err("This project is set to Blockloom 0.2.0.".into()));
+    let answered = respond(
+        &f,
+        editor.id(),
+        Err("This project is set to Blockloom 0.2.0.".into()),
+    );
     let error = f.hub.launch(&f.project).unwrap_err();
     answered.join().unwrap();
     assert!(error.message.contains("set to Blockloom 0.2.0"));
@@ -476,7 +540,13 @@ fn a_new_project_is_created_by_an_idle_editor_when_there_is_one() {
     let location = f.base.join("Games");
     let result = f
         .hub
-        .new_project("Pond", None, Some(location.to_str().unwrap()), "ThreeD", Some("physics-playground"))
+        .new_project(
+            "Pond",
+            None,
+            Some(location.to_str().unwrap()),
+            "ThreeD",
+            Some("physics-playground"),
+        )
         .unwrap();
     let request = answered.join().unwrap();
     assert_eq!(result["reused"], true);
@@ -493,8 +563,20 @@ fn a_new_project_is_created_by_an_idle_editor_when_there_is_one() {
 #[test]
 fn a_new_project_needs_a_name_and_a_dimension() {
     let f = fixture();
-    assert!(f.hub.new_project("  ", None, None, "TwoD", None).unwrap_err().message.contains("name"));
-    assert!(f.hub.new_project("x", None, None, "FourD", None).unwrap_err().message.contains("Dimension"));
+    assert!(
+        f.hub
+            .new_project("  ", None, None, "TwoD", None)
+            .unwrap_err()
+            .message
+            .contains("name")
+    );
+    assert!(
+        f.hub
+            .new_project("x", None, None, "FourD", None)
+            .unwrap_err()
+            .message
+            .contains("Dimension")
+    );
 }
 
 #[cfg(unix)]

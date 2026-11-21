@@ -4,6 +4,7 @@
 //! show what they change. `BLOCKLOOM_BLESS=1` rewrites the expected file.
 
 use blockloom_app::{AppHandle, Backend};
+use blockloom_core::soundscape::Soundscape;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -244,7 +245,20 @@ fn saved_project_round_trips() {
         let parse = |p: PathBuf| -> Value {
             serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
         };
-        assert_preserved(&parse(source.join(rel)), &parse(dir.join(rel)), rel);
+        let old = parse(source.join(rel));
+        let mut new = parse(dir.join(rel));
+        if rel.ends_with(".blockscene") {
+            let components = new["components"].as_array_mut().expect("scene components");
+            let soundscape = components
+                .iter()
+                .position(|component| component["component"] == "Soundscape")
+                .expect("default soundscape added to the old scene");
+            let added: Soundscape =
+                serde_json::from_value(components.remove(soundscape)["soundscape"].take())
+                    .expect("valid soundscape");
+            assert_eq!(added, Soundscape::default());
+        }
+        assert_preserved(&old, &new, rel);
     }
     backend.dispatch("close_project", json!({})).expect("close");
     let _ = std::fs::remove_dir_all(&data);

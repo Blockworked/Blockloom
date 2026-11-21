@@ -451,6 +451,15 @@ pub enum Effect {
         bus: SoundBus,
         volume: f32,
     },
+    /// Replaces the project's reverb with a named preset. Window-global.
+    SetReverb {
+        preset: String,
+    },
+    /// Whether a bus sinks while the camera is underwater. Window-global.
+    SetUnderwaterMuffle {
+        bus: SoundBus,
+        enabled: bool,
+    },
     /// Writes one field of one of the actor's custom components.
     SetComponentField {
         actor: String,

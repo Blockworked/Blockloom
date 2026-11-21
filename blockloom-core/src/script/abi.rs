@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 47;
+pub const ABI_VERSION: u32 = 52;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -287,9 +287,47 @@ pub const READ_LIST_LENGTH: u32 = 62;
 /// [`MISSING`] when the list is unknown or the index is out of range. Text
 /// that reads as a number answers with it.
 pub const READ_LIST_ITEM: u32 = 63;
+/// `a` = `zoom` (pixels per world unit, 0 before a frame is drawn),
+/// `rotation` (degrees of roll, shake included), `at bounds`, `shaking` or
+/// `cover` (0 clear to 1 opaque). The 2D camera as of the last frame; flags
+/// read 1 or 0, anything else is [`MISSING`].
+pub const READ_CAMERA_2D: u32 = 64;
+/// `a` = "x y". The 2D light at that point as of the last frame, 1 being
+/// the picture as drawn (1 everywhere without 2D lighting).
+pub const READ_LIGHT_LEVEL: u32 = 65;
+/// Whether the time-of-day clock is outside the project's day hours: 1 or 0.
+pub const READ_IS_NIGHT: u32 = 66;
+/// `a` = list, `b` = the item as text, with NaN in `arg` for empty text. Empty `b` with a numeric `arg` searches for that number. 1 when the list holds it, as `list contains` answers.
+pub const READ_LIST_CONTAINS: u32 = 67;
+/// `a` = list, `b` = text item (same encoding as `READ_LIST_CONTAINS`). How many times it appears.
+pub const READ_LIST_AMOUNT: u32 = 68;
+/// `a` = list, `b` = text item (same encoding as `READ_LIST_CONTAINS`). Its 1-based position, 0 when absent, as `item # of` answers.
+pub const READ_LIST_INDEX_OF: u32 = 69;
+/// `a` = list, `arg` = 1-based index. 1 when the list has an item there.
+pub const READ_LIST_HAS_INDEX: u32 = 70;
+/// `a` = dict. How many distinct keys it holds; 0 for an unknown dict.
+pub const READ_DICT_SIZE: u32 = 71;
+/// `a` = dict, `b` = key. 1 when the key is present.
+pub const READ_DICT_HAS_KEY: u32 = 72;
+/// `a` = dict, `b` = key. The value as a number (text that reads as one counts); [`MISSING`] for no key or a non-number.
+pub const READ_DICT_VALUE: u32 = 73;
+/// `a` = `x`, `y` or `z`. Where the world camera stands this frame; 0 before
+/// one has drawn.
+pub const READ_CAMERA_POSITION: u32 = 74;
+/// `a` = `x`, `y` or `z`. What the middle of the screen points at, as a
+/// direction.
+pub const READ_CAMERA_DIRECTION: u32 = 75;
 /// `a` = field name (`actor`, `body`, `collider`, `error`), `b` = which
 /// obstacle, from 1. Words from this actor's last controller move.
 pub const TEXT_CONTROLLER: u32 = 23;
+/// `a` = list. The whole list as a JSON array, what `list as JSON` reads.
+pub const TEXT_LIST_JSON: u32 = 32;
+/// `a` = dict, `b` = key. The value as text; empty for no key, as `value of key` reads.
+pub const TEXT_DICT_VALUE: u32 = 33;
+/// `a` = dict. Its keys, in order, as a JSON array.
+pub const TEXT_DICT_KEYS: u32 = 34;
+/// `a` = dict. The whole dict as a JSON object.
+pub const TEXT_DICT_JSON: u32 = 35;
 
 /// `read_text` binary result: seven little-endian `f32`s (position XYZ,
 /// rotation XYZ in degrees, uniform scale). `a` empty = self, else name/id.
@@ -606,6 +644,61 @@ pub const ACT_DELETE_SAVE_SLOT: u32 = 135;
 /// `a` = language. Speaks the run's language for the rest of the run: what
 /// `text for` answers in. Empty reads as the project's default language.
 pub const ACT_SET_LANGUAGE: u32 = 136;
+/// `a` = dial (`zoom`, `zoom height`, `rotation`, `shake`, `hitstop`,
+/// `flash`, `cover`, `pixelation`, `ambient light`, ... - the names
+/// `Look2dDial::parse` takes), `b` = its value as text, which is what the
+/// block's slot would hold: a number, a colour, or a cover kind. Empty puts a
+/// colour dial back. The same `set [look] to` the blocks run; an unknown
+/// dial is an error effect, not a silent no-op.
+pub const ACT_SET_LOOK_2D: u32 = 137;
+/// `a` = `Static`, `Dynamic`, `Kinematic` or `None`. Gives this actor's physics body that kind, as `set my body to`.
+pub const ACT_SET_BODY: u32 = 138;
+/// `n0`, `n1`, `n2` = gravity. Window-global, like the block.
+pub const ACT_SET_GRAVITY: u32 = 139;
+/// `n0` = density of this actor's collider.
+pub const ACT_SET_DENSITY: u32 = 140;
+/// `n0` = explicit mass, overriding density.
+pub const ACT_SET_MASS: u32 = 141;
+/// `n0` != 0 turns this actor's trail on.
+pub const ACT_SET_TRAIL_ENABLED: u32 = 142;
+/// `b` = easing (a `TweenEasing` name, empty is linear), `n0` = seconds, `n1`, `n2`, `n3` = target. The same glide the block runs; the strand carries on.
+pub const ACT_GLIDE: u32 = 143;
+/// `a` = actor name or id, empty for this actor. Breaks it into pieces.
+pub const ACT_FRACTURE: u32 = 144;
+/// `n0`, `n1`, `n2` = where, `n3` = radius, `n4` = strength.
+pub const ACT_SPLASH: u32 = 145;
+/// `n0`, `n1`, `n2` = where, `n3` = radius, `n4` = strength.
+pub const ACT_PUFF_SMOKE: u32 = 146;
+/// `a` = preset, `n0`-`n2` = where, `n3`-`n5` = surface normal, `n6` = size, `n7` = lifetime seconds, `n8` = fade seconds. An unknown preset is an error.
+pub const ACT_SPAWN_DECAL: u32 = 147;
+/// `n0`, `n1`, `n2` = where, `n3` = radius, `n4` = seconds to fade.
+pub const ACT_FADE_DECALS: u32 = 148;
+/// `a` = list. Reverses it in place, at once like the other list writes.
+pub const ACT_LIST_REVERSE: u32 = 149;
+/// `a` = list, `n0` = places to rotate it (negative rotates the other way).
+pub const ACT_LIST_SHIFT: u32 = 150;
+/// `a` = list, `c` = a JSON array. Replaces the list with it; bad JSON is an error.
+pub const ACT_JSON_TO_LIST: u32 = 151;
+/// `a` = dict, `b` = key, `n0` = number value. Immediate, like list writes.
+pub const ACT_DICT_SET: u32 = 152;
+/// `a` = dict, `b` = key, `c` = text value.
+pub const ACT_DICT_SET_TEXT: u32 = 153;
+/// `a` = dict, `b` = key. Quiet when the key is absent.
+pub const ACT_DICT_DELETE_KEY: u32 = 154;
+/// `a` = dict. Empties it.
+pub const ACT_DICT_CLEAR: u32 = 155;
+/// `a` = dict, `c` = a JSON object. Replaces the dict with it; bad JSON is an error.
+pub const ACT_JSON_TO_DICT: u32 = 156;
+/// `a` = actor, `b` = body kind. `ACT_SET_BODY` for another actor.
+pub const ACT_SET_BODY_OTHER: u32 = 157;
+/// `a` = actor, `n0` = density. `ACT_SET_DENSITY` for another actor.
+pub const ACT_SET_DENSITY_OTHER: u32 = 158;
+/// `a` = actor, `n0` = mass. `ACT_SET_MASS` for another actor.
+pub const ACT_SET_MASS_OTHER: u32 = 159;
+/// `a` = reverb preset name (`Off` for dry). `set reverb to`.
+pub const ACT_SET_REVERB: u32 = 160;
+/// `a` = bus, `n0` = 1 to muffle it while the camera is underwater, 0 to stop.
+pub const ACT_MUFFLE_UNDERWATER: u32 = 161;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per
@@ -695,6 +788,8 @@ pub const EVENT_PLUGIN: u32 = 20;
 /// actor's name; detail: its id; `n0` = phase (0 enter, 1 stay, 2 exit), `n1` =
 /// 1 for a trigger overlap, `n2` = impulse, `n3` = relative speed.
 pub const EVENT_CONTACT: u32 = 21;
+/// This actor's character motor did something. Subject: `jump`, `land`, `leave ground`, `head hit` or `stance change`.
+pub const EVENT_MOTOR: u32 = 22;
 
 // ─── The same three calls in a browser ─────────────────────────────────────
 // A web build loads each script as its own wasm module, and one module can't

@@ -567,6 +567,7 @@ impl Scene {
             }
         }
         self.world.input.normalize();
+        self.world.soundscape.normalize();
         for actor in &mut self.actors {
             if let Some(ActorComponent::Material { material }) =
                 actor.components.get_mut("Material")
@@ -607,6 +608,10 @@ impl Scene {
             }
             if let Some(ActorComponent::Hazard { hazard }) = actor.components.get_mut("Hazard") {
                 hazard.normalize();
+            }
+            if let Some(ActorComponent::SoundZone { zone }) = actor.components.get_mut("SoundZone")
+            {
+                zone.normalize();
             }
             if let Some(ActorComponent::Room { room }) = actor.components.get_mut("Room") {
                 room.normalize();

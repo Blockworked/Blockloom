@@ -83,7 +83,8 @@ pub fn backup_document(dir: &Path) -> Result<std::path::PathBuf, String> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let target = folder.join(format!("project-{stamp}.blockloom"));
-    std::fs::copy(&source, &target).map_err(|e| format!("Couldn't back up the project file: {e}"))?;
+    std::fs::copy(&source, &target)
+        .map_err(|e| format!("Couldn't back up the project file: {e}"))?;
     Ok(target)
 }
 
@@ -277,7 +278,11 @@ mod tests {
             project: None,
             requested_at: crate::sync::now_secs(),
         };
-        write_file_atomic(&request_path(&dir, pid), &serde_json::to_string(&request).unwrap()).unwrap();
+        write_file_atomic(
+            &request_path(&dir, pid),
+            &serde_json::to_string(&request).unwrap(),
+        )
+        .unwrap();
         assert_eq!(take_request(&dir), Some(request));
         assert!(take_request(&dir).is_none());
         publish_reply(&dir, "r1", Err("no".into()));

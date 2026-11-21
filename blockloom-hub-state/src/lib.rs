@@ -107,7 +107,10 @@ pub fn read_json(path: &Path) -> Result<Value> {
     let text = std::fs::read_to_string(path)?;
     let value: Value = serde_json::from_str(&text)?;
     if !value.is_object() {
-        return Err(Error::new(format!("Expected a JSON object: {}", path.display())));
+        return Err(Error::new(format!(
+            "Expected a JSON object: {}",
+            path.display()
+        )));
     }
     Ok(value)
 }
@@ -144,7 +147,11 @@ pub fn checkpoint() -> Result<()> {
 pub fn key(path: &Path) -> String {
     let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let text = resolved.to_string_lossy().into_owned();
-    if cfg!(windows) { text.to_lowercase() } else { text }
+    if cfg!(windows) {
+        text.to_lowercase()
+    } else {
+        text
+    }
 }
 
 /// The Hub itself: a root for its own files and the editor's project list.

@@ -1886,7 +1886,8 @@ Slow-mo, hitstop, fade-to-black and shake blocks already exist from the
 cinematic work. The `Iris` cover kind is a ring that closes to a hole. The
 sprite dials `Pop` (area-preserving squash-and-stretch, render-only, applied
 in PostUpdate and cleared in First) and `FloatNumber` (a UI label that rises
-and fades, `floaters.rs`) finish the feedback set. Not done: a script ABI.
+and fades, `floaters.rs`) finish the feedback set. Scripts reach every `SetLook2d` dial and the camera and
+light reporters through ABI 48-51 (`set_look_2d`, `camera_zoom`, `light_level`, ...).
 
 ### 2D animation and sprites
 
@@ -2112,6 +2113,27 @@ owns the voices: one entity per play with an `AudioPlayer`, handles cached by
 path, oldest stolen past 8 of a file or 128 total. Sounds ignore the pause
 freeze (a menu click still clicks), and `stop all` silences them. Reporters
 are `is playing?` and `bus volume`, read off the published snapshot.
+
+`blockloom-core/src/soundscape.rs` (`World.soundscape`) layers rules over the
+mix: weather loops follow the atmosphere's wind, rain, snow or storm, ducking
+dips a bus while paused or while a named sound plays, and the underwater
+muffle pulls buses down and dulls them while the camera is under water.
+`drive_soundscape` steps the levels on the real clock, blends the listener's
+`SoundZone`s over the project reverb (`blend_zones`) and spawns the weather
+voices; `SoundState::bus_factor` multiplies the gains into `effective`.
+`set-soundscape` writes it, and `set reverb to` / `muffle _ while underwater?`
+override it for one run.
+
+Voices don't play the file directly: `maintain_voices` waits for the
+`AudioSource` to load, then gives the voice its own `FxSource`
+(`sound_fx.rs`), a decoder wrapper with a lowpass and a Freeverb-style reverb
+whose parameters are atomics on an `Arc<VoiceFx>` (so a parameter move never
+needs the sink). Looping is done in that decoder; Bevy's `repeat_infinite`
+would replay processed samples. Per frame each voice's cutoff is the
+combination of underwater, zone and occlusion muffle, and its reverb is the
+listener's blend for its bus. A WAV impulse response (project or zone) swaps the comb tail for per-channel partitioned FFT convolution (`RawIr`, `Convolver`). `probe_occlusion` (outside the big `Update`
+chain, which is at the tuple limit) rays positional voices to the listener
+through `QueryAccess` against static scenery only.
 
 ### Building a game
 

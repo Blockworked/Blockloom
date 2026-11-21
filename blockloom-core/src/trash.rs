@@ -5,8 +5,11 @@
 //! another drive can't be renamed into the home trash; that is an error the
 //! caller can answer with a permanent delete.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::path::PathBuf;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn unique(dir: &Path, name: &str) -> PathBuf {
     let mut candidate = dir.join(name);
     let mut n = 1;
@@ -120,7 +123,10 @@ pub fn move_to_trash(dir: &Path) -> Result<(), String> {
     if status.success() {
         Ok(())
     } else {
-        Err(format!("Couldn't move {} to the Recycle Bin.", dir.display()))
+        Err(format!(
+            "Couldn't move {} to the Recycle Bin.",
+            dir.display()
+        ))
     }
 }
 

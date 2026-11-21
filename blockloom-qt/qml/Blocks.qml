@@ -76,6 +76,7 @@ QtObject {
     readonly property var cloudLayerOptions: [{value:"Coverage",label:"coverage"},{value:"Opacity",label:"opacity"},{value:"Contrast",label:"contrast"},{value:"Altitude",label:"altitude"},{value:"Spin",label:"spin"}]
     readonly property var cloudOptions: [{value:"Coverage",label:"coverage"},{value:"Density",label:"density"},{value:"Type",label:"type"}]
     readonly property var precipitationOptions: [{value:"Rain",label:"rain"},{value:"Snow",label:"snow"}]
+    readonly property var reverbPresetOptions: [{value:"Off",label:"off"},{value:"Small room",label:"a small room"},{value:"Hall",label:"a hall"},{value:"Cave",label:"a cave"},{value:"Cathedral",label:"a cathedral"},{value:"Tunnel",label:"a tunnel"},{value:"Underwater",label:"underwater"}]
     readonly property var soundBusOptions: [{value:"Master",label:"master"},{value:"Music",label:"music"},{value:"Sfx",label:"sound effects"}]
     readonly property var soundLoopOptions: [{value:"false",label:"once"},{value:"true",label:"loop"}]
     readonly property var easingOptions: opts(["Linear","EaseIn","EaseOut","EaseInOut","Bounce","Elastic"])
@@ -162,7 +163,7 @@ QtObject {
         SetRotation:"rotate-cw", PointTowards:"target", SetScale:"maximize", SetBody:"boxes", SetTrigger:"ghost", SetCollisionLayer:"layers",
         SetCollisionMask:"filter", ApplyImpulse:"zap", AddForce:"arrow-right", AddTorque:"rotate-cw", ControllerMove:"footprints", SetController:"sliders-horizontal", MotorAct:"person-standing", SetMotor:"gauge", JointAct:"link", CastRay:"crosshair", CastBall:"circle-dot", OverlapBall:"search", FindClosest:"target", SetVelocity:"trending-up", SetGravity:"cloud", SetDensity:"weight", SetMass:"weight",
         Say:"message-square", SetVisible:"eye", SetColor:"palette", SetExposure:"sun", SetLightIntensity:"zap", SetEmissiveStrength:"sparkles", SetHdrOutput:"monitor", SetPeakBrightness:"sun", EnableVolume:"box", SetVolumeWeight:"weight", CaptureProbes:"aperture", SetShadowDistance:"sun-dim", SetLightShadows:"lamp", SetRayTracing:"sparkles", SetGiBounces:"repeat", SetGiSamples:"layers", SetFogDensity:"cloud", SetAurora:"moon", StrikeLightning:"zap", SetLightningRate:"wind", SetWind:"wind", SetCloudDrift:"cloud", SetClouds:"cloud", SetCloudLayer:"layers", SetWater:"wind", SetTimeOfDay:"clock", AdvanceTime:"clock", SetPrecipitation:"cloud-rain", BlendWeather:"cloud", PaintTile:"palette", SetParallax:"layers", BurstParticles:"sparkles", SetEmitterDial:"sliders-horizontal", SetTrailEnabled:"wind", SetEmitterPlaying:"play", PlaySound:"volume-2", PlaySoundAt:"map-pin", StopSound:"square",
-        SetSoundVolume:"volume-1", SetSoundPitch:"music", SetBusVolume:"sliders-horizontal", SetComponentField:"panels-top-left",
+        SetSoundVolume:"volume-1", SetSoundPitch:"music", SetBusVolume:"sliders-horizontal", SetReverb:"waves", MuffleUnderwater:"volume-1", SetComponentField:"panels-top-left",
         SetCameraView:"camera", SetCameraPitch:"video", SetCameraFov:"video", AttachComponent:"plus", DetachComponent:"x", SetParent:"link",
         CreateClone:"copy", CreateActor:"sparkles", DeleteActor:"trash-2", Wait:"clock", WaitUntil:"hand", If:"git-branch", IfElse:"git-fork",
         Repeat:"repeat", Forever:"infinity", While:"repeat", EscapeLoop:"log-out", ContinueLoop:"skip-forward", Broadcast:"radio", StopAll:"octagon",
@@ -313,6 +314,8 @@ QtObject {
             SetSoundVolume: row([lb("set volume of sound"), slot("SoundAsset", "sound"), lb("to"), slot("SoundVolume", "volume")]),
             SetSoundPitch: row([lb("set pitch of sound"), slot("SoundAsset", "sound"), lb("to"), slot("SoundPitch", "pitch")]),
             SetBusVolume: row([lb("set"), dd("bus", soundBusOptions), lb("volume to"), slot("SoundVolume", "volume")]),
+            SetReverb: row([lb("set reverb to"), dd("preset", reverbPresetOptions)]),
+            MuffleUnderwater: row([lb("muffle"), dd("bus", soundBusOptions), lb("while underwater?"), flagDefaultTrue("enabled", onOffOptions)]),
             // Components
             SetComponentField: row([lb("set"), dd("field", componentFieldOptions, { placeholder: "field" }), lb("of"), dd("component", () => opts(customComponents().map(c => c.name)), { placeholder: "component" }), lb("to"), slot("ComponentFieldValue", "value")]),
             SetCameraView: row([lb("set my camera to"), dd("view", cameraViewOptions)]),
@@ -610,6 +613,8 @@ QtObject {
         case "SetSoundVolume": return { sound: txt(""), volume: num(100) };
         case "SetSoundPitch": return { sound: txt(""), pitch: num(1) };
         case "SetBusVolume": return { bus: "Sfx", volume: num(100) };
+        case "SetReverb": return { preset: "Cave" };
+        case "MuffleUnderwater": return { bus: "Sfx", enabled: true };
         case "SetComponentField": return { component: "", field: "", value: num(0) };
         case "SetCameraView": return { view: "ThirdPerson" };
         case "SetCameraPitch": return { degrees: num(0) };
@@ -926,7 +931,7 @@ QtObject {
         { category: "world", title: "Water", items: ["SetWater", "WaterHeight", "Underwater"] },
         { category: "world", title: "Levels", items: ["PaintTile", "SetParallax", "TileAt", "RoomContaining"] },
         { category: "world", title: "Rendering", items: ["SetRenderSetting", "SetHdrOutput", "SetPeakBrightness", "SetRayTracing", "SetGiBounces", "SetGiSamples", "CurrentQuality", "DlssAvailable", "IsHdrDisplay", "PeakBrightness", "IsRayTracing", "RayTracingAvailable", "FrameTime", "DrawCalls"] },
-        { category: "sound", title: "", items: ["PlaySound", "PlaySoundAt", "StopSound", "SetSoundVolume", "SetSoundPitch", "SetBusVolume", "SoundPlaying", "BusVolume"] },
+        { category: "sound", title: "", items: ["PlaySound", "PlaySoundAt", "StopSound", "SetSoundVolume", "SetSoundPitch", "SetBusVolume", "SetReverb", "MuffleUnderwater", "SoundPlaying", "BusVolume"] },
         { category: "actors", title: "Clones and actors", items: ["CreateClone", "CreateActor", "DeleteActor", "IsClone", "NewActor", "ActorCount"] },
         { category: "actors", title: "Components", items: ["AttachComponent", "DetachComponent", "SetComponentField", "ComponentField", "SetParent", "MyParent"] },
         { category: "interface", title: "Showing", items: ["ShowWidget", "ShowPanel", "ShowLabel", "ShowButton", "ShowImage", "ShowInput", "ShowSlider", "ShowToggle", "ShowList"] },
@@ -1030,7 +1035,7 @@ QtObject {
         SetTrigger:"make me solid or a trigger", SetCollisionLayer:"set my collision layer", SetCollisionMask:"set my collision mask",
         ApplyImpulse:"push", AddForce:"add force", AddTorque:"add torque", ControllerMove:"move controller", SetController:"set controller", MotorAct:"motor", SetMotor:"set motor", JointAct:"joint", CastRay:"cast ray", CastBall:"cast ball", OverlapBall:"find in ball", FindClosest:"find closest", SetVelocity:"set velocity", SetGravity:"set gravity", SetDensity:"set density", SetMass:"set mass", Say:"say",
         SetVisible:"show or hide", SetColor:"set color", SetExposure:"set exposure", SetLightIntensity:"set my light brightness", SetEmissiveStrength:"set my glow", SetHdrOutput:"turn HDR output on or off", SetPeakBrightness:"set peak brightness", EnableVolume:"enable or disable a volume", SetVolumeWeight:"set a volume's weight", CaptureProbes:"capture light probes", SetShadowDistance:"set shadow distance", SetLightShadows:"turn my light's shadows on or off", SetRayTracing:"turn ray tracing on or off", SetGiBounces:"set GI bounces", SetGiSamples:"set GI samples", SetFogDensity:"set fog density", SetAurora:"set aurora", StrikeLightning:"strike lightning", SetLightningRate:"set lightning storm", SetWind:"set the wind", SetCloudDrift:"set cloud drift", SetClouds:"set clouds", SetCloudLayer:"set a cloud layer", SetWater:"set water level, chop or foam", SetTimeOfDay:"set time of day", AdvanceTime:"advance time", SetPrecipitation:"set rain or snow", BlendWeather:"blend weather to a preset", PaintTile:"paint a tile", SetParallax:"set a layer's parallax", BurstParticles:"burst particles", SetEmitterDial:"set an emitter dial", SetTrailEnabled:"start or stop my trail", SetEmitterPlaying:"start or stop my particles", PlaySound:"play sound", PlaySoundAt:"play sound at an actor", StopSound:"stop sound",
-        SetSoundVolume:"set sound volume", SetSoundPitch:"set sound pitch", SetBusVolume:"set bus volume", SetComponentField:"set a component field",
+        SetSoundVolume:"set sound volume", SetSoundPitch:"set sound pitch", SetBusVolume:"set bus volume", SetReverb:"set reverb", MuffleUnderwater:"muffle a bus underwater", SetComponentField:"set a component field",
         SetCameraView:"set my camera view", SetCameraPitch:"set camera pitch", SetCameraFov:"set camera fov", AttachComponent:"attach a component",
         DetachComponent:"detach a component", SetParent:"attach me to an actor", CreateClone:"create a clone", CreateActor:"create an actor",
         DeleteActor:"delete an actor", Wait:"wait", WaitUntil:"wait until", If:"if", IfElse:"if else", Repeat:"repeat", Forever:"forever",

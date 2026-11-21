@@ -51,3 +51,26 @@ busy/unavailable reason, in that order.
   editor; the editor's card says opening it joins that session.
 - A row is a button: click or Enter opens it, its menu holds Show in folder,
   Backups and Remove from list.
+
+## Interface designer
+
+The designer's own chrome (palette, tree, toolbar, inspector) uses the Theme
+values above and the `Bw*` controls, `InspectorRow`, `IconButton`,
+`NumberField` and `ChoiceField`. Only the design surface draws with its own
+colours, declared once at the top of `UiViewport.qml`:
+
+| Role | Value |
+| --- | --- |
+| stage behind the frame | `#171a21` |
+| rulers / ruler text | `#1d222c` / `#8892a6` |
+| selection / marquee | `#70baff` |
+| hover outline | `#b9dfff` |
+| also selected | `#8fd0a0` |
+| safe area | `#ffb454` |
+| reference size | `#c792ea` |
+| guides | `#4dd0e1` |
+| snap lines | `#ffcc70` |
+| canvas behind the frame (dark / light theme) | `#252d3a` / `#d9dfe8` |
+
+Panels fit a 1100x700 window: the side panels have min and max widths and a
+drag handle, and the toolbar wraps instead of widening the centre column.

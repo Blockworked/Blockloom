@@ -1,58 +1,81 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtCore
 import com.blockworked.Blockloom 1.0
 import com.blockworked.Blockstitch 1.0
 
 Item {
     id: root
     InterfaceGeometry { id: geometry }
+    UiEditMath { id: editMath }
+    readonly property var geo: geometry
+    // Editor-only preferences: preview size and which inspector sections are folded.
+    Loader {
+        id: prefsLoader
+        // Settings need an application identity; a bare test host has none.
+        active: Qt.application.organization !== ""
+        sourceComponent: Settings {
+            category: "interfaceDesigner"
+            property int previewWidth: 960
+            property int previewHeight: 720
+            property string folds: ""
+        }
+    }
+    readonly property var prefs: prefsLoader.item
     required property var app
     property var document: ({widgets: [], styles: {}, prefabs: {}, reference_size: [960,720], safe_area: [0,0,0,0], theme: "Dark", scale: "ConstantPixel"})
     property string selectedId: ""
     property string screenId: ""
+    readonly property var widgetsById: {
+        const m = Object.create(null);
+        document.widgets.forEach(w => { m[w.element.id] = w; });
+        return m;
+    }
+    function widgetNamed(id) { return widgetsById[id] || null; }
     readonly property var screens: document.widgets.filter(w => !w.element.parent).map(w => w.element.id)
     readonly property var screenWidgets: document.widgets.filter(w => inScreen(w.element.id))
     function inScreen(id) {
         if (!screenId) return true;
-        let current = document.widgets.find(w => w.element.id === id);
-        const visited = [];
-        while (current && visited.indexOf(current.element.id) < 0) {
+        let current = widgetsById[id];
+        const visited = Object.create(null);
+        while (current && !visited[current.element.id]) {
             if (current.element.id === screenId) return true;
-            visited.push(current.element.id);
-            current = document.widgets.find(w => w.element.id === current.element.parent);
+            visited[current.element.id] = true;
+            current = widgetsById[current.element.parent];
         }
         return false;
     }
     // Editor-only state: never saved and never sent to the runtime.
-    property var lockedIds: ({})
+    property var lockedIds: Object.create(null)
     // Further selected widgets beside selectedId (Shift-click, Ctrl-click in the tree, marquee).
+    // Draw the project's actors behind the interface in the preview. Editor only.
+    property bool showWorld: true
+    onShowWorldChanged: { cancelEdit(); ++revision; frameLayout = null; if (designing) previewDelay.restart(); }
     property bool showSafeArea: false
     property bool showReference: false
     // Editor-only guides in preview pixels: {axis: 0 vertical line at x, 1 horizontal line at y, pos}.
     property bool showRulers: false
     property var guides: []
-    onGuidesChanged: overlay.requestPaint()
+    onGuidesChanged: viewport.repaint()
     function addGuide(axis, pos) { guides = guides.concat([{axis: axis, pos: pos}]); return guides.length - 1; }
     function moveGuide(index, pos) { guides = guides.map((g, i) => i === index ? {axis: g.axis, pos: pos} : g); }
     function removeGuide(index) { guides = guides.filter((g, i) => i !== index); }
     // Axis 0 is x, 1 is y; stage pixels are the viewport, canvas pixels the preview.
-    function stageToCanvas(axis, s) { return (axis === 0 ? previewWidth : previewHeight) / 2 + (s - (axis === 0 ? stage.width : stage.height) / 2 - (axis === 0 ? panX : panY)) / Math.max(0.05, zoom); }
-    function canvasToStage(axis, c) { return (axis === 0 ? stage.width : stage.height) / 2 + (axis === 0 ? panX : panY) + (c - (axis === 0 ? previewWidth : previewHeight) / 2) * Math.max(0.05, zoom); }
+    function stageToCanvas(axis, s) { return (axis === 0 ? previewWidth : previewHeight) / 2 + (s - (axis === 0 ? viewport.stageWidth : viewport.stageHeight) / 2 - (axis === 0 ? panX : panY)) / Math.max(0.05, zoom); }
+    function canvasToStage(axis, c) { return (axis === 0 ? viewport.stageWidth : viewport.stageHeight) / 2 + (axis === 0 ? panX : panY) + (c - (axis === 0 ? previewWidth : previewHeight) / 2) * Math.max(0.05, zoom); }
     function guideTargets(frame, axis) {
         // Guides only snap in axis-aligned frames, in the frame's own units.
         if (Math.abs(frame[1]) > 1e-6 || Math.abs(frame[2]) > 1e-6) return [];
         return guides.filter(g => g.axis === axis).map(g => (g.pos - frame[axis === 0 ? 4 : 5]) / frame[axis === 0 ? 0 : 3]);
     }
-    onShowSafeAreaChanged: overlay.requestPaint()
-    onShowReferenceChanged: overlay.requestPaint()
-    onSafeChanged: overlay.requestPaint()
+    onShowSafeAreaChanged: viewport.repaint()
+    onShowReferenceChanged: viewport.repaint()
+    onSafeChanged: viewport.repaint()
     property var extraIds: []
     readonly property var selectionIds: {
         if (!selectedId) return [];
-        const have = {};
-        document.widgets.forEach(w => { have[w.element.id] = true; });
-        return [selectedId].concat(extraIds.filter(id => have[id] && id !== selectedId && inScreen(id)));
+        return [selectedId].concat(extraIds.filter(id => widgetsById[id] && id !== selectedId && inScreen(id)));
     }
     // A selection never lists a widget together with its ancestor: the ancestor's edit covers it.
     function topLevelSelection() {
@@ -69,26 +92,28 @@ Item {
     function finishMarquee(m) {
         const x0 = Math.min(m.x0, m.x1), x1 = Math.max(m.x0, m.x1), y0 = Math.min(m.y0, m.y1), y1 = Math.max(m.y0, m.y1);
         const ids = pickable.filter(b => b.visible && editableId(b.id)).filter(b => {
-            const c = geometry.point(b.transform, 0, 0);
-            return c.x >= x0 && c.x <= x1 && c.y >= y0 && c.y <= y1;
+            const polygon = geometry.polygon(b);
+            if (!polygon.length) return false;
+            const xs = polygon.map(p => p.x), ys = polygon.map(p => p.y);
+            return Math.max(...xs) >= x0 && Math.min(...xs) <= x1 && Math.max(...ys) >= y0 && Math.min(...ys) <= y1;
         }).sort((a, b) => a.paint_order - b.paint_order).map(b => b.id);
         extraIds = ids.slice(1); selectedId = ids.length ? ids[0] : "";
     }
-    function editableId(id) { return document.widgets.some(w => w.element.id === id && !w.world_actor); }
-    property var hiddenIds: ({})
-    property var collapsedIds: ({})
+    function editableId(id) { const w = widgetsById[id]; return !!w && !w.world_actor; }
+    property var hiddenIds: Object.create(null)
+    property var collapsedIds: Object.create(null)
     function toggleHidden(id) {
-        const next = Object.assign({}, hiddenIds); if (next[id]) delete next[id]; else next[id] = true;
+        const next = Object.assign(Object.create(null), hiddenIds); if (next[id]) delete next[id]; else next[id] = true;
         hiddenIds = next; cancelEdit(); ++revision; frameLayout = null; if (designing) previewDelay.restart();
     }
     // Only IDs that still exist: the runtime refuses a request naming a missing widget.
     readonly property var hiddenList: document.widgets.map(w => w.element.id).filter(id => !!hiddenIds[id])
     property string search: ""
     function isLocked(id) { return !!lockedIds[id]; }
-    function toggleLock(id) { const next = Object.assign({}, lockedIds); if (next[id]) delete next[id]; else next[id] = true; lockedIds = next; if (gesture && gesture.id === id) cancelEdit(); }
-    function toggleCollapsed(id) { const next = Object.assign({}, collapsedIds); if (next[id]) delete next[id]; else next[id] = true; collapsedIds = next; }
+    function toggleLock(id) { const next = Object.assign(Object.create(null), lockedIds); if (next[id]) delete next[id]; else next[id] = true; lockedIds = next; if (gesture && gesture.id === id) cancelEdit(); }
+    function toggleCollapsed(id) { const next = Object.assign(Object.create(null), collapsedIds); if (next[id]) delete next[id]; else next[id] = true; collapsedIds = next; }
     readonly property var treeRows: {
-        const widgets = screenWidgets, children = {}, byId = {};
+        const widgets = screenWidgets, children = Object.create(null), byId = Object.create(null);
         widgets.forEach(w => { byId[w.element.id] = w; });
         widgets.forEach(w => {
             const parent = byId[w.element.parent] ? w.element.parent : "";
@@ -96,7 +121,7 @@ Item {
         });
         const needle = search.trim().toLowerCase();
         const matches = w => w.element.id.toLowerCase().indexOf(needle) >= 0 || (w.element.content || "").toLowerCase().indexOf(needle) >= 0;
-        const keep = {};
+        const keep = Object.create(null);
         if (needle) {
             widgets.filter(matches).forEach(w => {
                 let current = w;
@@ -125,7 +150,7 @@ Item {
     }
     readonly property int selected: document.widgets.findIndex(w => w.element.id === selectedId)
     property var gesture: null
-    readonly property var selectedBounds: bounds.find(w => w.id === selectedId) || null
+    readonly property var selectedBounds: boundsById[selectedId] || null
     property bool snapGrid: false
     property bool snapAlign: false
     property real snapStep: 8
@@ -146,46 +171,30 @@ Item {
         const angle = (Math.atan2(matrix[1]*handle.x+matrix[3]*handle.y,matrix[0]*handle.x+matrix[2]*handle.y)*180/Math.PI+180)%180;
         return [Qt.SizeHorCursor,Qt.SizeFDiagCursor,Qt.SizeVerCursor,Qt.SizeBDiagCursor][Math.round(angle/45)%4];
     }
-    function boxInFrame(bound, inverse) {
-        const points = geometry.rectangle(bound.transform, [-bound.size[0]/2,-bound.size[1]/2,bound.size[0]/2,bound.size[1]/2]).map(p => geometry.point(inverse,p.x,p.y));
-        return [Math.min(...points.map(p=>p.x)), Math.min(...points.map(p=>p.y)), Math.max(...points.map(p=>p.x)), Math.max(...points.map(p=>p.y))];
-    }
-    function alignAxis(values, targets, tolerance) {
-        let result = {delta:0, target:null}, distance = tolerance;
-        targets.forEach(target => values.forEach(value => {
-            const d = Math.abs(target-value);
-            if (d < distance) { distance = d; result = {delta:target-value, target:target}; }
-        }));
-        return result;
-    }
-    function showSnapLines(g, hits) {
-        snapLines = hits.map((target,axis) => target === null ? null : {
-            a: geometry.point(g.frame, axis === 0 ? target : g.extent[0], axis === 0 ? g.extent[1] : target),
-            b: geometry.point(g.frame, axis === 0 ? target : g.extent[2], axis === 0 ? g.extent[3] : target)
-        }).filter(line => line !== null);
-    }
+    function boxInFrame(bound, inverse) { return editMath.boxInFrame(bound, inverse); }
+    function alignAxis(values, targets, tolerance) { return editMath.alignAxis(values, targets, tolerance); }
+    function showSnapLines(g, hits) { snapLines = editMath.snapLines(g.frame, g.extent, hits); }
     function editable(w) {
         if (!w || w.world_actor || isLocked(w.element.id) || animPreviewing) return false;
-        const parent = document.widgets.find(p => p.element.id === w.element.parent);
+        const parent = widgetsById[w.element.parent];
         return !w.element.parent || (w.layout && w.layout.absolute) || (parent && parent.element.kind === "Canvas");
     }
     function startEdit(kind, x, y, handle) {
         if (gesture || !widget || ((kind === "Move" || kind === "Resize") && !editable(widget))) return false;
         const bound = selectedBounds;
         if (x !== null && (!layoutReady || !bound || !bound.visible)) return false;
-        const parent = bounds.find(w => w.id === widget.element.parent);
+        const parent = boundsById[widget.element.parent] || null;
         const frame = parent ? parent.transform.slice() : [designScale,0,0,designScale,safe[0],safe[1]];
         const frameInverse = geometry.inverse(frame);
         if (x !== null && (!geometry.inverse(bound.transform) || !frameInverse)) return false;
         const extent = parent ? [-parent.size[0]/2,-parent.size[1]/2,parent.size[0]/2,parent.size[1]/2] : [0,0,(previewWidth-safe[0]-safe[2])/designScale,(previewHeight-safe[1]-safe[3])/designScale];
-        const targets = [[extent[0],(extent[0]+extent[2])/2,extent[2]], [extent[1],(extent[1]+extent[3])/2,extent[3]]];
+        const siblingBoxes = [];
         if (frameInverse) bounds.forEach(b => {
-            const w = document.widgets.find(w => w.element.id === b.id);
+            const w = widgetsById[b.id];
             if (b.id === selectedId || !b.visible || !w || w.world_actor || (w.element.parent || "") !== (widget.element.parent || "")) return;
-            const box = boxInFrame(b, frameInverse);
-            for (let axis=0;axis<2;++axis) targets[axis].push(box[axis],(box[axis]+box[axis+2])/2,box[axis+2]);
+            siblingBoxes.push({box: editMath.boxInFrame(b, frameInverse)});
         });
-        for (let axis=0;axis<2;++axis) guideTargets(frame, axis).forEach(t => targets[axis].push(t));
+        const targets = editMath.snapTargets(extent, siblingBoxes, [guideTargets(frame, 0), guideTargets(frame, 1)]);
         const g = {kind: kind, id: selectedId, original: copy(document), token: null,
             offset: (widget.element.offset || [0,0]).slice(), start: {x: x, y: y},
             inverse: bound ? geometry.inverse(bound.transform) : null,
@@ -198,7 +207,7 @@ Item {
             grid: snapGrid, align: snapAlign, step: Math.max(1,snapStep),
             tolerance: [6/(Math.max(0.05,zoom)*Math.hypot(frame[0],frame[1])),6/(Math.max(0.05,zoom)*Math.hypot(frame[2],frame[3]))],
             scale: designScale, committing: false, edit: null, sent: null, busy: false, released: false, canceled: false};
-        const others = selectionIds.slice(1).map(id => document.widgets.find(w => w.element.id === id));
+        const others = selectionIds.slice(1).map(id => widgetsById[id] || null);
         g.group = kind === "Move" && others.length && others.every(w => w && editable(w) && (w.element.parent || "") === (widget.element.parent || ""))
             ? others.map(w => ({id: w.element.id, offset: (w.element.offset || [0,0]).slice()})) : null;
         gesture = g;
@@ -222,9 +231,11 @@ Item {
         if (g.canceled || !g.token || g.busy) return;
         if (g.edit && g.edit !== g.sent) {
             const edit = g.edit; g.sent = edit; g.busy = true;
-            app.invoke("update_interface_edit", {token: g.token, edit: edit}, function(next) {
+            app.invoke("update_interface_edit", {token: g.token, edit: edit, patch: true}, function(reply) {
                 g.busy = false;
                 if (g.canceled || root.gesture !== g) return;
+                const next = root.applyUpdate(reply);
+                if (!next) { root.failEdit(g, "The editor's reply did not match the draft. Try again."); return; }
                 root.document = next;
                 if (g.select !== undefined) { root.extraIds = g.more || []; root.selectedId = g.select; }
                 root.flushEdit(g);
@@ -238,61 +249,42 @@ Item {
             }, function(e) { root.failEdit(g, e); });
         }
     }
+    // An update answers with the whole document or, as asked here, a patch:
+    // every field but the widgets, all ids in order, and the widgets that
+    // changed. Unchanged widgets keep their objects, so their bindings stay put.
+    function applyUpdate(reply) {
+        if (!reply || !Array.isArray(reply.order)) return reply;
+        const changed = Object.create(null);
+        (reply.widgets || []).forEach(w => { changed[w.element.id] = w; });
+        const widgets = reply.order.map(id => changed[id] || widgetsById[id]);
+        if (widgets.some(w => !w)) return null;
+        return Object.assign({}, reply.document, {widgets: widgets});
+    }
     function dragEdit(x, y, modifiers) {
         const g = gesture;
         if (!g || g.released || !g.inverse) return;
-        let dx = x-g.start.x, dy = y-g.start.y;
         const snapping = !(modifiers & Qt.ShiftModifier);
-        let offset = g.offset.slice();
         snapLines = [];
         if (g.kind === "Move") {
+            let dx = x - g.start.x, dy = y - g.start.y;
             if (g.parentInverse) {
                 const a = geometry.point(g.parentInverse, g.start.x, g.start.y), b = geometry.point(g.parentInverse, x, y);
-                dx = b.x-a.x; dy = b.y-a.y;
+                dx = b.x - a.x; dy = b.y - a.y;
             } else { dx /= g.scale; dy /= g.scale; }
-            offset = [g.offset[0]+dx, g.offset[1]+dy];
-            if (g.grid && snapping) offset = offset.map(v => Math.round(v/g.step)*g.step);
-            if (g.align && snapping) {
-                const delta = [offset[0]-g.offset[0],offset[1]-g.offset[1]];
-                const hits = [0,1].map(axis => alignAxis([g.box[axis]+delta[axis],(g.box[axis]+g.box[axis+2])/2+delta[axis],g.box[axis+2]+delta[axis]],g.targets[axis],g.tolerance[axis]));
-                offset = offset.map((v,axis)=>v+hits[axis].delta);
-                showSnapLines(g,hits.map(hit=>hit.target));
-            }
-            g.edit = {kind: "Move", id: g.id, offset: offset};
+            const result = editMath.moveResult(g, dx, dy, snapping);
+            if (result.hits) showSnapLines(g, result.hits);
+            g.edit = {kind: "Move", id: g.id, offset: result.offset};
             if (g.group) {
-                const shift = [offset[0]-g.offset[0], offset[1]-g.offset[1]];
-                g.edit = {kind: "Batch", edits: [g.edit].concat(g.group.map(o => ({kind: "Move", id: o.id, offset: [o.offset[0]+shift[0], o.offset[1]+shift[1]]})))};
+                const shift = [result.offset[0] - g.offset[0], result.offset[1] - g.offset[1]];
+                g.edit = {kind: "Batch", edits: [g.edit].concat(g.group.map(o => ({kind: "Move", id: o.id, offset: [o.offset[0] + shift[0], o.offset[1] + shift[1]]})))};
             }
         } else {
             const a = geometry.point(g.inverse, g.start.x, g.start.y), b = geometry.point(g.inverse, x, y);
-            const direction = g.direction;
-            const constrain = (value,axis) => Math.min(g.maximum[axis],Math.max(g.minimum[axis],value));
-            let size = [direction.x ? g.size[0]+direction.x*(b.x-a.x) : g.size[0], direction.y ? g.size[1]+direction.y*(b.y-a.y) : g.size[1]];
-            size = size.map((v,axis) => (axis === 0 ? direction.x : direction.y) ? constrain(g.grid && snapping ? Math.round(v/g.step)*g.step : v,axis) : v);
-            // Edge alignment is representable only when widget axes match its parent.
-            const origin = geometry.point(g.frameInverse,g.bound.transform[4],g.bound.transform[5]);
-            const axisX = geometry.point(g.frameInverse,g.bound.transform[4]+g.bound.transform[0],g.bound.transform[5]+g.bound.transform[1]);
-            const axisY = geometry.point(g.frameInverse,g.bound.transform[4]+g.bound.transform[2],g.bound.transform[5]+g.bound.transform[3]);
-            const relative = [axisX.x-origin.x,axisX.y-origin.y,axisY.x-origin.x,axisY.y-origin.y];
-            if (g.align && snapping && Math.abs(relative[1])<0.001 && Math.abs(relative[2])<0.001 && relative[0]>0 && relative[3]>0) {
-                const hits = [null,null];
-                [direction.x,direction.y].forEach((d,axis) => {
-                    if (!d) return;
-                    const scale = relative[axis === 0 ? 0 : 3];
-                    const edge = g.box[axis+(d>0 ? 2 : 0)]+d*(size[axis]-g.size[axis])*scale;
-                    const hit = alignAxis([edge],g.targets[axis],g.tolerance[axis]);
-                    const snapped = size[axis]+d*hit.delta/scale;
-                    if (snapped >= g.minimum[axis] && snapped <= g.maximum[axis]) { size[axis] = snapped; hits[axis] = hit.target; }
-                });
-                showSnapLines(g,hits);
-            }
             const w = g.original.widgets.find(w => w.element.id === g.id);
-            const fractions = {TopLeft:[0,0], Top:[0.5,0], TopRight:[1,0], Left:[0,0.5], Center:[0.5,0.5], Right:[1,0.5], BottomLeft:[0,1], Bottom:[0.5,1], BottomRight:[1,1]};
-            const f = w.layout && w.layout.absolute ? [0,0] : fractions[w.element.anchor || "Center"];
-            const delta = [size[0]-g.size[0],size[1]-g.size[1]];
-            const center = [direction.x*delta[0]/2,direction.y*delta[1]/2];
-            offset = [g.offset[0]+relative[0]*center[0]+relative[2]*center[1]+(f[0]-0.5)*delta[0], g.offset[1]+relative[1]*center[0]+relative[3]*center[1]+(f[1]-0.5)*delta[1]];
-            g.edit = {kind: "Resize", id: g.id, size: size, offset: offset};
+            const fraction = w.layout && w.layout.absolute ? [0, 0] : editMath.anchorFractions[w.element.anchor || "Center"];
+            const result = editMath.resizeResult(g, a, b, snapping, fraction);
+            if (result.hits) showSnapLines(g, result.hits);
+            g.edit = {kind: "Resize", id: g.id, size: result.size, offset: result.offset};
         }
         flushEdit(g);
     }
@@ -348,12 +340,12 @@ Item {
         if (widget) submitEdit({kind: "SetProperty", id: selectedId, property: {path: path, value: value}});
     }
     function descendant(id, ancestor) {
-        const visited = [];
-        let w = document.widgets.find(w => w.element.id === id);
-        while (w && visited.indexOf(w.element.id) < 0) {
+        const visited = Object.create(null);
+        let w = widgetsById[id];
+        while (w && !visited[w.element.id]) {
             if (w.element.id === ancestor) return true;
-            visited.push(w.element.id);
-            w = document.widgets.find(p => p.element.id === w.element.parent);
+            visited[w.element.id] = true;
+            w = widgetsById[w.element.parent];
         }
         return false;
     }
@@ -362,27 +354,19 @@ Item {
         const target = document.widgets.find(w => w.element.id === parentId);
         let placement = {mode: "Flow"};
         if (!target || target.element.kind === "Canvas") {
-            const bound = selectedBounds, parent = bounds.find(w => w.id === parentId);
+            const bound = selectedBounds, parent = boundsById[parentId] || null;
             if (!layoutReady || !bound || (target && !parent)) { error = "Wait for matching geometry before reparenting."; return; }
             if (!bound.visible || (parent && !parent.visible)) { error = "Show all screens before reparenting into a hidden tree."; return; }
-            const transform = parent ? geometry.inverse(parent.transform) : [1/designScale,0,0,1/designScale,-safe[0]/designScale,-safe[1]/designScale];
-            if (!transform) { error = "The parent transform cannot be inverted."; return; }
-            const corner = geometry.point(bound.transform,-bound.size[0]/2,-bound.size[1]/2);
-            const at = geometry.point(transform,corner.x,corner.y);
-            const x = geometry.point(bound.transform,bound.size[0]/2,-bound.size[1]/2);
-            const y = geometry.point(bound.transform,-bound.size[0]/2,bound.size[1]/2);
-            const right = geometry.point(transform,x.x,x.y), bottom = geometry.point(transform,y.x,y.y);
-            if (Math.abs(right.y-at.y)>0.01 || Math.abs(bottom.x-at.x)>0.01 || right.x<=at.x || bottom.y<=at.y) {
-                error = "This transform cannot preserve placement in the new parent."; return;
-            }
-            placement = {mode: "Free", offset: [at.x+(parent ? parent.size[0]/2 : 0),at.y+(parent ? parent.size[1]/2 : 0)], size: [right.x-at.x,bottom.y-at.y]};
+            const result = editMath.reparentPlacement(bound, parent || null, designScale, safe);
+            if (result.error) { error = result.error; return; }
+            placement = result.placement;
         }
         submitEdit({kind: "Reparent", id: selectedId, parent: parentId, placement: placement});
     }
     Keys.priority: Keys.AfterItem
     Keys.onPressed: event => {
         if (event.key === Qt.Key_Escape && gesture) { cancelEdit(); event.accepted = true; }
-        else if ((event.key === Qt.Key_Delete || event.key === Qt.Key_Backspace) && activeFocus && designing && !gesture && widget) { removeSelected(); event.accepted = true; }
+        else if (event.key === Qt.Key_Delete && activeFocus && designing && !gesture && widget) { removeSelected(); event.accepted = true; }
         else event.accepted = nudge(event);
     }
     Keys.onReleased: event => {
@@ -406,6 +390,11 @@ Item {
         && frameLayout.revision === revision && frameLayout.generation === generation
         && frameLayout.viewport[0] === previewWidth && frameLayout.viewport[1] === previewHeight
     readonly property var bounds: layoutReady ? frameLayout.widgets : []
+    readonly property var boundsById: {
+        const m = Object.create(null);
+        bounds.forEach(b => { m[b.id] = b; });
+        return m;
+    }
     function receiveLayout(text) {
         try { frameLayout = text ? JSON.parse(text) : null; } catch(e) { frameLayout = null; }
     }
@@ -414,7 +403,7 @@ Item {
         ++revision;
         frameLayout = null;
         app.invoke("preview_interface", {design: {revision: revision, generation: generation,
-            viewport: [previewWidth, previewHeight], screen: screenId || null, hidden: hiddenList,
+            viewport: [previewWidth, previewHeight], screen: screenId || null, hidden: hiddenList, world: showWorld,
             animation: animPreviewing ? {name: animPreviewName, time: animPreviewTime} : null, document: copy(document)}},
             function() { root.error = ""; }, function(e) { root.error = String(e); });
     }
@@ -446,13 +435,13 @@ Item {
     }
     onPreviewWidthChanged: { cancelEdit(); ++generation; frameLayout = null; if (designing) previewDelay.restart(); }
     onPreviewHeightChanged: { cancelEdit(); ++generation; frameLayout = null; if (designing) previewDelay.restart(); }
-    onSelectedIdChanged: { if (gesture && gesture.keyboard) cancelEdit(); overlay.requestPaint(); }
-    onHoveredIdChanged: overlay.requestPaint()
-    onMarqueeChanged: overlay.requestPaint()
-    onExtraIdsChanged: overlay.requestPaint()
-    onSnapLinesChanged: overlay.requestPaint()
-    onFrameLayoutChanged: overlay.requestPaint()
-    onLayoutReadyChanged: overlay.requestPaint()
+    onSelectedIdChanged: { if (gesture && gesture.keyboard) cancelEdit(); viewport.repaint(); Qt.callLater(loadOverrides); }
+    onHoveredIdChanged: viewport.repaint()
+    onMarqueeChanged: viewport.repaint()
+    onExtraIdsChanged: viewport.repaint()
+    onSnapLinesChanged: viewport.repaint()
+    onFrameLayoutChanged: viewport.repaint()
+    onLayoutReadyChanged: viewport.repaint()
     Timer { id: previewDelay; interval: 80; onTriggered: root.requestPreview() }
     readonly property double savedRevision: app.appState.sync ? app.appState.sync.revision : 0
     onSavedRevisionChanged: { if (gesture && !gesture.committing) cancelEdit(); frameLayout = null; if (designing) previewDelay.restart(); }
@@ -488,7 +477,7 @@ Item {
     }
     function loadPropertyKinds() {
         app.invoke("interface_properties", {}, function(list) {
-            const m = {};
+            const m = Object.create(null);
             for (const p of (list || [])) m[p.path] = p.kinds || [];
             root.propertyKinds = m;
             root.propertyInfo = list || [];
@@ -499,28 +488,41 @@ Item {
     property int previewHeight: 720
     readonly property var safe: document.safe_area || [0,0,0,0]
     readonly property real designScale: document.scale === "ScaleWithSize" ? Math.max(0.01, Math.min((previewWidth-safe[0]-safe[2])/(document.reference_size || [960,720])[0], (previewHeight-safe[1]-safe[3])/(document.reference_size || [960,720])[1])) : 1
-    readonly property real fitZoom: Math.min((stage.width - 32) / previewWidth, (stage.height - 32) / previewHeight)
+    readonly property real fitZoom: Math.min((viewport.stageWidth - 32) / previewWidth, (viewport.stageHeight - 32) / previewHeight)
     // Zoom follows the fit until the user sets one; panning is the canvas offset from centre.
     property real zoom: fitZoom
     property real panX: 0
     property real panY: 0
     function fitView() { zoom = Qt.binding(() => fitZoom); panX = 0; panY = 0; }
     function actualSize() { zoom = 1; panX = 0; panY = 0; }
+    function zoomBy(factor) { zoomAt(viewport.stageWidth / 2, viewport.stageHeight / 2, factor); }
+    function setPreviewSize(w, h) {
+        if (w === previewWidth && h === previewHeight) return;
+        previewWidth = w; previewHeight = h;
+        if (prefs) { prefs.previewWidth = w; prefs.previewHeight = h; }
+    }
     // Zooms by `factor` keeping the preview point under the stage position (sx, sy) where it is.
     function zoomAt(sx, sy, factor) {
         const old = Math.max(0.05, zoom);
         const next = Math.max(0.1, Math.min(8, old * factor));
-        const cx = previewWidth / 2 + (sx - stage.width / 2 - panX) / old;
-        const cy = previewHeight / 2 + (sy - stage.height / 2 - panY) / old;
+        const cx = previewWidth / 2 + (sx - viewport.stageWidth / 2 - panX) / old;
+        const cy = previewHeight / 2 + (sy - viewport.stageHeight / 2 - panY) / old;
         zoom = next;
-        panX = sx - stage.width / 2 - (cx - previewWidth / 2) * next;
-        panY = sy - stage.height / 2 - (cy - previewHeight / 2) * next;
+        panX = sx - viewport.stageWidth / 2 - (cx - previewWidth / 2) * next;
+        panY = sy - viewport.stageHeight / 2 - (cy - previewHeight / 2) * next;
     }
     function copy(v) { return JSON.parse(JSON.stringify(v)); }
+    property var lastSaved: null
+    property var lastDocument: null
     function refresh() {
         if (gesture) return;
         const saved = app.appState.project ? app.appState.project.world.interface : null;
-        if (saved && JSON.stringify(saved) !== JSON.stringify(document)) document = copy(saved);
+        // Skip the comparison while the snapshot and our copy of it are both unchanged.
+        if (saved && (saved !== lastSaved || document !== lastDocument)) {
+            lastSaved = saved;
+            if (JSON.stringify(saved) !== JSON.stringify(document)) document = copy(saved);
+            lastDocument = document;
+        }
         if (selected < 0) selectedId = "";
     }
     readonly property string projectId: app.appState.project ? app.appState.project.id || "" : ""
@@ -532,37 +534,37 @@ Item {
             if (g.token && !g.committing) app.invoke("cancel_interface_edit", {token: g.token});
         }
     }
-    Component.onCompleted: { loadPropertyKinds(); refresh(); if (designing) updateSession(); }
+    Component.onCompleted: {
+        loadPropertyKinds(); refresh(); if (designing) updateSession();
+        if (prefs) {
+            try { if (prefs.folds) folded = Object.assign({}, folded, JSON.parse(prefs.folds)); } catch (e) {}
+            previewWidth = prefs.previewWidth; previewHeight = prefs.previewHeight;
+        }
+    }
     Connections {
         target: root.app
         function onAppStateChanged() { root.refresh(); }
         function onPreviewLayoutChanged() { if (root.designing && !root.embedded) Qt.callLater(() => root.receiveLayout(root.app.previewLayout)); }
     }
-    function save(next) {
-        if (gesture) return;
-        document = next;
-        app.invoke("set_interface", {document: next}, function() { root.error = ""; }, function(e) { root.error = String(e); root.refresh(); });
-    }
     function change(field, value) {
         if (!widget) return;
         propertyEdit("element." + field, value);
     }
-    readonly property var typedFields: ["layout","style","class","bindings","actions","variants","items","tooltip","scroll_target","tab_index","transition"]
+    // Fields written through a plain SetProperty of the same name.
     function extra(field, value) {
         if (!widget) return;
-        if (typedFields.indexOf(field) >= 0) { propertyEdit(field, value); return; }
-        const next = copy(document); next.widgets[selected][field] = value; save(next);
+        propertyEdit(field, value);
     }
     function paint(field, value) {
         if (!widget) return;
         const style = copy(widget.style || {});
-        if (!style[styleState.currentText]) style[styleState.currentText] = {};
-        style[styleState.currentText][field] = value;
+        if (!style[styleStateName]) style[styleStateName] = {};
+        style[styleStateName][field] = value;
         extra("style", style);
     }
     // Image fit as the inspector sees it: auto, stretch, sliced or tiled.
     function imageFit() {
-        const fit = widget ? ((widget.style || {})[styleState.currentText] || {}).image_fit : null;
+        const fit = widget ? ((widget.style || {})[styleStateName] || {}).image_fit : null;
         if (!fit) return {mode: "auto", border: [0,0,0,0]};
         if (fit === "Stretch") return {mode: "stretch", border: [0,0,0,0]};
         if (fit === "Tiled") return {mode: "tiled", border: [0,0,0,0]};
@@ -578,7 +580,7 @@ Item {
     function inheritedPaint(field) {
         if (!widget || !widget.class || !document.styles) return null;
         const sheet = document.styles[widget.class];
-        const paint = sheet ? sheet[styleState.currentText] : null;
+        const paint = sheet ? sheet[styleStateName] : null;
         return paint && paint[field] !== undefined && paint[field] !== null ? paint[field] : null;
     }
     function saveClass(name) {
@@ -612,9 +614,9 @@ Item {
         return base + n;
     }
     readonly property var containerKinds: ["Canvas","VerticalBox","HorizontalBox","Grid","WrapBox"]
-    function add(kind, x, y) {
+    function add(kind, x, y, dropped) {
         const id = uniqueId(kind.toLowerCase());
-        const parent = widget && !widget.world_actor && containerKinds.indexOf(widget.element.kind) >= 0 && x === 20 && y === 20 ? widget : null;
+        const parent = !dropped && widget && !widget.world_actor && containerKinds.indexOf(widget.element.kind) >= 0 ? widget : null;
         const free = !parent || parent.element.kind === "Canvas";
         // Values use the core's tagged representation; default values can be omitted.
         const created = {element: {id: id, kind: kind, content: ["Label","Button","RichText","Toggle"].indexOf(kind) >= 0 ? kind : "", anchor: "TopLeft", offset: free ? [Math.round(x),Math.round(y)] : [0,0], size: [180, kind === "Panel" || kind === "ListView" ? 180 : 40], parent: parent ? parent.element.id : "", modal: false, range: [0,100]}, style: {}, bindings: [], items: []};
@@ -622,7 +624,7 @@ Item {
     }
     function duplicateSelected() {
         if (!widget || widget.world_actor) return;
-        const taken = {};
+        const taken = Object.create(null);
         document.widgets.forEach(w => { taken[w.element.id] = true; });
         const edits = [];
         topLevelSelection().forEach(id => {
@@ -648,13 +650,43 @@ Item {
         const prefabs = document.prefabs || {};
         const root = (prefabs[name] || []).find(w => !w.element.parent);
         if (!root) return;
-        const taken = {};
+        const taken = Object.create(null);
         document.widgets.forEach(w => { taken[w.element.id] = true; });
         let n = 1;
         while (taken["i" + n + "." + root.element.id]) n++;
         const prefix = "i" + n + ".";
         const parent = widget && !widget.world_actor ? widget.element.id : "";
         structuralEdit({kind: "InstantiatePrefab", name: name, prefix: prefix, parent: parent}, prefix + root.element.id, []);
+    }
+    readonly property var kindIcons: ({
+        Panel: "square", Canvas: "square-dashed", VerticalBox: "layout-panel-top", HorizontalBox: "panel-left", Grid: "layout-grid",
+        WrapBox: "boxes", SizeBox: "maximize", Spacer: "move", Label: "type", RichText: "file-text", Image: "image",
+        Progress: "gauge", RadialProgress: "loader-circle", Tooltip: "message-square", Button: "mouse-pointer-click",
+        Toggle: "toggle-left", Slider: "sliders-horizontal", Input: "text-cursor-input", Select: "chevron-down",
+        Tabs: "panels-top-left", Scrollbar: "grip-vertical", List: "list", ListView: "list-ordered"})
+    function kindIcon(kind) { return kindIcons[kind] || "square"; }
+    // Inspector sections start folded when they are rarely needed; the choice is remembered.
+    property var folded: ({advanced: true, responsive: true, component: true, animation: true})
+    function toggleFold(key) {
+        const next = Object.assign({}, folded);
+        next[key] = !next[key];
+        folded = next;
+        try { if (prefs) prefs.folds = JSON.stringify(next); } catch (e) {}
+    }
+    // A palette tile released over the viewport adds its kind at the pointer.
+    function dropKind(kind, item, x, y) {
+        const c = viewport.canvasItem;
+        const p = c.mapFromItem(item, x, y);
+        if (p.x >= 0 && p.y >= 0 && p.x < c.width && p.y < c.height)
+            add(kind, Math.round((p.x - safe[0]) / designScale), Math.round((p.y - safe[1]) / designScale), true);
+    }
+    property string styleStateName: "normal"
+    property string animName: ""
+    property var overrides: []
+    function loadOverrides() {
+        const w = widget;
+        if (!designing || !w || !w.instance_of) { overrides = []; return; }
+        app.invoke("interface_overrides", {id: w.element.id}, function(list) { root.overrides = list || []; }, function() { root.overrides = []; });
     }
     function describeAction(a) {
         const run = a.run || {};
@@ -719,6 +751,56 @@ Item {
             if (Number(time) > a.duration) a.duration = Number(time);
         });
     }
+    // Changes one key in place: any of time, value and ease.
+    function setKey(name, trackIndex, keyIndex, patch) {
+        withAnimation(name, a => {
+            const track = a.tracks[trackIndex];
+            if (!track || !track.keys[keyIndex]) return;
+            const key = track.keys[keyIndex];
+            Object.assign(key, patch);
+            if (patch.time !== undefined) {
+                track.keys = track.keys.filter((other, i) => i === keyIndex || other.time !== key.time);
+                track.keys.sort((x, y) => x.time - y.time);
+                if (key.time > a.duration) a.duration = key.time;
+            }
+        });
+    }
+    // What the selected widget has now for an animatable property, if it says.
+    function currentValue(prop) {
+        if (!widget) return undefined;
+        const st = (widget.style || {})[styleStateName] || {};
+        switch (prop) {
+        case "Width": return (widget.element.size || [0, 0])[0];
+        case "Height": return (widget.element.size || [0, 0])[1];
+        case "TextSize": return st.text_size;
+        case "CornerRadius": return st.radius;
+        case "Padding": return widget.layout && widget.layout.padding ? widget.layout.padding[0] : undefined;
+        case "Opacity": return fxValue("opacity");
+        case "OffsetX": return fxValue("offset_x");
+        case "OffsetY": return fxValue("offset_y");
+        case "Rotation": return fxValue("rotation");
+        case "Background": return st.background;
+        case "TextColor": return st.text_color;
+        }
+        return undefined;
+    }
+    function fxValue(key) {
+        const fx = widget && widget.fx ? widget.fx : {};
+        const offset = fx.offset || [0, 0];
+        if (key === "opacity") return fx.opacity === undefined ? 1 : fx.opacity;
+        if (key === "offset_x") return offset[0];
+        if (key === "offset_y") return offset[1];
+        return fx.rotation || 0;
+    }
+    function setFx(key, value) {
+        if (!widget || !Number.isFinite(value)) return;
+        const next = {opacity: fxValue("opacity"), offset: [fxValue("offset_x"), fxValue("offset_y")], rotation: fxValue("rotation")};
+        if (key === "opacity") next.opacity = Math.max(0, Math.min(1, value));
+        else if (key === "offset_x") next.offset[0] = value;
+        else if (key === "offset_y") next.offset[1] = value;
+        else next.rotation = value;
+        propertyEdit("fx", next);
+    }
     function removeTrack(name, index) {
         withAnimation(name, a => { a.tracks.splice(index, 1); });
     }
@@ -753,6 +835,17 @@ Item {
     function removeVariant(index) {
         if (!widget) return;
         propertyEdit("variants", (widget.variants || []).filter((v, i) => i !== index));
+    }
+    function addBinding(property, actor, name, twoWay) {
+        if (!widget || !name) return;
+        const next = copy(widget.bindings || []).filter(b => b.property !== property);
+        next.push({property: property, source: {Variable: {actor: actor, name: name}}, two_way: !!twoWay});
+        propertyEdit("bindings", next);
+    }
+    function variantActive(v) {
+        const w = v.when || {};
+        return (w.min_width == null || previewWidth >= w.min_width) && (w.max_width == null || previewWidth <= w.max_width)
+            && (w.min_height == null || previewHeight >= w.min_height) && (w.max_height == null || previewHeight <= w.max_height);
     }
     function removeBinding(index) {
         if (!widget) return;
@@ -801,780 +894,160 @@ Item {
     // Align or distribute the selection inside its shared parent, as one Batch of Moves.
     function arrange(op) {
         const ids = topLevelSelection();
-        const widgets = ids.map(id => document.widgets.find(w => w.element.id === id));
+        const widgets = ids.map(id => widgetsById[id]);
         const need = op === "hdist" || op === "vdist" ? 3 : 2;
         if (!layoutReady || widgets.length < need) return false;
         const parentId = widgets[0].element.parent || "";
         if (!widgets.every(w => editable(w) && (w.element.parent || "") === parentId)) { error = "Select free-placed widgets that share a parent."; return false; }
-        const parent = bounds.find(b => b.id === parentId);
+        const parent = boundsById[parentId] || null;
         const frame = parent ? parent.transform.slice() : [designScale,0,0,designScale,safe[0],safe[1]];
         const inverse = geometry.inverse(frame);
-        const boxes = {};
+        const boxes = Object.create(null);
         for (const id of ids) {
-            const b = bounds.find(x => x.id === id);
+            const b = boundsById[id];
             if (!b || !b.visible || !inverse) { error = "Wait for matching geometry before arranging."; return false; }
-            const origin = geometry.point(inverse, b.transform[4], b.transform[5]);
-            const ax = geometry.point(inverse, b.transform[4]+b.transform[0], b.transform[5]+b.transform[1]);
-            const ay = geometry.point(inverse, b.transform[4]+b.transform[2], b.transform[5]+b.transform[3]);
-            if (Math.abs(ax.y-origin.y) > 0.001 || Math.abs(ay.x-origin.x) > 0.001 || ax.x <= origin.x || ay.y <= origin.y) { error = "Rotated widgets cannot be aligned."; return false; }
-            boxes[id] = boxInFrame(b, inverse);
+            const box = editMath.alignedBox(b, inverse);
+            if (!box) { error = "Rotated widgets cannot be aligned."; return false; }
+            boxes[id] = box;
         }
-        const axis = op === "left" || op === "hcenter" || op === "right" || op === "hdist" ? 0 : 1;
-        const lo = id => boxes[id][axis], hi = id => boxes[id][axis+2], mid = id => (lo(id)+hi(id))/2;
-        const delta = {};
-        if (op === "hdist" || op === "vdist") {
-            const sorted = ids.slice().sort((a, b) => mid(a) - mid(b));
-            const span = hi(sorted[sorted.length-1]) - lo(sorted[0]);
-            const total = sorted.reduce((sum, id) => sum + hi(id) - lo(id), 0);
-            const gap = (span - total) / (sorted.length - 1);
-            let at = lo(sorted[0]);
-            sorted.forEach(id => { delta[id] = at - lo(id); at += hi(id) - lo(id) + gap; });
-        } else {
-            const first = op === "left" || op === "top", last = op === "right" || op === "bottom";
-            const target = first ? Math.min(...ids.map(lo)) : last ? Math.max(...ids.map(hi)) : (Math.min(...ids.map(lo)) + Math.max(...ids.map(hi))) / 2;
-            ids.forEach(id => { delta[id] = target - (first ? lo(id) : last ? hi(id) : mid(id)); });
-        }
-        const edits = widgets.filter(w => Math.abs(delta[w.element.id]) > 0.005).map(w => {
+        const result = editMath.arrangeDeltas(op, ids, boxes);
+        const edits = widgets.filter(w => Math.abs(result.delta[w.element.id]) > 0.005).map(w => {
             const offset = (w.element.offset || [0,0]).slice();
-            offset[axis] = Math.round((offset[axis] + delta[w.element.id]) * 100) / 100;
+            offset[result.axis] = Math.round((offset[result.axis] + result.delta[w.element.id]) * 100) / 100;
             return {kind: "Move", id: w.element.id, offset: offset};
         });
         if (!edits.length) return true;
         return structuralEdit(edits.length === 1 ? edits[0] : {kind: "Batch", edits: edits}, selectedId, extraIds.slice());
     }
+    function renameWidget(id, newId) {
+        const next = (newId || "").trim();
+        if (!id || !next || next === id) return false;
+        if (widgetsById[next]) { error = "A widget named " + next + " already exists."; return false; }
+        const was = extraIds.slice();
+        return structuralEdit({kind: "Rename", id: id, new_id: next}, selectedId === id ? next : selectedId, was.map(x => x === id ? next : x));
+    }
+    // `entry` is one line of instance_overrides: "widget id: path".
+    function resetOverride(entry) {
+        if (!widget || !widget.instance_of) return false;
+        const at = entry.lastIndexOf(": ");
+        if (at < 0) return false;
+        const target = entry.slice(0, at), path = entry.slice(at + 2);
+        if (path === "added" || path === "removed") { error = "Use Reset to component or Detach for added and removed widgets."; return false; }
+        return structuralEdit({kind: "ResetField", instance: widget.element.id, widget: target, path: path}, selectedId, extraIds.slice());
+    }
     function removeSelected() {
         if (!widget) return;
         const edits = topLevelSelection().map(id => ({kind: "Delete", id: id}));
         structuralEdit(edits.length === 1 ? edits[0] : {kind: "Batch", edits: edits}, "");
-    }
+    }    // ── Layout: palette and tree, viewport, inspector ──────────────────────
+    property real leftWidth: 230
+    property real rightWidth: 310
+    readonly property bool hasSelection: selectionIds.length > 0
+    readonly property bool canEdit: designing && !gesture
     RowLayout {
         anchors.fill: parent; spacing: 0
-        ColumnLayout {
-            Layout.preferredWidth: 170; Layout.fillHeight: true; spacing: 6
-            Label { text: "Widgets"; font.bold: true; padding: 8 }
-            ScrollView {
-                Layout.fillWidth: true; Layout.preferredHeight: 210
-                Column {
-                    width: parent.width
-                    Repeater {
-                        model: root.kinds
-                        delegate: Button {
-                            required property string modelData
-                            width: 158; height: 29; text: modelData
-                            onClicked: root.add(modelData,20,20)
-                            DragHandler {
-                                target: null
-                                onActiveChanged: if (!active) {
-                                    const p=canvas.mapFromItem(parent,centroid.position.x,centroid.position.y);
-                                    if (p.x>=0 && p.y>=0 && p.x<canvas.width && p.y<canvas.height) root.add(parent.modelData,(p.x-root.safe[0])/root.designScale,(p.y-root.safe[1])/root.designScale);
-                                }
-                            }
-                        }
-                    }
+
+        Rectangle {
+            Layout.preferredWidth: root.leftWidth; Layout.minimumWidth: 180; Layout.maximumWidth: 380
+            Layout.fillHeight: true
+            color: Theme.panel
+            ColumnLayout {
+                anchors.fill: parent; anchors.margins: 10; spacing: 6
+                SectionLabel { label: "Widgets"; Layout.fillWidth: true; topPadding: 0 }
+                Flickable {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.min(palette.implicitHeight, 300)
+                    contentHeight: palette.implicitHeight; contentWidth: width
+                    clip: true; boundsBehavior: Flickable.StopAtBounds
+                    UiPalette { id: palette; designer: root; width: parent.width }
                 }
-            }
-            Label { text: "Hierarchy"; font.bold: true; padding: 8 }
-            TextField {
-                objectName: "interfaceSearch"
-                Layout.fillWidth: true; Layout.leftMargin: 6; Layout.rightMargin: 6
-                placeholderText: "Search widgets"
-                text: root.search
-                onTextEdited: root.search = text
-            }
-            ListView {
-                objectName: "interfaceTree"
-                Layout.fillWidth: true; Layout.fillHeight: true; clip: true
-                model: root.treeRows
-                delegate: ItemDelegate {
-                    required property var modelData
-                    width: ListView.view.width; height: 30
-                    highlighted: root.selectionIds.indexOf(modelData.id) >= 0
-                    onClicked: { if (Qt.application.keyboardModifiers & (Qt.ControlModifier | Qt.ShiftModifier)) root.toggleSelected(modelData.id); else root.selectOnly(modelData.id); root.forceActiveFocus(); }
-                    contentItem: RowLayout {
-                        spacing: 2
-                        Item { Layout.preferredWidth: 10 + modelData.depth * 14 }
-                        ToolButton {
-                            objectName: "interfaceFold"
-                            Layout.preferredWidth: 22; Layout.preferredHeight: 24
-                            text: modelData.kids ? (modelData.collapsed ? "\u25B8" : "\u25BE") : ""
-                            enabled: modelData.kids > 0
-                            onClicked: root.toggleCollapsed(modelData.id)
-                        }
-                        Label { Layout.fillWidth: true; elide: Text.ElideRight; text: modelData.id; opacity: root.hiddenIds[modelData.id] ? 0.4 : (root.isLocked(modelData.id) ? 0.6 : 1) }
-                        ToolButton {
-                            objectName: "interfaceHide"
-                            Layout.preferredWidth: 26; Layout.preferredHeight: 24
-                            text: root.hiddenIds[modelData.id] ? "\u25CB" : "\u25CF"
-                            ToolTip.visible: hovered; ToolTip.text: root.hiddenIds[modelData.id] ? "Show in preview (editor only)" : "Hide in preview (editor only)"
-                            onClicked: root.toggleHidden(modelData.id)
-                        }
-                        ToolButton {
-                            objectName: "interfaceLock"
-                            Layout.preferredWidth: 26; Layout.preferredHeight: 24
-                            text: root.isLocked(modelData.id) ? "\uD83D\uDD12" : "\u00B7"
-                            ToolTip.visible: hovered; ToolTip.text: root.isLocked(modelData.id) ? "Unlock (editor only)" : "Lock in the viewport (editor only)"
-                            onClicked: root.toggleLock(modelData.id)
-                        }
-                    }
-                }
-            }
-            RowLayout {
-                Button { objectName: "interfaceEarlier"; text: "Earlier"; enabled: root.designing && !root.gesture && root.siblingIndex > 0; onClicked: root.reorderSibling(-1) }
-                Button { objectName: "interfaceLater"; text: "Later"; enabled: root.designing && !root.gesture && root.siblingIndex >= 0 && root.siblingIndex+1 < root.siblings.length; onClicked: root.reorderSibling(1) }
-            }
-            Label { Layout.fillWidth: true; wrapMode: Text.Wrap; text: "Sibling order controls flow layout and draw order." }
-            GridLayout {
-                columns: 4; Layout.leftMargin: 6; Layout.rightMargin: 6
-                enabled: root.designing && !root.gesture && root.selectionIds.length > 1
-                Repeater {
-                    model: [["Left","left"],["Mid","hcenter"],["Right","right"],["Space H","hdist"],["Top","top"],["Mid","vcenter"],["Bottom","bottom"],["Space V","vdist"]]
-                    delegate: Button {
-                        required property var modelData
-                        objectName: "interfaceArrange_" + modelData[1]
-                        Layout.fillWidth: true; Layout.preferredWidth: 1; text: modelData[0]
-                        onClicked: root.arrange(modelData[1])
-                    }
-                }
-            }
-            RowLayout {
-                Button { objectName: "interfaceDuplicate"; text: "Duplicate"; enabled: root.designing && !root.gesture && !!root.widget && !root.widget.world_actor; onClicked: root.duplicateSelected() }
-                Button { objectName: "interfaceDelete"; text: "Delete"; enabled: root.designing && !root.gesture && !!root.widget; onClicked: root.removeSelected() }
+                SectionLabel { label: "Hierarchy"; Layout.fillWidth: true }
+                UiHierarchy { objectName: "interfaceHierarchy"; designer: root; Layout.fillWidth: true; Layout.fillHeight: true }
             }
         }
-        ColumnLayout {
-            Layout.fillWidth: true; Layout.fillHeight: true
-            RowLayout {
-                Label { text: "Screen" }
-                ComboBox {
-                    objectName: "interfaceScreen"
-                    model: ["All screens"].concat(root.screens)
-                    currentIndex: root.screenId ? root.screens.indexOf(root.screenId) + 1 : 0
-                    onActivated: root.screenId = currentIndex > 0 ? root.screens[currentIndex - 1] : ""
-                }
-                ComboBox { model: ["960 × 720","1280 × 720","1920 × 1080","720 × 1280","1170 × 2532","2560 × 1440"]; onActivated: { const sizes=[[960,720],[1280,720],[1920,1080],[720,1280],[1170,2532],[2560,1440]]; root.previewWidth=sizes[currentIndex][0]; root.previewHeight=sizes[currentIndex][1]; } }
-                ComboBox { model: ["Dark","Light","HighContrast"]; currentIndex: model.indexOf(root.document.theme || "Dark"); onActivated: root.structuralEdit({kind: "SetDocument", theme: currentText}, root.selectedId, root.extraIds.slice()) }
-                ComboBox { model: ["ConstantPixel","ScaleWithSize"]; currentIndex: model.indexOf(root.document.scale || "ConstantPixel"); onActivated: root.structuralEdit({kind: "SetDocument", scale: currentText}, root.selectedId, root.extraIds.slice()) }
-                Item { Layout.fillWidth: true }
+        Rectangle {
+            Layout.preferredWidth: 5; Layout.fillHeight: true; color: leftSplit.containsMouse || leftSplit.pressed ? Theme.accent : Theme.borderSoft
+            MouseArea {
+                id: leftSplit
+                anchors.fill: parent; anchors.leftMargin: -3; anchors.rightMargin: -3
+                hoverEnabled: true; cursorShape: Qt.SplitHCursor
+                property real startX: 0
+                property real startWidth: 0
+                onPressed: mouse => { startX = mapToItem(root, mouse.x, 0).x; startWidth = root.leftWidth; }
+                onPositionChanged: mouse => { if (pressed) root.leftWidth = Math.max(180, Math.min(380, startWidth + mapToItem(root, mouse.x, 0).x - startX)); }
             }
-            RowLayout {
-                CheckBox { text: "Grid"; checked: root.snapGrid; onToggled: root.snapGrid = checked }
-                SpinBox { from: 1; to: 256; value: root.snapStep; editable: true; onValueModified: root.snapStep = value }
-                Label { text: "px" }
-                CheckBox { objectName: "interfaceSafeArea"; text: "Safe area"; checked: root.showSafeArea; onToggled: root.showSafeArea = checked }
-                CheckBox { objectName: "interfaceReference"; text: "Reference size"; checked: root.showReference; onToggled: root.showReference = checked }
-                Button { objectName: "interfaceFit"; text: "Fit"; onClicked: root.fitView() }
-                Button { objectName: "interfaceActualSize"; text: "100%"; onClicked: root.actualSize() }
-                Label { objectName: "interfaceZoomLabel"; text: Math.round(root.zoom * 100) + "%" }
-                CheckBox { objectName: "interfaceRulers"; text: "Rulers"; checked: root.showRulers; onToggled: root.showRulers = checked }
-                Button { objectName: "interfaceClearGuides"; text: "Clear guides"; enabled: root.guides.length > 0; onClicked: root.guides = [] }
-                CheckBox { text: "Align edges/centers"; checked: root.snapAlign; onToggled: root.snapAlign = checked }
-                Label { text: "Hold Shift to bypass snapping" }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumWidth: 280
+            spacing: 0
+            Rectangle {
+                Layout.fillWidth: true; Layout.preferredHeight: toolbar.height + 16
+                color: Theme.panel
+                UiToolbar { id: toolbar; objectName: "interfaceToolbar"; designer: root; x: 10; y: 8; width: parent.width - 20 }
             }
             Rectangle {
-                id: stage; Layout.fillWidth: true; Layout.fillHeight: true; color: Theme.canvas; clip: true
-                // Ctrl+wheel zooms at the pointer; the wheel pans (Shift for sideways); middle-drag pans.
-                WheelHandler {
-                    objectName: "interfaceWheel"
-                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-                    onWheel: event => {
-                        const dy = event.angleDelta.y, dx = event.angleDelta.x;
-                        if (event.modifiers & Qt.ControlModifier) root.zoomAt(point.position.x, point.position.y, Math.pow(1.0015, dy));
-                        else if (event.modifiers & Qt.ShiftModifier) root.panX += (dy || dx) / 2;
-                        else { root.panX += dx / 2; root.panY += dy / 2; }
-                    }
-                }
-                DragHandler {
-                    objectName: "interfacePan"
-                    acceptedButtons: Qt.MiddleButton
-                    target: null
-                    property real lastX: 0
-                    property real lastY: 0
-                    onActiveChanged: { lastX = 0; lastY = 0; }
-                    onTranslationChanged: { root.panX += translation.x - lastX; root.panY += translation.y - lastY; lastX = translation.x; lastY = translation.y; }
-                }
-                // Rulers: drag out of one for a guide, and drag a guide back onto it to remove it.
-                Repeater {
-                    model: root.showRulers ? [0, 1] : []
-                    delegate: Item {
-                        id: ruler
-                        required property int modelData
-                        // The top ruler measures x and pulls out horizontal guides; the left one the reverse.
-                        readonly property int measures: modelData
-                        readonly property int makes: 1 - modelData
-                        objectName: measures === 0 ? "interfaceRulerTop" : "interfaceRulerLeft"
-                        z: 5
-                        width: measures === 0 ? stage.width : 18
-                        height: measures === 0 ? 18 : stage.height
-                        property int dragging: -1
-                        Rectangle { anchors.fill: parent; color: Theme.panel; opacity: 0.92 }
-                        Repeater {
-                            // A tick every 50 preview pixels, labelled every 100.
-                            model: Math.ceil((ruler.measures === 0 ? root.previewWidth : root.previewHeight) / 50) + 1
-                            delegate: Item {
-                                required property int index
-                                readonly property real at: root.canvasToStage(ruler.measures, index * 50)
-                                x: ruler.measures === 0 ? at : 0
-                                y: ruler.measures === 0 ? 0 : at
-                                Rectangle {
-                                    width: ruler.measures === 0 ? 1 : (index % 2 ? 6 : 12)
-                                    height: ruler.measures === 0 ? (index % 2 ? 6 : 12) : 1
-                                    color: Theme.textDim
-                                }
-                                Label {
-                                    visible: index % 2 === 0
-                                    x: ruler.measures === 0 ? 3 : 1; y: ruler.measures === 0 ? 0 : 3
-                                    text: index * 50; font.pixelSize: 8; color: Theme.textDim
-                                }
-                            }
-                        }
-                        MouseArea {
-                            anchors.fill: parent
-                            function canvasPoint(mouse) {
-                                const p = mapToItem(stage, mouse.x, mouse.y);
-                                return Math.round(root.stageToCanvas(ruler.makes, ruler.makes === 0 ? p.x : p.y));
-                            }
-                            onPressed: mouse => { ruler.dragging = root.addGuide(ruler.makes, canvasPoint(mouse)); }
-                            onPositionChanged: mouse => { if (ruler.dragging >= 0) root.moveGuide(ruler.dragging, canvasPoint(mouse)); }
-                            onReleased: mouse => {
-                                if (ruler.dragging < 0) return;
-                                const p = mapToItem(stage, mouse.x, mouse.y);
-                                // Released on a ruler (or off the stage) takes the guide away again.
-                                if ((ruler.makes === 0 ? p.x : p.y) <= 18) root.removeGuide(ruler.dragging);
-                                ruler.dragging = -1;
-                            }
-                            onCanceled: { if (ruler.dragging >= 0) root.removeGuide(ruler.dragging); ruler.dragging = -1; }
-                        }
-                    }
-                }
-                Rectangle {
-                    id: canvas; objectName: "interfaceCanvas"; anchors.centerIn: parent
-                    anchors.horizontalCenterOffset: root.panX; anchors.verticalCenterOffset: root.panY
-                    width: root.previewWidth; height: root.previewHeight
-                    scale: Math.max(0.05,root.zoom); color: root.document.theme === "Light" ? "#d9dfe8" : "#252d3a"
-                    Loader {
-                        id: nativeView
-                        anchors.fill: parent
-                        active: root.designing && root.embedded
-                        sourceComponent: Component {
-                            GameView {
-                                resolution: Qt.size(root.previewWidth, root.previewHeight)
-                                onInterfaceLayoutChanged: root.receiveLayout(interfaceLayout)
-                            }
-                        }
-                    }
-                    Image {
-                        id: streamedView
-                        anchors.fill: parent
-                        visible: !root.embedded && root.designing
-                        source: visible ? root.app.previewFrame : ""
-                        cache: false; asynchronous: false; fillMode: Image.PreserveAspectFit
-                        onSourceChanged: root.receiveLayout(root.app.previewLayout)
-                    }
-                    Canvas {
-                        id: overlay
-                        objectName: "interfaceSelection"
-                        anchors.fill: parent
-                        visible: root.layoutReady || !!root.gesture
-                        onPaint: {
-                            const ctx = getContext("2d");
-                            ctx.clearRect(0, 0, width, height);
-                            function outline(id, color) {
-                                const widget = root.bounds.find(w => w.id === id);
-                                const polygon = geometry.polygon(widget);
-                                if (!polygon.length) return;
-                                ctx.beginPath(); ctx.moveTo(polygon[0].x, polygon[0].y);
-                                for (let i = 1; i < polygon.length; ++i) ctx.lineTo(polygon[i].x, polygon[i].y);
-                                ctx.closePath(); ctx.strokeStyle = color;
-                                ctx.lineWidth = 2/Math.max(0.05, root.zoom); ctx.stroke();
-                            }
-                            if (root.hoveredId !== root.selectedId) outline(root.hoveredId, "#b9dfff");
-                            const inset = {x: root.safe[0], y: root.safe[1], w: root.previewWidth-root.safe[0]-root.safe[2], h: root.previewHeight-root.safe[1]-root.safe[3]};
-                            if (root.showSafeArea) {
-                                ctx.save(); ctx.setLineDash([6/Math.max(0.05,root.zoom), 4/Math.max(0.05,root.zoom)]);
-                                ctx.strokeStyle = "#ffb454"; ctx.lineWidth = 1/Math.max(0.05,root.zoom);
-                                ctx.strokeRect(inset.x, inset.y, inset.w, inset.h); ctx.restore();
-                            }
-                            if (root.showReference) {
-                                const ref = root.document.reference_size || [960,720];
-                                ctx.save(); ctx.setLineDash([2/Math.max(0.05,root.zoom), 3/Math.max(0.05,root.zoom)]);
-                                ctx.strokeStyle = "#c792ea"; ctx.lineWidth = 1/Math.max(0.05,root.zoom);
-                                ctx.strokeRect(inset.x, inset.y, ref[0]*root.designScale, ref[1]*root.designScale); ctx.restore();
-                            }
-                            ctx.save(); ctx.strokeStyle = "#4dd0e1"; ctx.lineWidth = 1/Math.max(0.05,root.zoom);
-                            root.guides.forEach(g => {
-                                ctx.beginPath();
-                                if (g.axis === 0) { ctx.moveTo(g.pos, 0); ctx.lineTo(g.pos, height); } else { ctx.moveTo(0, g.pos); ctx.lineTo(width, g.pos); }
-                                ctx.stroke();
-                            });
-                            ctx.restore();
-                            root.selectionIds.slice(1).forEach(id => outline(id, "#8fd0a0"));
-                            outline(root.selectedId, "#70baff");
-                            const m = root.marquee;
-                            if (m) {
-                                ctx.fillStyle = "rgba(112,186,255,0.15)"; ctx.strokeStyle = "#70baff"; ctx.lineWidth = 1/Math.max(0.05,root.zoom);
-                                ctx.fillRect(Math.min(m.x0,m.x1), Math.min(m.y0,m.y1), Math.abs(m.x1-m.x0), Math.abs(m.y1-m.y0));
-                                ctx.strokeRect(Math.min(m.x0,m.x1), Math.min(m.y0,m.y1), Math.abs(m.x1-m.x0), Math.abs(m.y1-m.y0));
-                            }
-                            ctx.strokeStyle = "#ffcc70";
-                            ctx.lineWidth = 1/Math.max(0.05,root.zoom);
-                            root.snapLines.forEach(line => { ctx.beginPath(); ctx.moveTo(line.a.x,line.a.y); ctx.lineTo(line.b.x,line.b.y); ctx.stroke(); });
-                        }
-                    }
-                    MouseArea {
-                        objectName: "interfacePicking"
-                        anchors.fill: parent
-                        enabled: root.layoutReady || !!root.gesture
-                        property real pressX: 0
-                        property real pressY: 0
-                        hoverEnabled: true
-                        onPositionChanged: mouse => {
-                            if (pressed && marqueeStart) { root.marquee = {x0: marqueeStart.x, y0: marqueeStart.y, x1: mouse.x, y1: mouse.y}; return; }
-                            if (pressed) {
-                                if (!root.gesture && Math.hypot(mouse.x-pressX, mouse.y-pressY) > 3/Math.max(0.05,root.zoom)) root.startEdit("Move", pressX, pressY);
-                                root.dragEdit(mouse.x, mouse.y, mouse.modifiers);
-                            }
-                            else root.hoveredId = geometry.pick(root.pickable, mouse.x, mouse.y);
-                        }
-                        onExited: root.hoveredId = ""
-                        onPressed: mouse => {
-                            root.forceActiveFocus();
-                            const hit = geometry.pick(root.pickable, mouse.x, mouse.y);
-                            pressX = mouse.x; pressY = mouse.y;
-                            if (mouse.modifiers & Qt.ShiftModifier) { root.toggleSelected(hit); marqueeStart = null; }
-                            else if (!hit) { root.selectOnly(""); marqueeStart = {x: mouse.x, y: mouse.y}; }
-                            else { if (hit !== root.selectedId) root.selectOnly(hit); marqueeStart = null; }
-                        }
-                        property var marqueeStart: null
-                        onReleased: {
-                            if (marqueeStart && root.marquee) root.finishMarquee(root.marquee);
-                            marqueeStart = null; root.marquee = null;
-                            root.finishEdit();
-                        }
-                        onCanceled: { marqueeStart = null; root.marquee = null; root.cancelEdit(); }
-                    }
+                visible: root.hasSelection
+                Layout.fillWidth: true; Layout.preferredHeight: visible ? selectionBar.height + 10 : 0
+                color: Theme.window
+                Flow {
+                    id: selectionBar
+                    x: 10; y: 5; width: parent.width - 20; spacing: 6
+                    Text { text: root.selectionIds.length > 1 ? root.selectionIds.length + " selected" : root.selectedId; color: Theme.textDim; font.pixelSize: 12; height: 28; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight; width: Math.min(implicitWidth, 160) }
+                    IconButton { objectName: "interfaceDuplicate"; iconName: "copy"; tip: "Duplicate"; implicitWidth: 28; implicitHeight: 28; enabled: root.canEdit && !!root.widget && !root.widget.world_actor; onClicked: root.duplicateSelected() }
+                    IconButton { objectName: "interfaceDelete"; iconName: "trash"; tip: "Delete (Delete key)"; implicitWidth: 28; implicitHeight: 28; enabled: root.canEdit && !!root.widget; onClicked: root.removeSelected() }
+                    IconButton { objectName: "interfaceEarlier"; iconName: "chevron-left"; tip: "Move earlier in sibling order (drawn below, flows first)"; implicitWidth: 28; implicitHeight: 28; enabled: root.canEdit && root.siblingIndex > 0; onClicked: root.reorderSibling(-1) }
+                    IconButton { objectName: "interfaceLater"; iconName: "chevron-right"; tip: "Move later in sibling order (drawn above, flows last)"; implicitWidth: 28; implicitHeight: 28; enabled: root.canEdit && root.siblingIndex >= 0 && root.siblingIndex + 1 < root.siblings.length; onClicked: root.reorderSibling(1) }
                     Repeater {
-                        model: root.resizeHandles
-                        delegate: Rectangle {
+                        model: [["Left","left"],["Centre","hcenter"],["Right","right"],["Top","top"],["Middle","vcenter"],["Bottom","bottom"],["Space across","hdist"],["Space down","vdist"]]
+                        delegate: StitchButton {
                             required property var modelData
-                            readonly property var point: root.handlePoint(modelData)
-                            objectName: modelData.name === "BottomRight" ? "interfaceResizeHandle" : "interfaceResize"+modelData.name
-                            visible: (root.gesture && root.gesture.kind === "Resize") || (root.layoutReady && !!root.selectedBounds && root.selectedBounds.visible && root.editable(root.widget))
-                            x: point.x-width/2; y: point.y-height/2
-                            width: 10/Math.max(0.05,root.zoom); height: width
-                            color: "#70baff"
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: root.resizeCursor(modelData)
-                                onPressed: mouse => { const p = canvas.mapFromItem(parent,mouse.x,mouse.y); root.startEdit("Resize",p.x,p.y,modelData); }
-                                onPositionChanged: mouse => { if (pressed) { const p = canvas.mapFromItem(parent,mouse.x,mouse.y); root.dragEdit(p.x,p.y,mouse.modifiers); } }
-                                onReleased: root.finishEdit()
-                                onCanceled: root.cancelEdit()
-                            }
+                            objectName: "interfaceArrange_" + modelData[1]
+                            text: modelData[0]; implicitHeight: 28; font.pixelSize: 11
+                            visible: root.selectionIds.length > 1
+                            enabled: root.canEdit && root.selectionIds.length > 1
+                            ToolTip.visible: hovered; ToolTip.text: modelData[1].indexOf("dist") >= 0 ? "Even gaps (3 or more)" : "Align " + modelData[0].toLowerCase()
+                            onClicked: root.arrange(modelData[1])
                         }
-                    }
-                    Rectangle {
-                        anchors.fill: parent
-                        visible: !root.layoutReady && !root.gesture
-                        color: Theme.panelRaised
-                        Text { anchors.centerIn: parent; color: Theme.text; text: root.app.appState.running ? "Stop the game to edit the interface" : root.error ? "Preview unavailable" : "Rendering interface..." }
                     }
                 }
             }
-            Label { text: root.error || "Drag to move/resize. Arrows nudge 1 px; Shift+arrows 10 px. Escape cancels. Parent layout controls flow widgets."; color: root.error ? Theme.danger : Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            UiViewport { id: viewport; objectName: "interfaceViewport"; designer: root; Layout.fillWidth: true; Layout.fillHeight: true }
+            Rectangle {
+                visible: root.error !== ""
+                Layout.fillWidth: true; Layout.preferredHeight: visible ? errorText.implicitHeight + 14 : 0
+                color: "#3a1d1d"; border.color: Theme.danger
+                RowLayout {
+                    anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 6
+                    Text { id: errorText; objectName: "interfaceError"; Layout.fillWidth: true; text: root.error; color: "#ff9b9b"; font.pixelSize: 12; wrapMode: Text.Wrap }
+                    IconButton { iconName: "x"; tip: "Dismiss"; implicitWidth: 24; implicitHeight: 24; onClicked: root.error = "" }
+                }
+            }
+            Text {
+                visible: root.error === ""
+                Layout.fillWidth: true; Layout.margins: 6; wrapMode: Text.Wrap
+                color: Theme.textDim; font.pixelSize: 11
+                text: "Drag to move or resize. Arrows nudge 1 px, Shift+arrows 10 px. Hold Shift to bypass snapping. Escape cancels."
+            }
         }
-        ScrollView {
-            Layout.preferredWidth: 245; Layout.fillHeight: true
-            ColumnLayout {
-                width: 225; spacing: 8
-                Label { text: "Widget inspector"; font.bold: true }
-                Label { text: root.widget ? root.widget.element.id : "Select a widget" }
-                ComboBox { Layout.fillWidth: true; model: root.kinds; currentIndex: root.widget ? root.kinds.indexOf(root.widget.element.kind) : -1; enabled: !!root.widget; onActivated: root.change("kind",currentText) }
-                TextField { Layout.fillWidth: true; placeholderText: "Text or image asset"; text: root.widget ? root.widget.element.content || "" : ""; enabled: !!root.widget; onEditingFinished: root.change("content",text) }
-                Label { text: "Parent (flow containers control placement)"; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                ComboBox { Layout.fillWidth: true; model: [""].concat(root.document.widgets.filter(w=>!w.world_actor && !root.descendant(w.element.id,root.selectedId)).map(w=>w.element.id)); currentIndex: root.widget ? model.indexOf(root.widget.element.parent || "") : 0; enabled: !!root.widget && !root.widget.world_actor && !root.gesture; onActivated: root.reparent(currentText) }
-                Label { text: "Anchor (unused with absolute placement)"; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                ComboBox { Layout.fillWidth: true; model: ["TopLeft","Top","TopRight","Left","Center","Right","BottomLeft","Bottom","BottomRight"]; currentIndex: root.widget ? model.indexOf(root.widget.element.anchor || "Center") : 0; onActivated: root.change("anchor",currentText) }
-                Repeater {
-                    model: ["X","Y","Width","Height"]
-                    delegate: RowLayout {
-                        required property string modelData
-                        required property int index
-                        Label { text: modelData; Layout.preferredWidth: 55 }
-                        TextField { Layout.fillWidth: true; text: root.widget ? (index<2 ? root.widget.element.offset || [0,0] : root.widget.element.size || [0,0])[index%2] : "0"; validator: DoubleValidator {}
-                            enabled: root.editable(root.widget) && !root.gesture
-                            onEditingFinished: root.editDimension(index, Number(text)) }
-                    }
-                }
-                UiLayoutInspector {
-                    Layout.fillWidth: true
-                    enabled: !!root.widget && !root.gesture
-                    layoutValue: root.widget ? root.widget.layout || null : null
-                    onEdited: value => root.propertyEdit("layout", value)
-                }
-                CheckBox { visible: root.applies("element.modal"); text: "Modal"; checked: root.widget ? root.widget.element.modal === true : false; onToggled: root.change("modal",checked) }
-                TextField { Layout.fillWidth: true; placeholderText: "Tooltip"; text: root.widget ? root.widget.tooltip || "" : ""; onEditingFinished: root.extra("tooltip",text) }
-                TextField { Layout.fillWidth: true; placeholderText: "World actor id"; text: root.widget ? root.widget.world_actor || "" : ""; onEditingFinished: root.extra("world_actor",text) }
-                TextField { visible: root.applies("scroll_target"); Layout.fillWidth: true; placeholderText: "Scrollbar target widget id"; text: root.widget ? root.widget.scroll_target || "" : ""; onEditingFinished: root.extra("scroll_target",text) }
-                TextField { Layout.fillWidth: true; placeholderText: "Tab page number (1-based)"; validator: IntValidator { bottom: 1 } text: root.widget ? root.widget.tab_index ?? "" : ""; onEditingFinished: root.extra("tab_index",text ? Number(text) : null) }
-                Label { visible: root.applies("items"); text: "Items (one per line)" }
-                TextArea { visible: root.applies("items"); Layout.fillWidth: true; Layout.preferredHeight: 70; text: root.widget ? (root.widget.items || []).join("\n") : ""; onActiveFocusChanged: if(!activeFocus && root.widget) root.extra("items",text ? text.split("\n") : []) }
-                Label { text: "Style"; font.bold: true }
-                ComboBox { id: styleState; Layout.fillWidth: true; model: ["normal","hover","pressed","disabled","focused"] }
-                RowLayout {
-                    Label { text: "Class"; Layout.preferredWidth: 100 }
-                    ComboBox {
-                        objectName: "interfaceClass"
-                        Layout.fillWidth: true
-                        model: [""].concat(Object.keys(root.document.styles || {}))
-                        currentIndex: root.widget ? Math.max(0, model.indexOf(root.widget.class || "")) : 0
-                        enabled: !!root.widget && !root.gesture
-                        onActivated: root.extra("class", currentText)
-                    }
-                }
-                RowLayout {
-                    TextField { id: className; objectName: "interfaceClassName"; Layout.fillWidth: true; placeholderText: "New class name" }
-                    Button { objectName: "interfaceSaveClass"; text: "Save style as class"; enabled: !!root.widget && !!className.text.trim() && !root.gesture; onClicked: root.saveClass(className.text.trim()) }
-                }
-                Button { objectName: "interfaceDeleteClass"; text: "Delete class"; enabled: !!root.widget && !!root.widget.class && !root.gesture; onClicked: root.deleteClass(root.widget.class) }
-                Repeater {
-                    model: ["background","text_color","border_color","shadow"]
-                    delegate: RowLayout {
-                        required property string modelData
-                        readonly property string own: root.widget ? ((root.widget.style || {})[styleState.currentText] || {})[modelData] || "" : ""
-                        readonly property string inherited: root.inheritedPaint(modelData) || ""
-                        ColorField {
-                            value: /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(own || inherited) ? (own || inherited) : "#FFFFFF"
-                            opacity: own ? 1 : 0.5
-                            onPicked: c => root.paint(modelData, c)
-                        }
-                        TextField {
-                            Layout.fillWidth: true
-                            placeholderText: modelData.replace(/_/g," ") + (inherited ? " (class: " + inherited + ")" : " (#RRGGBB)")
-                            text: own
-                            onEditingFinished: root.paint(modelData,text || null)
-                        }
-                    }
-                }
-                Label { visible: imageFitMode.visible; text: "Image fit" }
-                ComboBox {
-                    id: imageFitMode; objectName: "interfaceImageFit"; Layout.fillWidth: true
-                    visible: !!root.widget && root.widget.element.kind === "Image"
-                    model: ["auto","stretch","sliced","tiled"]
-                    currentIndex: model.indexOf(root.imageFit().mode)
-                    onActivated: root.setImageFit(currentText, root.imageFit().border)
-                }
-                RowLayout {
-                    visible: imageFitMode.visible && imageFitMode.currentText === "sliced"
-                    Repeater {
-                        model: ["left","right","top","bottom"]
-                        delegate: TextField {
-                            required property string modelData
-                            required property int index
-                            objectName: "interfaceSlice" + modelData
-                            Layout.fillWidth: true; Layout.preferredWidth: 40; placeholderText: modelData[0].toUpperCase()
-                            validator: DoubleValidator { bottom: 0 }
-                            text: root.imageFit().border[index]
-                            onEditingFinished: { const b = root.imageFit().border.slice(); b[index] = Number(text) || 0; root.setImageFit("sliced", b); }
-                        }
-                    }
-                }
-                Label { text: "Fonts (first available wins)" }
-                RowLayout {
-                    AssetField {
-                        Layout.fillWidth: true; app: root.app; accept: ["font"]
-                        value: root.widget ? (((root.widget.style || {})[styleState.currentText] || {}).fonts || [])[0] || "" : ""
-                        placeholderText: "Drag a font here"
-                        onCommitted: p => root.paint("fonts", p ? [p] : [])
-                    }
-                }
-                Repeater {
-                    model: ["text_size","border_width","radius"]
-                    delegate: RowLayout {
-                        required property string modelData
-                        Label { text: modelData.replace(/_/g," "); Layout.preferredWidth: 100 }
-                        TextField {
-                            Layout.fillWidth: true; validator: DoubleValidator { bottom: 0 }
-                            text: root.widget ? ((root.widget.style || {})[styleState.currentText] || {})[modelData] ?? "" : ""
-                            onEditingFinished: root.paint(modelData,text ? Number(text) : null)
-                        }
-                    }
-                }
-                RowLayout {
-                    Label { text: "Transition (seconds)" }
-                    TextField { Layout.fillWidth: true; validator: DoubleValidator { bottom: 0 }
-                        text: root.widget ? root.widget.transition || 0 : 0
-                        onEditingFinished: root.extra("transition",Number(text)) }
-                }
-                Label { text: "Component"; font.bold: true }
-                Label { visible: !!(root.widget && root.widget.instance_of); text: root.widget ? "Instance of " + root.widget.instance_of : ""; color: Theme.textDim }
-                RowLayout {
-                    TextField { id: componentName; objectName: "interfaceComponentName"; Layout.fillWidth: true; placeholderText: "Component name" }
-                    Button { objectName: "interfaceSaveComponent"; text: "Save"; enabled: !!root.widget && !root.widget.world_actor && !!componentName.text.trim() && !root.gesture; onClicked: root.saveComponent(componentName.text.trim(), true) }
-                }
-                ComboBox { id: componentPick; objectName: "interfaceComponentPick"; Layout.fillWidth: true; model: Object.keys(root.document.prefabs || {}) }
-                RowLayout {
-                    Button { objectName: "interfaceInsertComponent"; text: "Insert"; enabled: componentPick.currentIndex >= 0 && !root.gesture; onClicked: root.insertComponent(componentPick.currentText) }
-                    Button { objectName: "interfaceResetInstance"; text: "Reset"; enabled: !!(root.widget && root.widget.instance_of) && !root.gesture; onClicked: root.resetInstance() }
-                    Button { objectName: "interfaceDetachInstance"; text: "Detach"; enabled: !!(root.widget && root.widget.instance_of) && !root.gesture; onClicked: root.detachInstance() }
-                    Button { objectName: "interfaceDeleteComponent"; text: "Delete"; enabled: componentPick.currentIndex >= 0 && !root.gesture; onClicked: root.structuralEdit({kind: "DeletePrefab", name: componentPick.currentText}, root.selectedId, []) }
-                }
-                Repeater {
-                    model: root.exposedRows()
-                    delegate: RowLayout {
-                        required property var modelData
-                        Layout.fillWidth: true
-                        Label { text: modelData.name; color: Theme.textDim }
-                        TextField {
-                            objectName: "interfaceExposed_" + modelData.name
-                            Layout.fillWidth: true; visible: !modelData.slot
-                            text: typeof modelData.value === "string" ? modelData.value : JSON.stringify(modelData.value)
-                            onEditingFinished: if (text !== (typeof modelData.value === "string" ? modelData.value : JSON.stringify(modelData.value))) root.setExposed(modelData.name, text)
-                        }
-                        Button {
-                            objectName: "interfaceFillSlot_" + modelData.name
-                            visible: modelData.slot; text: "Place selection here"
-                            enabled: !root.gesture && root.extraIds.length > 0
-                            onClicked: root.extraIds.forEach(id => root.fillSlot(modelData.name, id))
-                        }
-                    }
-                }
-                Label { text: "Expose from the selected widget"; font.bold: true; visible: componentPick.currentIndex >= 0 }
-                RowLayout {
-                    visible: componentPick.currentIndex >= 0
-                    TextField { id: exposeName; objectName: "interfaceExposeName"; Layout.fillWidth: true; placeholderText: "Name" }
-                    ComboBox { id: exposePath; objectName: "interfaceExposePath"; model: Object.keys(root.propertyKinds).filter(p => root.applies(p)) }
-                }
-                RowLayout {
-                    visible: componentPick.currentIndex >= 0
-                    Button { objectName: "interfaceExposeProperty"; text: "Expose property"; enabled: !!root.widget && !!exposeName.text.trim() && !root.gesture; onClicked: root.exposeProperty(componentPick.currentText, exposeName.text.trim(), exposePath.currentText) }
-                    Button { objectName: "interfaceExposeSlot"; text: "Expose as slot"; enabled: !!root.widget && !!exposeName.text.trim() && !root.gesture; onClicked: root.exposeSlot(componentPick.currentText, exposeName.text.trim()) }
-                }
-                Label { text: "Variable binding"; font.bold: true }
-                ComboBox { id: bindingProperty; Layout.fillWidth: true; model: ["Text","Value","Visible","SelectedIndex"] }
-                TextField { id: bindingActor; Layout.fillWidth: true; placeholderText: "Actor id (blank for global)" }
-                TextField { id: bindingName; Layout.fillWidth: true; placeholderText: "Variable name" }
-                CheckBox { id: bindingWrite; text: "Write input back to variable" }
-                Button { text: "Bind variable"; enabled: !!root.widget && !!bindingName.text; onClicked: {
-                    const bindings=root.copy(root.widget.bindings || []).filter(b=>b.property!==bindingProperty.currentText);
-                    bindings.push({property:bindingProperty.currentText,source:{Variable:{actor:bindingActor.text,name:bindingName.text}},two_way:bindingWrite.checked});
-                    root.extra("bindings",bindings);
-                } }
-                Repeater {
-                    model: root.widget ? root.widget.bindings || [] : []
-                    delegate: RowLayout {
-                        required property var modelData
-                        required property int index
-                        Layout.fillWidth: true
-                        Label { Layout.fillWidth: true; elide: Text.ElideRight; text: root.describeBinding(modelData); color: Theme.textDim }
-                        Button { objectName: "interfaceRemoveBinding" + index; text: "Remove"; enabled: !root.gesture; onClicked: root.removeBinding(index) }
-                    }
-                }
-                Label { text: "Events"; font.bold: true }
-                Repeater {
-                    model: root.widget ? root.widget.actions || [] : []
-                    delegate: RowLayout {
-                        required property var modelData
-                        required property int index
-                        Layout.fillWidth: true
-                        Label { Layout.fillWidth: true; elide: Text.ElideRight; text: root.describeAction(modelData); color: Theme.textDim }
-                        Button { objectName: "interfaceRemoveAction" + index; text: "Remove"; enabled: !root.gesture; onClicked: root.removeAction(index) }
-                    }
-                }
-                RowLayout {
-                    ComboBox { id: actionOn; objectName: "interfaceActionOn"; model: ["Click","Change"] }
-                    ComboBox { id: actionKind; objectName: "interfaceActionKind"; model: ["Broadcast","Set variable","Play animation","Stop animation"] }
-                }
-                TextField { id: actionMessage; objectName: "interfaceActionMessage"; Layout.fillWidth: true; visible: actionKind.currentIndex === 0 || actionKind.currentIndex >= 2; placeholderText: actionKind.currentIndex === 0 ? "Message to broadcast" : "Animation name" }
-                TextField { id: actionActor; Layout.fillWidth: true; visible: actionKind.currentIndex === 1; placeholderText: "Actor id (blank for global)" }
-                TextField { id: actionVariable; objectName: "interfaceActionVariable"; Layout.fillWidth: true; visible: actionKind.currentIndex === 1; placeholderText: "Variable name" }
-                TextField { id: actionValue; objectName: "interfaceActionValue"; Layout.fillWidth: true; visible: actionKind.currentIndex === 1; placeholderText: "Value ($value is the new value on Change)" }
-                Button {
-                    objectName: "interfaceAddAction"; text: "Add event"
-                    enabled: !!root.widget && !root.gesture && (actionKind.currentIndex === 1 ? !!actionVariable.text.trim() : !!actionMessage.text.trim())
-                    onClicked: {
-                        const text = actionMessage.text.trim();
-                        root.addAction({on: actionOn.currentText, run: [
-                            {Broadcast: {message: text}},
-                            {SetVariable: {actor: actionActor.text.trim(), name: actionVariable.text.trim(), value: actionValue.text}},
-                            {PlayAnimation: {name: text}},
-                            {StopAnimation: {name: text}}][actionKind.currentIndex]});
-                    }
-                }
-                Label { text: "Animations"; font.bold: true }
-                RowLayout {
-                    ComboBox { id: animationPick; objectName: "interfaceAnimationPick"; Layout.fillWidth: true; model: root.animationNames(); onCurrentIndexChanged: root.stopAnimationPreview() }
-                    Button { objectName: "interfaceDeleteAnimation"; text: "Delete"; enabled: animationPick.currentIndex >= 0 && !root.gesture; onClicked: root.deleteAnimation(animationPick.currentText) }
-                }
-                RowLayout {
-                    TextField { id: animationName; objectName: "interfaceAnimationName"; Layout.fillWidth: true; placeholderText: "New animation name" }
-                    Button { objectName: "interfaceNewAnimation"; text: "New"; enabled: !!animationName.text.trim() && !root.gesture; onClicked: { root.newAnimation(animationName.text.trim()); animationName.text = ""; } }
-                }
-                RowLayout {
-                    visible: animationPick.currentIndex >= 0
-                    Label { text: "Seconds" }
-                    TextField {
-                        id: animationLength; objectName: "interfaceAnimationLength"; Layout.preferredWidth: 60
-                        text: animationPick.currentIndex >= 0 ? String(((root.document.animations || {})[animationPick.currentText] || {}).duration || 1) : ""
-                        validator: DoubleValidator { bottom: 0.05 }
-                        onEditingFinished: { const n = Number(text); if (n > 0) root.withAnimation(animationPick.currentText, a => { a.duration = n; a.tracks.forEach(t => { t.keys = t.keys.filter(k => k.time <= n); }); a.tracks = a.tracks.filter(t => t.keys.length); }); }
-                    }
-                    CheckBox {
-                        objectName: "interfaceAnimationLoop"; text: "Loop"
-                        checked: animationPick.currentIndex >= 0 && !!((root.document.animations || {})[animationPick.currentText] || {}).looping
-                        onToggled: root.withAnimation(animationPick.currentText, a => { a.looping = checked; })
-                    }
-                }
-                Repeater {
-                    model: animationPick.currentIndex >= 0 ? (((root.document.animations || {})[animationPick.currentText] || {}).tracks || []) : []
-                    delegate: ColumnLayout {
-                        required property var modelData
-                        required property int index
-                        Layout.fillWidth: true
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Label { Layout.fillWidth: true; elide: Text.ElideRight; text: root.describeTrack(modelData); color: Theme.textDim }
-                            Button { text: "Remove track"; enabled: !root.gesture; onClicked: root.removeTrack(animationPick.currentText, index) }
-                        }
-                        // The timeline: each key sits at its time along the animation.
-                        Rectangle {
-                            id: strip
-                            objectName: "interfaceTimeline" + index
-                            Layout.fillWidth: true; Layout.preferredHeight: 18; color: Theme.field; radius: 3
-                            readonly property real total: Math.max(0.05, ((root.document.animations || {})[animationPick.currentText] || {}).duration || 1)
-                            Repeater {
-                                model: modelData.keys
-                                delegate: Rectangle {
-                                    required property var modelData
-                                    required property int index
-                                    x: Math.min(strip.width - width, modelData.time / strip.total * (strip.width - width))
-                                    y: 4; width: 10; height: 10; rotation: 45; color: "#70baff"
-                                    MouseArea { anchors.fill: parent; onClicked: root.removeKey(animationPick.currentText, trackIndexOf(strip), index) }
-                                    function trackIndexOf(item) { return parseInt(item.objectName.replace("interfaceTimeline", "")); }
-                                }
-                            }
-                        }
-                    }
-                }
-                RowLayout {
-                    visible: animationPick.currentIndex >= 0
-                    ComboBox { id: keyProperty; objectName: "interfaceKeyProperty"; model: root.animatableProps }
-                    TextField { id: keyTime; objectName: "interfaceKeyTime"; Layout.preferredWidth: 50; placeholderText: "time"; validator: DoubleValidator { bottom: 0 } }
-                    TextField { id: keyValue; objectName: "interfaceKeyValue"; Layout.fillWidth: true; placeholderText: root.isColorProp(keyProperty.currentText) ? "#rrggbbaa" : "value" }
-                    ComboBox { id: keyEase; objectName: "interfaceKeyEase"; model: ["Linear","EaseIn","EaseOut","EaseInOut"] }
-                }
-                Button {
-                    objectName: "interfaceAddKey"; text: "Key selected widget"
-                    visible: animationPick.currentIndex >= 0
-                    enabled: !!root.widget && !root.gesture && keyTime.text !== "" && keyValue.text !== ""
-                    onClicked: root.addKey(animationPick.currentText, root.widget.element.id, keyProperty.currentText, keyTime.text, keyValue.text, keyEase.currentText)
-                }
-                RowLayout {
-                    visible: animationPick.currentIndex >= 0
-                    Button {
-                        objectName: "interfacePreviewAnimation"
-                        text: root.animPreviewing ? "Stop preview" : "Preview"
-                        enabled: !root.gesture && root.designing
-                        onClicked: root.animPreviewing ? root.stopAnimationPreview() : root.previewAnimation(animationPick.currentText, 0)
-                    }
-                    Slider {
-                        objectName: "interfaceAnimationScrub"
-                        Layout.fillWidth: true
-                        enabled: root.animPreviewing
-                        from: 0
-                        to: animationPick.currentIndex >= 0 ? Math.max(0.05, ((root.document.animations || {})[animationPick.currentText] || {}).duration || 1) : 1
-                        value: root.animPreviewTime
-                        onMoved: root.previewAnimation(root.animPreviewName, value)
-                    }
-                    Label { text: root.animPreviewTime.toFixed(2) + "s"; color: Theme.textDim }
-                }
-                Label { visible: root.animPreviewing; text: "Previewing: editing is paused and nothing is saved."; color: Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                Label { text: "Run it from Events: add an event whose action plays the animation."; color: Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true; visible: animationPick.currentIndex >= 0 }
-                Label { text: "Responsive variants"; font.bold: true }
-                Repeater {
-                    model: root.widget ? root.widget.variants || [] : []
-                    delegate: RowLayout {
-                        required property var modelData
-                        required property int index
-                        Layout.fillWidth: true
-                        Label { Layout.fillWidth: true; elide: Text.ElideRight; text: root.describeVariant(modelData); color: Theme.textDim }
-                        Button { objectName: "interfaceRemoveVariant" + index; text: "Remove"; enabled: !root.gesture; onClicked: root.removeVariant(index) }
-                    }
-                }
-                GridLayout {
-                    columns: 4
-                    TextField { id: varMinW; objectName: "interfaceVariantMinWidth"; Layout.fillWidth: true; placeholderText: "min w"; validator: DoubleValidator { bottom: 0 } }
-                    TextField { id: varMaxW; objectName: "interfaceVariantMaxWidth"; Layout.fillWidth: true; placeholderText: "max w"; validator: DoubleValidator { bottom: 0 } }
-                    TextField { id: varMinH; objectName: "interfaceVariantMinHeight"; Layout.fillWidth: true; placeholderText: "min h"; validator: DoubleValidator { bottom: 0 } }
-                    TextField { id: varMaxH; objectName: "interfaceVariantMaxHeight"; Layout.fillWidth: true; placeholderText: "max h"; validator: DoubleValidator { bottom: 0 } }
-                }
-                RowLayout {
-                    ComboBox { id: varVisible; objectName: "interfaceVariantVisible"; model: ["Visibility unchanged","Shown","Hidden"] }
-                    CheckBox { id: varLayout; objectName: "interfaceVariantLayout"; text: "Use current layout"; enabled: !!(root.widget && root.widget.layout) }
-                }
-                Button {
-                    objectName: "interfaceAddVariant"; text: "Add variant"
-                    enabled: !!root.widget && !root.gesture
-                    onClicked: {
-                        const num = f => f.text.trim() === "" ? null : Number(f.text);
-                        const when = {min_width: num(varMinW), max_width: num(varMaxW), min_height: num(varMinH), max_height: num(varMaxH)};
-                        root.addVariant(when, varLayout.checked, [undefined, true, false][varVisible.currentIndex]);
-                    }
-                }
-                Label { text: "All properties"; font.bold: true }
-                Label { text: "Every property of the selected widget, straight from the backend's table."; color: Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                Repeater {
-                    model: root.propertyInfo
-                    delegate: ColumnLayout {
-                        id: field
-                        required property var modelData
-                        readonly property string ty: modelData.ty
-                        // Re-read whenever the widget changes.
-                        readonly property var current: root.widget ? root.propertyValue(modelData.path) : undefined
-                        visible: !!root.widget && root.applies(modelData.path)
-                        Layout.fillWidth: true
-                        Label { text: modelData.group + ": " + modelData.label; color: Theme.textDim }
-                        ComboBox {
-                            objectName: "interfaceField_" + modelData.path
-                            visible: field.ty === "choice"; Layout.fillWidth: true
-                            model: modelData.choices || []
-                            currentIndex: model.indexOf(field.current)
-                            onActivated: root.propertyEdit(modelData.path, currentText)
-                        }
-                        CheckBox {
-                            objectName: "interfaceField_" + modelData.path
-                            visible: field.ty === "bool"
-                            checked: !!field.current
-                            onToggled: root.propertyEdit(modelData.path, checked)
-                        }
-                        TextArea {
-                            objectName: "interfaceField_" + modelData.path
-                            visible: field.ty !== "choice" && field.ty !== "bool"
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: ["layout","style","bindings","actions","variants","lines","fx"].indexOf(field.ty) >= 0 ? 90 : implicitHeight
-                            wrapMode: TextEdit.Wrap
-                            text: root.formatProperty(field.ty, field.current)
-                            onActiveFocusChanged: if (!activeFocus && root.widget && text !== root.formatProperty(field.ty, field.current)) {
-                                try { root.propertyEdit(modelData.path, root.parseProperty(field.ty, text)); }
-                                catch (e) { root.error = String(e); }
-                            }
-                        }
-                    }
-                }
-                Label { text: "Interface assets"; font.bold: true }
-                TextField { id: assetName; Layout.fillWidth: true; placeholderText: "menu.json" }
-                Button { text: "Save as asset"; enabled: !!assetName.text; onClicked: root.app.invoke("save_interface_asset",{name:assetName.text},function(){root.error="";},function(e){root.error=String(e);}) }
-                TextField { id: assetPath; Layout.fillWidth: true; placeholderText: "assets/ui/menu.json" }
-                Button { text: "Load interface asset"; enabled: !!assetPath.text; onClicked: root.app.invoke("load_interface_asset",{path:assetPath.text},function(){root.error="";},function(e){root.error=String(e);}) }
-                Label { text: "Reusable menus"; font.bold: true }
-                TextField { id: prefabName; Layout.fillWidth: true; placeholderText: "Prefab name" }
-                Button { text: "Save interface as prefab"; enabled: !!prefabName.text; onClicked: { const d=root.copy(root.document); if(!d.prefabs)d.prefabs={}; d.prefabs[prefabName.text]=root.copy(d.widgets); root.save(d); } }
-                ComboBox { id: prefab; Layout.fillWidth: true; model: Object.keys(root.document.prefabs || {}) }
-                Button { text: "Insert prefab"; enabled: prefab.currentIndex>=0; onClicked: {
-                    const d=root.copy(root.document), prefix="copy"+Date.now()+"_";
-                    const widgets=root.copy(d.prefabs[prefab.currentText]); const ids=widgets.map(w=>w.element.id); widgets.forEach(w=>{if(ids.indexOf(w.scroll_target)>=0)w.scroll_target=prefix+w.scroll_target;w.element.id=prefix+w.element.id;if(w.element.parent)w.element.parent=prefix+w.element.parent;});
-                    d.widgets=d.widgets.concat(widgets);root.save(d);
-                } }
+
+        Rectangle {
+            Layout.preferredWidth: 5; Layout.fillHeight: true; color: rightSplit.containsMouse || rightSplit.pressed ? Theme.accent : Theme.borderSoft
+            MouseArea {
+                id: rightSplit
+                anchors.fill: parent; anchors.leftMargin: -3; anchors.rightMargin: -3
+                hoverEnabled: true; cursorShape: Qt.SplitHCursor
+                property real startX: 0
+                property real startWidth: 0
+                onPressed: mouse => { startX = mapToItem(root, mouse.x, 0).x; startWidth = root.rightWidth; }
+                onPositionChanged: mouse => { if (pressed) root.rightWidth = Math.max(240, Math.min(480, startWidth - (mapToItem(root, mouse.x, 0).x - startX))); }
             }
+        }
+        Rectangle {
+            Layout.preferredWidth: root.rightWidth; Layout.minimumWidth: 240; Layout.maximumWidth: 480
+            Layout.fillHeight: true
+            color: Theme.panel
+            UiInspector { objectName: "interfaceInspector"; anchors.fill: parent; designer: root }
         }
     }
 }

@@ -11,6 +11,7 @@ TestCase {
     property var panel: null
     property var calls: []
     property var draft: null
+    property var lastReply: null
     property bool deferBegin: false
     property bool deferUpdate: false
     property var pendingBegin: null
@@ -20,6 +21,8 @@ TestCase {
         property var appState: ({running: false, runtime_embedded: true, project: {world: {interface: {
             widgets: [{element: {id: "back", kind: "Panel"}}, {element: {id: "front", kind: "Label"}}]
         }}}})
+        property var assetTargets: []
+        property var assetDrag: null
         property string previewFrame: ""
         property string previewLayout: ""
         function invoke(command, args, done, failed) {
@@ -65,8 +68,15 @@ TestCase {
                         w.element.size = args.edit.placement.size;
                     } else w.element.offset = [0,0];
                 }
-                if (test.deferUpdate) test.pendingUpdate = () => done(next);
-                else if (done) done(next);
+                const reply = !args.patch ? next : (() => {
+                    const before = {}; test.draft.widgets.forEach(w => { before[w.element.id] = JSON.stringify(w); });
+                    const rest = JSON.parse(JSON.stringify(next)); rest.widgets = [];
+                    return {document: rest, order: next.widgets.map(w => w.element.id),
+                            widgets: next.widgets.filter(w => before[w.element.id] !== JSON.stringify(w))};
+                })();
+                test.lastReply = reply;
+                if (test.deferUpdate) test.pendingUpdate = () => done(reply);
+                else if (done) done(reply);
             } else if (command === "commit_interface_edit") {
                 appState = {running: false, runtime_embedded: true, sync: {revision: 2}, project: {world: {interface: panel.copy(panel.document)}}};
                 if (done) done();
@@ -908,4 +918,177 @@ TestCase {
         verify(!calls.some(c => c.command === "commit_interface_edit"));
     }
 
+    function inside(item, host) {
+        const a = item.mapToItem(host, 0, 0);
+        return a.x >= -0.5 && a.y >= -0.5 && a.x + item.width <= host.width + 0.5 && a.y + item.height <= host.height + 0.5;
+    }
+    function test_panels_fit_a_small_window() {
+        panel.destroy();
+        panel = workspace.createObject(test, {width: 1100, height: 700});
+        verify(panel !== null);
+        const inspector = findChild(panel, "interfaceInspector"), tree = findChild(panel, "interfaceHierarchy");
+        const viewport = findChild(panel, "interfaceViewport"), toolbar = findChild(panel, "interfaceToolbar");
+        verify(inspector.width >= 240);
+        verify(inside(inspector, panel));
+        verify(inside(tree, panel));
+        verify(inside(viewport, panel));
+        verify(viewport.width >= 280);
+        // The toolbar wraps inside the centre column instead of widening it.
+        verify(toolbar.mapToItem(panel, toolbar.width, 0).x <= panel.width - inspector.width);
+        findChild(panel, "interfaceSafeArea").clicked();
+        verify(inside(findChild(panel, "interfaceSafeArea"), panel));
+    }
+    function test_dropping_adds_at_the_pointer_and_clicking_adds_into_the_selected_container() {
+        const d = panel.copy(panel.document);
+        d.widgets[0].element.kind = "Canvas";
+        panel.document = d; backend.appState.project.world.interface = d;
+        panel.selectedId = "back";
+        panel.add("Label", 20, 20, true);
+        let edit = calls.filter(c => c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.widget.element.parent, "");
+        compare(edit.widget.element.offset, [20, 20]);
+        panel.cancelEdit();
+        panel.selectedId = "back";
+        panel.add("Button", 20, 20, false);
+        edit = calls.filter(c => c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.widget.element.parent, "back");
+    }
+    function test_delete_removes_the_selection_but_backspace_does_not() {
+        panel.selectedId = "front";
+        panel.forceActiveFocus();
+        keyClick(Qt.Key_Backspace);
+        verify(!calls.some(c => c.command === "begin_interface_edit"));
+        compare(panel.document.widgets.length, 2);
+        keyClick(Qt.Key_Delete);
+        compare(panel.document.widgets.map(w => w.element.id), ["back"]);
+    }
+    function test_marquee_selects_widgets_it_touches() {
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision, panel.generation)));
+        // "back" spans 200..400; a marquee over only its corner still takes it.
+        panel.finishMarquee({x0: 380, y0: 380, x1: 500, y1: 500});
+        verify(panel.selectionIds.indexOf("back") >= 0);
+        panel.finishMarquee({x0: 600, y0: 600, x1: 700, y1: 700});
+        compare(panel.selectionIds, []);
+    }
+    function test_world_actor_is_a_typed_property_edit() {
+        panel.selectedId = "front";
+        panel.extra("world_actor", "hero");
+        const edit = calls.filter(c => c.command === "update_interface_edit").pop().args.edit;
+        compare(edit, {kind: "SetProperty", id: "front", property: {path: "world_actor", value: "hero"}});
+        verify(!calls.some(c => c.command === "set_interface"));
+    }
+    function test_an_edit_during_a_gesture_is_not_dropped_silently() {
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision, panel.generation)));
+        panel.selectedId = "back";
+        verify(panel.startEdit("Move", 300, 300));
+        const before = calls.filter(c => c.command === "begin_interface_edit").length;
+        panel.extra("tooltip", "hi");
+        compare(calls.filter(c => c.command === "begin_interface_edit").length, before);
+        panel.cancelEdit();
+    }
+    function test_bindings_and_fx_use_typed_properties() {
+        panel.selectedId = "front";
+        panel.addBinding("Text", "", "score", false);
+        let edit = calls.filter(c => c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.property.path, "bindings");
+        compare(edit.property.value, [{property: "Text", source: {Variable: {actor: "", name: "score"}}, two_way: false}]);
+        panel.cancelEdit();
+        panel.setFx("opacity", 3);
+        edit = calls.filter(c => c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.property.path, "fx");
+        compare(edit.property.value, {opacity: 1, offset: [0, 0], rotation: 0});
+        panel.cancelEdit();
+        panel.setFx("rotation", 15);
+        edit = calls.filter(c => c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.property.value.rotation, 15);
+    }
+    function test_keys_move_retime_and_take_a_current_value() {
+        panel.selectedId = "front";
+        const d = panel.copy(panel.document);
+        d.animations = {pulse: {duration: 2, looping: false, tracks: [{widget: "front", property: "Width", keys: [
+            {time: 0, value: 10, ease: "Linear"}, {time: 1, value: 20, ease: "Linear"}]}]}};
+        panel.document = d; backend.appState.project.world.interface = d;
+        panel.setKey("pulse", 0, 0, {time: 1.5});
+        let edit = calls.filter(c => c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.animation.tracks[0].keys.map(k => k.time), [1, 1.5]);
+        panel.cancelEdit();
+        panel.setKey("pulse", 0, 0, {time: 1});
+        edit = calls.filter(c => c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.animation.tracks[0].keys.length, 1);
+        panel.cancelEdit();
+        panel.setKey("pulse", 0, 0, {ease: "EaseIn", value: 99});
+        edit = calls.filter(c => c.command === "update_interface_edit").pop().args.edit;
+        compare(edit.animation.tracks[0].keys[0], {time: 0, value: 99, ease: "EaseIn"});
+        compare(panel.currentValue("Opacity"), 1);
+        compare(panel.currentValue("Width"), 100);
+    }
+    function test_variants_report_whether_they_match_the_preview_size() {
+        panel.previewWidth = 500; panel.previewHeight = 800;
+        verify(panel.variantActive({when: {max_width: 599}}));
+        verify(!panel.variantActive({when: {min_width: 600}}));
+        verify(panel.variantActive({when: {}}));
+    }
+    function test_tree_arrow_keys_move_the_selection() {
+        panel.selectedId = "back";
+        const tree = findChild(panel, "interfaceTree");
+        tree.forceActiveFocus();
+        keyClick(Qt.Key_Down);
+        compare(panel.selectedId, "front");
+        keyClick(Qt.Key_Up);
+        compare(panel.selectedId, "back");
+    }
+    function test_updates_ask_for_patches_and_unchanged_widgets_keep_their_objects() {
+        panel.receiveLayout(JSON.stringify(geometry(panel.revision, panel.generation)));
+        panel.selectedId = "back";
+        const frontBefore = panel.document.widgets[1];
+        verify(panel.startEdit("Move", 300, 300));
+        panel.dragEdit(320, 310);
+        const call = calls.filter(c => c.command === "update_interface_edit").pop();
+        compare(call.args.patch, true);
+        verify(Array.isArray(lastReply.order));
+        compare(lastReply.widgets.map(w => w.element.id), ["back"]);
+        compare(panel.document.widgets[0].element.offset, [220, 210]);
+        verify(panel.document.widgets[1] === frontBefore);
+        panel.cancelEdit();
+    }
+    function test_a_reply_naming_an_unknown_widget_fails_the_gesture() {
+        verify(panel.applyUpdate({document: {}, order: ["back", "ghost"], widgets: []}) === null);
+        const ok = panel.applyUpdate({document: {theme: "Light"}, order: ["front", "back"], widgets: []});
+        compare(ok.widgets.map(w => w.element.id), ["front", "back"]);
+        compare(ok.theme, "Light");
+        compare(panel.applyUpdate({widgets: []}).widgets, []);
+    }
+    function test_rename_is_one_typed_edit_and_keeps_the_selection_on_the_widget() {
+        panel.selectedId = "front";
+        verify(!panel.renameWidget("front", "back"));
+        verify(panel.error.indexOf("already exists") >= 0);
+        panel.error = "";
+        verify(panel.renameWidget("front", "title"));
+        const edit = calls.filter(c => c.command === "update_interface_edit").pop().args.edit;
+        compare(edit, {kind: "Rename", id: "front", new_id: "title"});
+        verify(!calls.some(c => c.command === "set_interface"));
+        verify(!panel.renameWidget("title", " "));
+        verify(!panel.renameWidget("title", "title"));
+    }
+    function test_one_override_resets_through_a_typed_edit() {
+        const d = panel.copy(panel.document);
+        d.widgets[0].instance_of = "card";
+        panel.document = d; backend.appState.project.world.interface = d;
+        panel.selectedId = "back";
+        verify(!panel.resetOverride("back: added"));
+        verify(panel.error !== "");
+        verify(panel.resetOverride("front: element.content"));
+        const edit = calls.filter(c => c.command === "update_interface_edit").pop().args.edit;
+        compare(edit, {kind: "ResetField", instance: "back", widget: "front", path: "element.content"});
+    }
+    function test_the_world_behind_the_interface_is_a_preview_only_switch() {
+        const last = () => calls.filter(c => c.command === "preview_interface" && c.args.design).pop().args.design;
+        compare(last().world, true);
+        findChild(panel, "interfaceWorld").toggled();
+        panel.showWorld = false;
+        tryVerify(() => last().world === false);
+        verify(!calls.some(c => c.command === "set_interface" || c.command === "begin_interface_edit"));
+        panel.showWorld = true;
+        tryVerify(() => last().world === true);
+    }
 }

@@ -345,6 +345,8 @@ impl Host for Recorder {
             | Act::SetFocus { .. }
             | Act::SetUiTheme { .. }
             | Act::SetBusVolume { .. }
+            | Act::SetReverb { .. }
+            | Act::MuffleUnderwater { .. }
             | Act::SetRenderSetting { .. }
             | Act::SetLook2d { .. }
             | Act::SetExposure { .. }
@@ -1161,6 +1163,8 @@ fn line_of(act: &Act) -> String {
         Act::SetShadowDistance { distance } => format!("SetShadowDistance {distance:?}"),
         Act::SetLightShadows { enabled } => format!("SetLightShadows {enabled}"),
         Act::SetRayTracing { enabled } => format!("SetRayTracing {enabled}"),
+        Act::SetReverb { preset } => format!("SetReverb {preset}"),
+        Act::MuffleUnderwater { bus, enabled } => format!("MuffleUnderwater {bus} {enabled}"),
         Act::SetGiBounces { bounces } => format!("SetGiBounces {bounces:?}"),
         Act::SetGiSamples { samples } => format!("SetGiSamples {samples:?}"),
         Act::SetFogDensity { density } => format!("SetFogDensity {density:?}"),
@@ -1476,6 +1480,10 @@ fn line_of(effect: &Effect) -> Option<String> {
             format!("{actor}|SetLightShadows {enabled}")
         }
         Effect::SetRayTracing { enabled } => format!("|SetRayTracing {enabled}"),
+        Effect::SetReverb { preset } => format!("|SetReverb {preset}"),
+        Effect::SetUnderwaterMuffle { bus, enabled } => {
+            format!("|MuffleUnderwater {} {enabled}", bus.name())
+        }
         Effect::SetGiBounces { bounces } => format!("|SetGiBounces {bounces:?}"),
         Effect::SetGiSamples { samples } => format!("|SetGiSamples {samples:?}"),
         Effect::SetFogDensity { density } => format!("|SetFogDensity {density:?}"),
@@ -3114,6 +3122,13 @@ fn sounds_ask_for_the_same_things() {
             K::SetBusVolume {
                 bus: SoundBus::Music,
                 volume: number(80.0),
+            },
+            K::SetReverb {
+                preset: "Cave".to_string(),
+            },
+            K::MuffleUnderwater {
+                bus: SoundBus::Music,
+                enabled: true,
             },
             K::StopSound {
                 sound: Value::text(""),

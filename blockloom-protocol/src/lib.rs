@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 37;
+pub const PROTOCOL_VERSION: u32 = 38;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -85,6 +85,14 @@ pub enum TouchPhase {
     Cancel,
 }
 
+fn design_world_default() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
 /// A caller-owned revision and viewport generation identify a temporary draft.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InterfaceDesign {
@@ -99,6 +107,10 @@ pub struct InterfaceDesign {
     /// Show a document animation frozen at one time, without playing it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub animation: Option<InterfaceAnimationPreview>,
+    /// Draw the project's actors behind the interface. Off hides them for the
+    /// preview only, so the interface is seen on its own.
+    #[serde(default = "design_world_default", skip_serializing_if = "is_true")]
+    pub world: bool,
     pub revision: u64,
     pub generation: u64,
     pub document: blockloom_core::ui::UiDocument,
@@ -799,6 +811,7 @@ mod tests {
     fn interface_design_and_geometry_round_trip() {
         let message = EditorMessage::InterfaceDesign {
             design: Some(InterfaceDesign {
+                world: true,
                 screen: Some("screen".into()),
                 hidden: vec![],
                 animation: None,

@@ -16,7 +16,10 @@ pub fn token(pid: u32) -> Option<String> {
         ProcessRefreshKind::nothing(),
     );
     let process = system.process(target)?;
-    if matches!(process.status(), ProcessStatus::Zombie | ProcessStatus::Dead) {
+    if matches!(
+        process.status(),
+        ProcessStatus::Zombie | ProcessStatus::Dead
+    ) {
         return None;
     }
     Some(process.start_time().to_string())

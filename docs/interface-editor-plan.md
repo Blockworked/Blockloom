@@ -1,6 +1,6 @@
 # Interface editor overhaul
 
-Status: implementation started (nine increments). Phase 0 has a runtime design session, frame-matched selection and screen isolation. Interface supports typed move/resize, property, reparent and reorder transactions, snapping, eight resize handles and keyboard nudging; the preview gate is still open.
+Status: phases 0-6 are largely implemented (typed transactions, runtime preview, hierarchy, multiselect, alignment and guides, styles and classes, components with exposed properties and slots, variants, animations with a timeline). `UiDesigner.qml` is split into viewport, hierarchy, palette, toolbar and inspector files, and the panels fit a small window; the remaining list, with its done and open items, is in `interface-editor-fixes-plan.md`.
 
 ## Goal
 

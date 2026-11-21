@@ -15,6 +15,7 @@ name = "blockloom-runtime"
 path = "src/main.rs"
 
 [dependencies]
+hound = "3.5"
 blockloom-core = { path = "../blockloom-core" }
 blockloom-protocol = { path = "../blockloom-protocol" }
 blockloom-plugin-api = { path = "../blockloom-plugin-api" }

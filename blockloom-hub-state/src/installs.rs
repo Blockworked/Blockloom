@@ -13,9 +13,17 @@ const OPTIONAL_TOOLS: [&str; 3] = ["java", "android-sdk", "android-ndk"];
 pub fn host_target() -> &'static str {
     let arm = cfg!(target_arch = "aarch64");
     if cfg!(windows) {
-        if arm { "aarch64-pc-windows-msvc" } else { "x86_64-pc-windows-msvc" }
+        if arm {
+            "aarch64-pc-windows-msvc"
+        } else {
+            "x86_64-pc-windows-msvc"
+        }
     } else if cfg!(target_os = "macos") {
-        if arm { "aarch64-apple-darwin" } else { "x86_64-apple-darwin" }
+        if arm {
+            "aarch64-apple-darwin"
+        } else {
+            "x86_64-apple-darwin"
+        }
     } else if arm {
         "aarch64-unknown-linux-gnu"
     } else {
@@ -24,7 +32,11 @@ pub fn host_target() -> &'static str {
 }
 
 fn exe(name: &str) -> String {
-    if cfg!(windows) { format!("{name}.exe") } else { name.to_string() }
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
 }
 
 pub fn editor_name() -> String {
@@ -59,27 +71,52 @@ fn validate_tools(directory: &Path, tools: &Value) -> Result<()> {
         .and_then(|c| c.as_str())
         .is_some_and(|c| {
             let parts: Vec<_> = c.split('.').collect();
-            parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.chars().all(|d| d.is_ascii_digit()))
+            parts.len() == 3
+                && parts
+                    .iter()
+                    .all(|p| !p.is_empty() && p.chars().all(|d| d.is_ascii_digit()))
         });
     if !channel_ok {
-        return Err(Error::new("Every installation must bundle its pinned Rust toolchain"));
+        return Err(Error::new(
+            "Every installation must bundle its pinned Rust toolchain",
+        ));
     }
     for binary in ["rustc", "cargo"] {
         if !rust.join("bin").join(exe(binary)).is_file() {
-            return Err(Error::new(format!("Bundled Rust toolchain is missing {binary}")));
+            return Err(Error::new(format!(
+                "Bundled Rust toolchain is missing {binary}"
+            )));
         }
     }
-    if !rust.join("lib").join("rustlib").join(host_target()).join("lib").is_dir() {
-        return Err(Error::new("Bundled Rust toolchain is missing host standard libraries"));
+    if !rust
+        .join("lib")
+        .join("rustlib")
+        .join(host_target())
+        .join("lib")
+        .is_dir()
+    {
+        return Err(Error::new(
+            "Bundled Rust toolchain is missing host standard libraries",
+        ));
     }
     for name in OPTIONAL_TOOLS {
-        let Some(meta) = tools.get(name) else { continue };
-        if meta.get("version").and_then(|v| v.as_str()).is_none_or(str::is_empty) {
-            return Err(Error::new(format!("Component must declare its pinned version: {name}")));
+        let Some(meta) = tools.get(name) else {
+            continue;
+        };
+        if meta
+            .get("version")
+            .and_then(|v| v.as_str())
+            .is_none_or(str::is_empty)
+        {
+            return Err(Error::new(format!(
+                "Component must declare its pinned version: {name}"
+            )));
         }
         let root = directory.join("tools").join(name);
         if !root.is_dir() {
-            return Err(Error::new(format!("Bundle is missing selected component: {name}")));
+            return Err(Error::new(format!(
+                "Bundle is missing selected component: {name}"
+            )));
         }
         let missing = match name {
             "java" => !root.join("bin").join(exe("java")).is_file(),
@@ -98,9 +135,16 @@ fn validate_tools(directory: &Path, tools: &Value) -> Result<()> {
         .filter_map(|t| t.as_str())
     {
         if !ANDROID_TARGETS.contains(&target)
-            || !rust.join("lib").join("rustlib").join(target).join("lib").is_dir()
+            || !rust
+                .join("lib")
+                .join("rustlib")
+                .join(target)
+                .join("lib")
+                .is_dir()
         {
-            return Err(Error::new(format!("Bundle is missing Android Rust target: {target}")));
+            return Err(Error::new(format!(
+                "Bundle is missing Android Rust target: {target}"
+            )));
         }
     }
     Ok(())
@@ -123,7 +167,10 @@ impl Hub {
         }
         let manifest = read_json(&directory.join(MANIFEST))?;
         if manifest["id"] != identity || manifest["target"] != host_target() {
-            return Err(Error::new(format!("Invalid installation manifest: {}", directory.display())));
+            return Err(Error::new(format!(
+                "Invalid installation manifest: {}",
+                directory.display()
+            )));
         }
         if !matches!(manifest["kind"].as_str(), Some("release" | "dev")) {
             return Err(Error::new("Unknown installation kind"));
@@ -135,7 +182,10 @@ impl Hub {
             for name in ["blockloom", "blockloom-runtime"] {
                 let binary = directory.join(exe(name));
                 if !is_regular(&binary) {
-                    return Err(Error::new(format!("Missing regular binary: {}", binary.display())));
+                    return Err(Error::new(format!(
+                        "Missing regular binary: {}",
+                        binary.display()
+                    )));
                 }
             }
             validate_tools(&directory, manifest.get("tools").unwrap_or(&json!({})))?;
@@ -212,11 +262,16 @@ impl Hub {
         let mut bound = vec![];
         let mut active = vec![];
         for entry in self.projects()? {
-            if entry["installation"] != identity || entry.get("error").is_some_and(|e| !e.is_null()) {
+            if entry["installation"] != identity || entry.get("error").is_some_and(|e| !e.is_null())
+            {
                 continue;
             }
             let name = entry["name"].as_str().unwrap_or("").to_string();
-            let label = if name.is_empty() { entry["path"].as_str().unwrap_or("").to_string() } else { name };
+            let label = if name.is_empty() {
+                entry["path"].as_str().unwrap_or("").to_string()
+            } else {
+                name
+            };
             bound.push(label.clone());
             if entry["active"] == true {
                 active.push(label);

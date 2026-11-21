@@ -61,3 +61,23 @@ cargo test --release -p blockloom-runtime -- --ignored --nocapture sensor_publis
    `apply_common` (per-effect lookups), `batch_meshes` (small movers merge
    every frame), `cull_views` (CPU Hi-Z raster), `tiles::redraw_maps`,
    `ai::tick`, `sync_lights`.
+
+## Interface designer
+
+`UiDocument::validate` walks each parent chain once (an id to parent map and a
+set of ids already known to reach a root), and `UiDocument::with_edit` clones
+the document once per edit. A drag no longer clones the project: a transaction
+keeps only the interface document it started from, and staleness is judged on
+that document and the saved revision.
+
+Measured on a debug build, one `Move` on a chain-heavy document (chains eight
+deep), `cargo test -p blockloom-core scale_tests::timings -- --ignored
+--nocapture`:
+
+| Widgets | `validate` | `with_edit` (clone, edit, validate) |
+| --- | --- | --- |
+| 1,000 | 2.0 ms | 2.7 ms |
+| 10,000 | 19.9 ms | 20.8 ms |
+
+Release builds are several times faster. A QML-side drag still receives the
+whole document back per pointer move; sending a patch instead is open.

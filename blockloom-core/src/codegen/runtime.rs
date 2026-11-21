@@ -474,6 +474,13 @@ pub enum Act {
         bus: &'static str,
         volume: f32,
     },
+    SetReverb {
+        preset: &'static str,
+    },
+    MuffleUnderwater {
+        bus: &'static str,
+        enabled: bool,
+    },
     SetComponentField {
         component: &'static str,
         field: &'static str,
@@ -1348,7 +1355,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 39;
+pub const LOGIC_ABI_VERSION: u32 = 40;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1592,6 +1599,10 @@ pub const ACT_SWITCH_SAVE_SLOT: u32 = 126;
 pub const ACT_DELETE_SAVE_SLOT: u32 = 127;
 /// `a` = language tag (`en`, `fr`, ...). Window-global.
 pub const ACT_SET_LANGUAGE: u32 = 128;
+/// `a` the preset name.
+pub const ACT_SET_REVERB: u32 = 129;
+/// `b` the bus, `n0` on or off.
+pub const ACT_MUFFLE_UNDERWATER: u32 = 130;
 /// `a` = dial name, `b` = the value as text. Window-global.
 pub const ACT_SET_LOOK_2D: u32 = 200;
 
@@ -2426,6 +2437,17 @@ impl Host for AbiHost {
                 &sound,
                 "",
                 [pitch as f64, 0.0, 0.0],
+                &zero,
+            ),
+            Act::SetReverb { preset } => {
+                self.act_wire(actor, ACT_SET_REVERB, preset, "", [0.0; 3], &zero)
+            }
+            Act::MuffleUnderwater { bus, enabled } => self.act_wire(
+                actor,
+                ACT_MUFFLE_UNDERWATER,
+                "",
+                bus,
+                [if enabled { 1.0 } else { 0.0 }, 0.0, 0.0],
                 &zero,
             ),
             Act::SetBusVolume { bus, volume } => self.act_wire(

@@ -508,10 +508,11 @@ pub(crate) fn sync_dto(s: &AppState) -> SyncDto {
     }
 }
 
-/// A draft belongs to one project and one saved revision.
+/// A draft belongs to one project and one saved revision. It holds only the
+/// interface document it started from, not a copy of the project.
 pub(crate) struct InterfaceEditTransaction {
     pub(crate) token: String,
-    pub(crate) project: Project,
+    pub(crate) original: blockloom_core::ui::UiDocument,
     pub(crate) revision: u64,
     pub(crate) document: blockloom_core::ui::UiDocument,
 }

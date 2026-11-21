@@ -711,63 +711,68 @@ pub(crate) mod tests {
         publish_one("a1");
         let variables = blockloom_core::vm::Variables::default();
         let lists = blockloom_core::vm::Lists::default();
-        crate::script::with_script_stores(&variables, &lists, || {
-            let mut asked = Asked::default();
-            script.start("a1", &mut asked);
-            assert!(
-                asked.effects.iter().any(|effect| matches!(
-                    effect,
-                    Effect::Say { actor, text }
-                    if actor == "a1" && text == "hello from wasm"
-                )),
-                "{:?}",
-                asked.effects
-            );
-            assert!(
-                asked.effects.iter().any(|effect| matches!(
-                    effect,
-                    Effect::SwitchSaveSlot { actor, slot }
-                    if actor == "a1" && slot == "Slot 2"
-                )),
-                "{:?}",
-                asked.effects
-            );
-            assert!(
-                asked.effects.iter().any(|effect| matches!(
-                    effect,
-                    Effect::SetLanguage { actor, language }
-                    if actor == "a1" && language == "fr"
-                )),
-                "{:?}",
-                asked.effects
-            );
-            let mut asked = Asked::default();
-            script.tick("a1", &mut asked, 1.0 / 60.0);
-            assert!(
-                asked.effects.iter().any(|effect| matches!(
-                    effect,
-                    Effect::ChangePosition { actor, axis: Axis::X, by }
-                    if actor == "a1" && (*by - 1.0).abs() < f32::EPSILON
-                )),
-                "{:?}",
-                asked.effects
-            );
-            let mut asked = Asked::default();
-            script.event(
-                "a1",
-                &mut asked,
-                &ScriptEvent::new(abi::EVENT_MESSAGE, "hi"),
-            );
-            assert!(
-                asked.effects.iter().any(|effect| matches!(
-                    effect,
-                    Effect::Say { text, .. } if text == "event heard"
-                )),
-                "{:?}",
-                asked.effects
-            );
-            assert!(!script.is_stopped());
-        });
+        crate::script::with_script_stores(
+            &variables,
+            &lists,
+            &blockloom_core::vm::Dicts::default(),
+            || {
+                let mut asked = Asked::default();
+                script.start("a1", &mut asked);
+                assert!(
+                    asked.effects.iter().any(|effect| matches!(
+                        effect,
+                        Effect::Say { actor, text }
+                        if actor == "a1" && text == "hello from wasm"
+                    )),
+                    "{:?}",
+                    asked.effects
+                );
+                assert!(
+                    asked.effects.iter().any(|effect| matches!(
+                        effect,
+                        Effect::SwitchSaveSlot { actor, slot }
+                        if actor == "a1" && slot == "Slot 2"
+                    )),
+                    "{:?}",
+                    asked.effects
+                );
+                assert!(
+                    asked.effects.iter().any(|effect| matches!(
+                        effect,
+                        Effect::SetLanguage { actor, language }
+                        if actor == "a1" && language == "fr"
+                    )),
+                    "{:?}",
+                    asked.effects
+                );
+                let mut asked = Asked::default();
+                script.tick("a1", &mut asked, 1.0 / 60.0);
+                assert!(
+                    asked.effects.iter().any(|effect| matches!(
+                        effect,
+                        Effect::ChangePosition { actor, axis: Axis::X, by }
+                        if actor == "a1" && (*by - 1.0).abs() < f32::EPSILON
+                    )),
+                    "{:?}",
+                    asked.effects
+                );
+                let mut asked = Asked::default();
+                script.event(
+                    "a1",
+                    &mut asked,
+                    &ScriptEvent::new(abi::EVENT_MESSAGE, "hi"),
+                );
+                assert!(
+                    asked.effects.iter().any(|effect| matches!(
+                        effect,
+                        Effect::Say { text, .. } if text == "event heard"
+                    )),
+                    "{:?}",
+                    asked.effects
+                );
+                assert!(!script.is_stopped());
+            },
+        );
     }
 
     /// The C guest as a sandboxed module: one `clang --target=wasm32` run over

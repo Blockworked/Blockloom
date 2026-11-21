@@ -11,7 +11,7 @@
 typedef unsigned int u32;
 typedef int i32;
 
-#define BL_ABI_VERSION 47u
+#define BL_ABI_VERSION 52u
 #define BL_OK 0u
 #define BL_TOO_LONG 2u
 
@@ -78,6 +78,18 @@ typedef int i32;
 #define BL_READ_VARIABLE 61u
 #define BL_READ_LIST_LENGTH 62u
 #define BL_READ_LIST_ITEM 63u
+#define BL_READ_CAMERA_2D 64u
+#define BL_READ_LIGHT_LEVEL 65u
+#define BL_READ_IS_NIGHT 66u
+#define BL_READ_LIST_CONTAINS 67u
+#define BL_READ_LIST_AMOUNT 68u
+#define BL_READ_LIST_INDEX_OF 69u
+#define BL_READ_LIST_HAS_INDEX 70u
+#define BL_READ_DICT_SIZE 71u
+#define BL_READ_DICT_HAS_KEY 72u
+#define BL_READ_DICT_VALUE 73u
+#define BL_READ_CAMERA_POSITION 74u
+#define BL_READ_CAMERA_DIRECTION 75u
 #define BL_TEXT_CURRENT_QUALITY 18u
 #define BL_TEXT_ACTOR_NAME 1u
 #define BL_TEXT_FIELD 2u
@@ -108,6 +120,10 @@ typedef int i32;
 #define BL_TEXT_PLUGIN 21u
 #define BL_TEXT_QUERY 22u
 #define BL_TEXT_CONTROLLER 23u
+#define BL_TEXT_LIST_JSON 32u
+#define BL_TEXT_DICT_VALUE 33u
+#define BL_TEXT_DICT_KEYS 34u
+#define BL_TEXT_DICT_JSON 35u
 #define BL_ACT_MOVE 1u
 #define BL_ACT_GO_TO 2u
 #define BL_ACT_CHANGE_POSITION 3u
@@ -241,6 +257,31 @@ typedef int i32;
 #define BL_ACT_SWITCH_SAVE_SLOT 134u
 #define BL_ACT_DELETE_SAVE_SLOT 135u
 #define BL_ACT_SET_LANGUAGE 136u
+#define BL_ACT_SET_LOOK_2D 137u
+#define BL_ACT_SET_BODY 138u
+#define BL_ACT_SET_GRAVITY 139u
+#define BL_ACT_SET_DENSITY 140u
+#define BL_ACT_SET_MASS 141u
+#define BL_ACT_SET_BODY_OTHER 157u
+#define BL_ACT_SET_DENSITY_OTHER 158u
+#define BL_ACT_SET_MASS_OTHER 159u
+#define BL_ACT_SET_REVERB 160u
+#define BL_ACT_MUFFLE_UNDERWATER 161u
+#define BL_ACT_SET_TRAIL_ENABLED 142u
+#define BL_ACT_GLIDE 143u
+#define BL_ACT_FRACTURE 144u
+#define BL_ACT_SPLASH 145u
+#define BL_ACT_PUFF_SMOKE 146u
+#define BL_ACT_SPAWN_DECAL 147u
+#define BL_ACT_FADE_DECALS 148u
+#define BL_ACT_LIST_REVERSE 149u
+#define BL_ACT_LIST_SHIFT 150u
+#define BL_ACT_JSON_TO_LIST 151u
+#define BL_ACT_DICT_SET 152u
+#define BL_ACT_DICT_SET_TEXT 153u
+#define BL_ACT_DICT_DELETE_KEY 154u
+#define BL_ACT_DICT_CLEAR 155u
+#define BL_ACT_JSON_TO_DICT 156u
 #define BL_EVENT_MESSAGE 1u
 #define BL_EVENT_KEY 2u
 #define BL_EVENT_ACTION 3u
@@ -262,6 +303,7 @@ typedef int i32;
 #define BL_EVENT_CUTSCENE_ENDED 19u
 #define BL_EVENT_PLUGIN 20u
 #define BL_EVENT_CONTACT 21u
+#define BL_EVENT_MOTOR 22u
 
 /* The call record the imports take; 56 bytes, field for field the host's
  * WasmCall. */
@@ -341,6 +383,19 @@ static void bl_switch_save_slot(const char *slot) {
 
 static void bl_set_language(const char *language) {
     bl_act(BL_ACT_SET_LANGUAGE, language, "", "", 0, 0);
+}
+
+/* `set [look] to`: dial and value spelled as the blocks' slot holds them,
+ * e.g. bl_set_look_2d("shake", "0.5") or bl_set_look_2d("cover kind", "fade"). */
+static void bl_set_look_2d(const char *dial, const char *value) {
+    bl_act(BL_ACT_SET_LOOK_2D, dial, value, "", 0, 0);
+}
+
+/* The 2D camera: "zoom", "rotation", "at bounds", "shaking" or "cover". */
+static double bl_camera_2d(const char *what) {
+    double out = 0;
+    bl_read_number(BL_READ_CAMERA_2D, what, "", 0, &out);
+    return out;
 }
 
 #endif

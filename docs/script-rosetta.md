@@ -161,6 +161,16 @@ Three rules cover most of the table:
 | `pause/resume the game`, `is paused?` | `me.set_paused(true/false)`, `me.is_paused()` |
 | `set time scale`, `hitstop`, `set letterbox`, `fade screen` | `me.set_time_scale(s)`, `me.hitstop(n)`, `me.set_letterbox(1.0)`, `me.fade_screen("black")` |
 | `play/skip cutscene`, `shake camera` | `me.play_cutscene("Intro")`, `me.skip_cutscene()`, `me.shake_camera(0.5)` |
+| `set [look] to`, `shake`/`hitstop`/`flash` | `me.set_look_2d("cover kind", "fade")`, `me.shake_2d(0.5)`, `me.hitstop_2d(0.1)`, `me.flash_screen(0.2)` |
+| `camera zoom`, `is camera at bounds?`, `is screen shaking?`, `screen cover` | `me.camera_zoom()`, `me.camera_at_bounds()`, `me.screen_shaking()`, `me.screen_cover()` |
+| `light level at`, `is night?` | `me.light_level(x, y)`, `me.is_night()` |
+| `list contains/amount/index of/has index`, `list as JSON` | `me.list_contains(l, v)`, `me.list_amount(l, v)`, `me.list_index_of(l, v)`, `me.list_has_index(l, i)`, `me.list_json(l)` |
+| `reverse/shift list`, `load JSON into list` | `me.list_reverse(l)`, `me.list_shift(l, n)`, `me.list_set_json(l, j)` |
+| `dict size/has key/value`, `set key`, `delete key`, `clear dict` | `me.dict_size(d)`, `me.dict_has_key(d, k)`, `me.dict_number(d, k)`, `me.dict_set(d, k, v)`, `me.dict_delete(d, k)`, `me.dict_clear(d)` |
+| `set my body/gravity/density/mass`, `trail on/off` | `me.set_body("Dynamic")`, `me.set_gravity(x, y, z)`, `me.set_density(d)`, `me.set_mass(m)`, `me.set_trail_enabled(true)` |
+| `glide ... easing`, `fracture`, `splash`, `puff of smoke`, `decal` | `me.glide_to(x, y, z, s, "EaseIn")`, `me.fracture("")`, `me.splash(..)`, `me.puff_smoke(..)`, `me.spawn_decal(..)` |
+| `when I jump/land/...` | `Event::Motor(MotorEvent::Jump)` in `event` |
+| `camera position/direction` | `me.camera_position()`, `me.camera_direction()` |
 | `cutscene name/time` | `me.cutscene_name()`, `me.cutscene_time()` |
 
 ## Sound
@@ -170,7 +180,7 @@ Three rules cover most of the table:
 | `play sound (pop)` | `me.play_sound("pop", 100.0, 1.0, false, SoundBus::Sfx)` |
 | `play sound at (Ball)` | `me.play_sound_at("pop", "Ball", 100.0, 1.0, false, SoundBus::Sfx)` |
 | `stop sound (pop)` (empty stops all) | `me.stop_sound("pop")` |
-| `set sound volume/pitch`, `bus volume`, `is playing?` | `me.set_sound_volume(..)`, `me.set_sound_pitch(..)`, `me.set_bus_volume(SoundBus::Music, v)` / `me.bus_volume(..)`, `me.is_sound_playing(..)` |
+| `set sound volume/pitch`, `bus volume`, `is playing?` | `me.set_sound_volume(..)`, `me.set_sound_pitch(..)`, `me.set_bus_volume(SoundBus::Music, v)` / `me.bus_volume(..)`, `me.set_reverb("Cave")`, `me.muffle_underwater(SoundBus::Sfx, true)`, `me.is_sound_playing(..)` |
 
 ## Interface
 

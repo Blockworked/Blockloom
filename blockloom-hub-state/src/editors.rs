@@ -41,10 +41,15 @@ impl Hub {
         let mut best: Option<(u64, u32)> = None;
         for entry in read.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let Some(pid) = name.strip_suffix(".json").and_then(|n| n.parse::<u32>().ok()) else {
+            let Some(pid) = name
+                .strip_suffix(".json")
+                .and_then(|n| n.parse::<u32>().ok())
+            else {
                 continue;
             };
-            let Some(presence) = self.presence(pid) else { continue };
+            let Some(presence) = self.presence(pid) else {
+                continue;
+            };
             if !process::alive(pid) {
                 // Left behind by an editor that is gone.
                 let _ = std::fs::remove_file(entry.path());
@@ -61,7 +66,13 @@ impl Hub {
         best.map(|(_, pid)| pid)
     }
 
-    fn send_request(&self, pid: u32, action: &str, path: Option<&Path>, project: Option<Value>) -> Result<String> {
+    fn send_request(
+        &self,
+        pid: u32,
+        action: &str,
+        path: Option<&Path>,
+        project: Option<Value>,
+    ) -> Result<String> {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let request = contract::Request {
             schema: 1,
@@ -93,7 +104,11 @@ impl Hub {
                 return if answer.ok {
                     Reuse::Done(true)
                 } else {
-                    Reuse::Declined(answer.error.unwrap_or_else(|| "The editor couldn't open it.".into()))
+                    Reuse::Declined(
+                        answer
+                            .error
+                            .unwrap_or_else(|| "The editor couldn't open it.".into()),
+                    )
                 };
             }
             if folder.is_some_and(|f| self.lock_owned_by(pid, Some(f))) {
@@ -128,25 +143,30 @@ impl Hub {
                 }
             }
             Some(_) => {}
-            None => candidates.extend(
-                self.remembered_paths().into_iter().map(PathBuf::from),
-            ),
+            None => candidates.extend(self.remembered_paths().into_iter().map(PathBuf::from)),
         }
-        candidates
-            .iter()
-            .any(|folder| {
-                crate::read_json(&sync::lock_path(folder))
-                    .is_ok_and(|lock| lock["pid"].as_u64() == Some(pid as u64))
-            })
+        candidates.iter().any(|folder| {
+            crate::read_json(&sync::lock_path(folder))
+                .is_ok_and(|lock| lock["pid"].as_u64() == Some(pid as u64))
+        })
     }
 
     fn remembered_paths(&self) -> Vec<String> {
         self.projects()
-            .map(|rows| rows.iter().filter_map(|r| r["path"].as_str().map(str::to_string)).collect())
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|r| r["path"].as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
-    fn spawn(&self, identity: &str, arguments: &[String], project: Option<&Path>) -> Result<(Child, PathBuf)> {
+    fn spawn(
+        &self,
+        identity: &str,
+        arguments: &[String],
+        project: Option<&Path>,
+    ) -> Result<(Child, PathBuf)> {
         let installation = self.installation(identity, true)?;
         let directory = self.slot(identity)?;
         let tool = |name: &str| directory.join("tools").join(name);
@@ -156,7 +176,10 @@ impl Hub {
         let rust = tool("rust");
         let mut bins = vec![rust.join("bin")];
         command.env("RUSTUP_TOOLCHAIN", &rust);
-        let tools = installation["tools"].as_object().cloned().unwrap_or_default();
+        let tools = installation["tools"]
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
         for (name, variable) in [
             ("java", "JAVA_HOME"),
             ("android-sdk", "BLOCKLOOM_HUB_ANDROID_SDK"),
@@ -172,10 +195,14 @@ impl Hub {
                 match name {
                     "java" => bins.push(root.join("bin")),
                     "android-sdk" => {
-                        command.env("ANDROID_HOME", &root).env("ANDROID_SDK_ROOT", &root);
+                        command
+                            .env("ANDROID_HOME", &root)
+                            .env("ANDROID_SDK_ROOT", &root);
                     }
                     _ => {
-                        command.env("ANDROID_NDK_HOME", &root).env("ANDROID_NDK_ROOT", &root);
+                        command
+                            .env("ANDROID_NDK_HOME", &root)
+                            .env("ANDROID_NDK_ROOT", &root);
                     }
                 }
             }
@@ -188,14 +215,20 @@ impl Hub {
         let logs = self.root.join("logs");
         std::fs::create_dir_all(&logs)?;
         let log = logs.join(format!("{identity}-editor.log"));
-        let output = std::fs::OpenOptions::new().create(true).append(true).open(&log)?;
+        let output = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log)?;
         let errors = output.try_clone()?;
         command
             .stdin(Stdio::null())
             .stdout(Stdio::from(output))
             .stderr(Stdio::from(errors));
         let mut child = command.spawn().map_err(|e| {
-            Error::new(format!("Couldn't start the editor ({}): {e}", directory.display()))
+            Error::new(format!(
+                "Couldn't start the editor ({}): {e}",
+                directory.display()
+            ))
         })?;
         if let Some(token) = process::token(child.id()) {
             let mut records = self.running_editors();
@@ -204,7 +237,10 @@ impl Hub {
                 "path": project.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
                 "launched_at": now(),
             }));
-            if let Err(error) = write_json(&self.root.join("running.json"), &json!({"editors": records})) {
+            if let Err(error) = write_json(
+                &self.root.join("running.json"),
+                &json!({"editors": records}),
+            ) {
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(error);
@@ -271,8 +307,10 @@ impl Hub {
         if let Some((pid, id)) = reuse {
             match self.await_reply(pid, &id, Some(&path)) {
                 Reuse::Done(opened) => {
-                    return Ok(json!({"pid": pid, "installation": identity, "path": path.to_string_lossy(),
-                                     "opened": opened, "bound": bound, "reused": true}));
+                    return Ok(
+                        json!({"pid": pid, "installation": identity, "path": path.to_string_lossy(),
+                                     "opened": opened, "bound": bound, "reused": true}),
+                    );
                 }
                 Reuse::Declined(error) => return Err(Error::new(error)),
                 Reuse::Unanswered => {}
@@ -281,12 +319,18 @@ impl Hub {
         let (mut child, log) = {
             let _lock = OperationLock::acquire(&self.root)?;
             self.require_idle(&path)?;
-            self.spawn(&identity, &["--project".into(), path.to_string_lossy().into_owned()], Some(&path))?
+            self.spawn(
+                &identity,
+                &["--project".into(), path.to_string_lossy().into_owned()],
+                Some(&path),
+            )?
         };
         // The lock is only for starting the editor, not for waiting on it.
         let opened = self.confirm_open(&mut child, Some(&path), &log)?;
-        Ok(json!({"pid": child.id(), "installation": identity, "path": path.to_string_lossy(),
-                  "opened": opened, "bound": bound, "reused": false}))
+        Ok(
+            json!({"pid": child.id(), "installation": identity, "path": path.to_string_lossy(),
+                  "opened": opened, "bound": bound, "reused": false}),
+        )
     }
 
     /// Asks the editor holding a project to come to the front. The editor
@@ -341,7 +385,13 @@ impl Hub {
                 Error::new("Install an editor first. Get a release on the Installations tab.")
             })?,
         };
-        let folder = location.map(|l| PathBuf::from(l.replacen('~', &dirs::home_dir().unwrap_or_default().to_string_lossy(), 1)));
+        let folder = location.map(|l| {
+            PathBuf::from(l.replacen(
+                '~',
+                &dirs::home_dir().unwrap_or_default().to_string_lossy(),
+                1,
+            ))
+        });
         let mut spec = json!({"name": name, "mode": mode});
         if let Some(folder) = &folder {
             spec["location"] = json!(folder.to_string_lossy());
@@ -353,21 +403,31 @@ impl Hub {
             let _lock = OperationLock::acquire(&self.root)?;
             self.installation(&identity, true)?;
             match self.idle_editor(&identity) {
-                Some(pid) => Some((pid, self.send_request(pid, "create", None, Some(spec.clone()))?)),
+                Some(pid) => Some((
+                    pid,
+                    self.send_request(pid, "create", None, Some(spec.clone()))?,
+                )),
                 None => None,
             }
         };
         if let Some((pid, id)) = reuse {
             match self.await_reply(pid, &id, folder.as_deref()) {
                 Reuse::Done(opened) => {
-                    return Ok(json!({"pid": pid, "installation": identity, "opened": opened,
-                                     "name": name, "reused": true}));
+                    return Ok(
+                        json!({"pid": pid, "installation": identity, "opened": opened,
+                                     "name": name, "reused": true}),
+                    );
                 }
                 Reuse::Declined(error) => return Err(Error::new(error)),
                 Reuse::Unanswered => {}
             }
         }
-        let mut args: Vec<String> = vec!["--new-project".into(), name.into(), "--mode".into(), mode.into()];
+        let mut args: Vec<String> = vec![
+            "--new-project".into(),
+            name.into(),
+            "--mode".into(),
+            mode.into(),
+        ];
         if let Some(folder) = &folder {
             args.extend(["--location".into(), folder.to_string_lossy().into_owned()]);
         }
@@ -380,7 +440,9 @@ impl Hub {
             self.spawn(&identity, &args, None)?
         };
         let opened = self.confirm_open(&mut child, folder.as_deref(), &log)?;
-        Ok(json!({"pid": child.id(), "installation": identity, "opened": opened,
-                  "name": name, "reused": false}))
+        Ok(
+            json!({"pid": child.id(), "installation": identity, "opened": opened,
+                  "name": name, "reused": false}),
+        )
     }
 }

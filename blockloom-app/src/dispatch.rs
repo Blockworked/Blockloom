@@ -360,6 +360,7 @@ impl Backend {
                 state,
                 arg(&args, "token")?,
                 arg(&args, "edit")?,
+                arg::<Option<bool>>(&args, "patch")?.unwrap_or(false),
             )?),
             "commit_interface_edit" => to_json(commands::commit_interface_edit(
                 state,
@@ -372,6 +373,9 @@ impl Backend {
             )?),
             "interface_layout" => to_json(commands::interface_layout(state)?),
             "interface_properties" => to_json(commands::interface_properties()),
+            "interface_overrides" => {
+                to_json(commands::interface_overrides(state, arg(&args, "id")?)?)
+            }
             "set_interface" => to_json(commands::set_interface(
                 state,
                 app,
@@ -381,6 +385,11 @@ impl Backend {
                 let mixer: SoundMixer = arg(&args, "mixer")?;
                 to_json(commands::set_sound_mixer(state, app, mixer)?)
             }
+            "set_soundscape" => to_json(commands::set_soundscape(
+                state,
+                app,
+                arg(&args, "soundscape")?,
+            )?),
             "set_display_output" => {
                 let display: DisplayOutput = arg(&args, "display")?;
                 to_json(commands::set_display_output(state, app, display)?)

@@ -944,6 +944,7 @@ mod tests {
         session
             .apply(
                 Some(blockloom_protocol::InterfaceDesign {
+                    world: true,
                     screen: None,
                     hidden: vec![],
                     animation: None,

@@ -2729,6 +2729,7 @@ dependencies = [
  "bytemuck",
  "getrandom 0.4.3",
  "half",
+ "hound",
  "image",
  "indexmap 2.14.2",
  "js-sys",

@@ -1868,6 +1868,7 @@ mod tests {
                 |p| p[0] > 180 && p[1] < 30,
                 vec![EditorMessage::InterfaceDesign {
                     design: Some(blockloom_protocol::InterfaceDesign {
+                        world: true,
                         screen: None,
                         hidden: vec![],
                         animation: None,
@@ -1936,6 +1937,7 @@ mod tests {
                 |_| false,
                 vec![EditorMessage::InterfaceDesign {
                     design: Some(blockloom_protocol::InterfaceDesign {
+                        world: true,
                         screen: None,
                         hidden: vec![],
                         animation: None,

@@ -300,6 +300,7 @@ fn trace(
 }
 
 const COLD: Color = Color::srgba(0.45, 0.6, 0.85, 0.5);
+const ZONE: Color = Color::srgba(0.3, 0.85, 0.5, 0.7);
 const HOT: Color = Color::srgba(1.0, 0.6, 0.15, 0.9);
 
 /// Volume bounds in the scene view. The heat map is `volume_heat`'s pass.
@@ -324,6 +325,23 @@ pub fn draw_volumes(
                 .map_or(0.0, |v| v.weight);
             let color = COLD.mix(&HOT, weight);
             draw_bounds(&mut gizmos, spec, pose, mode, color);
+        }
+        // Sound zones draw the same bounds, in green.
+        for (id, transform) in actors.iter() {
+            let Some(zone) = engine.actor(&id.0).and_then(|a| a.components.sound_zone()) else {
+                continue;
+            };
+            if !zone.enabled {
+                continue;
+            }
+            let shape = VolumeSpec {
+                shape: zone.shape,
+                half_extents: zone.half_extents,
+                radius: zone.radius,
+                blend_distance: zone.blend_distance,
+                ..VolumeSpec::default()
+            };
+            draw_bounds(&mut gizmos, &shape, &pose_of(transform), mode, ZONE);
         }
     }
 }

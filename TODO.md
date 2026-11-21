@@ -1095,12 +1095,44 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         name actors carrying a `Volume`, and a reel never moves the sun or
         weather tracks; 2D shots frame position only, never FOV; the fade
         wash has no wipe/iris shapes.
-  - [ ] Soundscape zones: reverb volumes (size/decay/damping/excursion, IR or
+  - [x] Soundscape zones: reverb volumes (size/decay/damping/excursion, IR or
         parametric), occlusion (raycast, lowpass plus gain per wall hit) and
         obstruction (edge diffraction lowpass), weather-tied loop mixer (wind gain by
         wind speed, rain gain by precipitation, thunder by lightning director),
         ducking (music dips under dialogue or pause menu), underwater muffle tied to
         water volume. Blocks: `set reverb to`, `muffle _ while underwater?`.
+        Done: `World.soundscape` (`blockloom-core/src/soundscape.rs`) holds
+        weather loops (a looping sound whose gain ramps between two readings
+        of wind, rain, snow or storm), ducking rules (a bus dips while the
+        game is paused or a named sound plays, with attack and release), an
+        underwater muffle (buses pulled down and dulled while the camera is
+        below a water surface), the project reverb and occlusion settings.
+        A `SoundZone` actor component (box, sphere or everywhere, priority,
+        blend distance, reverb, muffle, buses) blends over the project
+        ambience by how far the listener is inside, like an environment
+        volume. Voices play an `FxSource` (`blockloom-runtime/src/sound_fx.rs`):
+        the file through a one-pole lowpass and a Freeverb-style reverb (RT60
+        from `decay`, `size` scales the delays, `excursion` modulates them),
+        driven per voice by atomics the main thread writes each frame and
+        smoothed on the audio thread, with looping handled inside the decoder
+        so the effects stay live. Occlusion (`sound::probe_occlusion`, ~10 Hz)
+        rays each positional voice to the listener against static scenery
+        (bodies and triggers never block): each wall costs gain and highs, and
+        a blocked line with a clear detour round an edge is obstruction
+        (highs only). Blocks `set reverb to` and `muffle _ while underwater?`
+        (LOGIC_ABI_VERSION 40, VM/compiled parity in `tests/codegen.rs`).
+        Authored in Project Settings > Soundscape, the Sound zone inspector
+        card and `set-soundscape` (shell/MCP); zone bounds draw in the scene
+        view with the volume bounds.
+        Scripts reach both blocks as `set_reverb(preset)` and
+        `muffle_underwater(bus, on)` (ABI 52). Occlusion probes are sampled
+        about ten times a second and each voice glides between the answers.
+        The reverb is parametric by default, or a recorded room: a WAV
+        impulse response (`Soundscape::reverb_impulse`, or a zone's
+        `impulse`) is convolved per voice with a uniform-partitioned FFT
+        (`sound_fx.rs`, 1024-sample blocks, trimmed to 2 s, one block of
+        latency; a zone past half weight takes over, `set reverb to` goes
+        back to parametric). Obstruction only looks at static scenery.
   - [ ] Editor, preview and scaling:
         - Sky/Environment inspector: tabbed Sky/Clouds/Fog/Light/Post, live 16:9
           preview thumbnail rendering the real sky shader, cloud-shape slice viewer
@@ -1217,8 +1249,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
   - [x] Blocks and scripts: `set move speed/jump height/coyote time to`, `is _
         grounded/on wall/in water?`, `launch _ by x y`, event `when _ lands`.
         Sampled on fixed tick so replays stay deterministic.
-        (New: `when I land/jump/...` hat, `on wall` reading. Open: no script ABI
-        for the hat or the new components.)
+        (New: `when I land/jump/...` hat, `on wall` reading. Scripts hear the hat
+        as `Event::Motor` (ABI 49); components go through the generic field verbs.)
 - [ ] 2D effects and juice (the 2D path through the Phase 4 particle/trail blocks
       plus screen feedback):
   - [ ] Particles in 2D: sprite-sheet flipbook particles, spawn burst/rate shapes

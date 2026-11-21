@@ -1,4 +1,4 @@
-//! End-to-end test of the real MCP server: spawn the built `dist/index.js`
+//! End-to-end test of the real MCP server: spawn the server built for the test suite
 //! over stdio and call tools through an SDK client, so the full `invoke`
 //! result path - text content and structuredContent - is exercised.
 //! Regression guard: a command whose result is an array (list-assets) must
@@ -9,9 +9,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { repoRoot, resolveShell } from "./shell.js";
 
@@ -23,11 +24,7 @@ test("an array-returning command stays a valid tool result", async (t) => {
     t.skip("no blockloom-shell binary built; run `just build` to exercise this test");
     return;
   }
-  const serverScript = join(repoRoot(), "mcp", "dist", "index.js");
-  if (!existsSync(serverScript)) {
-    t.skip("mcp/dist/index.js not built; run `pnpm run build` in mcp/ to exercise this test");
-    return;
-  }
+  const serverScript = fileURLToPath(new URL("./index.js", import.meta.url));
 
   const dataDir = mkdtempSync(join(tmpdir(), "blockloom-mcp-server-"));
   const savedDataDir = process.env.BLOCKLOOM_DATA_DIR;
@@ -78,11 +75,7 @@ test("installing a plugin adds its commands as tools, removing it takes them awa
     t.skip("no blockloom-shell binary built; run `just build` to exercise this test");
     return;
   }
-  const serverScript = join(repoRoot(), "mcp", "dist", "index.js");
-  if (!existsSync(serverScript)) {
-    t.skip("mcp/dist/index.js not built; run `pnpm run build` in mcp/ to exercise this test");
-    return;
-  }
+  const serverScript = fileURLToPath(new URL("./index.js", import.meta.url));
 
   const dataDir = mkdtempSync(join(tmpdir(), "blockloom-mcp-plugins-"));
   const transport = new StdioClientTransport({

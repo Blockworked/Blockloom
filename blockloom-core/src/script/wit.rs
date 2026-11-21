@@ -486,6 +486,66 @@ pub const READS: &[WitOp] = &[
         name: "READ_LIST_ITEM",
         wit: "lists.get-number",
     },
+    WitOp {
+        abi: abi::READ_CAMERA_2D,
+        name: "READ_CAMERA_2D",
+        wit: "sensors.camera-2d",
+    },
+    WitOp {
+        abi: abi::READ_LIGHT_LEVEL,
+        name: "READ_LIGHT_LEVEL",
+        wit: "sensors.light-level",
+    },
+    WitOp {
+        abi: abi::READ_IS_NIGHT,
+        name: "READ_IS_NIGHT",
+        wit: "sensors.is-night",
+    },
+    WitOp {
+        abi: abi::READ_LIST_CONTAINS,
+        name: "READ_LIST_CONTAINS",
+        wit: "sensors.list-contains",
+    },
+    WitOp {
+        abi: abi::READ_LIST_AMOUNT,
+        name: "READ_LIST_AMOUNT",
+        wit: "sensors.list-amount",
+    },
+    WitOp {
+        abi: abi::READ_LIST_INDEX_OF,
+        name: "READ_LIST_INDEX_OF",
+        wit: "sensors.list-index-of",
+    },
+    WitOp {
+        abi: abi::READ_LIST_HAS_INDEX,
+        name: "READ_LIST_HAS_INDEX",
+        wit: "sensors.list-has-index",
+    },
+    WitOp {
+        abi: abi::READ_DICT_SIZE,
+        name: "READ_DICT_SIZE",
+        wit: "sensors.dict-size",
+    },
+    WitOp {
+        abi: abi::READ_DICT_HAS_KEY,
+        name: "READ_DICT_HAS_KEY",
+        wit: "sensors.dict-has-key",
+    },
+    WitOp {
+        abi: abi::READ_DICT_VALUE,
+        name: "READ_DICT_VALUE",
+        wit: "sensors.dict-value",
+    },
+    WitOp {
+        abi: abi::READ_CAMERA_POSITION,
+        name: "READ_CAMERA_POSITION",
+        wit: "sensors.camera-position",
+    },
+    WitOp {
+        abi: abi::READ_CAMERA_DIRECTION,
+        name: "READ_CAMERA_DIRECTION",
+        wit: "sensors.camera-direction",
+    },
 ];
 
 /// Every `abi::TEXT_*` verb and its WIT path.
@@ -604,6 +664,26 @@ pub const TEXTS: &[WitOp] = &[
         abi: abi::TEXT_CONTROLLER,
         name: "TEXT_CONTROLLER",
         wit: "physics.controller-text",
+    },
+    WitOp {
+        abi: abi::TEXT_LIST_JSON,
+        name: "TEXT_LIST_JSON",
+        wit: "texts.list-json",
+    },
+    WitOp {
+        abi: abi::TEXT_DICT_VALUE,
+        name: "TEXT_DICT_VALUE",
+        wit: "texts.dict-value",
+    },
+    WitOp {
+        abi: abi::TEXT_DICT_KEYS,
+        name: "TEXT_DICT_KEYS",
+        wit: "texts.dict-keys",
+    },
+    WitOp {
+        abi: abi::TEXT_DICT_JSON,
+        name: "TEXT_DICT_JSON",
+        wit: "texts.dict-json",
     },
     WitOp {
         abi: abi::TEXT_DATA,
@@ -1309,6 +1389,131 @@ pub const ACTS: &[WitOp] = &[
         name: "ACT_SET_LANGUAGE",
         wit: "acts.set-language",
     },
+    WitOp {
+        abi: abi::ACT_SET_LOOK_2D,
+        name: "ACT_SET_LOOK_2D",
+        wit: "acts.set-look-2d",
+    },
+    WitOp {
+        abi: abi::ACT_SET_BODY,
+        name: "ACT_SET_BODY",
+        wit: "acts.set-body",
+    },
+    WitOp {
+        abi: abi::ACT_SET_GRAVITY,
+        name: "ACT_SET_GRAVITY",
+        wit: "acts.set-gravity",
+    },
+    WitOp {
+        abi: abi::ACT_SET_DENSITY,
+        name: "ACT_SET_DENSITY",
+        wit: "acts.set-density",
+    },
+    WitOp {
+        abi: abi::ACT_SET_MASS,
+        name: "ACT_SET_MASS",
+        wit: "acts.set-mass",
+    },
+    WitOp {
+        abi: abi::ACT_SET_BODY_OTHER,
+        name: "ACT_SET_BODY_OTHER",
+        wit: "acts.set-body-other",
+    },
+    WitOp {
+        abi: abi::ACT_SET_DENSITY_OTHER,
+        name: "ACT_SET_DENSITY_OTHER",
+        wit: "acts.set-density-other",
+    },
+    WitOp {
+        abi: abi::ACT_SET_MASS_OTHER,
+        name: "ACT_SET_MASS_OTHER",
+        wit: "acts.set-mass-other",
+    },
+    WitOp {
+        abi: abi::ACT_SET_REVERB,
+        name: "ACT_SET_REVERB",
+        wit: "acts.set-reverb",
+    },
+    WitOp {
+        abi: abi::ACT_MUFFLE_UNDERWATER,
+        name: "ACT_MUFFLE_UNDERWATER",
+        wit: "acts.muffle-underwater",
+    },
+    WitOp {
+        abi: abi::ACT_SET_TRAIL_ENABLED,
+        name: "ACT_SET_TRAIL_ENABLED",
+        wit: "acts.set-trail-enabled",
+    },
+    WitOp {
+        abi: abi::ACT_GLIDE,
+        name: "ACT_GLIDE",
+        wit: "acts.glide",
+    },
+    WitOp {
+        abi: abi::ACT_FRACTURE,
+        name: "ACT_FRACTURE",
+        wit: "acts.fracture",
+    },
+    WitOp {
+        abi: abi::ACT_SPLASH,
+        name: "ACT_SPLASH",
+        wit: "acts.splash",
+    },
+    WitOp {
+        abi: abi::ACT_PUFF_SMOKE,
+        name: "ACT_PUFF_SMOKE",
+        wit: "acts.puff-smoke",
+    },
+    WitOp {
+        abi: abi::ACT_SPAWN_DECAL,
+        name: "ACT_SPAWN_DECAL",
+        wit: "acts.spawn-decal",
+    },
+    WitOp {
+        abi: abi::ACT_FADE_DECALS,
+        name: "ACT_FADE_DECALS",
+        wit: "acts.fade-decals",
+    },
+    WitOp {
+        abi: abi::ACT_LIST_REVERSE,
+        name: "ACT_LIST_REVERSE",
+        wit: "acts.list-reverse",
+    },
+    WitOp {
+        abi: abi::ACT_LIST_SHIFT,
+        name: "ACT_LIST_SHIFT",
+        wit: "acts.list-shift",
+    },
+    WitOp {
+        abi: abi::ACT_JSON_TO_LIST,
+        name: "ACT_JSON_TO_LIST",
+        wit: "acts.json-to-list",
+    },
+    WitOp {
+        abi: abi::ACT_DICT_SET,
+        name: "ACT_DICT_SET",
+        wit: "acts.dict-set",
+    },
+    WitOp {
+        abi: abi::ACT_DICT_SET_TEXT,
+        name: "ACT_DICT_SET_TEXT",
+        wit: "acts.dict-set-text",
+    },
+    WitOp {
+        abi: abi::ACT_DICT_DELETE_KEY,
+        name: "ACT_DICT_DELETE_KEY",
+        wit: "acts.dict-delete-key",
+    },
+    WitOp {
+        abi: abi::ACT_DICT_CLEAR,
+        name: "ACT_DICT_CLEAR",
+        wit: "acts.dict-clear",
+    },
+    WitOp {
+        abi: abi::ACT_JSON_TO_DICT,
+        name: "ACT_JSON_TO_DICT",
+        wit: "acts.json-to-dict",
+    },
 ];
 
 /// Every `abi::EVENT_*` verb and its WIT path.
@@ -1417,6 +1622,11 @@ pub const EVENTS: &[WitOp] = &[
         abi: abi::EVENT_CONTACT,
         name: "EVENT_CONTACT",
         wit: "event.contact",
+    },
+    WitOp {
+        abi: abi::EVENT_MOTOR,
+        name: "EVENT_MOTOR",
+        wit: "event.motor",
     },
 ];
 
@@ -1558,6 +1768,19 @@ mod tests {
         check_table("TEXT", TEXTS);
         check_table("ACT", ACTS);
         check_table("EVENT", EVENTS);
+    }
+
+    /// Two verbs on one number would shadow each other in the host's match.
+    #[test]
+    fn verb_numbers_are_unique_within_a_namespace() {
+        for prefix in ["READ", "TEXT", "ACT", "EVENT"] {
+            let verbs = abi_verbs(prefix);
+            for (i, (name, value)) in verbs.iter().enumerate() {
+                for (other, other_value) in &verbs[i + 1..] {
+                    assert!(value != other_value, "{name} and {other} both use {value}");
+                }
+            }
+        }
     }
 
     #[test]

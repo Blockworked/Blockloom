@@ -34,6 +34,7 @@ pub const BUILT_IN_SCENE_NAMES: &[&str] = &[
     "SpeechBubble",
     "Lighting",
     "Sound",
+    "Soundscape",
     "Input",
     "Post",
     "Display",
@@ -89,6 +90,10 @@ pub enum SceneComponent {
     /// One gain per sound bus.
     Sound {
         mixer: SoundMixer,
+    },
+    /// Weather loops, ducking, reverb, occlusion and the underwater muffle.
+    Soundscape {
+        soundscape: crate::soundscape::Soundscape,
     },
     /// Named input actions and their bindings.
     Input {
@@ -164,6 +169,7 @@ impl SceneComponent {
             SceneComponent::SpeechBubble { .. } => "SpeechBubble",
             SceneComponent::Lighting { .. } => "Lighting",
             SceneComponent::Sound { .. } => "Sound",
+            SceneComponent::Soundscape { .. } => "Soundscape",
             SceneComponent::Input { .. } => "Input",
             SceneComponent::Post { .. } => "Post",
             SceneComponent::Display { .. } => "Display",
@@ -217,6 +223,9 @@ impl SceneComponents {
                 lighting: world.lighting.clone(),
             },
             SceneComponent::Sound { mixer: world.sound },
+            SceneComponent::Soundscape {
+                soundscape: world.soundscape.clone(),
+            },
             SceneComponent::Input {
                 config: world.input.clone(),
             },
@@ -308,6 +317,9 @@ impl SceneComponents {
                 }
                 SceneComponent::Lighting { lighting } => world.lighting.clone_from(lighting),
                 SceneComponent::Sound { mixer } => world.sound.clone_from(mixer),
+                SceneComponent::Soundscape { soundscape } => {
+                    world.soundscape.clone_from(soundscape);
+                }
                 SceneComponent::Input { config } => world.input.clone_from(config),
                 SceneComponent::Post { post } => world.post.clone_from(post),
                 SceneComponent::Display { display } => world.display = *display,

@@ -523,7 +523,7 @@ fn run_script_stops(engine: &mut Engine) {
     let mut actors: Vec<String> = engine.scripts.keys().cloned().collect();
     actors.sort();
     let mut asked = crate::script::Asked::default();
-    crate::script::with_script_stores(&engine.variables, &engine.lists, || {
+    crate::script::with_script_stores(&engine.variables, &engine.lists, &engine.dicts, || {
         for actor in &actors {
             let Some(scripts) = engine.scripts.get(actor) else {
                 continue;
@@ -931,7 +931,10 @@ pub fn rebuild_world(
         commands.entity(entity).despawn();
     }
     // Particles and ghosts go in `fx::despawn_fx`, just before this system.
-    sound.reset(project_sound(&engine));
+    sound.reset(
+        project_sound(&engine),
+        engine.project.world.soundscape.clone(),
+    );
     engine.entities.clear();
     engine.touching.clear();
     engine.contacts.clear();
@@ -1355,7 +1358,7 @@ pub fn step_scripts(
     // Scripts read and write the run's block variables and lists through the
     // same stores the VM does, so the two stay one working memory.
     let mut timed: Vec<(String, f64)> = Vec::new();
-    crate::script::with_script_stores(&engine.variables, &engine.lists, || {
+    crate::script::with_script_stores(&engine.variables, &engine.lists, &engine.dicts, || {
         queries.scope(engine.contact_ticks, || {
             for actor in &actors {
                 let Some(scripts) = engine.scripts.get(actor) else {
@@ -1480,7 +1483,7 @@ pub fn step_scripts_frame_ui(
 
     let mut asked = crate::script::Asked::default();
     let mut timed: Vec<(String, f64)> = Vec::new();
-    crate::script::with_script_stores(&engine.variables, &engine.lists, || {
+    crate::script::with_script_stores(&engine.variables, &engine.lists, &engine.dicts, || {
         queries.scope(engine.contact_ticks, || {
             for actor in &actors {
                 let Some(scripts) = engine.scripts.get(actor) else {
@@ -4109,11 +4112,16 @@ fn detach(
             // `destroy` runs first, like a deleted actor's does.
             if let Some(scripts) = engine.scripts.remove(actor) {
                 let mut asked = crate::script::Asked::default();
-                crate::script::with_script_stores(&engine.variables, &engine.lists, || {
-                    for entry in &scripts {
-                        entry.script.destroy(actor, &mut asked);
-                    }
-                });
+                crate::script::with_script_stores(
+                    &engine.variables,
+                    &engine.lists,
+                    &engine.dicts,
+                    || {
+                        for entry in &scripts {
+                            entry.script.destroy(actor, &mut asked);
+                        }
+                    },
+                );
                 for effect in asked.effects {
                     match effect {
                         Effect::Say { actor, text } => {
@@ -4450,7 +4458,7 @@ pub(crate) fn delete_actor(commands: &mut Commands, engine: &mut Engine, actor: 
     // the actor is already going away.
     if let Some(scripts) = engine.scripts.get(actor) {
         let mut asked = crate::script::Asked::default();
-        crate::script::with_script_stores(&engine.variables, &engine.lists, || {
+        crate::script::with_script_stores(&engine.variables, &engine.lists, &engine.dicts, || {
             for entry in scripts {
                 entry.script.destroy(actor, &mut asked);
             }
@@ -5425,6 +5433,8 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::PaintTile { .. }
         | Effect::SetParallax { .. }
         | Effect::SetBusVolume { .. }
+        | Effect::SetReverb { .. }
+        | Effect::SetUnderwaterMuffle { .. }
         | Effect::RumbleGamepad { .. }
         | Effect::Stopped
         // Sound is the sound module's to play, like UI is the overlay's.

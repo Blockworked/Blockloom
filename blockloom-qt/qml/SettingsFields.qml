@@ -46,7 +46,7 @@ Item {
             set_cloud_layers: ["CloudLayers", "layers", "layers"], set_lightning: ["Lightning", "lightning", "lightning"],
             set_wind: ["Wind", "wind", "wind"], set_director: ["Director", "director", "director"],
             set_vfx: ["Vfx", "settings", "vfx"], set_post_process: ["Post", "post", "post"],
-            set_display_output: ["Display", "display", "display"], set_sound_mixer: ["Sound", "mixer", "mixer"]
+            set_display_output: ["Display", "display", "display"], set_sound_mixer: ["Sound", "mixer", "mixer"], set_soundscape: ["Soundscape", "soundscape", "soundscape"]
         };
         if (fields[command]) { const f = fields[command]; const c = { component: f[0] }; c[f[1]] = args[f[2]]; return c; }
         if (command === "set_mode") return { component: "Dimension", mode: args.mode };
@@ -134,6 +134,31 @@ Item {
     function writePost(next) { invoke("set_post_process", { post: Object.assign(postOf(), next) }); }
     function displayOf() { return Object.assign({ space: "Sdr", peak_nits: 1000, paper_white_nits: 200 }, world && world.display ? world.display : {}); }
     function writeDisplay(next) { invoke("set_display_output", { display: Object.assign(displayOf(), next) }); }
+    function soundscapeOf() {
+        const base = { weather: [], ducking: [], underwater: { buses: [], amount: 0.7, fade: 0.1 }, reverb: { mix: 0, size: 0.5, decay: 1.5, damping: 0.5, excursion: 0.2 },
+            reverb_buses: ["Sfx"], reverb_impulse: "", occlusion: { enabled: false, wall_gain: 0.6, wall_muffle: 0.45, max_walls: 3, obstruction: 0.35 } };
+        const w = world && world.soundscape ? JSON.parse(JSON.stringify(world.soundscape)) : {};
+        return Object.assign(base, w, {
+            underwater: Object.assign(base.underwater, w.underwater || {}),
+            reverb: Object.assign(base.reverb, w.reverb || {}),
+            occlusion: Object.assign(base.occlusion, w.occlusion || {})
+        });
+    }
+    function writeSoundscape(next) { invoke("set_soundscape", { soundscape: Object.assign(soundscapeOf(), next) }); }
+    function writeSoundscapePart(part, next) { const o = {}; o[part] = Object.assign(soundscapeOf()[part], next); writeSoundscape(o); }
+    function writeSoundscapeList(key, index, next) { const list = soundscapeOf()[key]; list[index] = Object.assign(list[index], next); const o = {}; o[key] = list; writeSoundscape(o); }
+    function removeSoundscapeItem(key, index) { const list = soundscapeOf()[key]; list.splice(index, 1); const o = {}; o[key] = list; writeSoundscape(o); }
+    function addSoundscapeItem(key, item) { const list = soundscapeOf()[key]; list.push(item); const o = {}; o[key] = list; writeSoundscape(o); }
+    readonly property var soundBusChoices: [{ value: "Master", label: "Master" }, { value: "Music", label: "Music" }, { value: "Sfx", label: "Effects" }]
+    readonly property var reverbPresetValues: ({
+        "Off": { mix: 0, size: 0.5, decay: 1.5, damping: 0.5, excursion: 0.2 },
+        "Small room": { mix: 0.25, size: 0.2, decay: 0.6, damping: 0.6, excursion: 0.1 },
+        "Hall": { mix: 0.35, size: 0.6, decay: 2.2, damping: 0.4, excursion: 0.25 },
+        "Cave": { mix: 0.5, size: 0.8, decay: 3.5, damping: 0.3, excursion: 0.35 },
+        "Cathedral": { mix: 0.55, size: 1.0, decay: 5.5, damping: 0.35, excursion: 0.3 },
+        "Tunnel": { mix: 0.45, size: 0.45, decay: 2.8, damping: 0.5, excursion: 0.15 },
+        "Underwater": { mix: 0.5, size: 0.6, decay: 2.0, damping: 0.9, excursion: 0.6 }
+    })
     function writeMixer(next) { invoke("set_sound_mixer", { mixer: Object.assign(soundOf(), next) }); }
     // Human spelling of a binding, the same text the `bind` block parses.
     function bindingText(b) {
@@ -1282,6 +1307,120 @@ Item {
                     }
                 }
                 Note { text: "The saved mix every voice plays through: master scales everything, music and effects scale their own bus on top of it. A `set bus volume` block moves the live mix without changing this. Applies on the next run of the game." }
+            }
+            Section {
+                id: scapeSection
+                heading: "Soundscape"; available: !!root.world
+                readonly property var sc: root.soundscapeOf()
+                Text { text: "Reverb"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+                InspectorRow { label: "Room"; labelWidth: 110; Layout.fillWidth: true
+                    ChoiceField { options: Object.keys(root.reverbPresetValues).map(k => ({ value: k, label: k })); value: ""
+                        onChosen: k => root.writeSoundscapePart("reverb", root.reverbPresetValues[k]) } }
+                InspectorRow { label: "Mix, size"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: scapeSection.sc.reverb.mix; fallback: 0; onCommitted: n => root.writeSoundscapePart("reverb", { mix: root.clamp(n, 0, 1) }) }
+                    NumberField { value: scapeSection.sc.reverb.size; fallback: 0.5; onCommitted: n => root.writeSoundscapePart("reverb", { size: root.clamp(n, 0, 1) }) } }
+                InspectorRow { label: "Decay s, damping"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: scapeSection.sc.reverb.decay; fallback: 1.5; onCommitted: n => root.writeSoundscapePart("reverb", { decay: root.clamp(n, 0.1, 20) }) }
+                    NumberField { value: scapeSection.sc.reverb.damping; fallback: 0.5; onCommitted: n => root.writeSoundscapePart("reverb", { damping: root.clamp(n, 0, 1) }) } }
+                InspectorRow { label: "Recorded room"; labelWidth: 110; Layout.fillWidth: true
+                    AssetField { app: root.app; accept: ["audio"]; value: scapeSection.sc.reverb_impulse || ""; placeholderText: "Parametric (a WAV impulse response)"
+                        onCommitted: p => root.writeSoundscape({ reverb_impulse: p }) }
+                    IconButton { iconName: "x"; tip: "Back to the parametric reverb"; enabled: !!scapeSection.sc.reverb_impulse; onClicked: root.writeSoundscape({ reverb_impulse: "" }) } }
+                InspectorRow { label: "Excursion"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: scapeSection.sc.reverb.excursion; fallback: 0.2; onCommitted: n => root.writeSoundscapePart("reverb", { excursion: root.clamp(n, 0, 1) }) } }
+                Repeater {
+                    model: root.soundBusChoices
+                    delegate: InspectorRow {
+                        id: reverbBus
+                        required property var modelData
+                        label: "Reverb · " + modelData.label
+                        labelWidth: 110; Layout.fillWidth: true
+                        SwitchField {
+                            value: scapeSection.sc.reverb_buses.includes(reverbBus.modelData.value)
+                            onToggled: on => {
+                                const bus = reverbBus.modelData.value;
+                                const buses = scapeSection.sc.reverb_buses.filter(b => b !== bus);
+                                root.writeSoundscape({ reverb_buses: on ? buses.concat([bus]) : buses });
+                            }
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+                }
+                Text { text: "Occlusion"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+                InspectorRow { label: "Walls muffle"; labelWidth: 110; Layout.fillWidth: true
+                    SwitchField { value: scapeSection.sc.occlusion.enabled; onToggled: on => root.writeSoundscapePart("occlusion", { enabled: on }) } Item { Layout.fillWidth: true } }
+                InspectorRow { visible: scapeSection.sc.occlusion.enabled; label: "Per wall: gain, muffle"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: scapeSection.sc.occlusion.wall_gain; fallback: 0.6; onCommitted: n => root.writeSoundscapePart("occlusion", { wall_gain: root.clamp(n, 0, 1) }) }
+                    NumberField { value: scapeSection.sc.occlusion.wall_muffle; fallback: 0.45; onCommitted: n => root.writeSoundscapePart("occlusion", { wall_muffle: root.clamp(n, 0, 1) }) } }
+                InspectorRow { visible: scapeSection.sc.occlusion.enabled; label: "Max walls, bend"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: scapeSection.sc.occlusion.max_walls; fallback: 3; onCommitted: n => root.writeSoundscapePart("occlusion", { max_walls: root.clamp(Math.round(n), 1, 16) }) }
+                    NumberField { value: scapeSection.sc.occlusion.obstruction; fallback: 0.35; onCommitted: n => root.writeSoundscapePart("occlusion", { obstruction: root.clamp(n, 0, 1) }) } }
+                Text { text: "Underwater"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+                Repeater {
+                    model: [{ key: "Master", label: "Muffle all" }, { key: "Music", label: "Muffle music" }, { key: "Sfx", label: "Muffle effects" }]
+                    delegate: InspectorRow {
+                        id: uw
+                        required property var modelData
+                        readonly property bool on: scapeSection.sc.underwater.buses.indexOf(modelData.key) >= 0
+                        label: modelData.label; labelWidth: 110; Layout.fillWidth: true
+                        SwitchField { value: uw.on
+                            onToggled: v => { const rest = scapeSection.sc.underwater.buses.filter(b => b !== modelData.key); root.writeSoundscapePart("underwater", { buses: v ? rest.concat([modelData.key]) : rest }); } }
+                        Item { Layout.fillWidth: true }
+                    }
+                }
+                InspectorRow { label: "Amount, fade s"; labelWidth: 110; Layout.fillWidth: true
+                    NumberField { value: scapeSection.sc.underwater.amount; fallback: 0.7; onCommitted: n => root.writeSoundscapePart("underwater", { amount: root.clamp(n, 0, 1) }) }
+                    NumberField { value: scapeSection.sc.underwater.fade; fallback: 0.1; onCommitted: n => root.writeSoundscapePart("underwater", { fade: Math.max(0, n) }) } }
+                Text { text: "Ducking"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+                Repeater {
+                    model: scapeSection.sc.ducking.length
+                    delegate: ColumnLayout {
+                        id: duck
+                        required property int index
+                        readonly property var d: scapeSection.sc.ducking[index]
+                        readonly property bool paused: duck.d.trigger === "Paused"
+                        Layout.fillWidth: true; spacing: 4
+                        InspectorRow { label: duck.paused ? "While paused" : "While playing"; labelWidth: 110; Layout.fillWidth: true
+                            ChoiceField { options: root.soundBusChoices; value: duck.d.target; onChosen: b => root.writeSoundscapeList("ducking", duck.index, { target: b }) }
+                            IconButton { iconName: "trash-2"; tip: "Remove this rule"; onClicked: root.removeSoundscapeItem("ducking", duck.index) } }
+                        InspectorRow { visible: !duck.paused; label: "Sound"; labelWidth: 110; Layout.fillWidth: true
+                            AssetField { app: root.app; accept: ["audio"]; value: duck.d.trigger.Sound || ""; placeholderText: "Sound that ducks it"
+                                onCommitted: p => root.writeSoundscapeList("ducking", duck.index, { trigger: { Sound: p } }) } }
+                        InspectorRow { label: "Dip, in s, out s"; labelWidth: 110; Layout.fillWidth: true
+                            NumberField { value: duck.d.amount; fallback: 0.5; onCommitted: n => root.writeSoundscapeList("ducking", duck.index, { amount: root.clamp(n, 0, 1) }) }
+                            NumberField { value: duck.d.attack; fallback: 0.1; onCommitted: n => root.writeSoundscapeList("ducking", duck.index, { attack: Math.max(0, n) }) }
+                            NumberField { value: duck.d.release; fallback: 0.5; onCommitted: n => root.writeSoundscapeList("ducking", duck.index, { release: Math.max(0, n) }) } }
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true; spacing: 6
+                    StitchButton { text: "Duck while paused"; iconName: "plus"; onClicked: root.addSoundscapeItem("ducking", { trigger: "Paused", target: "Music", amount: 0.5, attack: 0.1, release: 0.5 }) }
+                    StitchButton { text: "Duck under a sound"; iconName: "plus"; onClicked: root.addSoundscapeItem("ducking", { trigger: { Sound: "" }, target: "Music", amount: 0.5, attack: 0.1, release: 0.5 }) }
+                }
+                Text { text: "Weather loops"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
+                Repeater {
+                    model: scapeSection.sc.weather.length
+                    delegate: ColumnLayout {
+                        id: loop
+                        required property int index
+                        readonly property var w: scapeSection.sc.weather[index]
+                        Layout.fillWidth: true; spacing: 4
+                        InspectorRow { label: "Sound"; labelWidth: 110; Layout.fillWidth: true
+                            AssetField { app: root.app; accept: ["audio"]; value: loop.w.sound || ""; placeholderText: "Looping sound"
+                                onCommitted: p => root.writeSoundscapeList("weather", loop.index, { sound: p }) }
+                            IconButton { iconName: "trash-2"; tip: "Remove this loop"; onClicked: root.removeSoundscapeItem("weather", loop.index) } }
+                        InspectorRow { label: "Follows"; labelWidth: 110; Layout.fillWidth: true
+                            ChoiceField { options: [{ value: "Wind", label: "Wind speed" }, { value: "Rain", label: "Rain" }, { value: "Snow", label: "Snow" }, { value: "Storm", label: "Storm" }]
+                                value: loop.w.source; onChosen: v => root.writeSoundscapeList("weather", loop.index, { source: v }) }
+                            ChoiceField { options: root.soundBusChoices; value: loop.w.bus; onChosen: b => root.writeSoundscapeList("weather", loop.index, { bus: b }) } }
+                        InspectorRow { label: "Silent at, full at, gain"; labelWidth: 110; Layout.fillWidth: true
+                            NumberField { value: loop.w.from; fallback: 0; onCommitted: n => root.writeSoundscapeList("weather", loop.index, { from: n }) }
+                            NumberField { value: loop.w.to; fallback: 1; onCommitted: n => root.writeSoundscapeList("weather", loop.index, { to: n }) }
+                            NumberField { value: loop.w.max_gain; fallback: 1; onCommitted: n => root.writeSoundscapeList("weather", loop.index, { max_gain: root.clamp(n, 0, 2) }) } }
+                    }
+                }
+                StitchButton { text: "Add weather loop"; iconName: "plus"; onClicked: root.addSoundscapeItem("weather", { sound: "", source: "Wind", from: 0, to: 10, max_gain: 1, bus: "Sfx" }) }
+                Note { text: "Rules over the mix. Reverb is the project's room, parametric or a recorded WAV impulse response; a Sound zone component on an actor overrides it where the camera stands. Walls only muffle static scenery. Weather loops fade in as the wind, rain, snow or storm rises; wind is in world units a second. Ducking dips a bus while the game is paused or a named sound plays. Muffling dulls and quiets a bus while the camera is underwater. The set reverb and muffle blocks change these for one run." }
             }
             Section {
                 heading: "Input actions"; enabled: root.activeScene; available: !!root.world

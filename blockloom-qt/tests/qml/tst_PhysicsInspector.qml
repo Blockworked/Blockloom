@@ -181,12 +181,16 @@ TestCase {
         results = { preview_player_preset: { steps: [], conflicts: [{ component: "Rigidbody", reason: "dynamic", conversion: "kinematic" }], blocked: null }, list_player_profiles: [] };
         const card = createTemporaryObject(setupFactory, test, {});
         compare(card.conflicts.length, 1);
+        // Applying refreshes the preview and the profile list afterwards, so the
+        // apply call is found by name rather than being the last one made.
+        const applied = () => calls.filter(c => c.command === "apply_player_preset");
         card.apply();
-        compare(last().command, "apply_player_preset");
-        compare(last().args.convert, false);
+        compare(applied().length, 1);
+        compare(applied()[0].args.convert, false);
         card.convert = true;
         card.apply();
-        compare(last().args.convert, true);
+        compare(applied().length, 2);
+        compare(applied()[1].args.convert, true);
     }
 
     function test_aBlankConstraintShowsItsDefaults() {

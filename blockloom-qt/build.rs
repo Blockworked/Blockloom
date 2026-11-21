@@ -23,8 +23,16 @@ fn main() {
                 "qml/NewProjectDialog.qml",
                 "qml/EditorPage.qml",
                 "qml/UiDesigner.qml",
+                "qml/UiHierarchy.qml",
+                "qml/UiInspector.qml",
+                "qml/UiPalette.qml",
+                "qml/UiSection.qml",
+                "qml/UiTimeline.qml",
+                "qml/UiToolbar.qml",
+                "qml/UiViewport.qml",
                 "qml/UiLayoutInspector.qml",
                 "qml/InterfaceGeometry.qml",
+                "qml/UiEditMath.qml",
                 "qml/TopBar.qml",
                 "qml/ActorList.qml",
                 "qml/BlockSidebar.qml",
@@ -166,7 +174,14 @@ fn qt_private_headers(module: &str) -> Option<std::path::PathBuf> {
 /// The bundled typeface, at ":/fonts/...".
 fn fonts() -> QResource {
     let mut fonts = QResource::new().prefix("/fonts");
-    for weight in ["Regular", "Medium", "SemiBold", "Bold", "ExtraBold", "Italic"] {
+    for weight in [
+        "Regular",
+        "Medium",
+        "SemiBold",
+        "Bold",
+        "ExtraBold",
+        "Italic",
+    ] {
         let name = format!("AtkinsonHyperlegibleNext-{weight}.ttf");
         fonts = fonts.file(QResourceFile::new(format!("../res/fonts/{name}")).alias(&name));
     }

@@ -6,7 +6,7 @@ review itself.
 
 ## Status
 
-All items are built. Checks: `scripts/test-hub.py` (63), 
+All items are built. Checks: `scripts/test-hub.py` (63),
 `blockloom-app/tests/hub_coherence.rs` (8), Hub UI smoke
 (`scripts/test-hub-ui.py`, 20 scenarios including empty, unavailable,
 missing editor, no match and busy), and `tst_Dashboard.qml`.
@@ -234,7 +234,7 @@ editor reads only its registry. Consequences reproduced or observed:
 
 The forget inconsistency was reproduced with a fixture.
 
-Current code: `scripts/hub.py:301` (Hub registry merge), 
+Current code: `scripts/hub.py:301` (Hub registry merge),
 `blockloom-core/src/library.rs:145` (`list` drops gone or unreadable
 folders and rewrites the file).
 

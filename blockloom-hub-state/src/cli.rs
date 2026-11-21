@@ -81,7 +81,11 @@ pub fn dispatch(hub: &Hub, command: &str, raw: &[String]) -> Result<Value> {
         "remember" => hub.remember(&project(0)?)?,
         "forget" => hub.forget(&project(0)?)?,
         "relocate" => hub.relocate(&project(0)?, &PathBuf::from(args.at(1, "folder")?))?,
-        "bind" => hub.bind(&project(0)?, args.at(1, "installation")?, args.has("backup"))?,
+        "bind" => hub.bind(
+            &project(0)?,
+            args.at(1, "installation")?,
+            args.has("backup"),
+        )?,
         "backups" => json!(hub.backups(&project(0)?)?),
         "backup-project" => hub.backup_project(&project(0)?)?,
         "restore-backup" => hub.restore_backup(&project(0)?, args.at(1, "backup name")?)?,
@@ -120,7 +124,10 @@ pub fn run(argv: &[String]) -> i32 {
     let hub = Hub::new(root, None);
     match dispatch(&hub, command, tail) {
         Ok(value) => {
-            println!("{}", serde_json::to_string_pretty(&value).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&value).unwrap_or_default()
+            );
             0
         }
         Err(error) => {

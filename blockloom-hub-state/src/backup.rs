@@ -23,6 +23,8 @@ struct Item {
     len: u64,
     modified: u128,
     inode: u64,
+    #[cfg(unix)]
+    permissions: u32,
 }
 
 type Inventory = BTreeMap<String, Item>;
@@ -61,17 +63,25 @@ fn inventory(project: &Path) -> Result<Inventory> {
         entries.sort_by_key(|e| e.file_name());
         for entry in entries {
             let path = entry.path();
-            let relative = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            if EXCLUDED.contains(&relative.as_str()) {
+            let relative = path.strip_prefix(root).expect("walk stays under its root");
+            let relative = relative
+                .to_str()
+                .ok_or_else(|| Error::new("Project backup requires UTF-8 file names"))?;
+            #[cfg(windows)]
+            let relative = relative.replace('\\', "/");
+            if excluded(&relative) {
                 continue;
+            }
+            if !safe_name(&relative) {
+                return Err(Error::new(format!(
+                    "Project backup cannot include this path: {relative}"
+                )));
             }
             let meta = std::fs::symlink_metadata(&path)?;
             if is_link(&meta) {
-                return Err(Error::new(format!("Project backup does not follow links: {relative}")));
+                return Err(Error::new(format!(
+                    "Project backup does not follow links: {relative}"
+                )));
             }
             if !meta.is_file() && !meta.is_dir() {
                 return Err(Error::new(format!(
@@ -85,12 +95,17 @@ fn inventory(project: &Path) -> Result<Inventory> {
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
             out.insert(
-                relative,
+                relative.to_string(),
                 Item {
                     dir: meta.is_dir(),
                     len: if meta.is_dir() { 0 } else { meta.len() },
                     modified,
                     inode: inode(&meta),
+                    #[cfg(unix)]
+                    permissions: {
+                        use std::os::unix::fs::PermissionsExt;
+                        meta.permissions().mode() & 0o777
+                    },
                 },
             );
             if meta.is_dir() {
@@ -128,7 +143,10 @@ fn stamp(secs: u64) -> String {
 }
 
 fn unix_now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 struct Progress {
@@ -141,7 +159,13 @@ struct Progress {
 
 impl Progress {
     fn new(files: usize, size: u64) -> Self {
-        let mut p = Self { files, size, copied: 0, finished: 0, last: Instant::now() };
+        let mut p = Self {
+            files,
+            size,
+            copied: 0,
+            finished: 0,
+            last: Instant::now(),
+        };
         p.report();
         p
     }
@@ -167,90 +191,119 @@ impl Progress {
 fn create(project: &Path, destination: &Path, idle: &dyn Fn() -> Result<()>) -> Result<Value> {
     let resolved = std::fs::canonicalize(destination.parent().unwrap_or(destination))
         .unwrap_or_else(|_| destination.to_path_buf());
-    if resolved.starts_with(std::fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf())) {
-        return Err(Error::new("Project backups must be stored outside the project folder"));
+    if resolved
+        .starts_with(std::fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf()))
+    {
+        return Err(Error::new(
+            "Project backups must be stored outside the project folder",
+        ));
     }
     idle()?;
     let entries = inventory(project)?;
-    let files: Vec<&String> = entries.iter().filter(|(_, i)| !i.dir).map(|(n, _)| n).collect();
+    let files: Vec<&String> = entries
+        .iter()
+        .filter(|(_, i)| !i.dir)
+        .map(|(n, _)| n)
+        .collect();
     let size: u64 = entries.values().map(|i| i.len).sum();
     let mut progress = Progress::new(files.len(), size);
-    let attempt = (|| -> Result<()> {
-        let file = std::fs::OpenOptions::new().write(true).create_new(true).open(destination)?;
-        let mut archive = zip::ZipWriter::new(file);
-        let options = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated)
-            .compression_level(Some(3))
-            .large_file(true);
-        for (name, item) in &entries {
-            checkpoint()?;
-            let path = project.join(name);
-            if item.dir {
-                archive.add_directory(name.as_str(), options)?;
-                continue;
-            }
-            archive.start_file(name.as_str(), options)?;
-            let mut reader = std::fs::File::open(&path)?;
-            let mut buffer = vec![0u8; 1024 * 1024];
-            loop {
-                let n = reader.read(&mut buffer)?;
-                if n == 0 {
-                    break;
-                }
-                checkpoint()?;
-                archive.write_all(&buffer[..n])?;
-                progress.step(n as u64, false);
-            }
-            progress.step(0, true);
-        }
-        archive.finish()?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| Error::new("Backup destination must have a parent folder"))?;
+    let mut pending = tempfile::NamedTempFile::new_in(parent)?;
+    let mut archive = zip::ZipWriter::new(pending.as_file_mut());
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .compression_level(Some(3))
+        .large_file(true);
+    let mut buffer = vec![0; 1024 * 1024];
+    for (name, item) in &entries {
         checkpoint()?;
-        idle()?;
-        if inventory(project)? != entries {
-            return Err(Error::new(
-                "Project files changed during backup. Try again with the editor closed",
-            ));
+        let path = project.join(name);
+        #[cfg(unix)]
+        let options = options.unix_permissions(item.permissions);
+        if item.dir {
+            archive.add_directory(name.as_str(), options)?;
+            continue;
         }
-        Ok(())
-    })();
-    if let Err(error) = attempt {
-        let _ = std::fs::remove_file(destination);
-        return Err(error);
+        archive.start_file(name.as_str(), options)?;
+        let mut reader = std::fs::File::open(&path)?;
+        loop {
+            let n = reader.read(&mut buffer)?;
+            if n == 0 {
+                break;
+            }
+            checkpoint()?;
+            archive.write_all(&buffer[..n])?;
+            progress.step(n as u64, false);
+        }
+        progress.step(0, true);
     }
+    archive.finish()?.sync_all()?;
+    checkpoint()?;
+    idle()?;
+    if inventory(project)? != entries {
+        return Err(Error::new(
+            "Project files changed during backup. Try again with the editor closed",
+        ));
+    }
+    pending
+        .persist_noclobber(destination)
+        .map_err(|error| error.error)?;
     eprintln!("Project backup complete.");
-    Ok(json!({"path": destination.to_string_lossy(), "files": files.len(), "created_at": unix_now()}))
+    Ok(
+        json!({"path": destination.to_string_lossy(), "files": files.len(), "created_at": unix_now()}),
+    )
+}
+
+fn excluded(name: &str) -> bool {
+    let eq = |a: &str, b: &str| {
+        if cfg!(windows) {
+            a.eq_ignore_ascii_case(b)
+        } else {
+            a == b
+        }
+    };
+    EXCLUDED.iter().any(|entry| {
+        eq(name, entry)
+            || name
+                .get(..entry.len())
+                .is_some_and(|prefix| eq(prefix, entry))
+                && name.as_bytes().get(entry.len()) == Some(&b'/')
+    })
 }
 
 fn safe_name(name: &str) -> bool {
-    !(name.starts_with('/')
-        || name.starts_with('\\')
-        || name.split(['/', '\\']).any(|p| p == "..")
-        || Path::new(name).is_absolute()
-        || name.contains(':') && cfg!(windows))
+    !name.contains(['\\', '\0'])
+        && name.trim_end_matches('/').split('/').all(|part| {
+            !matches!(part, "" | "." | "..")
+                && (!cfg!(windows) || !part.contains(':') && !part.ends_with(['.', ' ']))
+        })
 }
 
 fn restore(project: &Path, archive: &Path, idle: &dyn Fn() -> Result<()>) -> Result<()> {
     let project = std::fs::canonicalize(project)?;
     let mut snapshot = zip::ZipArchive::new(std::fs::File::open(archive)?)?;
-    let names: Vec<String> = snapshot.file_names().map(str::to_string).collect();
-    for name in &names {
-        if !safe_name(name) {
-            return Err(Error::new(format!("Backup holds an unsafe path: {name}")));
-        }
-    }
-    if !names.iter().any(|n| n == "project.blockloom") {
-        return Err(Error::new("That archive is not a Blockloom project backup"));
-    }
-    let staging = project
+    let parent = project
         .parent()
-        .unwrap_or(&project)
-        .join(format!(".restore-{}", uuid::Uuid::new_v4().simple()));
-    std::fs::create_dir_all(&staging)?;
+        .ok_or_else(|| Error::new("Cannot restore a filesystem root"))?;
+    let work = parent.join(format!(".restore-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir(&work)?;
+    let staging = work.join("incoming");
+    let previous = work.join("previous");
     let result = (|| -> Result<()> {
+        std::fs::create_dir(&staging)?;
+        let mut buffer = vec![0; 1024 * 1024];
         for index in 0..snapshot.len() {
             checkpoint()?;
             let mut entry = snapshot.by_index(index)?;
-            let target = staging.join(entry.name().trim_end_matches('/'));
+            let name = entry.name().trim_end_matches('/');
+            if !safe_name(name) || excluded(name) || entry.is_symlink() {
+                return Err(Error::new(format!(
+                    "Backup holds an unsupported path: {name}"
+                )));
+            }
+            let target = staging.join(name);
             if entry.is_dir() {
                 std::fs::create_dir_all(&target)?;
                 continue;
@@ -258,52 +311,76 @@ fn restore(project: &Path, archive: &Path, idle: &dyn Fn() -> Result<()>) -> Res
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            let mut out = std::fs::File::create(&target)?;
-            std::io::copy(&mut entry, &mut out)?;
+            let mut out = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)?;
+            loop {
+                checkpoint()?;
+                let n = entry.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                out.write_all(&buffer[..n])?;
+            }
             #[cfg(unix)]
             if let Some(mode) = entry.unix_mode() {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode & 0o777));
+                out.set_permissions(std::fs::Permissions::from_mode(mode & 0o777))?;
             }
         }
-        idle()?;
-        let current = inventory(&project)?;
-        for (relative, item) in &current {
-            checkpoint()?;
-            if !item.dir {
-                let _ = std::fs::remove_file(project.join(relative));
+        if blockloom_core::library::read_meta(&staging).is_none() {
+            return Err(Error::new(
+                "That archive is not a readable Blockloom project backup",
+            ));
+        }
+        let mut protected = Vec::new();
+        for name in EXCLUDED {
+            match project.join(name).symlink_metadata() {
+                Ok(_) => protected.push(name),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
             }
         }
-        // Only folders the walk saw, so .git and the build cache stay put.
-        for (relative, item) in current.iter().rev() {
-            if item.dir {
-                let _ = std::fs::remove_dir(project.join(relative));
-            }
-        }
-        copy_tree(&staging, &staging, &project)
-    })();
-    let _ = std::fs::remove_dir_all(&staging);
-    result?;
-    eprintln!("Project restored.");
-    Ok(())
-}
-
-fn copy_tree(root: &Path, dir: &Path, project: &Path) -> Result<()> {
-    for entry in std::fs::read_dir(dir)? {
-        checkpoint()?;
-        let entry = entry?;
-        let path = entry.path();
-        let target = project.join(path.strip_prefix(root).unwrap_or(&path));
-        if entry.file_type()?.is_dir() {
-            std::fs::create_dir_all(&target)?;
-            copy_tree(root, &path, project)?;
-        } else {
-            if let Some(parent) = target.parent() {
+        for name in &protected {
+            if let Some(parent) = staging.join(name).parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::copy(&path, &target)?;
         }
+        checkpoint()?;
+        idle()?;
+        std::fs::rename(&project, &previous)?;
+        // Finish the swap or roll it back before honoring cancellation again.
+        let mut moved = Vec::new();
+        let swap = (|| -> std::io::Result<()> {
+            for name in protected {
+                std::fs::rename(previous.join(name), staging.join(name))?;
+                moved.push(name);
+            }
+            std::fs::rename(&staging, &project)
+        })();
+        if let Err(error) = swap {
+            let mut rollback = Ok(());
+            for name in moved.into_iter().rev() {
+                if let Err(error) = std::fs::rename(staging.join(name), previous.join(name)) {
+                    rollback = Err(error);
+                }
+            }
+            if let Err(rollback) = rollback.and_then(|()| std::fs::rename(&previous, &project)) {
+                return Err(Error::new(format!(
+                    "Restore failed: {error}. Rollback failed: {rollback}. Project files are in {}",
+                    work.display()
+                )));
+            }
+            return Err(error.into());
+        }
+        Ok(())
+    })();
+    if result.is_ok() || !previous.exists() {
+        let _ = std::fs::remove_dir_all(&work);
     }
+    result?;
+    eprintln!("Project restored.");
     Ok(())
 }
 
@@ -320,7 +397,9 @@ impl Hub {
         let directory = self.backup_directory(&source);
         let inside = directory.starts_with(&source);
         if inside {
-            return Err(Error::new("Project backups must be stored outside the project folder"));
+            return Err(Error::new(
+                "Project backups must be stored outside the project folder",
+            ));
         }
         std::fs::create_dir_all(&directory)?;
         let name = format!(
@@ -343,7 +422,8 @@ impl Hub {
 
     /// Snapshots of a project, newest first.
     pub fn backups(&self, project: &Path) -> Result<Vec<Value>> {
-        let directory = self.backup_directory(&std::fs::canonicalize(project).unwrap_or(project.to_path_buf()));
+        let directory =
+            self.backup_directory(&std::fs::canonicalize(project).unwrap_or(project.to_path_buf()));
         let mut rows = vec![];
         if let Ok(read) = std::fs::read_dir(&directory) {
             for entry in read.flatten() {
@@ -377,7 +457,9 @@ impl Hub {
 
     /// Puts a snapshot back, keeping what is there now as a snapshot first.
     pub fn restore_backup(&self, project: &Path, name: &str) -> Result<Value> {
-        if Path::new(name).file_name().and_then(|n| n.to_str()) != Some(name) || !name.ends_with(".zip") {
+        if Path::new(name).file_name().and_then(|n| n.to_str()) != Some(name)
+            || !name.ends_with(".zip")
+        {
             return Err(Error::new("Invalid backup name"));
         }
         let _lock = OperationLock::acquire(&self.root)?;
@@ -407,6 +489,43 @@ mod tests {
     fn the_stamp_is_a_utc_date() {
         assert_eq!(stamp(0), "19700101-000000");
         assert_eq!(stamp(1_791_639_901), "20261010-134501");
+    }
+
+    #[test]
+    fn a_backup_name_collision_leaves_the_existing_file_intact() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        std::fs::create_dir(&project).unwrap();
+        let destination = temp.path().join("snapshot.zip");
+        std::fs::write(&destination, "already backed up").unwrap();
+        assert!(create(&project, &destination, &|| Ok(())).is_err());
+        assert_eq!(
+            std::fs::read_to_string(destination).unwrap(),
+            "already backed up"
+        );
+    }
+
+    #[test]
+    fn a_failed_restore_leaves_the_project_intact() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        std::fs::create_dir(&project).unwrap();
+        let manifest = project.join("project.blockloom");
+        let original = r#"{"name":"Original"}"#;
+        std::fs::write(&manifest, original).unwrap();
+        let archive = temp.path().join("snapshot.zip");
+        for (name, contents) in [
+            ("project.blockloom", "invalid JSON"),
+            (".blockloom/lock.json", "excluded metadata"),
+        ] {
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(contents.as_bytes()).unwrap();
+            zip.finish().unwrap();
+            assert!(restore(&project, &archive, &|| Ok(())).is_err());
+            assert_eq!(std::fs::read_to_string(&manifest).unwrap(), original);
+        }
     }
 
     #[test]

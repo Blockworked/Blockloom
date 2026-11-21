@@ -1,6 +1,9 @@
 //! The project list and who holds each project right now.
 
-use crate::{Error, Hub, Result, STARTUP_GRACE, key, now, oplock::OperationLock, process, read_json, write_json};
+use crate::{
+    Error, Hub, Result, STARTUP_GRACE, key, now, oplock::OperationLock, process, read_json,
+    write_json,
+};
 use blockloom_core::{library, project::project_file, sync};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -108,13 +111,17 @@ impl Hub {
     fn remembered(&self) -> BTreeMap<String, Value> {
         let mut merged: BTreeMap<String, Value> = BTreeMap::new();
         for source in [self.registry.clone(), self.root.join("projects.json")] {
-            let Ok(file) = read_json(&source) else { continue };
+            let Ok(file) = read_json(&source) else {
+                continue;
+            };
             for item in file["projects"].as_array().cloned().unwrap_or_default() {
-                let Some(path) = item["path"].as_str() else { continue };
+                let Some(path) = item["path"].as_str() else {
+                    continue;
+                };
                 let k = key(Path::new(path));
-                let newer = merged
-                    .get(&k)
-                    .is_none_or(|old| item["opened_at"].as_u64().unwrap_or(0) > old["opened_at"].as_u64().unwrap_or(0));
+                let newer = merged.get(&k).is_none_or(|old| {
+                    item["opened_at"].as_u64().unwrap_or(0) > old["opened_at"].as_u64().unwrap_or(0)
+                });
                 if newer {
                     merged.insert(k, item);
                 }
@@ -132,7 +139,8 @@ impl Hub {
             row.insert("path".into(), json!(path));
             match self.project(Path::new(&path)) {
                 Ok(info) => {
-                    let owner = self.project_owner(Path::new(info["path"].as_str().unwrap_or(&path)));
+                    let owner =
+                        self.project_owner(Path::new(info["path"].as_str().unwrap_or(&path)));
                     for (k, v) in info.as_object().cloned().unwrap_or_default() {
                         row.insert(k, v);
                     }
@@ -154,7 +162,10 @@ impl Hub {
                     row.insert("installation".into(), Value::Null);
                 }
             }
-            row.insert("opened_at".into(), json!(item["opened_at"].as_u64().unwrap_or(0)));
+            row.insert(
+                "opened_at".into(),
+                json!(item["opened_at"].as_u64().unwrap_or(0)),
+            );
             rows.push(Value::Object(row));
         }
         rows.sort_by(|a, b| {

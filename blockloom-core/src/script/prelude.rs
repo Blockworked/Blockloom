@@ -725,6 +725,199 @@ impl Actor {
         );
     }
 
+    /// Whether the block list `name` holds the number `value`.
+    pub fn list_contains(&self, name: &str, value: f64) -> bool {
+        self.number(READ_LIST_CONTAINS, Str::borrow(name), Str::EMPTY, value)
+            .is_some_and(|n| n != 0.0)
+    }
+
+    /// Whether the block list `name` holds the text `value`.
+    pub fn list_contains_text(&self, name: &str, value: &str) -> bool {
+        self.number(READ_LIST_CONTAINS, Str::borrow(name), Str::borrow(value), f64::NAN)
+            .is_some_and(|n| n != 0.0)
+    }
+
+    /// How many items of the list equal the number `value`.
+    pub fn list_amount(&self, name: &str, value: f64) -> usize {
+        self.number(READ_LIST_AMOUNT, Str::borrow(name), Str::EMPTY, value)
+            .unwrap_or(0.0)
+            .max(0.0) as usize
+    }
+
+    /// How many items of the list equal the text `value`.
+    pub fn list_amount_text(&self, name: &str, value: &str) -> usize {
+        self.number(READ_LIST_AMOUNT, Str::borrow(name), Str::borrow(value), f64::NAN)
+            .unwrap_or(0.0)
+            .max(0.0) as usize
+    }
+
+    /// The 1-based position of the number `value`, 0 when it is absent.
+    pub fn list_index_of(&self, name: &str, value: f64) -> usize {
+        self.number(READ_LIST_INDEX_OF, Str::borrow(name), Str::EMPTY, value)
+            .unwrap_or(0.0)
+            .max(0.0) as usize
+    }
+
+    /// The 1-based position of the text `value`, 0 when it is absent.
+    pub fn list_index_of_text(&self, name: &str, value: &str) -> usize {
+        self.number(READ_LIST_INDEX_OF, Str::borrow(name), Str::borrow(value), f64::NAN)
+            .unwrap_or(0.0)
+            .max(0.0) as usize
+    }
+
+    /// Whether the list has an item at the 1-based `index`.
+    pub fn list_has_index(&self, name: &str, index: usize) -> bool {
+        self.number(READ_LIST_HAS_INDEX, Str::borrow(name), Str::EMPTY, index as f64)
+            .is_some_and(|n| n != 0.0)
+    }
+
+    /// The list as a JSON array, what `list as JSON` reads.
+    pub fn list_json(&self, name: &str) -> String {
+        self.text(TEXT_LIST_JSON, Str::borrow(name), Str::EMPTY)
+            .unwrap_or_else(|| "[]".to_string())
+    }
+
+    /// Replaces the list with a JSON array. Bad JSON reports an error.
+    pub fn list_set_json(&self, name: &str, json: &str) {
+        self.act(
+            ACT_JSON_TO_LIST,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::borrow(json),
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Reverses the list in place.
+    pub fn list_reverse(&self, name: &str) {
+        self.act(
+            ACT_LIST_REVERSE,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Rotates the list by `places`, negative the other way.
+    pub fn list_shift(&self, name: &str, places: i32) {
+        self.act(
+            ACT_LIST_SHIFT,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::EMPTY,
+            places as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// How many distinct keys the block dict `name` holds.
+    pub fn dict_size(&self, name: &str) -> usize {
+        self.number(READ_DICT_SIZE, Str::borrow(name), Str::EMPTY, 0.0)
+            .unwrap_or(0.0)
+            .max(0.0) as usize
+    }
+
+    /// Whether the dict has `key`.
+    pub fn dict_has_key(&self, name: &str, key: &str) -> bool {
+        self.number(READ_DICT_HAS_KEY, Str::borrow(name), Str::borrow(key), 0.0)
+            .is_some_and(|n| n != 0.0)
+    }
+
+    /// The value at `key` as a number; 0 for no key or a non-number.
+    pub fn dict_number(&self, name: &str, key: &str) -> f64 {
+        self.number(READ_DICT_VALUE, Str::borrow(name), Str::borrow(key), 0.0)
+            .unwrap_or(0.0)
+    }
+
+    /// The value at `key` as text; empty for no key.
+    pub fn dict_text(&self, name: &str, key: &str) -> String {
+        self.text(TEXT_DICT_VALUE, Str::borrow(name), Str::borrow(key))
+            .unwrap_or_default()
+    }
+
+    /// The dict's keys, in order, as a JSON array.
+    pub fn dict_keys(&self, name: &str) -> String {
+        self.text(TEXT_DICT_KEYS, Str::borrow(name), Str::EMPTY)
+            .unwrap_or_else(|| "[]".to_string())
+    }
+
+    /// The whole dict as a JSON object.
+    pub fn dict_json(&self, name: &str) -> String {
+        self.text(TEXT_DICT_JSON, Str::borrow(name), Str::EMPTY)
+            .unwrap_or_else(|| "{}".to_string())
+    }
+
+    /// Sets `key` to a number. Unknown dicts do nothing; it lands at once.
+    pub fn dict_set(&self, name: &str, key: &str, value: f64) {
+        self.act(
+            ACT_DICT_SET,
+            Str::borrow(name),
+            Str::borrow(key),
+            Str::EMPTY,
+            value,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Sets `key` to text.
+    pub fn dict_set_text(&self, name: &str, key: &str, value: &str) {
+        self.act(
+            ACT_DICT_SET_TEXT,
+            Str::borrow(name),
+            Str::borrow(key),
+            Str::borrow(value),
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Removes `key`; quiet when it is absent.
+    pub fn dict_delete(&self, name: &str, key: &str) {
+        self.act(
+            ACT_DICT_DELETE_KEY,
+            Str::borrow(name),
+            Str::borrow(key),
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Empties the dict.
+    pub fn dict_clear(&self, name: &str) {
+        self.act(
+            ACT_DICT_CLEAR,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Replaces the dict with a JSON object. Bad JSON reports an error.
+    pub fn dict_set_json(&self, name: &str, json: &str) {
+        self.act(
+            ACT_JSON_TO_DICT,
+            Str::borrow(name),
+            Str::EMPTY,
+            Str::borrow(json),
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
     /// Seconds since the green flag.
     pub fn timer(&self) -> f64 {
         self.number(READ_TIMER, Str::EMPTY, Str::EMPTY, 0.0)
@@ -2716,6 +2909,32 @@ impl Actor {
         );
     }
 
+    /// Replaces the project's reverb with a named room (`"Off"` for dry).
+    pub fn set_reverb(&self, preset: &str) {
+        self.act(
+            ACT_SET_REVERB,
+            Str::borrow(preset),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Whether a bus sinks and dulls while the camera is underwater.
+    pub fn muffle_underwater(&self, bus: SoundBus, on: bool) {
+        self.act(
+            ACT_MUFFLE_UNDERWATER,
+            Str::borrow(bus.name()),
+            Str::EMPTY,
+            Str::EMPTY,
+            if on { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        );
+    }
+
     /// Whether any voice is playing that file right now.
     pub fn is_sound_playing(&self, sound: &str) -> bool {
         self.number(READ_SOUND_PLAYING, Str::borrow(sound), Str::EMPTY, 0.0)
@@ -3156,6 +3375,253 @@ impl Actor {
         );
     }
 
+    /// `set [look] to` for the run: a dial by the name the blocks use
+    /// (`"zoom"`, `"shake"`, `"cover kind"`, `"ambient light"`, ...) and its
+    /// value as the block's slot would hold it. An unknown dial reports an
+    /// error in the run log.
+    pub fn set_look_2d(&self, dial: &str, value: &str) {
+        self.act(
+            ACT_SET_LOOK_2D,
+            Str::borrow(dial),
+            Str::borrow(value),
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// [`Self::set_look_2d`] for a numeric dial.
+    pub fn set_look_2d_number(&self, dial: &str, value: f64) {
+        self.set_look_2d(dial, &value.to_string());
+    }
+
+    /// Adds trauma (0-1) to the 2D camera's shake.
+    pub fn shake_2d(&self, trauma: f32) {
+        self.set_look_2d_number("shake", trauma as f64);
+    }
+
+    /// Freezes the world for `seconds`; the interface keeps going.
+    pub fn hitstop_2d(&self, seconds: f32) {
+        self.set_look_2d_number("hitstop", seconds as f64);
+    }
+
+    /// Flashes the screen for `seconds`, fading out.
+    pub fn flash_screen(&self, seconds: f32) {
+        self.set_look_2d_number("flash", seconds as f64);
+    }
+
+    /// Where the world camera stands this frame (zeros before one draws).
+    pub fn camera_position(&self) -> (f32, f32, f32) {
+        let read = |axis: &str| {
+            self.number(READ_CAMERA_POSITION, Str::borrow(axis), Str::EMPTY, 0.0)
+                .unwrap_or(0.0) as f32
+        };
+        (read("x"), read("y"), read("z"))
+    }
+
+    /// What the middle of the screen points at, as a direction.
+    pub fn camera_direction(&self) -> (f32, f32, f32) {
+        let read = |axis: &str| {
+            self.number(READ_CAMERA_DIRECTION, Str::borrow(axis), Str::EMPTY, 0.0)
+                .unwrap_or(0.0) as f32
+        };
+        (read("x"), read("y"), read("z"))
+    }
+
+    /// The 2D camera's zoom in pixels per world unit (0 before a frame).
+    pub fn camera_zoom(&self) -> f32 {
+        self.number(READ_CAMERA_2D, Str::borrow("zoom"), Str::EMPTY, 0.0)
+            .unwrap_or(0.0) as f32
+    }
+
+    /// Whether the 2D camera's bounds are holding the view back.
+    pub fn camera_at_bounds(&self) -> bool {
+        self.number(READ_CAMERA_2D, Str::borrow("at bounds"), Str::EMPTY, 0.0)
+            .is_some_and(|n| n != 0.0)
+    }
+
+    /// Whether camera trauma is still shaking the 2D view.
+    pub fn screen_shaking(&self) -> bool {
+        self.number(READ_CAMERA_2D, Str::borrow("shaking"), Str::EMPTY, 0.0)
+            .is_some_and(|n| n != 0.0)
+    }
+
+    /// How much of the screen a cover hides, 0 clear to 1 opaque.
+    pub fn screen_cover(&self) -> f32 {
+        self.number(READ_CAMERA_2D, Str::borrow("cover"), Str::EMPTY, 0.0)
+            .unwrap_or(0.0) as f32
+    }
+
+    /// The 2D light at a world point as of the last frame, 1 being the
+    /// picture as drawn (1 everywhere without 2D lighting).
+    pub fn light_level(&self, x: f32, y: f32) -> f32 {
+        let at = format!("{x} {y}");
+        self.number(READ_LIGHT_LEVEL, Str::borrow(&at), Str::EMPTY, 0.0)
+            .unwrap_or(1.0) as f32
+    }
+
+    /// Whether the time-of-day clock is outside the project's day hours.
+    pub fn is_night(&self) -> bool {
+        self.number(READ_IS_NIGHT, Str::EMPTY, Str::EMPTY, 0.0)
+            .is_some_and(|n| n != 0.0)
+    }
+
+    /// Gives this actor's physics body a kind: `Static`, `Dynamic`,
+    /// `Kinematic` or `None`, as `set my body to` does.
+    pub fn set_body(&self, kind: &str) {
+        self.act(
+            ACT_SET_BODY,
+            Str::borrow(kind),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Sets the world's gravity. Window-global, like the block.
+    pub fn set_gravity(&self, x: f32, y: f32, z: f32) {
+        self.act(
+            ACT_SET_GRAVITY,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            x as f64,
+            y as f64,
+            z as f64,
+        );
+    }
+
+    /// How heavy a unit of this actor's collider is.
+    pub fn set_density(&self, density: f32) {
+        self.act(
+            ACT_SET_DENSITY,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            density as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// An explicit body mass, overriding what density would derive.
+    pub fn set_mass(&self, mass: f32) {
+        self.act(
+            ACT_SET_MASS,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            mass as f64,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Turns this actor's trail on or off.
+    pub fn set_trail_enabled(&self, enabled: bool) {
+        self.act(
+            ACT_SET_TRAIL_ENABLED,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            f64::from(enabled),
+            0.0,
+            0.0,
+        );
+    }
+
+    /// Glides to a position over `seconds`, eased by `easing` (a
+    /// `TweenEasing` name; empty is linear), as the glide block does.
+    pub fn glide_to(&self, x: f32, y: f32, z: f32, seconds: f32, easing: &str) {
+        self.act_many(
+            ACT_GLIDE,
+            Str::EMPTY,
+            Str::borrow(easing),
+            Str::EMPTY,
+            &[seconds as f64, x as f64, y as f64, z as f64],
+        );
+    }
+
+    /// Breaks an actor into pieces; empty names this actor.
+    pub fn fracture(&self, actor: &str) {
+        self.act(
+            ACT_FRACTURE,
+            Str::borrow(actor),
+            Str::EMPTY,
+            Str::EMPTY,
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// A splash of droplets at a point.
+    pub fn splash(&self, x: f32, y: f32, z: f32, radius: f32, strength: f32) {
+        self.act_many(
+            ACT_SPLASH,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            &[x as f64, y as f64, z as f64, radius as f64, strength as f64],
+        );
+    }
+
+    /// A puff of smoke at a point.
+    pub fn puff_smoke(&self, x: f32, y: f32, z: f32, radius: f32, strength: f32) {
+        self.act_many(
+            ACT_PUFF_SMOKE,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            &[x as f64, y as f64, z as f64, radius as f64, strength as f64],
+        );
+    }
+
+    /// Stamps a decal `preset` at `at` on a surface facing `normal`. It
+    /// lives `lifetime` seconds and fades over the last `fade`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_decal(
+        &self,
+        preset: &str,
+        at: (f32, f32, f32),
+        normal: (f32, f32, f32),
+        size: f32,
+        lifetime: f32,
+        fade: f32,
+    ) {
+        self.act_many(
+            ACT_SPAWN_DECAL,
+            Str::borrow(preset),
+            Str::EMPTY,
+            Str::EMPTY,
+            &[
+                at.0 as f64,
+                at.1 as f64,
+                at.2 as f64,
+                normal.0 as f64,
+                normal.1 as f64,
+                normal.2 as f64,
+                size as f64,
+                lifetime as f64,
+                fade as f64,
+            ],
+        );
+    }
+
+    /// Fades the decals within `radius` of a point over `seconds`.
+    pub fn fade_decals(&self, x: f32, y: f32, z: f32, radius: f32, seconds: f32) {
+        self.act_many(
+            ACT_FADE_DECALS,
+            Str::EMPTY,
+            Str::EMPTY,
+            Str::EMPTY,
+            &[x as f64, y as f64, z as f64, radius as f64, seconds as f64],
+        );
+    }
+
     /// Which text input holds the keyboard, or an empty string. While one
     /// does, a script's `key_down` sees nothing, the same as a block's.
     pub fn ui_focus(&self) -> String {
@@ -3459,6 +3925,21 @@ impl ActorRef {
             "",
             &[x as f64, y as f64, z as f64],
         );
+    }
+
+    /// Gives its physics body a kind: `Static`, `Dynamic`, `Kinematic` or `None`.
+    pub fn set_body(&self, kind: &str) {
+        self.act_other(ACT_SET_BODY_OTHER, kind, "", &[]);
+    }
+
+    /// How heavy a unit of its collider is.
+    pub fn set_density(&self, density: f32) {
+        self.act_other(ACT_SET_DENSITY_OTHER, "", "", &[density as f64]);
+    }
+
+    /// An explicit body mass, overriding what density would derive.
+    pub fn set_mass(&self, mass: f32) {
+        self.act_other(ACT_SET_MASS_OTHER, "", "", &[mass as f64]);
     }
 
     /// A force on its body for one fixed step. `mode` is `"Force"`,
@@ -3901,6 +4382,9 @@ pub enum Event {
         impulse: f32,
         speed: f32,
     },
+    /// This actor's character motor jumped, landed, left the ground, hit its
+    /// head or changed stance.
+    Motor(MotorEvent),
     /// This actor's particles spawned, died or collided this frame: how many,
     /// and where the last one did.
     Particles {
@@ -4022,6 +4506,16 @@ pub enum ContactPhase {
     Exit,
 }
 
+/// Which thing the character motor did, as [`Event::Motor`] reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MotorEvent {
+    Jump,
+    Land,
+    LeftGround,
+    HeadHit,
+    StanceChanged,
+}
+
 /// Which particle event an [`Event::Particles`] is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParticleKind {
@@ -4062,6 +4556,14 @@ impl Event {
                 impulse: n[2] as f32,
                 speed: n[3] as f32,
             },
+            EVENT_MOTOR => Event::Motor(match subject.as_str() {
+                "jump" => MotorEvent::Jump,
+                "land" => MotorEvent::Land,
+                "leave ground" => MotorEvent::LeftGround,
+                "head hit" => MotorEvent::HeadHit,
+                "stance change" => MotorEvent::StanceChanged,
+                _ => return None,
+            }),
             EVENT_PARTICLES => Event::Particles {
                 kind: match subject.as_str() {
                     "spawn" => ParticleKind::Spawn,

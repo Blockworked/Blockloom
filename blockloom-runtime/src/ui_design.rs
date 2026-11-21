@@ -75,6 +75,39 @@ impl DesignSession {
     }
 }
 
+/// An actor's own visibility, kept while a design preview hides the world.
+#[derive(Component)]
+pub(crate) struct DesignHidden(Visibility);
+
+/// Hides every actor while a design session asks for the interface alone, and
+/// puts each one's own visibility back when it stops asking.
+pub(crate) fn hide_world(
+    session: Res<DesignSession>,
+    mut commands: Commands,
+    mut actors: Query<
+        (Entity, &mut Visibility, Option<&DesignHidden>),
+        With<crate::engine::ActorId>,
+    >,
+) {
+    let hide = session.request.as_ref().is_some_and(|r| !r.world);
+    if !hide && !actors.iter().any(|(_, _, held)| held.is_some()) {
+        return;
+    }
+    for (entity, mut visibility, held) in &mut actors {
+        match (hide, held) {
+            (true, None) => {
+                commands.entity(entity).insert(DesignHidden(*visibility));
+                *visibility = Visibility::Hidden;
+            }
+            (false, Some(held)) => {
+                *visibility = held.0;
+                commands.entity(entity).remove::<DesignHidden>();
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Restore the process window when the design viewport releases it.
 pub(crate) fn resize(
     mut session: ResMut<DesignSession>,
@@ -181,6 +214,7 @@ mod tests {
 
     fn fixture(revision: u64) -> InterfaceDesign {
         InterfaceDesign {
+            world: true,
             screen: None,
             hidden: vec![],
             animation: None,
@@ -192,6 +226,57 @@ mod tests {
             ))
             .unwrap(),
         }
+    }
+
+    #[test]
+    fn the_world_hides_for_a_preview_and_comes_back_as_it_was() {
+        let mut app = App::new();
+        app.init_resource::<DesignSession>()
+            .add_systems(Update, hide_world);
+        let shown = app
+            .world_mut()
+            .spawn((crate::engine::ActorId("a".into()), Visibility::Inherited))
+            .id();
+        let hidden = app
+            .world_mut()
+            .spawn((crate::engine::ActorId("b".into()), Visibility::Hidden))
+            .id();
+        let mut design = fixture(1);
+        design.world = false;
+        app.world_mut().resource_mut::<DesignSession>().request = Some(design);
+        app.update();
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(shown),
+            Some(&Visibility::Hidden)
+        );
+        // Asking again with the world on restores each actor's own value.
+        app.world_mut().resource_mut::<DesignSession>().request = Some(fixture(2));
+        app.update();
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(shown),
+            Some(&Visibility::Inherited)
+        );
+        assert_eq!(
+            app.world().get::<Visibility>(hidden),
+            Some(&Visibility::Hidden)
+        );
+        assert!(app.world().get::<DesignHidden>(shown).is_none());
+        // Closing the session restores too.
+        app.world_mut().resource_mut::<DesignSession>().request = Some({
+            let mut d = fixture(3);
+            d.world = false;
+            d
+        });
+        app.update();
+        app.world_mut().resource_mut::<DesignSession>().clear();
+        app.update();
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(shown),
+            Some(&Visibility::Inherited)
+        );
     }
 
     #[test]

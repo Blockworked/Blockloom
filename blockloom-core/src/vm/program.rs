@@ -329,6 +329,11 @@ pub enum Action {
         bus: SoundBus,
         volume: Value,
     },
+    SetReverb(String),
+    MuffleUnderwater {
+        bus: SoundBus,
+        enabled: bool,
+    },
     SetComponentField {
         component: String,
         field: String,
@@ -2136,6 +2141,13 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
             sound: sound.clone(),
             pitch: pitch.clone(),
         })),
+        K::SetReverb { preset } => steps.push(Step::Action(Action::SetReverb(preset.clone()))),
+        K::MuffleUnderwater { bus, enabled } => {
+            steps.push(Step::Action(Action::MuffleUnderwater {
+                bus: *bus,
+                enabled: *enabled,
+            }))
+        }
         K::SetBusVolume { bus, volume } => steps.push(Step::Action(Action::SetBusVolume {
             bus: *bus,
             volume: volume.clone(),

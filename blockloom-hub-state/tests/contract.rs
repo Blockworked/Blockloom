@@ -27,7 +27,10 @@ fn scratch() -> (tempfile::TempDir, PathBuf, Hub) {
         json!({"name": "Pond", "scenes": []}).to_string(),
     )
     .unwrap();
-    let hub = Hub::new(Some(base.join("Hub")), Some(base.join("data/projects.json")));
+    let hub = Hub::new(
+        Some(base.join("Hub")),
+        Some(base.join("data/projects.json")),
+    );
     (dir, project, hub)
 }
 
@@ -35,7 +38,11 @@ fn scratch() -> (tempfile::TempDir, PathBuf, Hub) {
 fn the_hub_reads_the_editors_lock_and_binding() {
     let (_dir, project, hub) = scratch();
     let mut lock = fixture("lock.json");
-    assert!(keys(&lock).is_superset(&BTreeSet::from(["pid".into(), "heartbeat".into(), "app".into()])));
+    assert!(keys(&lock).is_superset(&BTreeSet::from([
+        "pid".into(),
+        "heartbeat".into(),
+        "app".into()
+    ])));
     lock["pid"] = json!(std::process::id());
     lock["heartbeat"] = json!(blockloom_core::sync::now_secs());
     std::fs::create_dir_all(project.join(".blockloom")).unwrap();
@@ -44,7 +51,11 @@ fn the_hub_reads_the_editors_lock_and_binding() {
     assert_eq!(owner["pid"], std::process::id());
     assert_eq!(owner["app"], fixture("lock.json")["app"]);
     std::fs::remove_file(project.join(".blockloom/lock.json")).unwrap();
-    std::fs::write(project.join(".blockloom/hub.json"), fixture("hub.json").to_string()).unwrap();
+    std::fs::write(
+        project.join(".blockloom/hub.json"),
+        fixture("hub.json").to_string(),
+    )
+    .unwrap();
     assert_eq!(
         hub.project(&project).unwrap()["installation"],
         fixture("hub.json")["installation"]
@@ -55,10 +66,14 @@ fn the_hub_reads_the_editors_lock_and_binding() {
 fn what_the_hub_writes_has_the_editors_keys() {
     let (_dir, project, hub) = scratch();
     hub.remember(&project).unwrap();
-    let library: Value = serde_json::from_str(&std::fs::read_to_string(&hub.registry).unwrap()).unwrap();
+    let library: Value =
+        serde_json::from_str(&std::fs::read_to_string(&hub.registry).unwrap()).unwrap();
     let reference = fixture("projects.json");
     assert_eq!(keys(&library), keys(&reference));
-    assert_eq!(keys(&library["projects"][0]), keys(&reference["projects"][0]));
+    assert_eq!(
+        keys(&library["projects"][0]),
+        keys(&reference["projects"][0])
+    );
 
     std::fs::create_dir_all(project.join(".blockloom")).unwrap();
     std::fs::write(
@@ -70,14 +85,17 @@ fn what_the_hub_writes_has_the_editors_keys() {
     let mut quick = hub.clone();
     quick.focus_timeout = std::time::Duration::ZERO;
     quick.focus(&project).unwrap();
-    let focus: Value =
-        serde_json::from_str(&std::fs::read_to_string(project.join(".blockloom/focus.json")).unwrap()).unwrap();
+    let focus: Value = serde_json::from_str(
+        &std::fs::read_to_string(project.join(".blockloom/focus.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(keys(&focus), keys(&fixture("focus.json")));
 }
 
 #[test]
 fn the_hub_reads_the_presence_the_editor_writes() {
-    let presence: blockloom_core::hub::Presence = serde_json::from_value(fixture("presence.json")).unwrap();
+    let presence: blockloom_core::hub::Presence =
+        serde_json::from_value(fixture("presence.json")).unwrap();
     assert_eq!(presence.installation.as_deref(), Some("release-0.1.0"));
     assert!(presence.project.is_none());
 }

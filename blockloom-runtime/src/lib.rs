@@ -111,6 +111,7 @@ mod sky;
 #[cfg(feature = "ray_tracing")]
 mod solari_patch;
 mod sound;
+mod sound_fx;
 mod space;
 mod sprites;
 mod ssr;
@@ -480,6 +481,20 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     weather2d::register(app);
     onion::register(app);
     app.add_systems(Update, world::sync_audio_scale.after(world::rebuild_world));
+    app.add_systems(
+        Update,
+        sound::probe_occlusion
+            .after(sound::drive_soundscape)
+            .before(sound::maintain_voices),
+    );
+    // Voices play through their own effect chain; without an audio device
+    // plugin there is nothing to play them, but the asset still exists.
+    if app.is_plugin_added::<bevy::audio::AudioPlugin>() {
+        use bevy::audio::AddAudioSource;
+        app.add_audio_source::<sound_fx::FxSource>();
+    } else {
+        app.init_asset::<sound_fx::FxSource>();
+    }
     // Both dimensions register always for live cross-dimension switches;
     // each side's chains run only while its Dimension is live.
     {
@@ -541,6 +556,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 .run_if(is_3d),
         );
         app.add_systems(Update, ui_design::resize.after(world::pump_editor));
+        app.add_systems(Update, ui_design::hide_world.after(world::pump_editor));
         app.add_systems(Last, preview::capture_preview_frame);
         app.add_systems(
             PostUpdate,
@@ -638,6 +654,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 world::drag_input_selection,
                 world::publish_sensors,
                 world::step_scripts_frame_ui,
+                sound::drive_soundscape,
                 sound::maintain_voices,
                 world::interpolate_poses,
                 (
