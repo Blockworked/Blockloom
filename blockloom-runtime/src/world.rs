@@ -977,6 +977,7 @@ pub fn rebuild_world(
     }
     engine.rebuild = false;
     commands.insert_resource(engine.document());
+    commands.write_message(crate::module::WorldRebuilt);
     let _timer = RebuildTimer::start(engine.project.actors.len());
     // A scene switch across dimensions swaps the pipeline live: the Dimension
     // resource follows the newly active scene, so the spawn below picks up
@@ -1059,7 +1060,6 @@ pub fn rebuild_world(
     engine.fog_density = None;
     engine.aurora_kp = None;
     engine.lightning_rate = None;
-    engine.wind = Default::default();
     engine.precipitation = Default::default();
     engine.weather = Default::default();
     engine.director_time = None;

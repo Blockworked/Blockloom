@@ -2239,6 +2239,17 @@ timestep and the asset-folder readers (sprites, rigs, terrain, water, the
 interface) read it; a test app gets it through `InsertEngine::insert_engine`.
 What's left on `Engine` is run state and run overrides.
 
+`blockloom-runtime/src/module.rs` is the module contract: a
+`BlockloomModule` (`name`, `build`) added with `AddModule::add_module`
+registers its own resources and systems, keeps run state in its own
+resources and drops it on the `WorldRebuilt` message (written by
+`rebuild_world`), and reads the run through `RunState` (synced from `Engine`
+at the head of every tick and frame) and the document through
+`SceneDocument`. `wind::WindModule` is the first: `WindRun` holds `set wind`,
+and it reads the weather blend through `director::WeatherNow` and volume
+specs through `volumes::LiveVolumes`, both published on the fixed tick
+before it, so it takes no `Engine` at all.
+
 `volumes::VolumeEye` says where volumes are weighed: the world camera (the
 default), a named actor or a point, so a world with no camera blends the same
 atmosphere for `sample_atmosphere`.

@@ -4,26 +4,55 @@
 //! and the atmosphere slot reports it at the camera.
 
 use crate::atmosphere::{AtmosphereSources, sample_atmosphere};
-use crate::engine::{ActorId, Dimension, Engine, PendingEffects};
+use crate::director::WeatherNow;
+use crate::engine::{ActorId, Dimension, PendingEffects, SceneDocument};
+use crate::module::{BlockloomModule, RunState, WorldRebuilt};
+use crate::volumes::LiveVolumes;
 use crate::world::WorldCamera;
 use bevy::prelude::*;
 use blockloom_core::scene::Mode;
 use blockloom_core::vm::Effect;
-use blockloom_core::wind::{CloudOffsets, Wind, WindDials, WindZone, direction_of};
+use blockloom_core::wind::{CloudOffsets, Wind, WindDials, WindOverrides, WindZone, direction_of};
 
-pub fn register(app: &mut App) {
-    app.init_resource::<WindField>().add_systems(
-        FixedUpdate,
-        (
-            step_wind
-                .in_set(crate::world::SimulationSet)
-                .before(sample_atmosphere),
-            apply_wind_effects
-                .in_set(crate::world::SimulationSet)
-                .after(crate::world::apply_common)
-                .before(crate::world::clear_effects),
-        ),
-    );
+/// The first `BlockloomModule`: no `Engine` anywhere in it.
+pub struct WindModule;
+
+impl BlockloomModule for WindModule {
+    fn name(&self) -> &'static str {
+        "wind"
+    }
+
+    fn build(&self, app: &mut App) {
+        app.init_resource::<WindField>()
+            .init_resource::<WindRun>()
+            .init_resource::<WeatherNow>()
+            .init_resource::<LiveVolumes>()
+            .add_systems(
+                FixedUpdate,
+                (
+                    step_wind
+                        .in_set(crate::world::SimulationSet)
+                        .after(crate::director::publish_weather)
+                        .after(crate::volumes::publish_live_volumes)
+                        .before(sample_atmosphere),
+                    apply_wind_effects
+                        .in_set(crate::world::SimulationSet)
+                        .after(crate::world::apply_common)
+                        .before(crate::world::clear_effects),
+                ),
+            )
+            .add_systems(Update, forget_wind_run.after(crate::world::rebuild_world));
+    }
+}
+
+/// What `set wind` and `set cloud drift` wrote this run.
+#[derive(Resource, Default, Debug, Clone, Copy)]
+pub struct WindRun(pub WindOverrides);
+
+fn forget_wind_run(mut rebuilt: MessageReader<WorldRebuilt>, mut run: ResMut<WindRun>) {
+    if rebuilt.read().count() > 0 {
+        *run = WindRun::default();
+    }
 }
 
 /// The air as of the last fixed tick.
@@ -57,14 +86,18 @@ impl WindField {
 }
 
 /// `set wind` and `set cloud drift` for the rest of the run.
-fn apply_wind_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engine>) {
-    if !engine.running {
+fn apply_wind_effects(
+    effects: Res<PendingEffects>,
+    state: Res<RunState>,
+    mut run: ResMut<WindRun>,
+) {
+    if !state.running {
         return;
     }
     for effect in &effects.0 {
         match effect {
-            Effect::SetWind { property, value } => engine.wind.set(*property, *value),
-            Effect::SetCloudDrift { drift } => engine.wind.set_cloud_drift(*drift),
+            Effect::SetWind { property, value } => run.0.set(*property, *value),
+            Effect::SetCloudDrift { drift } => run.0.set_cloud_drift(*drift),
             _ => {}
         }
     }
@@ -75,7 +108,11 @@ fn apply_wind_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engin
 /// paused one holds it where it is.
 #[allow(clippy::too_many_arguments)]
 fn step_wind(
-    engine: NonSend<Engine>,
+    state: Res<RunState>,
+    document: Res<SceneDocument>,
+    run: Res<WindRun>,
+    weather: Res<WeatherNow>,
+    volumes: Res<LiveVolumes>,
     dimension: Res<Dimension>,
     time: Res<Time<Fixed>>,
     cameras: Query<&Transform, With<WorldCamera>>,
@@ -83,33 +120,34 @@ fn step_wind(
     mut field: ResMut<WindField>,
     mut sources: ResMut<AtmosphereSources>,
 ) {
-    if engine.running && engine.paused {
+    if state.running && state.paused {
         return;
     }
     let flat = dimension.0 == Mode::TwoD;
-    let wind = &engine.project.world.wind;
-    let mut dials = wind.dials(&engine.wind);
+    let overrides = &run.0;
+    let wind = &document.world.wind;
+    let mut dials = wind.dials(overrides);
     // The weather blend lays under explicit `set wind` dials: where a block
     // moved a dial, the block wins; everywhere else the weather shows.
-    if engine.weather.is_active() {
-        let blended = engine.weather.sampled();
-        if engine.wind.direction.is_none() {
+    if weather.active {
+        let blended = weather.values;
+        if overrides.direction.is_none() {
             dials.direction = blended.wind_direction;
         }
-        if engine.wind.speed.is_none() {
+        if overrides.speed.is_none() {
             dials.speed = blended.wind_speed;
         }
-        if engine.wind.storm.is_none() {
+        if overrides.storm.is_none() {
             dials.storm = blended.storm;
         }
     }
     let field = &mut *field;
-    if engine.running {
+    if state.running {
         let dt = time.delta_secs();
         // This tick's wind carries the air over the step it starts.
         let (base, _) = wind.base(&dials, field.time, flat);
         let aloft = wind.aloft(&dials, field.time, flat);
-        let extra = engine.wind.cloud_drift.unwrap_or(wind.clouds.advection);
+        let extra = overrides.cloud_drift.unwrap_or(wind.clouds.advection);
         field.drift += Vec3::from(base) * dt;
         field.clouds.step(&wind.clouds, aloft, extra, dt, flat);
         field.time += dt;
@@ -121,7 +159,7 @@ fn step_wind(
     field.wind.clone_from(wind);
     field.dials = dials;
     field.flat = flat;
-    field.zones = WindZone::from_volumes(crate::volumes::placed(&engine, actors.iter()));
+    field.zones = WindZone::from_volumes(volumes.placed(actors.iter()));
     let eye = cameras
         .iter()
         .next()
@@ -142,7 +180,7 @@ fn step_wind(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::InsertEngine;
+    use crate::engine::{Engine, InsertEngine};
     use blockloom_core::wind::WindProperty;
 
     fn app(mode: Mode) -> App {
@@ -162,7 +200,15 @@ mod tests {
             .init_resource::<AtmosphereSources>()
             .init_resource::<Time<Fixed>>()
             .init_resource::<WindField>()
-            .add_systems(Update, (step_wind, apply_wind_effects).chain());
+            .init_resource::<WindRun>()
+            .init_resource::<RunState>()
+            .init_resource::<WeatherNow>()
+            .init_resource::<LiveVolumes>()
+            .add_message::<WorldRebuilt>()
+            .add_systems(
+                Update,
+                (step_wind, apply_wind_effects, forget_wind_run).chain(),
+            );
         app
     }
 
@@ -179,7 +225,7 @@ mod tests {
     #[test]
     fn blocks_move_the_dials_for_the_rest_of_the_run() {
         let mut app = app(Mode::TwoD);
-        app.world_mut().non_send_mut::<Engine>().running = true;
+        app.world_mut().resource_mut::<RunState>().running = true;
         app.world_mut().resource_mut::<PendingEffects>().0 = vec![
             Effect::SetWind {
                 property: WindProperty::Direction,
@@ -204,7 +250,16 @@ mod tests {
             sources.wind
         );
         assert_eq!(sources.storm, 1.0);
-        let engine = app.world().non_send::<Engine>();
-        assert_eq!(engine.wind.cloud_drift, Some([1.0, 2.0, 3.0]));
+        let run = app.world().resource::<WindRun>();
+        assert_eq!(run.0.cloud_drift, Some([1.0, 2.0, 3.0]));
+    }
+
+    #[test]
+    fn a_rebuild_forgets_the_runs_dials() {
+        let mut app = app(Mode::ThreeD);
+        app.world_mut().resource_mut::<WindRun>().0.cloud_drift = Some([1.0, 0.0, 0.0]);
+        app.world_mut().write_message(WorldRebuilt);
+        app.update();
+        assert_eq!(app.world().resource::<WindRun>().0.cloud_drift, None);
     }
 }

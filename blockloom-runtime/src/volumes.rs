@@ -18,7 +18,14 @@ use blockloom_protocol::{
 pub fn register(app: &mut App) {
     app.init_resource::<VolumeBlend>()
         .init_resource::<VolumeEye>()
-        .init_resource::<VolumeDebugView>();
+        .init_resource::<VolumeDebugView>()
+        .init_resource::<LiveVolumes>()
+        .add_systems(
+            FixedUpdate,
+            publish_live_volumes
+                .in_set(crate::world::SimulationSet)
+                .before(crate::atmosphere::sample_atmosphere),
+        );
 }
 
 /// Where volumes are weighed. A game with a window weighs them at its world
@@ -107,6 +114,41 @@ fn pose_of(transform: &Transform) -> VolumePose {
         position: transform.translation.to_array(),
         rotation: transform.rotation.to_array(),
         scale: transform.scale.to_array(),
+    }
+}
+
+/// Each volume actor's live spec as of this tick, for modules that weigh
+/// volumes without the main-thread `Engine` (the wind's zones).
+#[derive(Resource, Default, Debug, Clone)]
+pub struct LiveVolumes(pub std::collections::HashMap<String, VolumeSpec>);
+
+impl LiveVolumes {
+    /// Every switched-on volume, with where it stands.
+    pub fn placed<'a>(
+        &'a self,
+        actors: impl Iterator<Item = (&'a ActorId, &'a Transform)>,
+    ) -> Vec<(&'a str, VolumeSpec, VolumePose)> {
+        actors
+            .filter_map(|(id, transform)| {
+                let spec = self.0.get(&id.0)?;
+                (spec.enabled && spec.weight > 0.0)
+                    .then(|| (id.0.as_str(), spec.clone(), pose_of(transform)))
+            })
+            .collect()
+    }
+}
+
+/// Refreshes `LiveVolumes` at the head of the fixed tick.
+pub fn publish_live_volumes(
+    engine: NonSend<Engine>,
+    actors: Query<&ActorId>,
+    mut live: ResMut<LiveVolumes>,
+) {
+    live.0.clear();
+    for id in &actors {
+        if let Some(spec) = live_spec(&engine, &id.0) {
+            live.0.insert(id.0.clone(), spec);
+        }
     }
 }
 

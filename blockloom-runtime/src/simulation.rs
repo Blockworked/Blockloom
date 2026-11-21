@@ -51,6 +51,7 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
         .init_resource::<crate::player_camera::BodyFacing>()
         .init_resource::<physics_install::PhysicsLayers>()
         .insert_engine(engine);
+    crate::module::register(app);
     atmosphere::register(app);
     crate::lan::register(app);
     app.init_resource::<crate::environment::Environment>();

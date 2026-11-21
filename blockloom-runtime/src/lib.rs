@@ -66,6 +66,7 @@ mod logic;
 mod luminance;
 mod materials;
 mod model;
+mod module;
 mod motor;
 mod player_camera;
 mod post2d;
@@ -394,7 +395,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     destruction::register(app);
     director::register(app);
     cinematic::register(app);
-    wind::register(app);
+    module::AddModule::add_module(app, wind::WindModule);
     vfx::register(app, mode);
     water::register(app, mode);
     edit::configure(app);

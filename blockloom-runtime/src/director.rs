@@ -15,12 +15,14 @@ use blockloom_core::vm::{Effect, Event};
 
 pub fn register(app: &mut App) {
     app.init_resource::<DirectorClock>()
+        .init_resource::<WeatherNow>()
         .init_resource::<WetnessField>()
         .init_resource::<WetnessTexture>()
         .add_systems(
             FixedUpdate,
             (
-                step_director
+                (step_director, publish_weather)
+                    .chain()
                     .in_set(crate::world::SimulationSet)
                     .before(sample_atmosphere),
                 apply_director_effects
@@ -30,6 +32,24 @@ pub fn register(app: &mut App) {
             ),
         )
         .add_systems(Update, upload_wetness.after(crate::world::rebuild_world));
+}
+
+/// The weather blend as of this tick, for modules that read it without the
+/// main-thread `Engine` (the wind).
+#[derive(Resource, Default, Debug, Clone, Copy)]
+pub struct WeatherNow {
+    pub active: bool,
+    pub values: WeatherValues,
+}
+
+pub fn publish_weather(engine: NonSend<Engine>, mut now: ResMut<WeatherNow>) {
+    let next = WeatherNow {
+        active: engine.weather.is_active(),
+        values: engine.weather.sampled(),
+    };
+    if now.active != next.active || now.values != next.values {
+        *now = next;
+    }
 }
 
 /// The ground wetness map: rain soaks it, evaporation dries it unevenly.

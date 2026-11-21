@@ -530,9 +530,6 @@ pub struct Engine {
     pub fog_density: Option<f32>,
     pub aurora_kp: Option<f32>,
     pub lightning_rate: Option<f32>,
-    /// `set wind`, `set storm` and `set cloud drift` this run, over the
-    /// project's wind.
-    pub wind: blockloom_core::wind::WindOverrides,
     /// `set precipitation` this run, over the director and the project.
     pub precipitation: blockloom_core::director::PrecipitationOverrides,
     /// The live weather blend: what the air is right now and where it is
@@ -700,7 +697,6 @@ impl Engine {
             fog_density: None,
             aurora_kp: None,
             lightning_rate: None,
-            wind: Default::default(),
             precipitation: Default::default(),
             weather: Default::default(),
             director_time: None,
