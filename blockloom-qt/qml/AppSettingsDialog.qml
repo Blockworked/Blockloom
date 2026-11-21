@@ -8,7 +8,7 @@ import com.blockworked.Blockstitch 1.0
 // the license stamp and the toolchain probes. Per-project Android rows
 // (applicationId, version) live in Project settings instead; phones and
 // emulators live in the Devices tab.
-BwDialog {
+StitchDialog {
     id: root
     required property var app
     property var android: null
@@ -64,20 +64,32 @@ BwDialog {
                     onTextChanged: errorScroll.contentItem.contentY = Math.max(0, errorScroll.contentItem.contentHeight - errorScroll.height)
                 }
             }
+            Text { text: "Appearance"; color: Theme.text; font.pixelSize: 14; font.weight: Font.Bold }
+            RowLayout {
+                spacing: 10
+                Text { text: "Theme"; color: Theme.textDim; font.pixelSize: 12 }
+                StitchComboBox {
+                    Layout.preferredWidth: 180
+                    readonly property var modes: ["", "light", "dark"]
+                    model: ["Match the system", "Light", "Dark"]
+                    currentIndex: Math.max(0, modes.indexOf(Theme.mode))
+                    onActivated: index => root.app.themeMode = modes[index]
+                }
+            }
             Text { text: "Android"; color: Theme.text; font.pixelSize: 14; font.weight: Font.Bold }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
                 text: "A project builds into an installable APK from Windows, Linux or macOS. No editor runs on the device: Android is a Build dialog row, never a Play path." }
             Text { text: "SDK path"; color: Theme.textDim; font.pixelSize: 12 }
             RowLayout {
                 Layout.fillWidth: true
-                BwTextField { id: sdkPathField; Layout.fillWidth: true; placeholderText: "Default SDK location"
+                StitchTextField { id: sdkPathField; Layout.fillWidth: true; placeholderText: "Default SDK location"
                     onEditingFinished: root.app.invoke("android_set_sdk_path", { path: text.trim() }, resolved => { sdkPathField.text = resolved; root.refresh(); }, e => root.androidError = String(e)) }
                 IconButton { iconName: "folder-open"; tip: "Browse for the SDK"; implicitWidth: 34; implicitHeight: 34; onClicked: sdkBrowse.open() }
             }
             Text { text: "NDK path"; color: Theme.textDim; font.pixelSize: 12 }
             RowLayout {
                 Layout.fillWidth: true
-                BwTextField { id: ndkPathField; Layout.fillWidth: true; placeholderText: "Pinned NDK inside the SDK"
+                StitchTextField { id: ndkPathField; Layout.fillWidth: true; placeholderText: "Pinned NDK inside the SDK"
                     onEditingFinished: root.app.invoke("android_set_ndk_path", { path: text.trim() }, resolved => { ndkPathField.text = resolved; root.refresh(); }, e => root.androidError = String(e)) }
                 IconButton { iconName: "folder-open"; tip: "Browse for the NDK"; implicitWidth: 34; implicitHeight: 34; onClicked: ndkBrowse.open() }
             }
@@ -101,16 +113,16 @@ BwDialog {
             Text { visible: !!root.android; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
                 text: root.android ? ("arm64 ready: " + (root.android.ready_arm64 ? "yes" : root.android.note_arm64) + "\nEmulator ready: " + (root.android.ready_emulator ? "yes" : root.android.note_emulator)) : "" }
             RowLayout {
-                BwButton {
+                StitchButton {
                     text: root.sdkBusy ? "Installing..." : "Install / update SDK"
                     enabled: !root.sdkBusy
                     onClicked: root.installSdk()
                 }
-                BwButton {
+                StitchButton {
                     text: "Show licenses"; enabled: !root.sdkBusy
                     onClicked: root.app.invoke("android_accept_licenses", { accept: false }, result => { root.licenseText = result.text; root.licensesAccepted = !!result.accepted; }, e => root.androidError = String(e))
                 }
-                BwButton {
+                StitchButton {
                     text: "Accept licenses"; enabled: !root.licensesAccepted && !root.sdkBusy
                     // Accepting is for installing: packages refused before
                     // this left an empty emulator dir behind, so install
@@ -140,8 +152,8 @@ BwDialog {
                 text: "Phones and emulators live in the editor's Devices tab: boot them there, see their screens and run the game on them." }
             RowLayout {
                 Layout.alignment: Qt.AlignRight; Layout.topMargin: 8; spacing: 8
-                BwButton { text: "Refresh"; onClicked: root.refresh() }
-                BwButton { text: "Done"; primary: true; onClicked: root.close() }
+                StitchButton { text: "Refresh"; onClicked: root.refresh() }
+                StitchButton { text: "Done"; primary: true; onClicked: root.close() }
             }
         }
     }

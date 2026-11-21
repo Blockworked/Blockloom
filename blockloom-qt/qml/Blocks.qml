@@ -91,6 +91,10 @@ QtObject {
         const theirs = (shared || []).map(x => x.name).filter(n => mine.indexOf(n) < 0).sort((a, b) => a.localeCompare(b));
         return mine.concat(theirs);
     }
+    // The first variable, list and dict, as one string so a palette block
+    // built from them is rebuilt only when one of those changes.
+    readonly property string firstNames: JSON.stringify([variableNames()[0] || "", listNames()[0] || "", dictNames()[0] || ""])
+    function firstName(i) { return JSON.parse(firstNames)[i]; }
     function variableNames() { return scoped(actor ? actor.variables : [], project ? project.globals : []); }
     function listNames() { return scoped(actor ? actor.lists : [], project ? project.global_lists : []); }
     function dictNames() { return scoped(actor ? actor.dicts : [], project ? project.global_dicts : []); }
@@ -174,7 +178,9 @@ QtObject {
     })
 
     function buildRows() {
-        const header = (head) => ({ shape: "header", head: head });
+        // Trigger labels are capitals, as every Blockworked editor writes them.
+        const upper = pieces => pieces.map(p => p.kind === "label" ? Object.assign({}, p, { text: p.text.toUpperCase() }) : p);
+        const header = (head) => ({ shape: "header", head: typeof head === "function" ? head : upper(head) });
         const cap = (head) => ({ shape: "cap", head: head });
         const row = (head) => ({ head: head });
         const r = {
@@ -397,7 +403,7 @@ QtObject {
     // the plugin and block and the rest are its slots.
     readonly property var pluginBlocks: (appState && appState.plugins ? appState.plugins.blocks : null) || []
     readonly property string pluginSource: JSON.stringify(pluginBlocks.map(b => [b.plugin, b.block.type_id, b.block.kind, b.block.label, b.block.category, b.block.event || "", b.block.returns ? b.block.returns.type : "", b.block.slots.map(sl => [sl.name, sl.type, sl.default === undefined ? null : sl.default])]))
-    onPluginSourceChanged: { pluginPieces = ({}); BlockRegistry.revision++; }
+    onPluginSourceChanged: { pluginPieces = ({}); registerPluginEntries(); BlockRegistry.revision++; }
     // The row's pieces per block. The canvas rebuilds a row's controls when
     // the array changes, so the same objects come back until the plugins do.
     property var pluginPieces: ({})
@@ -434,7 +440,7 @@ QtObject {
         if (pluginPieces[key]) return pluginPieces[key];
         const schema = pluginSchema(ins.plugin, ins.block);
         const pieces = schema
-            ? pluginLabelPieces(schema, (index, slot) => ({ kind: "text", key: "args", index: index, placeholder: slot.name }))
+            ? pluginLabelPieces(schema, (index, slot) => ({ kind: "text", key: "args", index: index, placeholder: slot.name })).map(p => p.kind === "label" ? lb(p.text.toUpperCase()) : p)
             : [lb(ins.plugin + "/" + ins.block + " (not installed)")];
         pluginPieces[key] = pieces;
         return pieces;
@@ -620,8 +626,8 @@ QtObject {
         case "Repeat": return { count: num(10), body: [] };
         case "Forever": return { body: [] };
         case "While": return { condition: blank, body: [] };
-        case "SetVariable": return { name: variableNames()[0] || "", value: num(0) };
-        case "ChangeVariable": return { name: variableNames()[0] || "", value: num(1) };
+        case "SetVariable": return { name: firstName(0), value: num(0) };
+        case "ChangeVariable": return { name: firstName(0), value: num(1) };
         case "CallBlock": return { block_id: "", args: [] };
         case "PluginBlock": return { plugin: "", block: "", args: [] };
         case "WhenPlugin": return { plugin: "", block: "", event: "", args: [] };
@@ -647,20 +653,20 @@ QtObject {
         case "ScrollUi": return { element: txt("widget"), value: txt("0") };
         case "SetElementTheme": return { element: txt("widget"), value: txt("Dark") };
         case "SetUiProp": return { prop: "Text", element: txt("score"), value: txt("") };
-        case "SaveVariable": case "ClearSavedVariable": return { name: variableNames()[0] || "" };
+        case "SaveVariable": case "ClearSavedVariable": return { name: firstName(0) };
         case "SwitchSaveSlot": case "DeleteSaveSlot": return { slot: txt("slot 1") };
         case "SetLanguage": return { language: txt("en") };
-        case "AddToList": return { name: listNames()[0] || "", value: num(0) };
-        case "DeleteOfList": return { name: listNames()[0] || "", index: num(1) };
-        case "DeleteAllOfList": case "ReverseList": return { name: listNames()[0] || "" };
-        case "ShiftList": return { name: listNames()[0] || "", amount: num(1) };
-        case "InsertIntoList": return { name: listNames()[0] || "", value: num(0), index: num(1) };
-        case "ReplaceItemOfList": return { name: listNames()[0] || "", index: num(1), value: num(0) };
-        case "LoadJsonIntoList": return { name: listNames()[0] || "", json: txt("") };
-        case "SetDictValue": return { name: dictNames()[0] || "", key: txt(""), value: num(0) };
-        case "DeleteDictKey": return { name: dictNames()[0] || "", key: txt("") };
-        case "DeleteAllOfDict": return { name: dictNames()[0] || "" };
-        case "LoadJsonIntoDict": return { name: dictNames()[0] || "", json: txt("") };
+        case "AddToList": return { name: firstName(1), value: num(0) };
+        case "DeleteOfList": return { name: firstName(1), index: num(1) };
+        case "DeleteAllOfList": case "ReverseList": return { name: firstName(1) };
+        case "ShiftList": return { name: firstName(1), amount: num(1) };
+        case "InsertIntoList": return { name: firstName(1), value: num(0), index: num(1) };
+        case "ReplaceItemOfList": return { name: firstName(1), index: num(1), value: num(0) };
+        case "LoadJsonIntoList": return { name: firstName(1), json: txt("") };
+        case "SetDictValue": return { name: firstName(2), key: txt(""), value: num(0) };
+        case "DeleteDictKey": return { name: firstName(2), key: txt("") };
+        case "DeleteAllOfDict": return { name: firstName(2) };
+        case "LoadJsonIntoDict": return { name: firstName(2), json: txt("") };
         case "HideElement": case "DeleteElement": return { element: txt("menu") };
         case "FocusElement": return { element: txt("name") };
         default: return {};
@@ -877,43 +883,139 @@ QtObject {
         {"kind":"CircleHit","op":"CircleHit","arity":4,"args":[{"type":"number","default":{"kind":"Number","value":0.0}},{"type":"number","default":{"kind":"Number","value":0.0}},{"type":"number","default":{"kind":"Number","value":0.0}},{"type":"number","default":{"kind":"Number","value":10.0}}],"host":true}
     ]
     // END GENERATED operator descriptors
-    // Palette groups, the way the sidebar shows them.
-    readonly property var operatorGroups: [
-        { label: "Sensing", kinds: ["KeyDown","MouseDown","MouseButtonDown","MouseX","MouseY","MouseDeltaX","MouseDeltaY","MouseLocked","ActionDown","ActionPressed","ActionReleased","ActionValue","TouchCount","TouchX","TouchY","GamepadConnected","GamepadAxis","GamepadButtonDown","Timer","MyPosition","MyRotation","MyLocalPosition","CameraPosition","CameraDirection","Touching","DistanceTo","IsTrigger","CollisionLayer","RayHit","RayDistance","CircleHit","QueryNumber","QueryText","ControllerNumber","ControllerText","MotorNumber","MotorText","JointNumber","ActorPosition","ActorLocalPosition","Velocity","AngularVelocity","Mass","IsGrounded","ComponentField","SoundPlaying","BusVolume","IsTweening","CurrentClip","CurrentFrame","AnimationPlaying","Atmosphere","TimeOfDay","SunElevation","CurrentWeather","FrameTime","DrawCalls","CurrentQuality","DlssAvailable","SceneLuminance","IsHdrDisplay","PeakBrightness","ActiveVolumes","CurrentScene","SceneNames","SaveSlot","SaveSlots","Language","LocalizedText","IsCutscenePlaying","CutsceneTime","CastsShadows","IsRayTracing","RayTracingAvailable","WaterHeight","LightLevel","IsNight","CameraZoom","CameraAtBounds","IsScreenShaking","ScreenCover","Underwater","TileAt","RoomContaining","ParticleCount","ParticleEventCount","ParticleEventPosition"] },
-        { label: "Interface", kinds: ["UiSelectedIndex","UiValue","UiText","UiShown","UiExists","UiFocus","GamePaused"] },
-        { label: "Actors", kinds: ["IsClone","MyParent","NewActor","ActorCount"] },
-        { label: "Maths", kinds: ["Add","Sub","Mul","Div","Mod","Round","Math","Random"] },
-        { label: "Comparing", kinds: ["Eq","Neq","Gt","Lt","Gte","Lte","And","Or","Not","True","False"] },
-        { label: "Text", kinds: ["Join","Join3","Length","LetterOf","IndexOf","LastIndexOf","Case","NewLine","Tab","CurrentTime"] }
+    // ─── The palette (blockstitch's PalettePanel) ───────────────────────────
+    // Blockloom's categories, between blockstitch's Flow and Data.
+    readonly property var appCategories: [
+        { id: "motion", name: "Motion", icon: "move", after: "control" },
+        { id: "physics", name: "Physics", icon: "boxes", after: "motion" },
+        { id: "looks", name: "Looks", icon: "palette", after: "physics" },
+        { id: "world", name: "World", icon: "sun", after: "looks" },
+        { id: "sound", name: "Sound", icon: "volume-2", after: "world" },
+        { id: "actors", name: "Actors", icon: "copy", after: "sound" },
+        { id: "interface", name: "Interface", icon: "layout-panel-top", after: "actors" },
+        { id: "sensing", name: "Sensing", icon: "keyboard", after: "interface" }
+    ].concat(pluginBlocks.length ? [{ id: "plugins", name: "Plugins", icon: "plug-zap" }] : [])
+    // Every block and reporter once, in the order each category shows them.
+    readonly property var baseSections: [
+        { category: "events", title: "Starting", items: ["WhenStarted", "WhenSceneStarts", "WhenSceneEnds", "WhenCloned"] },
+        { category: "events", title: "Input", items: ["WhenKeyPressed", "WhenActionPressed", "WhenTouched", "WhenClicked"] },
+        { category: "events", title: "Messages", items: ["WhenMessage", "Broadcast"] },
+        { category: "events", title: "In the world", items: ["WhenCollision", "WhenEnterRoom", "WhenWeather", "WhenQualityDrops", "WhenParticles", "WhenMotor", "WhenAnimationEnds", "WhenAnimationMarker"] },
+        { category: "events", title: "Cutscenes", items: ["WhenCutsceneSignal", "WhenCutsceneEnds"] },
+        { category: "events", title: "Interface", items: ["WhenUiEvent", "WhenUiClicked", "WhenUiChanged"] },
+        { category: "control", title: "", items: ["Wait", "WaitUntil", "If", "IfElse", "Repeat", "Forever", "While", "EscapeLoop", "ContinueLoop", "StopAll", "Return", "Timer"] },
+        { category: "control", title: "Scenes and cutscenes", items: ["SwitchScene", "CurrentScene", "SceneNames", "PlayCutscene", "SkipCutscene", "IsCutscenePlaying", "CutsceneTime"] },
+        { category: "control", title: "Pacing", items: ["SetTimeScale", "Hitstop", "PauseGame", "ResumeGame", "GamePaused"] },
+        { category: "motion", title: "Moving", items: ["Move", "GoTo", "NavigateTo", "ChangePosition", "Glide"] },
+        { category: "motion", title: "Turning", items: ["Turn", "SetRotation", "PointTowards"] },
+        { category: "motion", title: "Size", items: ["SetScale"] },
+        { category: "motion", title: "Tweens", items: ["TweenScale", "TweenRotation", "TweenColor", "StopTweens", "IsTweening"] },
+        { category: "motion", title: "Where things are", items: ["MyPosition", "MyRotation", "MyLocalPosition", "ActorPosition", "ActorLocalPosition", "DistanceTo"] },
+        { category: "physics", title: "Body", items: ["SetBody", "SetTrigger", "SetCollisionLayer", "SetCollisionMask", "SetGravity", "SetDensity", "SetMass"] },
+        { category: "physics", title: "Forces", items: ["ApplyImpulse", "AddForce", "AddTorque", "SetVelocity"] },
+        { category: "physics", title: "Characters", items: ["ControllerMove", "SetController", "MotorAct", "SetMotor", "ControllerNumber", "ControllerText", "MotorNumber", "MotorText"] },
+        { category: "physics", title: "Joints", items: ["JointAct", "JointNumber"] },
+        { category: "physics", title: "Queries", items: ["CastRay", "CastBall", "OverlapBall", "FindClosest", "RayHit", "RayDistance", "CircleHit", "QueryNumber", "QueryText"] },
+        { category: "physics", title: "Reading", items: ["Velocity", "AngularVelocity", "Mass", "IsGrounded", "Touching", "IsTrigger", "CollisionLayer"] },
+        { category: "looks", title: "Appearance", items: ["Say", "SetVisible", "SetColor", "SetEmissiveStrength", "SetSpriteDial", "SetLook2d"] },
+        { category: "looks", title: "Animation", items: ["PlayAnimation", "StopAnimation", "SetAnimationSpeed", "FireAnimationTrigger", "SetRigSlot", "SetSlotTint", "SetIkTarget", "CurrentClip", "CurrentFrame", "AnimationPlaying"] },
+        { category: "looks", title: "Particles and effects", items: ["BurstParticles", "SetEmitterDial", "SetTrailEnabled", "SetEmitterPlaying", "Fracture", "Splash", "PuffSmoke", "SpawnDecal", "FadeDecals", "ParticleCount", "ParticleEventCount", "ParticleEventPosition"] },
+        { category: "looks", title: "Camera", items: ["SetCameraView", "SetCameraPitch", "SetCameraFov", "CameraShake", "SetLetterbox", "FadeScreen", "CameraPosition", "CameraDirection", "CameraZoom", "CameraAtBounds", "IsScreenShaking", "ScreenCover"] },
+        { category: "world", title: "Lighting", items: ["SetExposure", "SetLightIntensity", "SetLightShadows", "SetShadowDistance", "EnableVolume", "SetVolumeWeight", "CaptureProbes", "LightLevel", "IsNight", "CastsShadows", "ActiveVolumes", "SceneLuminance"] },
+        { category: "world", title: "Sky and weather", items: ["SetTimeOfDay", "AdvanceTime", "SetFogDensity", "SetClouds", "SetCloudLayer", "SetCloudDrift", "SetWind", "SetPrecipitation", "BlendWeather", "SetAurora", "StrikeLightning", "SetLightningRate", "Atmosphere", "TimeOfDay", "SunElevation", "CurrentWeather"] },
+        { category: "world", title: "Water", items: ["SetWater", "WaterHeight", "Underwater"] },
+        { category: "world", title: "Levels", items: ["PaintTile", "SetParallax", "TileAt", "RoomContaining"] },
+        { category: "world", title: "Rendering", items: ["SetRenderSetting", "SetHdrOutput", "SetPeakBrightness", "SetRayTracing", "SetGiBounces", "SetGiSamples", "CurrentQuality", "DlssAvailable", "IsHdrDisplay", "PeakBrightness", "IsRayTracing", "RayTracingAvailable", "FrameTime", "DrawCalls"] },
+        { category: "sound", title: "", items: ["PlaySound", "PlaySoundAt", "StopSound", "SetSoundVolume", "SetSoundPitch", "SetBusVolume", "SoundPlaying", "BusVolume"] },
+        { category: "actors", title: "Clones and actors", items: ["CreateClone", "CreateActor", "DeleteActor", "IsClone", "NewActor", "ActorCount"] },
+        { category: "actors", title: "Components", items: ["AttachComponent", "DetachComponent", "SetComponentField", "ComponentField", "SetParent", "MyParent"] },
+        { category: "interface", title: "Showing", items: ["ShowWidget", "ShowPanel", "ShowLabel", "ShowButton", "ShowImage", "ShowInput", "ShowSlider", "ShowToggle", "ShowList"] },
+        { category: "interface", title: "Changing", items: ["SetUiProp", "SetUiTheme", "SetElementTheme", "BindUi", "SetUiItems", "ScrollUi", "HideElement", "HideAllUi", "DeleteElement", "FocusElement", "ClearFocus"] },
+        { category: "interface", title: "Reading", items: ["UiValue", "UiText", "UiSelectedIndex", "UiShown", "UiExists", "UiFocus"] },
+        { category: "sensing", title: "Keyboard and mouse", items: ["KeyDown", "MouseDown", "MouseButtonDown", "MouseX", "MouseY", "MouseDeltaX", "MouseDeltaY", "MouseLocked", "SetMouseLocked"] },
+        { category: "sensing", title: "Actions", items: ["ActionDown", "ActionPressed", "ActionReleased", "ActionValue", "BindAction", "ClearActionBindings"] },
+        { category: "sensing", title: "Touch and gamepads", items: ["TouchCount", "TouchX", "TouchY", "GamepadConnected", "GamepadAxis", "GamepadButtonDown", "RumbleGamepad"] },
+        { category: "data", title: "Variables", action: "makeVariable", items: ["@variables", "SetVariable", "ChangeVariable"] },
+        { category: "data", title: "Saving and language", items: ["SaveVariable", "ClearSavedVariable", "SwitchSaveSlot", "DeleteSaveSlot", "SaveSlot", "SaveSlots", "SetLanguage", "Language", "LocalizedText"] },
+        { category: "data", title: "Lists", action: "makeList", items: ["@lists"].concat(listOperatorKinds, listCommandTypes) },
+        { category: "data", title: "Dicts", action: "makeDict", items: ["@dicts"].concat(dictOperatorKinds, dictCommandTypes) },
+        { category: "operators", title: "Maths", items: ["Add", "Sub", "Mul", "Div", "Mod", "Round", "Math", "Random"] },
+        { category: "operators", title: "Comparing", items: ["Eq", "Neq", "Gt", "Lt", "Gte", "Lte", "And", "Or", "Not", "True", "False"] },
+        { category: "operators", title: "Text", items: ["Join", "Join3", "Length", "LetterOf", "IndexOf", "LastIndexOf", "Case", "NewLine", "Tab", "CurrentTime"] }
     ]
+    readonly property var paletteSections: baseSections.concat(pluginSections)
+    // The sensing reporters as PalettePanel lists host operators:
+    // [op, result, arity], plus each plugin reporter with its own args.
+    readonly property var extraOperators: {
+        const arity = {};
+        for (const d of hostDescriptors) arity[d.kind] = d.arity;
+        return Object.keys(sensing).map(k => [k, sensing[k].result, arity[k] || 0]).concat(pluginOperators);
+    }
     readonly property var listOperatorKinds: ["ListItem","ListItemNumber","ListAmount","ListLength","ListContains","ListItemExists","ListIsEmpty","ListAsJson"]
     readonly property var dictOperatorKinds: ["DictValue","DictHasKey","DictSize","DictKeys","DictAsJson","DictIsEmpty"]
-    readonly property var blockGroups: [
-        { label: "Events", types: ["WhenStarted","WhenQualityDrops","WhenSceneStarts","WhenSceneEnds","WhenWeather","WhenCutsceneSignal","WhenCutsceneEnds","WhenKeyPressed","WhenActionPressed","WhenTouched","WhenClicked","WhenCollision","WhenMessage","WhenCloned","WhenParticles","WhenMotor","WhenAnimationEnds","WhenAnimationMarker","WhenEnterRoom","WhenUiEvent","WhenUiClicked","WhenUiChanged","Broadcast"] },
-        { label: "Motion", types: ["Move","GoTo","NavigateTo","ChangePosition","Glide","TweenScale","TweenRotation","TweenColor","StopTweens","Turn","SetRotation","PointTowards","SetScale"] },
-        { label: "Physics", types: ["SetBody","ApplyImpulse","AddForce","AddTorque","ControllerMove","SetController","MotorAct","SetMotor","JointAct","CastRay","CastBall","OverlapBall","FindClosest","SetVelocity","SetGravity","SetDensity","SetMass","SetTrigger","SetCollisionLayer","SetCollisionMask"] },
-        { label: "Looks", types: ["Say","SetVisible","SetColor","SetRenderSetting","SetLook2d","SetExposure","SetLightIntensity","SetEmissiveStrength","SetHdrOutput","SetPeakBrightness","EnableVolume","SetVolumeWeight","CaptureProbes","SetShadowDistance","SetLightShadows","SetRayTracing","SetGiBounces","SetGiSamples","SetFogDensity","SetAurora","StrikeLightning","SetLightningRate","SetWind","SetCloudDrift","SetClouds","SetCloudLayer","SetWater","SetTimeOfDay","AdvanceTime","SetPrecipitation","BlendWeather","Fracture","Splash","PuffSmoke","SpawnDecal","FadeDecals","PaintTile","SetParallax","BurstParticles","SetEmitterDial","SetTrailEnabled","SetEmitterPlaying","PlayAnimation","StopAnimation","SetAnimationSpeed","FireAnimationTrigger","SetRigSlot","SetSlotTint","SetIkTarget","SetSpriteDial"] },
-        { label: "Sound", types: ["PlaySound","PlaySoundAt","StopSound","SetSoundVolume","SetSoundPitch","SetBusVolume"] },
-        { label: "Components", types: ["SetComponentField","SetCameraView","SetCameraPitch","SetCameraFov","AttachComponent","DetachComponent","SetParent"] },
-        { label: "Actors", types: ["CreateClone","CreateActor","DeleteActor"] },
-        { label: "Interface", types: ["ShowWidget","ShowPanel","ShowLabel","ShowButton","ShowImage","ShowInput","ShowSlider","ShowToggle","ShowList","SetUiTheme","BindUi","SetUiItems","ScrollUi","SetElementTheme","SetUiProp","HideElement","HideAllUi","DeleteElement","FocusElement","ClearFocus","PauseGame","ResumeGame"] },
-        { label: "Control", types: ["Wait","WaitUntil","If","IfElse","Repeat","Forever","While","EscapeLoop","ContinueLoop","StopAll","SwitchScene","PlayCutscene","SkipCutscene","CameraShake","SetTimeScale","Hitstop","SetLetterbox","FadeScreen","SetMouseLocked"] },
-        { label: "Input", types: ["RumbleGamepad","BindAction","ClearActionBindings"] }
-    ]
-    readonly property var variableCommandTypes: ["SetVariable","ChangeVariable","SaveVariable","ClearSavedVariable","SwitchSaveSlot","DeleteSaveSlot","SetLanguage"]
     readonly property var listCommandTypes: ["AddToList","DeleteOfList","DeleteAllOfList","ShiftList","InsertIntoList","ReplaceItemOfList","ReverseList","LoadJsonIntoList"]
     readonly property var dictCommandTypes: ["SetDictValue","DeleteDictKey","DeleteAllOfDict","LoadJsonIntoDict"]
 
-    function isBoolKind(kind) {
-        const s = sensing[kind];
-        if (s) return s.result === "bool";
-        return BlockRegistry.isBoolOp(kind === "Join3" ? "Join" : kind);
+    // Plugin blocks share one instruction type (and reporters one operator),
+    // but the palette lists entries by type. Each gets a stand-in name the
+    // palette files it under; realType/realValue turn a dropped one back.
+    readonly property string pluginStatementPrefix: "Plugin:"
+    readonly property string pluginHatPrefix: "PluginHat:"
+    readonly property string pluginReadPrefix: "PluginRead:"
+    function pluginKey(entry) { return entry.plugin + "/" + entry.block.type_id; }
+    readonly property var pluginSections: {
+        const out = [];
+        for (const entry of pluginBlocks) {
+            const name = entry.block.kind === "reporter" ? pluginReadPrefix + pluginKey(entry)
+                : (entry.block.kind === "hat" ? pluginHatPrefix : pluginStatementPrefix) + pluginKey(entry);
+            let section = out.find(x => x.title === entry.block.category);
+            if (!section) { section = { category: "plugins", title: entry.block.category, items: [] }; out.push(section); }
+            section.items.push(name);
+        }
+        return out;
     }
-    // A fresh operator value from blockstitch-core's defaults (see
-    // BlockRegistry.freshValue): an empty dropdown or list slot takes its
-    // first choice. A kind with no descriptor is unknown to the backend too.
-    function operatorValue(kind) {
-        return BlockRegistry.freshValue(kind) || { kind: "Op", op: kind, args: [], saved: num(0) };
+    readonly property var pluginOperators: pluginBlocks.filter(e => e.block.kind === "reporter").map(entry => {
+        const value = pluginValue(entry);
+        return [pluginReadPrefix + pluginKey(entry), pluginIsBool(entry) ? "bool" : pluginResult(value), value.args.length, value.args];
+    })
+    function registerPluginEntries() {
+        const rows = {}, prefabs = {}, ops = {};
+        for (const entry of pluginBlocks) {
+            const e = entry;
+            if (e.block.kind === "reporter") {
+                ops[pluginReadPrefix + pluginKey(e)] = { layout: pluginLayout, result: pluginResult };
+            } else if (e.block.kind === "hat") {
+                rows[pluginHatPrefix + pluginKey(e)] = { shape: "header", head: pluginHatHead, icon: "plug-zap" };
+                prefabs[pluginHatPrefix + pluginKey(e)] = () => pluginFresh(e);
+            } else {
+                rows[pluginStatementPrefix + pluginKey(e)] = { head: pluginHead, icon: "plug-zap" };
+                prefabs[pluginStatementPrefix + pluginKey(e)] = () => pluginFresh(e);
+            }
+        }
+        BlockRegistry.registerRows(rows);
+        BlockRegistry.registerPrefabs(prefabs);
+        BlockRegistry.registerOperators(ops);
+    }
+    function realType(type) {
+        if (String(type).indexOf(pluginHatPrefix) === 0) return "WhenPlugin";
+        if (String(type).indexOf(pluginStatementPrefix) === 0) return "PluginBlock";
+        return type;
+    }
+    // A palette instruction or value as the backend knows it.
+    function realInstruction(ins) {
+        if (!ins || realType(ins.type) === ins.type) return ins;
+        return Object.assign({}, ins, { type: realType(ins.type) });
+    }
+    function realValue(value) {
+        if (!value || value.kind !== "Op" || String(value.op).indexOf(pluginReadPrefix) !== 0) return value;
+        return Object.assign({}, value, { op: "PluginRead" });
+    }
+    // What Details calls a palette entry.
+    function labelFor(type) {
+        const t = String(type);
+        for (const prefix of [pluginHatPrefix, pluginStatementPrefix, pluginReadPrefix])
+            if (t.indexOf(prefix) === 0) return t.slice(prefix.length);
+        return labels[t] || t;
     }
 
     // What the Details dialog says about a block.
@@ -947,6 +1049,14 @@ QtObject {
 
     Component.onCompleted: {
         BlockRegistry.registerRows(buildRows());
+        BlockRegistry.registerDescriptors(hostDescriptors);
+        const prefabs = {};
+        for (const section of baseSections)
+            for (const name of section.items)
+                if (name[0] !== "@" && !sensing[name] && !BlockRegistry.descriptor(name))
+                    prefabs[name] = (type => () => fresh(type))(name);
+        BlockRegistry.registerPrefabs(prefabs);
+        registerPluginEntries();
         const ops = {};
         for (const kind in sensing) {
             const s = sensing[kind];
@@ -954,7 +1064,6 @@ QtObject {
         }
         ops.PluginRead = { layout: pluginLayout, result: pluginResult };
         BlockRegistry.registerOperators(ops);
-        BlockRegistry.registerDescriptors(hostDescriptors);
         BlockRegistry.blockMenu = [
             { id: "copy", text: "Copy block", icon: "copy" },
             { id: "copy-stack", text: "Copy from here down", icon: "layers" },

@@ -54,7 +54,7 @@ ColumnLayout {
     function threshold(n) { return n > 0 ? n : null; }
 
     InspectorRow { label: "Name"; Layout.fillWidth: true
-        BwTextField { objectName: "constraint-name"; Layout.fillWidth: true; implicitHeight: 28; font.pixelSize: 12
+        StitchTextField { objectName: "constraint-name"; Layout.fillWidth: true; implicitHeight: 28; font.pixelSize: 12
             placeholderText: "used by joint blocks"; text: root.k.name; onEditingFinished: if (text !== root.k.name) root.write({ name: text }) } }
     InspectorRow { label: "Enabled"; Layout.fillWidth: true
         SwitchField { objectName: "constraint-enabled"; value: root.k.enabled; onToggled: on => root.write({ enabled: on }) } Item { Layout.fillWidth: true } }
@@ -127,7 +127,7 @@ ColumnLayout {
         NumberField { objectName: "constraint-break-torque"; value: root.k.break_torque === null ? 0 : root.k.break_torque; fallback: 0
             onCommitted: n => root.write({ break_torque: root.threshold(n) }) } }
     InspectorRow { label: "When it breaks"; visible: root.k.break_force !== null || root.k.break_torque !== null; Layout.fillWidth: true
-        BwTextField { objectName: "constraint-break-message"; Layout.fillWidth: true; implicitHeight: 28; font.pixelSize: 12
+        StitchTextField { objectName: "constraint-break-message"; Layout.fillWidth: true; implicitHeight: 28; font.pixelSize: 12
             placeholderText: "message to broadcast"; text: root.k.break_message; onEditingFinished: if (text !== root.k.break_message) root.write({ break_message: text }) } }
     InspectorRow { label: "Collide with it"; Layout.fillWidth: true
         SwitchField { objectName: "constraint-collide"; value: root.k.enable_collision; onToggled: on => root.write({ enable_collision: on }) } Item { Layout.fillWidth: true } }

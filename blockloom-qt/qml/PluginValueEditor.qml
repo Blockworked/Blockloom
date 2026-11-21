@@ -72,7 +72,7 @@ ColumnLayout {
     Component { id: numberEditor
         NumberField { value: root.value; onCommitted: n => root.edited(root.clamp(n, root.ty.min, root.ty.max)) } }
     Component { id: textEditor
-        BwTextField {
+        StitchTextField {
             Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12
             maximumLength: root.ty.max_len !== undefined && root.ty.max_len !== null ? root.ty.max_len : 32767
             text: root.value === null || root.value === undefined ? "" : String(root.value)
@@ -152,7 +152,7 @@ ColumnLayout {
                 onClicked: { const list = root.items.slice(); list.splice(index, 1); root.edited(list); } }
         }
     }
-    BwButton {
+    StitchButton {
         visible: root.kind === "list" && (root.ty.max_len === undefined || root.ty.max_len === null || root.items.length < root.ty.max_len)
         iconName: "plus"; text: "Add item"; implicitHeight: 28; font.pixelSize: 12
         onClicked: root.edited(root.items.concat([root.zeroOf(root.ty.item || ({ type: "text" }))]))

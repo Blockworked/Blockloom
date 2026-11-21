@@ -21,10 +21,20 @@ fn main() {
                 .file(QResourceFile::new("../scripts/hub_backup.py").alias("hub_backup.py"))
                 .file(QResourceFile::new("../scripts/hub_tools.py").alias("hub_tools.py"))
                 .file(QResourceFile::new("../scripts/replace.py").alias("replace.py")),
-        ),
+        ).resource(fonts()),
     )
     .qt_module("Quick")
     .qt_module("QuickControls2")
     .qt_module("QuickDialogs2")
     .build();
+}
+
+// The editor's font, so the Hub reads the same.
+fn fonts() -> QResource {
+    let mut fonts = QResource::new().prefix("/fonts");
+    for weight in ["Regular", "Medium", "SemiBold", "Bold"] {
+        let name = format!("AtkinsonHyperlegibleNext-{weight}.ttf");
+        fonts = fonts.file(QResourceFile::new(format!("../res/fonts/{name}")).alias(&name));
+    }
+    fonts
 }

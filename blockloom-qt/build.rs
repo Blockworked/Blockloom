@@ -16,6 +16,7 @@ fn main() {
             .version(1, 0)
             .qml_file(QmlFile::from("qml/Blocks.qml").singleton(true))
             .qml_files([
+                "qml/Start.qml",
                 "qml/Main.qml",
                 "qml/Dashboard.qml",
                 "qml/NewProjectDialog.qml",
@@ -80,11 +81,13 @@ fn main() {
     .cpp_file("src/game_view.cpp")
     // Runtime window icon (see src/app_icon.cpp, addressed as ":/icons/...").
     .qrc_resources(
-        QResources::new().resource(
-            QResource::new()
-                .prefix("/icons")
-                .file(QResourceFile::new("../res/icons/blockloom.png").alias("blockloom.png")),
-        ),
+        QResources::new()
+            .resource(
+                QResource::new()
+                    .prefix("/icons")
+                    .file(QResourceFile::new("../res/icons/blockloom.png").alias("blockloom.png")),
+            )
+            .resource(fonts()),
     )
     .qt_module("Quick")
     .qt_module("QuickControls2")
@@ -157,4 +160,14 @@ fn qt_private_headers(module: &str) -> Option<std::path::PathBuf> {
         .join(module)
         .join(query("QT_VERSION")?);
     dir.is_dir().then_some(dir)
+}
+
+/// The bundled typeface, at ":/fonts/...".
+fn fonts() -> QResource {
+    let mut fonts = QResource::new().prefix("/fonts");
+    for weight in ["Regular", "Medium", "SemiBold", "Bold", "ExtraBold", "Italic"] {
+        let name = format!("AtkinsonHyperlegibleNext-{weight}.ttf");
+        fonts = fonts.file(QResourceFile::new(format!("../res/fonts/{name}")).alias(&name));
+    }
+    fonts
 }

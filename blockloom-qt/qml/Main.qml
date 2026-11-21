@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQml
+import QtCore
 import com.blockworked.Blockstitch 1.0
 import com.blockworked.Blockloom 1.0
 
@@ -24,6 +25,11 @@ ApplicationWindow {
         placeholderText: Theme.textDim; toolTipBase: Theme.panelRaised; toolTipText: Theme.text
         mid: Theme.border; dark: Theme.borderSoft; light: Theme.panelRaised; shadow: "#000000"
     }
+
+    // Light, dark or the system's, picked in App settings.
+    Settings { id: appearance; category: "appearance"; property string theme: "" }
+    Binding { target: Theme; property: "mode"; value: appearance.theme }
+    property alias themeMode: appearance.theme
 
     property var appState: ({
         library: [], default_project_location: "", default_export_location: "", default_build_location: "", project_path: null, project: null, selected_actor: null,
@@ -197,9 +203,9 @@ ApplicationWindow {
         property alias text: errorText.text
         visible: false
         anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-        height: Math.max(38, errorText.implicitHeight + 16); color: "#4b2225"; z: 200
-        Text { id: errorText; anchors.left: parent.left; anchors.right: closeError.left; anchors.margins: 14; anchors.verticalCenter: parent.verticalCenter; color: "#ffb5b5"; font.pixelSize: 13; wrapMode: Text.WordWrap }
-        BwButton { id: closeError; anchors.right: parent.right; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter; iconName: "x"; text: ""; flat: true; implicitWidth: 28; implicitHeight: 28; onClicked: errorBar.visible = false }
+        height: Math.max(38, errorText.implicitHeight + 16); color: Theme.dangerBackground; z: 200
+        Text { id: errorText; anchors.left: parent.left; anchors.right: closeError.left; anchors.margins: 14; anchors.verticalCenter: parent.verticalCenter; color: Theme.text; font.pixelSize: 13; wrapMode: Text.WordWrap }
+        StitchButton { id: closeError; anchors.right: parent.right; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter; iconName: "x"; text: ""; flat: true; implicitWidth: 28; implicitHeight: 28; onClicked: errorBar.visible = false }
         Timer { id: errorTimer; interval: 8000; onTriggered: errorBar.visible = false }
     }
 }

@@ -196,7 +196,7 @@ Rectangle {
         RowLayout {
             id: header
             Layout.fillWidth: true; Layout.preferredHeight: 36; Layout.leftMargin: 6; Layout.rightMargin: 6; spacing: 4
-            BwButton {
+            StitchButton {
                 flat: true; implicitHeight: 28; font.pixelSize: 12
                 iconName: remembered.open ? "chevron-down" : "chevron-up"; text: "Assets"
                 onClicked: { remembered.open = !remembered.open; if (remembered.open) root.refresh(); }
@@ -205,7 +205,7 @@ Rectangle {
                 id: crumbRow
                 visible: remembered.open; spacing: 2
                 Layout.fillWidth: true
-                BwButton {
+                StitchButton {
                     readonly property string folderPath: ""
                     flat: root.dropTarget !== ""; implicitHeight: 26; font.pixelSize: 12; iconName: "house"
                     text: root.appState.project ? root.appState.project.name : "Project"
@@ -213,7 +213,7 @@ Rectangle {
                 }
                 Repeater {
                     model: root.crumbs
-                    delegate: BwButton {
+                    delegate: StitchButton {
                         required property var modelData
                         readonly property string folderPath: modelData.path
                         flat: root.dropTarget !== modelData.path; implicitHeight: 26; font.pixelSize: 12; text: "› " + modelData.name
@@ -230,7 +230,7 @@ Rectangle {
         Rectangle {
             visible: remembered.open
             Layout.fillWidth: true; Layout.preferredHeight: remembered.height
-            color: fileDrop.containsDrag ? "#1a1597ff" : Theme.canvas
+            color: fileDrop.containsDrag ? Theme.selection : Theme.canvas
             // Files and folders dropped from the OS file manager import here.
             DropArea {
                 id: fileDrop
@@ -261,7 +261,7 @@ Rectangle {
                     component Tile: Rectangle {
                         property bool active: false
                         width: 88; height: 86; radius: 6
-                        color: active ? "#2b4a6b" : (tileHover.hovered ? "#303134" : "transparent")
+                        color: active ? Theme.selection : (tileHover.hovered ? Theme.hover : "transparent")
                         border.color: active ? Theme.accent : "transparent"
                         HoverHandler { id: tileHover }
                     }
@@ -276,7 +276,7 @@ Rectangle {
                     Tile {
                         visible: !!root.draft && root.draft.mode !== "rename"
                         LucideIcon { anchors.horizontalCenter: parent.horizontalCenter; y: 10; name: root.draft && root.draft.mode === "folder" ? "folder" : root.draft && root.draft.mode === "scene" ? "map" : "file"; width: 28; height: 28; color: Theme.textDim }
-                        BwTextField {
+                        StitchTextField {
                             id: draftField
                             anchors.left: parent.left; anchors.right: parent.right; y: 50; implicitHeight: 26; font.pixelSize: 11
                             text: root.draft ? root.draft.name : ""
@@ -321,7 +321,7 @@ Rectangle {
                                 text: tile.modelData.name; color: Theme.text; font.pixelSize: 11
                                 horizontalAlignment: Text.AlignHCenter; elide: Text.ElideMiddle
                             }
-                            BwTextField {
+                            StitchTextField {
                                 visible: tile.renaming
                                 anchors.left: parent.left; anchors.right: parent.right; y: 54; implicitHeight: 26; font.pixelSize: 11
                                 text: tile.modelData.name
@@ -365,7 +365,7 @@ Rectangle {
                                     else if (tile.modelData.kind === "scene") root.openSceneAsset(tile.modelData);
                                 }
                             }
-                            BwButton {
+                            StitchButton {
                                 visible: tile.modelData.kind === "audio"
                                 x: 4; y: 4; implicitWidth: 24; implicitHeight: 24; flat: true; text: ""
                                 iconName: root.previewing === tile.modelData.path ? "pause" : "play"
@@ -384,50 +384,50 @@ Rectangle {
         }
     }
 
-    BwMenu {
+    StitchMenu {
         id: createMenu
-        BwMenuItem { iconName: "file-plus"; text: "File"; onTriggered: root.startDraft("file") }
-        BwMenuItem { iconName: "map"; text: "Scene"; onTriggered: root.startDraft("scene") }
-        BwMenuItem { iconName: "sun"; text: "Lighting"; onTriggered: root.startDraft("lighting") }
+        StitchMenuItem { iconName: "file-plus"; text: "File"; onTriggered: root.startDraft("file") }
+        StitchMenuItem { iconName: "map"; text: "Scene"; onTriggered: root.startDraft("scene") }
+        StitchMenuItem { iconName: "sun"; text: "Lighting"; onTriggered: root.startDraft("lighting") }
     }
-    BwMenu {
+    StitchMenu {
         id: trayMenu
-        BwMenuItem { iconName: "external-link"; text: "Open File Location"; onTriggered: root.app.invoke("open_asset_location", { path: root.menuEntry ? root.menuEntry.path : root.path }) }
-        BwMenuItem { visible: !root.menuEntry; iconName: "folder-plus"; text: "New folder"; onTriggered: root.startDraft("folder") }
-        BwMenuItem { visible: !root.menuEntry; iconName: "file-plus"; text: "New file"; onTriggered: root.startDraft("file") }
-        BwMenuItem { visible: !root.menuEntry; iconName: "map"; text: "New scene"; onTriggered: root.startDraft("scene") }
-        BwMenuItem { visible: !root.menuEntry; iconName: "sun"; text: "New Lighting"; onTriggered: root.startDraft("lighting") }
-        BwMenuItem { visible: !root.menuEntry; iconName: "download"; text: "Import files here"; onTriggered: importDialog.open() }
-        BwMenuItem { visible: !root.menuEntry; iconName: "refresh-cw"; text: "Re-read this folder"; onTriggered: root.refresh() }
-        BwMenuItem {
+        StitchMenuItem { iconName: "external-link"; text: "Open File Location"; onTriggered: root.app.invoke("open_asset_location", { path: root.menuEntry ? root.menuEntry.path : root.path }) }
+        StitchMenuItem { visible: !root.menuEntry; iconName: "folder-plus"; text: "New folder"; onTriggered: root.startDraft("folder") }
+        StitchMenuItem { visible: !root.menuEntry; iconName: "file-plus"; text: "New file"; onTriggered: root.startDraft("file") }
+        StitchMenuItem { visible: !root.menuEntry; iconName: "map"; text: "New scene"; onTriggered: root.startDraft("scene") }
+        StitchMenuItem { visible: !root.menuEntry; iconName: "sun"; text: "New Lighting"; onTriggered: root.startDraft("lighting") }
+        StitchMenuItem { visible: !root.menuEntry; iconName: "download"; text: "Import files here"; onTriggered: importDialog.open() }
+        StitchMenuItem { visible: !root.menuEntry; iconName: "refresh-cw"; text: "Re-read this folder"; onTriggered: root.refresh() }
+        StitchMenuItem {
             visible: !root.menuEntry && Object.values(root.reports).some(r => r.dirty)
             iconName: "sparkles"; text: "Reimport changed files"
             onTriggered: root.run("reimport_assets", { paths: Object.values(root.reports).filter(r => r.dirty).map(r => r.path) })
         }
-        BwMenuItem { visible: !!root.menuEntry && !!root.report(root.menuEntry) && root.report(root.menuEntry).dirty; iconName: "sparkles"; text: "Reimport this file"; onTriggered: root.run("reimport_assets", { paths: [root.menuEntry.path] }) }
-        BwMenuItem {
+        StitchMenuItem { visible: !!root.menuEntry && !!root.report(root.menuEntry) && root.report(root.menuEntry).dirty; iconName: "sparkles"; text: "Reimport this file"; onTriggered: root.run("reimport_assets", { paths: [root.menuEntry.path] }) }
+        StitchMenuItem {
             visible: !root.menuEntry && root.staleImports.length > 0
             iconName: "plug-zap"; text: "Update plugin imports"
             onTriggered: root.run("plugin_reimport", {})
         }
-        BwMenuItem {
+        StitchMenuItem {
             visible: !!root.menuEntry && !!root.imported(root.menuEntry)
             iconName: "plug-zap"; text: root.menuEntry && root.importStale(root.menuEntry) ? "Import again (plugin)" : "Import again with the plugin"
             onTriggered: root.run("plugin_reimport", { path: root.menuEntry.path })
         }
-        BwMenuItem { visible: root.canRole("texture"); iconName: "image"; text: "Import as texture"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "auto" }) }
-        BwMenuItem { visible: root.canRole("heightmap"); iconName: "trending-up"; text: "Import as heightmap"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "heightmap" }) }
-        BwMenuItem { visible: root.canRole("cookie"); iconName: "sun"; text: "Import as light cookie"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "cookie" }) }
-        BwMenuItem { visible: root.canRole("volume"); iconName: "layers"; text: "Import as volume strip"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "volume" }) }
-        BwMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "hdr"; iconName: "sun"; text: "Exposure bias…"
+        StitchMenuItem { visible: root.canRole("texture"); iconName: "image"; text: "Import as texture"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "auto" }) }
+        StitchMenuItem { visible: root.canRole("heightmap"); iconName: "trending-up"; text: "Import as heightmap"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "heightmap" }) }
+        StitchMenuItem { visible: root.canRole("cookie"); iconName: "sun"; text: "Import as light cookie"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "cookie" }) }
+        StitchMenuItem { visible: root.canRole("volume"); iconName: "layers"; text: "Import as volume strip"; onTriggered: root.run("set_import_role", { path: root.menuEntry.path, role: "volume" }) }
+        StitchMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "hdr"; iconName: "sun"; text: "Exposure bias…"
             onTriggered: { biasDialog.entry = root.menuEntry; const r = root.report(root.menuEntry); biasDialog.ev = r && r.exposure_bias ? r.exposure_bias : 0; biasDialog.open(); } }
-        BwMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "folder"; iconName: "folder"; text: "Open"; onTriggered: root.goTo(root.menuEntry.path) }
-        BwMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "scene"; iconName: "map"; text: "Open scene"; onTriggered: root.openSceneAsset(root.menuEntry) }
-        BwMenuItem { visible: !!root.menuEntry; iconName: "pencil"; text: "Rename"; onTriggered: root.startRename(root.menuEntry) }
-        BwMenuItem { visible: !!root.menuEntry && root.path.length > 0; iconName: "upload"; text: "Move up one folder"; onTriggered: root.run("move_asset", { path: root.menuEntry.path, parent: root.parentOf(root.parentOf(root.menuEntry.path)) }) }
-        BwMenuItem { visible: !!root.menuEntry; iconName: "trash-2"; danger: true; text: root.menuEntry ? "Delete “" + root.menuEntry.name + "”" : ""; onTriggered: { deleteDialog.entry = root.menuEntry; deleteDialog.open(); } }
+        StitchMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "folder"; iconName: "folder"; text: "Open"; onTriggered: root.goTo(root.menuEntry.path) }
+        StitchMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "scene"; iconName: "map"; text: "Open scene"; onTriggered: root.openSceneAsset(root.menuEntry) }
+        StitchMenuItem { visible: !!root.menuEntry; iconName: "pencil"; text: "Rename"; onTriggered: root.startRename(root.menuEntry) }
+        StitchMenuItem { visible: !!root.menuEntry && root.path.length > 0; iconName: "upload"; text: "Move up one folder"; onTriggered: root.run("move_asset", { path: root.menuEntry.path, parent: root.parentOf(root.parentOf(root.menuEntry.path)) }) }
+        StitchMenuItem { visible: !!root.menuEntry; iconName: "trash-2"; danger: true; text: root.menuEntry ? "Delete “" + root.menuEntry.name + "”" : ""; onTriggered: { deleteDialog.entry = root.menuEntry; deleteDialog.open(); } }
     }
-    BwDialog {
+    StitchDialog {
         id: deleteDialog
         property var entry: null
         title: "Delete?"
@@ -435,7 +435,7 @@ Rectangle {
         Text { color: Theme.text; text: deleteDialog.entry ? "Delete " + (deleteDialog.entry.kind === "folder" ? "“" + deleteDialog.entry.name + "” and everything in it" : "“" + deleteDialog.entry.name + "”") + "?\n\nThis cannot be undone." : "" }
         onAccepted: if (entry) root.run("delete_asset", { path: entry.path })
     }
-    BwDialog {
+    StitchDialog {
         id: biasDialog
         property var entry: null
         property real ev: 0

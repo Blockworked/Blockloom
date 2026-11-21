@@ -165,7 +165,7 @@ Item {
             RowLayout {
                 visible: root.page === "scene" && !root.activeScene; Layout.fillWidth: true
                 Note { text: "Open this scene to edit input bindings, paint clouds or generate baked data." }
-                BwButton { text: "Open scene"; onClicked: root.invoke("set_active_scene", { sceneId: root.sceneId }) }
+                StitchButton { text: "Open scene"; onClicked: root.invoke("set_active_scene", { sceneId: root.sceneId }) }
             }
             Note {
                 visible: !!root.lightingPath && !root.lightingData
@@ -177,11 +177,11 @@ Item {
                     AssetField { objectName: "scene-lighting-field"; app: root.app; accept: ["lighting"]; value: root.world ? root.world.lighting.asset || "" : "";
                         placeholderText: "None (Lighting) - drag asset here"
                         onCommitted: p => root.invoke("set_scene_lighting_asset", { path: p, sceneId: root.sceneId }) }
-                    BwButton { objectName: "scene-lighting-edit"; visible: !!root.world && !!root.world.lighting.asset;
+                    StitchButton { objectName: "scene-lighting-edit"; visible: !!root.world && !!root.world.lighting.asset;
                         text: "Edit lighting"; implicitHeight: 30
                         onClicked: root.app.selectLighting(root.world.lighting.asset) }
                 }
-                BwButton { visible: !!root.world && !root.world.lighting.asset; text: "Create Lighting asset";
+                StitchButton { visible: !!root.world && !root.world.lighting.asset; text: "Create Lighting asset";
                     onClicked: root.createLighting() }
                 Note { text: "Select a Lighting asset in the tray to edit its components. Scenes sharing it use the same settings." }
             }
@@ -213,8 +213,8 @@ Item {
             Section {
                 heading: "Dimension"
                 InspectorRow { label: "Type"; labelWidth: 110; Layout.fillWidth: true
-                    BwButton { text: "2D"; iconName: "square"; primary: !root.is3d; implicitHeight: 30; onClicked: if (root.is3d) { modeDialog.target = "TwoD"; modeDialog.open(); } }
-                    BwButton { text: "3D"; iconName: "box"; primary: root.is3d; implicitHeight: 30; onClicked: if (!root.is3d) { modeDialog.target = "ThreeD"; modeDialog.open(); } }
+                    StitchButton { text: "2D"; iconName: "square"; primary: !root.is3d; implicitHeight: 30; onClicked: if (root.is3d) { modeDialog.target = "TwoD"; modeDialog.open(); } }
+                    StitchButton { text: "3D"; iconName: "box"; primary: root.is3d; implicitHeight: 30; onClicked: if (!root.is3d) { modeDialog.target = "ThreeD"; modeDialog.open(); } }
                     Item { Layout.fillWidth: true } }
                 Note { text: (root.is3d ? "Meshes and 3D physics, measured in metres." : "Sprites and flat physics, measured in pixels.") + " Switching converts the open scene; a running game swaps live." }
             }
@@ -262,7 +262,7 @@ Item {
                     root.invoke("set_android_settings", { applicationId: current.application_id || "", versionCode: Math.max(1, Math.round(current.version_code || 1)), versionName: current.version_name || "1.0.0", keystore: current.keystore || "", keyAlias: current.key_alias || "" });
                 }
                 InspectorRow { label: "Application ID"; labelWidth: 110; Layout.fillWidth: true
-                    BwTextField {
+                    StitchTextField {
                         Layout.fillWidth: true
                         text: androidSection.android.application_id || ""
                         placeholderText: "com.blockloom.game.<project>"
@@ -272,7 +272,7 @@ Item {
                 InspectorRow { label: "Version code"; labelWidth: 110; Layout.fillWidth: true
                     NumberField { value: androidSection.android.version_code || 1; fallback: 1; onCommitted: n => androidSection.writeAndroid({ version_code: Math.max(1, Math.round(n)) }) } }
                 InspectorRow { label: "Version name"; labelWidth: 110; Layout.fillWidth: true
-                    BwTextField {
+                    StitchTextField {
                         Layout.fillWidth: true
                         text: androidSection.android.version_name || "1.0.0"
                         placeholderText: "1.0.0"
@@ -280,7 +280,7 @@ Item {
                     } }
                 Note { text: "minSdk 29, targetSdk 35, no permissions in v1. The launcher icon comes from the game icon above." }
                 InspectorRow { label: "Release key"; labelWidth: 110; Layout.fillWidth: true
-                    BwTextField {
+                    StitchTextField {
                         id: keystoreField
                         Layout.fillWidth: true
                         text: androidSection.android.keystore || ""
@@ -290,7 +290,7 @@ Item {
                     IconButton { iconName: "folder-open"; tip: "Choose a key file"; onClicked: keystoreFile.open() }
                     IconButton { iconName: "x"; tip: "Sign with the debug key instead"; enabled: (androidSection.android.keystore || "") !== ""; onClicked: androidSection.writeAndroid({ keystore: "", key_alias: "" }) } }
                 InspectorRow { visible: (androidSection.android.keystore || "") !== ""; label: "Key alias"; labelWidth: 110; Layout.fillWidth: true
-                    BwTextField {
+                    StitchTextField {
                         Layout.fillWidth: true
                         text: androidSection.android.key_alias || ""
                         placeholderText: "Which key in the file signs"
@@ -669,7 +669,7 @@ Item {
                     AssetField { app: root.app; accept: ["image", "volume"]; value: cloudSection.c.detail_volume || ""; placeholderText: "Baked from the seed"; onCommitted: p => root.writeVolumetricClouds({ detail_volume: p }) }
                     IconButton { iconName: "x"; tip: "Bake from the seed"; enabled: !!cloudSection.c.detail_volume; onClicked: root.writeVolumetricClouds({ detail_volume: "" }) } }
                 InspectorRow { label: ""; labelWidth: 110; Layout.fillWidth: true
-                    BwButton { text: "Bake noise to assets"; enabled: root.activeScene; iconName: "download"; implicitHeight: 30; onClicked: root.invoke("bake_cloud_noise", {}) } Item { Layout.fillWidth: true } }
+                    StitchButton { text: "Bake noise to assets"; enabled: root.activeScene; iconName: "download"; implicitHeight: 30; onClicked: root.invoke("bake_cloud_noise", {}) } Item { Layout.fillWidth: true } }
                 Note { text: "Thickness is top minus bottom, in metres. Clouds ride the Wind section's cloud drift and seed. Quality controls view and light march steps: Low 16/3, Medium 32/5, High 48/6, Ultra 64/8. Noise volumes are image strips of square slices (e.g. 16384x128) or .cube files: shape reads red as its Perlin-Worley base, erosion reads red, green and blue as Worley octaves. Bake noise to assets writes the seed's own noise into assets/clouds to edit or swap." }
             }
             Section {
@@ -778,7 +778,7 @@ Item {
                     NumberField { value: layerSection.radius; fallback: 0.05; onCommitted: n => layerSection.radius = root.clamp(n, 0.001, 0.5) }
                     NumberField { value: layerSection.strength; fallback: 0.5; onCommitted: n => layerSection.strength = root.clamp(n, 0, 1) } }
                 InspectorRow { label: ""; labelWidth: 110; Layout.fillWidth: true
-                    BwButton { text: "Add layer"; iconName: "plus"; implicitHeight: 30; enabled: layerSection.layers.length < 4
+                    StitchButton { text: "Add layer"; iconName: "plus"; implicitHeight: 30; enabled: layerSection.layers.length < 4
                         onClicked: { const layers = root.cloudLayersOf(); const l = root.cloudLayerDefaults(); l.seed = layers.length + 1; l.altitude = 8000 - 2000 * layers.length; layers.push(l); root.writeCloudLayers(layers); } }
                     Item { Layout.fillWidth: true } }
                 Note { text: "Up to four flat layers of cloud, drawn in front of or behind the volumetric clouds by altitude, and the whole sky's clouds when volumetrics are off. Coverage is an image (its brightness) or noise from the seed; cover 0 is clear, 1 overcast, and contrast sharpens the edges. Parallax is the layer's apparent thickness in metres, which also shades it from the sun. The tint is multiplied by the day, sunset and night tints as the sun sinks. Layers scroll by their own speed plus the Wind section's layer scroll times wind, and turn round the pivot for storm spin; a flow map's red and green push coverage around (0.5 is still). Shadow darkens the ground under full cover towards the sun. Paint on a layer's tile to draw coverage into assets/clouds/layer-N.png: Cloud adds, Eraser removes, Blur softens, Advect smears along the stroke, and undo takes strokes back. The `set cloud layer` block changes a layer's coverage, opacity, contrast, altitude or spin while the game runs." }
@@ -923,7 +923,7 @@ Item {
                     NumberField { value: windSection.c.time_lapse; fallback: 1; onCommitted: n => root.writeClouds({ time_lapse: root.clamp(n, 1, 1000) }) } }
                 InspectorRow { label: "Cloud seed"; labelWidth: 110; Layout.fillWidth: true
                     NumberField { value: windSection.c.seed; fallback: 1; onCommitted: n => root.writeClouds({ seed: Math.max(Math.round(n), 0) }) }
-                    BwButton { text: "Shuffle"; iconName: "refresh-cw"; implicitHeight: 30; onClicked: root.writeClouds({ seed: 1 + Math.floor(Math.random() * 2147483646) }) } }
+                    StitchButton { text: "Shuffle"; iconName: "refresh-cw"; implicitHeight: 30; onClicked: root.writeClouds({ seed: 1 + Math.floor(Math.random() * 2147483646) }) } }
                 Note { text: "Direction is where the wind blows towards, in degrees clockwise from north (-Z in 3D, up the screen in 2D), and speed is measured at the reference height. Gusts come and go on smooth noise, swinging the direction by up to the veer; one seed always blows the same. In 3D the ground profile calms the wind towards the ground on a log law. Storm (0 to 1) triples the speed, quadruples the gusts and triples zone turbulence at full. Particles ride it (each emitter says how much), volumetric fog's noise drifts with it, and the clouds take the wind at their altitude times follow, plus their own drift; time-lapse runs them up to 1000x faster. Volumes can make local wind zones. Blocks: `set wind`, `set cloud drift to`, and the `wind speed`, `wind direction` and `storm` atmosphere readings." }
             }
             Section {
@@ -1013,7 +1013,7 @@ Item {
                 InspectorRow { visible: !!directorSection.d.enabled; label: "Loop day"; labelWidth: 110; Layout.fillWidth: true
                     SwitchField { value: directorSection.d.loop_enabled !== false; onToggled: on => root.writeDirector({ loop_enabled: on }) } Item { Layout.fillWidth: true } }
                 InspectorRow { visible: !!directorSection.d.enabled; label: "Keyframe"; labelWidth: 110; Layout.fillWidth: true
-                    Repeater { model: ["dawn", "noon", "dusk", "midnight"]; delegate: BwButton { required property string modelData; text: modelData[0].toUpperCase() + modelData.slice(1); enabled: root.activeScene; implicitHeight: 30; onClicked: root.invoke("apply_director_preset", { preset: modelData }) } } }
+                    Repeater { model: ["dawn", "noon", "dusk", "midnight"]; delegate: StitchButton { required property string modelData; text: modelData[0].toUpperCase() + modelData.slice(1); enabled: root.activeScene; implicitHeight: 30; onClicked: root.invoke("apply_director_preset", { preset: modelData }) } } }
                 InspectorRow { visible: !!directorSection.d.enabled; label: "Track"; labelWidth: 110; Layout.fillWidth: true
                     ChoiceField { options: directorSection.dials(); value: directorSection.dial; onChosen: v => directorSection.dial = v } }
                 DirectorTrackField {
@@ -1031,7 +1031,7 @@ Item {
                         placeholder: directorSection.customPresets().length ? "Pick a saved preset" : "No saved presets"
                         onChosen: v => directorSection.presetName = v
                     }
-                    BwButton { text: "Delete"; implicitHeight: 30; enabled: !!directorSection.editingPreset(); onClicked: directorSection.deletePreset() } }
+                    StitchButton { text: "Delete"; implicitHeight: 30; enabled: !!directorSection.editingPreset(); onClicked: directorSection.deletePreset() } }
                 InspectorRow { label: "New preset"; labelWidth: 110; Layout.fillWidth: true
                     TextField { id: presetNameField; Layout.fillWidth: true; placeholderText: "Name"; maximumLength: 64 }
                     ChoiceField {
@@ -1039,7 +1039,7 @@ Item {
                         value: directorSection.copyFrom
                         onChosen: v => directorSection.copyFrom = v
                     }
-                    BwButton { text: "Save copy"; implicitHeight: 30; onClicked: {
+                    StitchButton { text: "Save copy"; implicitHeight: 30; onClicked: {
                         const name = presetNameField.text.trim();
                         if (!name) return;
                         if (!root.activeScene) return;
@@ -1302,7 +1302,7 @@ Item {
                                 model: action.modelData.bindings
                                 delegate: Rectangle {
                                     required property var modelData
-                                    implicitWidth: chip.implicitWidth + 30; implicitHeight: 24; radius: 12; color: Theme.panelRaised; border.color: Theme.border
+                                    implicitWidth: chip.implicitWidth + 30; implicitHeight: 26; radius: 5; color: Theme.field; border.color: Theme.borderSoft
                                     Text { id: chip; x: 10; anchors.verticalCenter: parent.verticalCenter; text: root.bindingText(modelData); color: Theme.text; font.pixelSize: 11 }
                                     LucideIcon { anchors.right: parent.right; anchors.rightMargin: 6; anchors.verticalCenter: parent.verticalCenter; name: "x"; width: 12; height: 12; color: Theme.textDim
                                         MouseArea { anchors.fill: parent; anchors.margins: -3; cursorShape: Qt.PointingHandCursor; onClicked: root.invoke("remove_input_binding", { name: action.modelData.name, binding: root.bindingText(modelData) }) } }
@@ -1312,17 +1312,17 @@ Item {
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            BwTextField { id: bindingField; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "space, mouse:left, gamepad:south"
+                            StitchTextField { id: bindingField; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "space, mouse:left, gamepad:south"
                                 onAccepted: if (text.trim().length) { root.invoke("add_input_binding", { name: action.modelData.name, binding: text.trim() }); text = ""; } }
-                            BwButton { text: "Add binding"; implicitHeight: 30; onClicked: bindingField.accepted() }
+                            StitchButton { text: "Add binding"; implicitHeight: 30; onClicked: bindingField.accepted() }
                         }
                     }
                 }
                 RowLayout {
                     Layout.fillWidth: true
-                    BwTextField { id: actionName; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "New action name"
+                    StitchTextField { id: actionName; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "New action name"
                         onAccepted: if (text.trim().length) { root.invoke("create_input_action", { name: text.trim() }); text = ""; } }
-                    BwButton { text: "Add action"; implicitHeight: 30; onClicked: actionName.accepted() }
+                    StitchButton { text: "Add action"; implicitHeight: 30; onClicked: actionName.accepted() }
                 }
                 Note { text: "One name for every way to say it: keys, mouse buttons, gamepad buttons and sticks. Blocks read an action held, pressed, released or as an analog value, and a `bind` block remaps one for the rest of the run. Applies on the next run of the game." }
             }
@@ -1330,7 +1330,7 @@ Item {
         }
     }
 
-    BwDialog {
+    StitchDialog {
         id: modeDialog
         property string target: "TwoD"
         title: "Switch dimension?"
@@ -1338,7 +1338,7 @@ Item {
         Text { color: Theme.text; text: "Switch this project to " + (modeDialog.target === "ThreeD" ? "3D" : "2D") + "?\n\nContent is converted and a running game restarts." }
         onAccepted: root.invoke("set_mode", { mode: target })
     }
-    BwDialog {
+    StitchDialog {
         id: deleteAction
         property string name: ""
         title: "Delete input action?"

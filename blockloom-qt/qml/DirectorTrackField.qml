@@ -228,7 +228,7 @@ ColumnLayout {
                 root.commit(list);
             }
         }
-        BwButton {
+        StitchButton {
             text: "Remove"; implicitHeight: 28
             onClicked: {
                 const list = root.sortedKeys(root.track.keys || []);

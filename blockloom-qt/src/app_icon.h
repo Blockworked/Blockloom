@@ -1,6 +1,6 @@
 #pragma once
 
-// Applies the Blockloom window icon and desktop metadata to the running
+// Applies the Blockloom window icon, desktop metadata and bundled font to the running
 // QGuiApplication. Must be called after the QGuiApplication instance exists.
 void blockloom_apply_window_icon();
 

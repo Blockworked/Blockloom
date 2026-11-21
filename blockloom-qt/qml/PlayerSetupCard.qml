@@ -63,20 +63,20 @@ ColumnLayout {
         text: root.preview ? root.conflicts.map(c => c.component + ": " + c.reason + " - converting: " + c.conversion).join("\n") : "" }
     InspectorRow { label: "Convert"; visible: root.conflicts.length > 0; Layout.fillWidth: true
         SwitchField { objectName: "player-convert"; value: root.convert; onToggled: on => root.convert = on } Item { Layout.fillWidth: true } }
-    BwButton { objectName: "player-apply"; text: root.isPlayer ? "Apply preset again" : "Make player"
+    StitchButton { objectName: "player-apply"; text: root.isPlayer ? "Apply preset again" : "Make player"
         enabled: !!root.preview && !root.preview.blocked && (root.convert || root.conflicts.length === 0)
         onClicked: root.apply() }
     Text { objectName: "player-message"; visible: text.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11; text: root.message }
 
     InspectorRow { label: "Profile"; visible: root.profiles.length > 0; Layout.fillWidth: true
         ChoiceField { objectName: "player-profile"; options: root.profiles; value: root.profile; onChosen: v => root.profile = v } }
-    BwButton { objectName: "player-apply-profile"; visible: root.profiles.length > 0; text: "Apply profile"
+    StitchButton { objectName: "player-apply-profile"; visible: root.profiles.length > 0; text: "Apply profile"
         onClicked: root.app.invoke("apply_player_profile", { actorId: root.actorId, name: root.profile, convert: root.convert },
             r => { root.message = "Profile applied."; root.refresh(); }, e => { root.message = String(e); }) }
     InspectorRow { label: "Save as"; visible: root.isPlayer; Layout.fillWidth: true
-        BwTextField { objectName: "player-profile-name"; Layout.fillWidth: true; implicitHeight: 28; font.pixelSize: 12
+        StitchTextField { objectName: "player-profile-name"; Layout.fillWidth: true; implicitHeight: 28; font.pixelSize: 12
             placeholderText: "profile name"; text: root.profileName; onTextEdited: root.profileName = text } }
-    BwButton { objectName: "player-save-profile"; visible: root.isPlayer; text: "Save profile"; enabled: root.profileName.trim().length > 0
+    StitchButton { objectName: "player-save-profile"; visible: root.isPlayer; text: "Save profile"; enabled: root.profileName.trim().length > 0
         onClicked: root.app.invoke("save_player_profile", { actorId: root.actorId, name: root.profileName.trim() },
             path => { root.message = "Saved to " + path; root.refresh(); }, e => { root.message = String(e); }) }
 }

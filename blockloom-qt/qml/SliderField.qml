@@ -11,7 +11,7 @@ Slider {
     HoverHandler { cursorShape: Qt.PointingHandCursor }
     background: Rectangle {
         x: control.leftPadding; y: control.topPadding + control.availableHeight / 2 - height / 2
-        width: control.availableWidth; height: 5; radius: 3; color: "#45474d"
+        width: control.availableWidth; height: 5; radius: 3; color: Theme.border
         Rectangle { width: control.visualPosition * parent.width; height: parent.height; radius: 3; color: Theme.accent }
     }
     handle: Rectangle {

@@ -1101,6 +1101,7 @@ impl Backend {
                 arg(&args, "strandId")?,
                 arg::<InstrPath>(&args, "path")?,
                 instruction_arg(&args, "instruction")?,
+                arg(&args, "targetY")?,
             )?),
             "edit_instruction" => to_json(commands::edit_instruction(
                 state,
@@ -1191,6 +1192,7 @@ impl Backend {
                 arg(&args, "draggedId")?,
                 arg(&args, "targetId")?,
                 arg::<InstrPath>(&args, "path")?,
+                arg(&args, "targetY")?,
             )?),
             "merge_tail" => to_json(commands::merge_tail(
                 state,
@@ -1199,6 +1201,7 @@ impl Backend {
                 arg::<InstrPath>(&args, "path")?,
                 arg(&args, "targetId")?,
                 arg::<InstrPath>(&args, "targetPath")?,
+                arg(&args, "targetY")?,
             )?),
 
             // ── Values ─────────────────────────────────────────────────────

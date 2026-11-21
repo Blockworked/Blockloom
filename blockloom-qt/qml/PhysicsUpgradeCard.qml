@@ -39,9 +39,9 @@ ColumnLayout {
     Text { objectName: "upgrade-notes"; visible: root.actorNotes.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
         text: root.actorNotes.join("\n") }
     RowLayout { spacing: 6
-        BwButton { objectName: "upgrade-actor"; text: "Upgrade this actor"; enabled: !!root.actorPreview && root.actorPreview.total > 0
+        StitchButton { objectName: "upgrade-actor"; text: "Upgrade this actor"; enabled: !!root.actorPreview && root.actorPreview.total > 0
             onClicked: root.upgrade({ actorId: root.actorId }) }
-        BwButton { objectName: "upgrade-project"; text: "Upgrade all " + root.projectTotal; visible: root.projectTotal > 1
+        StitchButton { objectName: "upgrade-project"; text: "Upgrade all " + root.projectTotal; visible: root.projectTotal > 1
             onClicked: root.upgrade({}) }
     }
     Text { objectName: "upgrade-message"; visible: text.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11; text: root.message }

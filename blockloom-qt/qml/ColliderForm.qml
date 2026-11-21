@@ -99,7 +99,7 @@ ColumnLayout {
     }
 
     InspectorRow { label: "Name"; Layout.fillWidth: true
-        BwTextField { objectName: "collider-name"; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; text: root.k.name
+        StitchTextField { objectName: "collider-name"; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; text: root.k.name
             placeholderText: root.shapeKind === "FromLook" ? "Collider" : root.shapeKind
             onEditingFinished: if (text !== root.k.name) root.write({ name: text }) } }
     InspectorRow { label: "Enabled"; Layout.fillWidth: true
@@ -136,7 +136,7 @@ ColumnLayout {
     InspectorRow { label: "Mesh"; visible: root.shapeKind === "ConvexHull" || root.shapeKind === "TriangleMesh"; Layout.fillWidth: true
         AssetField { app: root.app; accept: ["model"]; value: root.shape && root.shape.mesh ? root.shape.mesh : ""; onCommitted: p => root.writeShape({ mesh: p }) } }
     InspectorRow { label: "Points"; visible: root.shapeKind === "Polygon" || root.shapeKind === "Chain"; Layout.fillWidth: true
-        BwTextField { objectName: "shape-points"; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12
+        StitchTextField { objectName: "shape-points"; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12
             text: root.shape && root.shape.points ? root.pointsText(root.shape.points) : ""
             onEditingFinished: { const p = root.parsePoints(text); if (p.length >= 2) root.writeShape({ points: p }); } } }
     InspectorRow { label: "Closed"; visible: root.shapeKind === "Chain"; Layout.fillWidth: true
@@ -149,7 +149,7 @@ ColumnLayout {
             delegate: NumberField { required property int index; value: root.shape.b[index]; onCommitted: n => root.writeShape({ b: root.withIndex(root.shape.b, index, n) }) } } }
     Text { visible: root.shapeKind === "Terrain" || root.shapeKind === "Tilemap"; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
         text: root.shapeKind === "Terrain" ? "Uses this actor's Terrain heightfield." : "Uses the solid cells of this actor's tilemap." }
-    BwButton {
+    StitchButton {
         objectName: "fit-to-look"
         visible: root.geometryKind === "FromLook" || root.shapeKind === "Box" || root.shapeKind === "Rect" || root.shapeKind === "Sphere" || root.shapeKind === "Circle" || root.shapeKind === "Capsule" || root.shapeKind === "Capsule2d"
         text: root.geometryKind === "FromLook" ? "Make independent" : "Fit to the look"; iconName: "box"; implicitHeight: 28; font.pixelSize: 12

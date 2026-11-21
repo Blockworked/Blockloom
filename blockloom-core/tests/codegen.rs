@@ -1806,6 +1806,9 @@ fn project_with_headers(
             name: name.to_string(),
             value_type: InputValueType::Any,
             default_value: None,
+            component: false,
+            multiline: false,
+            ui: None,
         }));
         actor.graph.block_defs.push(BlockDef {
             id: block.id.to_string(),

@@ -63,6 +63,6 @@ ColumnLayout {
     Text { Layout.fillWidth: true; text: root.cancelling ? "Cancelling..." : root.step; color: Theme.text; font.pixelSize: 12; wrapMode: Text.WordWrap }
     ProgressBar { objectName: "buildProgressBar"; Layout.fillWidth: true; indeterminate: root.busy }
     Text { visible: !!root.detail; Layout.fillWidth: true; text: root.detail; color: Theme.textDim; font.pixelSize: 11; wrapMode: Text.WrapAnywhere; maximumLineCount: 3; elide: Text.ElideRight }
-    BwButton { objectName: "cancelBuildButton"; text: root.cancelling ? "Cancelling..." : "Cancel"; enabled: root.busy && !root.cancelling; onClicked: root.cancel() }
+    StitchButton { objectName: "cancelBuildButton"; text: root.cancelling ? "Cancelling..." : "Cancel"; enabled: root.busy && !root.cancelling; onClicked: root.cancel() }
     Timer { interval: 500; running: root.busy; repeat: true; onTriggered: root.poll() }
 }

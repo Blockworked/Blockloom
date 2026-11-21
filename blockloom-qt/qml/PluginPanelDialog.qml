@@ -6,7 +6,7 @@ import com.blockworked.Blockstitch 1.0
 // The panels installed plugins declare: text, a form for one of the plugin's
 // resources, and buttons that run its commands. The editor draws all of it
 // from the schema, so a plugin brings no UI code.
-BwDialog {
+StitchDialog {
     id: root
     required property var app
     property int current: 0
@@ -103,7 +103,7 @@ BwDialog {
                             actors: root.actorOptions
                             onChanged: next => root.setDraft(item.index, next)
                         }
-                        BwButton {
+                        StitchButton {
                             visible: item.modelData.kind === "command"
                             objectName: "panel-run-" + item.index
                             text: item.modelData.label || item.modelData.command || ""
@@ -114,7 +114,7 @@ BwDialog {
             }
         }
         Text { visible: root.message !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: root.message }
-        Text { visible: root.error !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#ff8a8a"; font.pixelSize: 12; text: root.error }
-        RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } BwButton { text: "Close"; onClicked: root.close() } }
+        Text { visible: root.error !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.danger; font.pixelSize: 12; text: root.error }
+        RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } StitchButton { text: "Close"; onClicked: root.close() } }
     }
 }

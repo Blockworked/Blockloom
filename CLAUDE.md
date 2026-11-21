@@ -2385,14 +2385,18 @@ logs a warning, since a locked hidden cursor can't press anything.
 
 ### Frontend (`blockloom-qt/qml/`)
 
-`Main.qml` holds the one copy of backend state (`appState`, parsed from
+`Start.qml` is the entry point: it adds the Lucide icons blockstitch doesn't
+carry (`Icons.add`) and then creates `Main`. Trigger (hat) labels are
+uppercased in `buildRows()`. `Main.qml` holds the one copy of backend state (`appState`, parsed from
 `bridge.stateJson`) and `invoke(command, args, done, failed)`, which every
 other file calls. `Blocks.qml` (a singleton) is the single wiring point into
 blockstitch and where a block's row comes from: every block is described once
 as a list of pieces (a label, a value slot, a dropdown, a text field) and
 registered with blockstitch's `BlockRegistry`, which both the canvas and the
 palette read. **Adding a block means adding a variant to `InstructionKind`, a
-row and an icon in `Blocks.qml`'s `buildRows()`, a label in its `labels`, a
+row and an icon in `Blocks.qml`'s `buildRows()`, a label in its `labels`, an
+entry in one of its `baseSections` (the palette's categories and titled
+sections, drawn by blockstitch's `PalettePanel` in `BlockSidebar.qml`), a
 field id if it has value slots, and a `Step`/`Effect` if it does something
 new** - not a new QML file. A new sensing reporter's fresh value comes from its `default_args` in
 `blockloom-core/src/value.rs`: `Blocks.qml` carries those as a generated

@@ -1,11 +1,11 @@
 import QtQuick
 import com.blockworked.Blockstitch 1.0
 
-// An uppercase group heading, as the sidebar and panels use.
+// A group heading in a panel, as the palette writes its section names.
 Text {
     property string label: ""
-    text: label.toUpperCase()
+    text: label
     color: Theme.textDim
-    font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 1
+    font.pixelSize: 13; font.weight: Font.DemiBold
     topPadding: 8
 }

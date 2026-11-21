@@ -21,7 +21,7 @@ Rectangle {
     RowLayout {
         anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; spacing: 4
         IconButton { iconName: "layout-grid"; tip: "All projects"; onClicked: root.report("close_project") }
-        BwTextField {
+        StitchTextField {
             Layout.preferredWidth: 240
             text: root.appState.project ? root.appState.project.name : ""
             placeholderText: "Project name"
@@ -50,19 +50,19 @@ Rectangle {
             onClicked: pluginEditors.open()
         }
         IconButton { iconName: "settings"; tip: "Project settings"; onClicked: settingsDialog.open() }
-        IconButton { iconName: "smartphone"; tip: "App settings (Android SDK)"; onClicked: appSettings.open() }
+        IconButton { iconName: "sliders-horizontal"; tip: "App settings"; onClicked: appSettings.open() }
         Item { Layout.fillWidth: true }
         IconButton { iconName: "undo-2"; tip: "Undo"; enabled: root.appState.can_undo; onClicked: root.app.invoke("undo") }
         IconButton { iconName: "redo-2"; tip: "Redo"; enabled: root.appState.can_redo; onClicked: root.app.invoke("redo") }
         Rectangle {
             visible: root.appState.running
-            implicitWidth: fpsText.implicitWidth + 16; implicitHeight: 24; radius: 12; color: Theme.panelRaised; border.color: Theme.border
+            implicitWidth: fpsText.implicitWidth + 16; implicitHeight: 26; radius: 5; color: Theme.field; border.color: Theme.borderSoft
             Text { id: fpsText; anchors.centerIn: parent; text: Math.round(root.app.status ? root.app.status.fps : 0) + " fps"; color: Theme.textDim; font.pixelSize: 11 }
             MouseArea { anchors.fill: parent; onClicked: profilerPopup.visible ? profilerPopup.close() : profilerPopup.open() }
             ToolTip.visible: fpsHover.hovered; ToolTip.text: "Show render timings"; ToolTip.delay: 500
             HoverHandler { id: fpsHover }
         }
-        BwButton { visible: root.appState.running && !!root.appState.lan_session && root.appState.lan_session.enabled; text: "LAN spectators"; onClicked: lanDialog.open() }
+        StitchButton { visible: root.appState.running && !!root.appState.lan_session && root.appState.lan_session.enabled; text: "LAN spectators"; onClicked: lanDialog.open() }
         IconButton { visible: root.appState.runtime_open; iconName: "monitor-x"; tip: "Close the game window"; onClicked: root.app.invoke("close_runtime") }
         IconButton {
             visible: root.appState.running
@@ -70,7 +70,7 @@ Rectangle {
             onClicked: root.app.invoke("pause_project", { paused: !root.appState.paused })
         }
         IconButton { visible: root.appState.running && root.appState.paused; iconName: "step-forward"; tip: "Advance one tick"; onClicked: root.report("step_project") }
-        BwButton {
+        StitchButton {
             Layout.leftMargin: 6
             primary: !root.appState.running; danger: root.appState.running
             iconName: root.appState.running ? "square" : "play"
@@ -341,11 +341,11 @@ Rectangle {
     }
     // Menu items plugins add, grouped under their plugin and each item's own heading.
     readonly property var pluginMenus: appState.plugins && appState.plugins.surfaces ? appState.plugins.surfaces.menus : []
-    BwMenu {
+    StitchMenu {
         id: pluginMenu
         Repeater {
             model: root.pluginMenus
-            delegate: BwMenuItem {
+            delegate: StitchMenuItem {
                 required property var modelData
                 iconName: "plug-zap"
                 text: (modelData.group ? modelData.group + ": " : "") + modelData.title + (modelData.shortcut ? "    " + modelData.shortcut : "")
@@ -353,7 +353,7 @@ Rectangle {
             }
         }
     }
-    BwDialog {
+    StitchDialog {
         id: lanDialog
         title: "LAN spectators"
         width: 560
@@ -364,12 +364,12 @@ Rectangle {
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Guests receive a read-only replica of the running world." }
             RowLayout {
                 Label { text: "Interface and port" }
-                BwTextField { id: lanBind; Layout.fillWidth: true; placeholderText: "192.168.1.5:7777"; enabled: !lanDialog.session.open }
+                StitchTextField { id: lanBind; Layout.fillWidth: true; placeholderText: "192.168.1.5:7777"; enabled: !lanDialog.session.open }
             }
             RowLayout {
                 Label { text: "Guest limit" }
                 SpinBox { id: lanLimit; from: 1; to: lanDialog.session.max_guests || 1; value: lanDialog.session.max_guests || 1; enabled: !lanDialog.session.open }
-                BwButton {
+                StitchButton {
                     text: lanDialog.session.open ? "Close LAN" : "Open to LAN"
                     onClicked: root.report(lanDialog.session.open ? "close_lan" : "open_lan", { bind: lanBind.text, max_guests: lanLimit.value })
                 }
@@ -382,7 +382,7 @@ Rectangle {
                 delegate: RowLayout {
                     required property var modelData
                     Label { text: "Guest " + modelData }
-                    BwButton { text: "Disconnect"; onClicked: root.report("kick_guest", { id: parent.modelData }) }
+                    StitchButton { text: "Disconnect"; onClicked: root.report("kick_guest", { id: parent.modelData }) }
                 }
             }
         }

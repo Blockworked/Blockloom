@@ -8,7 +8,7 @@ import com.blockworked.Blockstitch 1.0
 // the package changes (install, update, remove, sync, roll back). Every row
 // runs the same backend command the shell's plugin-* lines do, so a change
 // here and one there are the same transaction.
-BwDialog {
+StitchDialog {
     id: root
     required property var app
     property var listing: null
@@ -175,11 +175,11 @@ BwDialog {
                                 color: Theme.text; font.pixelSize: 13; font.weight: Font.DemiBold
                                 text: card.modelData.name + "  " + card.modelData.version + (card.modelData.dev ? "  (local development)" : "")
                             }
-                            BwButton {
+                            StitchButton {
                                 text: "Update"; flat: true; enabled: !root.busy
                                 onClicked: root.run("plugin_update", { ids: [card.modelData.id] }, false)
                             }
-                            BwButton {
+                            StitchButton {
                                 text: "Remove"; flat: true; danger: true; enabled: !root.busy
                                 onClicked: root.run("plugin_remove", { id: card.modelData.id }, false)
                             }
@@ -276,7 +276,7 @@ BwDialog {
                                 color: Theme.text; font.pixelSize: 13; font.weight: Font.DemiBold
                                 text: resource.modelData.displayName + "  (" + resource.modelData.pluginName + ")"
                             }
-                            BwButton {
+                            StitchButton {
                                 text: "Reset"; flat: true
                                 visible: !!root.resourceRecord(resource.modelData.name)
                                 onClicked: root.resetResource(resource.modelData)
@@ -306,7 +306,7 @@ BwDialog {
                     text: modelData.text
                 }
             }
-            BwButton {
+            StitchButton {
                 visible: root.diagnosticRows.length > 0
                 text: "Refresh"; flat: true
                 onClicked: root.refreshDiagnostics()
@@ -319,7 +319,7 @@ BwDialog {
             }
             RowLayout {
                 Layout.fillWidth: true
-                BwTextField {
+                StitchTextField {
                     id: sourceField; Layout.fillWidth: true; placeholderText: "Source"
                     onEditingFinished: { root.inspected = null; root.inspect(); }
                 }
@@ -327,7 +327,7 @@ BwDialog {
             }
             RowLayout {
                 Layout.fillWidth: true
-                BwTextField { id: idField; Layout.fillWidth: true; placeholderText: "Plugin id, such as com.example.health" }
+                StitchTextField { id: idField; Layout.fillWidth: true; placeholderText: "Plugin id, such as com.example.health" }
             }
             Text {
                 visible: !!root.inspected
@@ -340,11 +340,11 @@ BwDialog {
             }
             RowLayout {
                 Layout.fillWidth: true; spacing: 8
-                BwButton {
+                StitchButton {
                     text: "Preview"; enabled: !root.busy && idField.text.trim() !== ""
                     onClicked: root.run("plugin_install", { id: idField.text.trim(), source: sourceField.text.trim(), dryRun: true }, true)
                 }
-                BwButton {
+                StitchButton {
                     text: root.busy ? "Working..." : "Install"; primary: true
                     enabled: !root.busy && idField.text.trim() !== ""
                     onClicked: root.run("plugin_install", { id: idField.text.trim(), source: sourceField.text.trim() }, false)
@@ -354,19 +354,19 @@ BwDialog {
             Text { text: "Project"; color: Theme.text; font.pixelSize: 14; font.weight: Font.Bold; Layout.topMargin: 6 }
             Flow {
                 Layout.fillWidth: true; spacing: 8
-                BwButton {
+                StitchButton {
                     text: "Update all"; enabled: !root.busy
                     onClicked: root.run("plugin_update", { ids: [] }, false)
                 }
-                BwButton {
+                StitchButton {
                     text: "Install what the lock says"; enabled: !root.busy
                     onClicked: root.run("plugin_sync", {}, false)
                 }
-                BwButton {
+                StitchButton {
                     text: "Undo last change"; enabled: !root.busy && !!root.listing && root.listing.history > 0
                     onClicked: root.run("plugin_rollback", {}, false)
                 }
-                BwButton {
+                StitchButton {
                     text: "Clean the cache"; enabled: !root.busy
                     onClicked: root.run("plugin_gc", {}, false)
                 }

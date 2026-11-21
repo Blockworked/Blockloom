@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
-import QtQuick.Templates as T
 import com.blockworked.BlockloomHub 1.0
+import com.blockworked.Blockstitch 1.0
 
 ApplicationWindow {
     id: window
@@ -13,172 +13,51 @@ ApplicationWindow {
     minimumHeight: 580
     visible: true
     title: "Blockloom Hub"
-    color: "#171b24"
-    palette.window: "#171b24"
-    palette.windowText: "#ecedf3"
-    palette.base: "#202633"
-    palette.text: "#ecedf3"
-    palette.button: "#30394b"
-    palette.buttonText: "#ecedf3"
-    palette.highlight: "#8171eb"
-    palette.highlightedText: "#ffffff"
-    font.pixelSize: 14
+    color: Theme.window
+    palette.window: Theme.window
+    palette.windowText: Theme.text
+    palette.base: Theme.field
+    palette.text: Theme.text
+    palette.button: Theme.panelRaised
+    palette.buttonText: Theme.text
+    palette.highlight: Theme.accent
+    palette.highlightedText: "white"
+    palette.placeholderText: Theme.textDim
+    font.pixelSize: 13
+    font.family: regularFont.status === FontLoader.Ready ? regularFont.name : Qt.application.font.family
+    FontLoader { id: regularFont; source: "qrc:/fonts/AtkinsonHyperlegibleNext-Regular.ttf" }
+    FontLoader { source: "qrc:/fonts/AtkinsonHyperlegibleNext-Medium.ttf" }
+    FontLoader { source: "qrc:/fonts/AtkinsonHyperlegibleNext-SemiBold.ttf" }
+    FontLoader { source: "qrc:/fonts/AtkinsonHyperlegibleNext-Bold.ttf" }
 
-    component HubButton: Button {
-        id: control
-        padding: 10
-        horizontalPadding: 16
-        contentItem: Text {
-            text: control.text
-            font: control.font
-            color: control.enabled ? "#ecedf3" : "#798298"
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-        }
-        background: Rectangle {
-            radius: 6
-            color: control.down ? "#4a4375" : control.hovered ? "#414b62" : "#30394b"
-            border.color: control.activeFocus ? "#b4a7ff" : "#46516a"
-            opacity: control.enabled ? 1 : 0.55
-        }
-    }
-    component HubField: TextField {
-        id: control
-        color: "#ecedf3"
-        placeholderTextColor: "#a7b0c4"
-        padding: 10
-        verticalAlignment: TextInput.AlignVCenter
-        selectByMouse: true
-        background: Rectangle {
-            implicitHeight: 40
-            radius: 6
-            color: "#202633"
-            border.color: control.activeFocus ? "#b4a7ff" : "#46516a"
-        }
-    }
-    component HubScrollBar: T.ScrollBar {
-        id: control
-        implicitWidth: 12
-        implicitHeight: 12
-        padding: 2
-        minimumSize: 0.08
-        hoverEnabled: true
-        visible: policy === T.ScrollBar.AlwaysOn || (policy === T.ScrollBar.AsNeeded && size < 1)
-        contentItem: Rectangle {
-            radius: 4
-            color: control.pressed ? "#8171eb" : control.hovered ? "#a79bdf" : "#626d85"
-            opacity: control.active || control.hovered || control.pressed ? 1 : 0.65
-        }
-        background: Rectangle { radius: 6; color: "#222938" }
-    }
+    // The Hub's controls are blockstitch's, so it looks like the editor.
+    component HubButton: StitchButton {}
+    component HubField: StitchTextField { implicitHeight: 34 }
+    component HubScrollBar: ScrollBar {}
     component HubTab: TabButton {
         id: control
-        padding: 12
+        implicitHeight: 34
+        padding: 8
+        horizontalPadding: 14
+        HoverHandler { cursorShape: Qt.PointingHandCursor }
         contentItem: Text {
             text: control.text
-            font: control.font
-            color: control.checked ? "#ecedf3" : "#a7b0c4"
+            font.pixelSize: 13
+            font.weight: control.checked ? Font.DemiBold : Font.Normal
+            color: control.checked ? Theme.text : Theme.textDim
             horizontalAlignment: Text.AlignHCenter
-        }
-        background: Rectangle {
-            radius: 6
-            color: control.checked ? "#3f385d" : "#222938"
-            border.color: control.checked ? "#8171eb" : "#30394b"
-        }
-    }
-    component HubCheck: T.CheckBox {
-        id: control
-        hoverEnabled: true
-        spacing: 10
-        padding: 4
-        implicitWidth: contentItem.implicitWidth + leftPadding + rightPadding
-        implicitHeight: Math.max(contentItem.implicitHeight, 20) + topPadding + bottomPadding
-        opacity: enabled ? 1 : 0.55
-        background: null
-        indicator: Rectangle {
-            width: 20
-            height: 20
-            x: control.leftPadding
-            y: (control.height - height) / 2
-            radius: 4
-            color: control.checked ? (control.down ? "#6959c9" : "#8171eb") : control.hovered ? "#30394b" : "#202633"
-            border.color: control.activeFocus || control.hovered ? "#b4a7ff" : "#66738c"
-            Canvas {
-                visible: control.checked
-                anchors.fill: parent
-                onVisibleChanged: if (visible) requestPaint()
-                onPaint: {
-                    const context = getContext("2d")
-                    context.clearRect(0, 0, width, height)
-                    context.strokeStyle = "white"
-                    context.lineWidth = 2
-                    context.lineCap = "round"
-                    context.lineJoin = "round"
-                    context.beginPath()
-                    context.moveTo(5, 10)
-                    context.lineTo(9, 14)
-                    context.lineTo(15, 6)
-                    context.stroke()
-                }
-            }
-        }
-        contentItem: Text {
-            text: control.text
-            font: control.font
-            color: "#ecedf3"
-            leftPadding: control.indicator.width + control.spacing
             verticalAlignment: Text.AlignVCenter
         }
-    }
-    component HubCombo: ComboBox {
-        id: control
-        padding: 10
-        contentItem: Text {
-            text: control.currentIndex < 0 ? "Select a version" : control.displayText
-            font: control.font
-            color: "#ecedf3"
-            rightPadding: 24
-            elide: Text.ElideRight
-        }
-        indicator: Text {
-            text: "▾"
-            color: "#ecedf3"
-            x: control.width - width - 12
-            y: (control.height - height) / 2
-        }
         background: Rectangle {
-            implicitHeight: 40
             radius: 6
-            color: "#202633"
-            border.color: control.activeFocus ? "#b4a7ff" : "#46516a"
-        }
-        delegate: ItemDelegate {
-            required property int index
-            required property var modelData
-            width: control.width
-            contentItem: Text { text: modelData; color: "#ecedf3"; font: control.font }
-            background: Rectangle { color: control.highlightedIndex === index ? "#4a4375" : "#222938" }
+            color: control.checked ? Theme.panelRaised : control.hovered ? Theme.hover : "transparent"
         }
     }
-    component HubDialog: Dialog {
-        id: control
-        padding: 18
-        background: Rectangle { color: "#222938"; border.color: "#46516a"; radius: 10 }
-        header: Label {
-            text: control.title
-            padding: 18
-            color: "#ecedf3"
-            font.pixelSize: 19
-            font.bold: true
-            wrapMode: Text.Wrap
-        }
-        footer: DialogButtonBox {
-            visible: count > 0
-            padding: 18
-            background: null
-            delegate: HubButton {}
-        }
+    component HubCheck: StitchCheckBox { font.pixelSize: 13 }
+    component HubCombo: StitchComboBox {
+        displayText: currentIndex < 0 ? "Select a version" : currentText
     }
+    component HubDialog: StitchDialog {}
 
     property var projects: []
     property var installations: []
@@ -333,7 +212,7 @@ ApplicationWindow {
             Layout.fillWidth: true
             ColumnLayout {
                 spacing: 4
-                Label { text: "Blockloom Hub"; font.pixelSize: 30; font.bold: true }
+                Label { text: "Blockloom Hub"; font.pixelSize: 24; font.bold: true }
             }
             Item { Layout.fillWidth: true }
             HubButton {
@@ -341,19 +220,20 @@ ApplicationWindow {
                 visible: window.lastBackup.length > 0
                 onClicked: if (!service.showBackup(window.lastBackup)) window.error = "The backup folder could not be opened."
             }
-            HubButton { text: "Settings"; enabled: !service.busy; onClicked: settingsDialog.open() }
-            HubButton { text: "Refresh"; enabled: !service.busy; onClicked: refresh() }
+            HubButton { iconName: "settings"; text: "Settings"; enabled: !service.busy; onClicked: settingsDialog.open() }
+            HubButton { iconName: "refresh-cw"; text: "Refresh"; enabled: !service.busy; onClicked: refresh() }
         }
         TabBar {
             id: tabs
-            Layout.fillWidth: true
+            spacing: 4
+            background: null
             HubTab { text: "Projects" }
             HubTab { text: "Installations" }
         }
         Label {
             visible: window.error.length > 0 || window.notice.length > 0
             text: window.error || window.notice
-            color: window.error ? "#ffaaaa" : "#b7e4c5"
+            color: window.error ? Theme.danger : Theme.running
             wrapMode: Text.Wrap
             maximumLineCount: 4
             elide: Text.ElideRight
@@ -372,35 +252,35 @@ ApplicationWindow {
                 Label {
                     visible: window.projects.length === 0
                     text: "No projects yet. Add an existing project folder to get started."
-                    color: "#a7b0c4"
+                    color: Theme.textDim
                     Layout.topMargin: 30
                 }
                 ListView {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
-                    spacing: 8
+                    spacing: 0
                     model: window.projects.filter(entry => window.matches(entry))
                     ScrollBar.vertical: HubScrollBar { id: projectsScrollBar }
                     delegate: Rectangle {
                         required property var modelData
                         width: ListView.view.width - (projectsScrollBar.visible ? projectsScrollBar.width + 8 : 0)
-                        height: projectRow.implicitHeight + 28
-                        radius: 10
-                        color: "#222938"
+                        height: projectRow.implicitHeight + 24
+                        color: "transparent"
+                        Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: Theme.borderSoft }
                         RowLayout {
                             id: projectRow
                             anchors.fill: parent
-                            anchors.margins: 14
+                            anchors.margins: 12
                             spacing: 16
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                Label { text: modelData.name || "Unavailable project"; font.bold: true; font.pixelSize: 17 }
-                                Label { text: window.displayPath(modelData.path); color: "#a7b0c4"; elide: Text.ElideMiddle; Layout.fillWidth: true }
+                                Label { text: modelData.name || "Unavailable project"; font.weight: Font.DemiBold; font.pixelSize: 14 }
+                                Label { text: window.displayPath(modelData.path); color: Theme.textDim; elide: Text.ElideMiddle; Layout.fillWidth: true }
                                 Label {
                                     text: modelData.error ? "Folder unavailable" : (modelData.mode === "ThreeD" ? "3D" : "2D")
-                                        + "  ·  " + window.selection(modelData.installation)
-                                    color: modelData.error ? "#ffaaaa" : "#c1b8ff"
+                                        + "  |  " + window.selection(modelData.installation)
+                                    color: modelData.error ? Theme.danger : Theme.accent
                                     elide: Text.ElideRight
                                     Layout.fillWidth: true
                                 }
@@ -428,54 +308,54 @@ ApplicationWindow {
                 }
                 Label {
                     text: " "
-                    color: "#a7b0c4"
+                    color: Theme.textDim
                     wrapMode: Text.Wrap
                     Layout.fillWidth: true
                 }
                 Label {
                     text: " "
-                    color: "#a7b0c4"
+                    color: Theme.textDim
                     wrapMode: Text.Wrap
                     Layout.fillWidth: true
                 }
                 Label {
                     visible: window.installations.length === 0
                     text: "Install a prepared release bundle or build from a local repository."
-                    color: "#a7b0c4"
+                    color: Theme.textDim
                     Layout.topMargin: 30
                 }
                 ListView {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
-                    spacing: 8
+                    spacing: 0
                     model: window.installations
                     ScrollBar.vertical: HubScrollBar { id: installationsScrollBar }
                     delegate: Rectangle {
                         required property var modelData
                         width: ListView.view.width - (installationsScrollBar.visible ? installationsScrollBar.width + 8 : 0)
-                        height: installRow.implicitHeight + 28
-                        radius: 10
-                        color: "#222938"
+                        height: installRow.implicitHeight + 24
+                        color: "transparent"
+                        Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: Theme.borderSoft }
                         RowLayout {
                             id: installRow
                             anchors.fill: parent
-                            anchors.margins: 14
+                            anchors.margins: 12
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                Label { text: window.label(modelData); font.bold: true; font.pixelSize: 17 }
+                                Label { text: window.label(modelData); font.weight: Font.DemiBold; font.pixelSize: 14 }
                                 Label {
                                     text: window.displayPath(modelData.repo || modelData.target)
-                                    color: "#a7b0c4"
+                                    color: Theme.textDim
                                     elide: Text.ElideMiddle
                                     Layout.fillWidth: true
                                 }
                                 Label {
                                     text: modelData.status === "ready"
-                                        ? (modelData.running ? "In use" : "Ready") + "  ·  Rust " + modelData.tools.rust.channel
-                                            + (Object.keys(modelData.tools).length > 1 ? "  ·  " + Object.keys(modelData.tools).filter(t => t !== "rust").join(", ") : "")
+                                        ? (modelData.running ? "In use" : "Ready") + "  |  Rust " + modelData.tools.rust.channel
+                                            + (Object.keys(modelData.tools).length > 1 ? "  |  " + Object.keys(modelData.tools).filter(t => t !== "rust").join(", ") : "")
                                         : "Build this repository to create its installation."
-                                    color: "#c1b8ff"
+                                    color: Theme.accent
                                     wrapMode: Text.Wrap
                                     Layout.fillWidth: true
                                 }
@@ -497,20 +377,18 @@ ApplicationWindow {
                                     }
                                 }
                                 HubButton {
-                                    text: "⋮"
-                                    font.pixelSize: 18
-                                    font.bold: true
-                                    implicitWidth: 44
+                                    iconName: "ellipsis"
+                                    implicitWidth: 38
                                     Accessible.name: "Installation options for " + window.label(modelData)
                                     Layout.alignment: Qt.AlignRight
                                     enabled: !service.busy
                                     onClicked: installMenu.open()
-                                    Menu {
+                                    StitchMenu {
                                         id: installMenu
                                         y: parent.height
                                         onOpened: window.installMenuOpen = true
                                         onClosed: window.installMenuOpen = false
-                                        MenuItem {
+                                        StitchMenuItem {
                                             text: "Add modules..."
                                             enabled: modelData.status === "ready" && !service.busy && !modelData.running
                                             onTriggered: {
@@ -519,13 +397,13 @@ ApplicationWindow {
                                                 toolsDialog.open()
                                             }
                                         }
-                                        MenuItem {
-                                            text: "Open File Location"
+                                        StitchMenuItem {
+                                            text: "Open file location"
                                             enabled: !!modelData.path
                                             onTriggered: { if (!service.showFolder(modelData.path)) window.error = "The installation folder could not be opened." }
                                         }
                                         MenuSeparator {}
-                                        MenuItem {
+                                        StitchMenuItem {
                                             text: "Uninstall..."
                                             enabled: !service.busy && !modelData.running
                                             onTriggered: { window.deleteTarget = modelData; deleteDialog.open() }
@@ -540,7 +418,7 @@ ApplicationWindow {
         }
         RowLayout {
             BusyIndicator { running: service.busy; visible: running; implicitWidth: 28; implicitHeight: 28 }
-            Label { text: service.cancelling ? "Stopping..." : service.busy ? "Working..." : "Ready"; color: "#a7b0c4" }
+            Label { text: service.cancelling ? "Stopping..." : service.busy ? "Working..." : "Ready"; color: Theme.textDim }
             Item { Layout.fillWidth: true }
             HubButton { text: service.cancelling ? "Stopping..." : "Cancel"; visible: service.canCancel; enabled: !service.cancelling; onClicked: service.cancel() }
             HubButton { text: "Operation log"; onClicked: logDialog.open() }
@@ -596,7 +474,7 @@ ApplicationWindow {
             Label {
                 text: versionDialog.choices.length === 0 ? "Install or build an editor first."
                     : "Selecting an editor saves this project's choice. Opening with a newer editor may migrate project files. Back up your project before upgrading."
-                color: "#a7b0c4"
+                color: Theme.textDim
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
             }
@@ -625,27 +503,27 @@ ApplicationWindow {
                     onClicked: settingsDialog.open()
                 }
             }
-            Label { text: window.error || window.notice; visible: text.length > 0; color: window.error ? "#ffaaaa" : "#b7e4c5"; wrapMode: Text.Wrap; Layout.fillWidth: true; maximumLineCount: 3; elide: Text.ElideRight }
+            Label { text: window.error || window.notice; visible: text.length > 0; color: window.error ? Theme.danger : Theme.running; wrapMode: Text.Wrap; Layout.fillWidth: true; maximumLineCount: 3; elide: Text.ElideRight }
             ListView {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
                 model: window.availableReleases
-                spacing: 8
+                spacing: 0
                 ScrollBar.vertical: HubScrollBar { id: releasesScrollBar }
                 delegate: Rectangle {
                     required property var modelData
                     width: ListView.view.width - (releasesScrollBar.visible ? releasesScrollBar.width + 8 : 0)
-                    height: 72
-                    radius: 6
-                    color: "#171b24"
+                    height: 64
+                    color: "transparent"
+                    Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: Theme.borderSoft }
                     RowLayout {
                         anchors.fill: parent
                         anchors.margins: 12
                         ColumnLayout {
                             Layout.fillWidth: true
                             Label { text: "Blockloom " + modelData.version; font.bold: true }
-                            Label { text: (modelData.channel || "release") + "  ·  " + (modelData.size / 1024 / 1024).toFixed(0) + " MiB"; color: "#a7b0c4" }
+                            Label { text: (modelData.channel || "release") + "  |  " + (modelData.size / 1024 / 1024).toFixed(0) + " MiB"; color: Theme.textDim }
                         }
                         HubButton {
                             text: modelData.installed ? "Installed" : "Install"
@@ -655,7 +533,7 @@ ApplicationWindow {
                     }
                 }
             }
-            Label { text: "Installing a release keeps existing editors and project selections."; color: "#a7b0c4"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: "Installing a release keeps existing editors and project selections."; color: Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
             HubButton { visible: service.canCancel; text: service.cancelling ? "Stopping..." : "Cancel check"; enabled: !service.cancelling; onClicked: service.cancel() }
         }
     }
@@ -682,16 +560,16 @@ ApplicationWindow {
             Label { text: "Blockloom releases"; font.bold: true }
             HubCheck { id: settingsGithub; text: "Use GitHub CLI for private releases"; checked: true; enabled: !service.busy }
             HubField { id: settingsRepo; visible: settingsGithub.checked; placeholderText: "GitHub owner/repo"; Layout.fillWidth: true }
-            Label { text: "Uses your gh auth login session."; visible: settingsGithub.checked; color: "#a7b0c4" }
+            Label { text: "Uses your gh auth login session."; visible: settingsGithub.checked; color: Theme.textDim }
             HubField { id: settingsUrl; visible: !settingsGithub.checked; placeholderText: "HTTPS release catalog URL"; Layout.fillWidth: true }
             Label {
                 text: "The catalog URL must serve the release catalog JSON, not a repository page."
                 visible: !settingsGithub.checked
-                color: "#a7b0c4"
+                color: Theme.textDim
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
             }
-            Label { text: window.error || window.notice; visible: text.length > 0; color: window.error ? "#ffaaaa" : "#b7e4c5"; wrapMode: Text.Wrap; Layout.fillWidth: true; maximumLineCount: 3; elide: Text.ElideRight }
+            Label { text: window.error || window.notice; visible: text.length > 0; color: window.error ? Theme.danger : Theme.running; wrapMode: Text.Wrap; Layout.fillWidth: true; maximumLineCount: 3; elide: Text.ElideRight }
         }
     }
     HubDialog {
@@ -732,7 +610,7 @@ ApplicationWindow {
                 text: window.selectedRelease.version
                     ? "Selected tools are downloaded with this release. APK builds need Java and the SDK; native Android builds also need the NDK and Rust targets."
                     : "Selected tools must be included in the bundle. APK builds need Java and the SDK; native Android builds also need the NDK and Rust targets."
-                color: "#a7b0c4"
+                color: Theme.textDim
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
             }
@@ -772,7 +650,7 @@ ApplicationWindow {
             anchors.fill: parent
             spacing: 10
             Label { text: window.label(toolsDialog.target); font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true }
-            Label { text: "Installed modules are checked and cannot be changed. New modules (Java, Android SDK, Android NDK, Android Rust targets) are downloaded with the versions this editor pins."; color: "#a7b0c4"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: "Installed modules are checked and cannot be changed. New modules (Java, Android SDK, Android NDK, Android Rust targets) are downloaded with the versions this editor pins."; color: Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
             HubCheck { id: addJava; text: "Java" }
             HubCheck { id: addSdk; text: "Android SDK" }
             HubCheck { id: addNdk; text: "Android NDK" }
@@ -780,7 +658,7 @@ ApplicationWindow {
             Label {
                 text: "Everything is already installed."
                 visible: !addJava.enabled && !addSdk.enabled && !addNdk.enabled && !addTargets.enabled
-                color: "#b7e4c5"
+                color: Theme.running
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
             }
@@ -810,14 +688,14 @@ ApplicationWindow {
             Label {
                 visible: deleteDialog.blockers.length > 0
                 text: "In use by: " + deleteDialog.blockers.map(p => p.name || p.path).join(", ") + ". Assign those projects another editor first."
-                color: "#ffaaaa"
+                color: Theme.danger
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
             }
             Label {
                 visible: deleteDialog.blockers.length === 0
                 text: "Projects using it must be assigned another editor first."
-                color: "#a7b0c4"
+                color: Theme.textDim
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
             }
@@ -851,7 +729,7 @@ ApplicationWindow {
         ColumnLayout {
             anchors.fill: parent
             spacing: 10
-            Label { text: "Build complete. Choose what to include in this installation."; color: "#ecedf3"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: "Build complete. Choose what to include in this installation."; color: Theme.text; wrapMode: Text.Wrap; Layout.fillWidth: true }
             HubCheck { text: "Rust toolchain (required)"; checked: true; enabled: false }
             HubCheck { id: devJava; text: "Java" }
             HubCheck { id: devSdk; objectName: "smokeCheckbox"; text: "Android SDK" }
@@ -862,7 +740,7 @@ ApplicationWindow {
             }
             Label {
                 text: "Selected tools are downloaded and bundled with this editor. Versions follow the repository's Android requirements. Local tool installations are not used."
-                color: "#a7b0c4"
+                color: Theme.textDim
                 wrapMode: Text.Wrap
                 Layout.fillWidth: true
             }
@@ -964,7 +842,7 @@ ApplicationWindow {
             // there is no gap to overscroll past either end.
             topPadding: 14
             bottomPadding: 14
-            background: Rectangle { color: "#141922"; radius: 6; border.color: "#46516a" }
+            background: Rectangle { color: Theme.field; radius: 6; border.color: Theme.border }
             ListView {
                 id: logViewport
                 objectName: "smokeLogViewport"
@@ -1020,9 +898,9 @@ ApplicationWindow {
                     width: ListView.view.width - 28
                     x: 14
                     text: line
-                    color: "#dbe2f2"
-                    selectionColor: "#5b4d94"
-                    selectedTextColor: "#ffffff"
+                    color: Theme.text
+                    selectionColor: Theme.accent
+                    selectedTextColor: "white"
                     readOnly: true
                     wrapMode: TextEdit.Wrap
                     textFormat: TextEdit.PlainText
@@ -1034,7 +912,7 @@ ApplicationWindow {
                 }
                 Text {
                     text: "No output for this operation."
-                    color: "#a7b0c4"
+                    color: Theme.textDim
                     font.pixelSize: 13
                     x: 14
                     y: 2

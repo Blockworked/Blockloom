@@ -7,7 +7,7 @@ import com.blockworked.Blockstitch 1.0
 // is the document here - it isn't part of the project - so this reads it on
 // open and writes it on save. "Check" hands it to rustc, and diagnostics come
 // back pinned to their lines so they show inline too.
-BwDialog {
+StitchDialog {
     id: root
     required property var app
     property var actor: null
@@ -174,12 +174,12 @@ BwDialog {
         Text { visible: root.error.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; text: root.error; color: Theme.danger }
         Text {
             visible: !!root.toolchain && !root.toolchain.available
-            Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#ffb86b"; font.pixelSize: 12
+            Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.warning; font.pixelSize: 12
             text: root.toolchain ? "No Rust toolchain found - scripts won't run until one is installed. Blocks still run. " + root.toolchain.help : ""
         }
         Rectangle {
             Layout.fillWidth: true; Layout.preferredHeight: 380
-            radius: 6; color: "#1c1f26"; border.color: editor.activeFocus ? Theme.accent : Theme.border; clip: true
+            radius: 6; color: Theme.field; border.color: editor.activeFocus ? Theme.accent : Theme.border; clip: true
             Flickable {
                 id: flick
                 anchors.fill: parent; anchors.margins: 1
@@ -204,7 +204,7 @@ BwDialog {
                             width: 38; horizontalAlignment: Text.AlignRight
                             height: editor.cursorRectangle.height > 0 ? editor.cursorRectangle.height : implicitHeight
                             text: index + 1; font: editor.font
-                            color: level === "error" ? "#ff6b6b" : level === "warning" ? "#e5c07b" : "#8b93a3"
+                            color: level === "error" ? Theme.danger : level === "warning" ? Theme.warning : Theme.textDim
                         }
                     }
                 }
@@ -214,7 +214,7 @@ BwDialog {
                     width: Math.max(flick.width - gutter.width, implicitWidth)
                     topPadding: 8; leftPadding: 8; rightPadding: 8; bottomPadding: 8
                     font.family: "monospace"; font.pixelSize: 13
-                    color: "transparent"; selectionColor: "#594c97ff"; selectedTextColor: "transparent"
+                    color: "transparent"; selectionColor: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.35); selectedTextColor: "transparent"
                     selectByMouse: true; wrapMode: TextEdit.NoWrap; textFormat: TextEdit.PlainText
                     persistentSelection: true; readOnly: root.busy && !text.length
                     onCursorRectangleChanged: flick.ensureVisible(cursorRectangle)
@@ -238,16 +238,16 @@ BwDialog {
                     Text {
                         z: -1
                         x: editor.leftPadding; y: editor.topPadding
-                        font: editor.font; color: "#dcdfe4"
+                        font: editor.font; color: Theme.text
                         textFormat: Text.RichText
                         // Not <pre>: that swaps in its own font, whose line height then drifts from the editor's.
                         text: "<div style=\"white-space:pre\">" + root.highlight(editor.text) + "</div>"
                     }
                     Rectangle {
                         z: -2; x: 0; width: editor.width; height: editor.cursorRectangle.height; y: editor.cursorRectangle.y
-                        visible: editor.activeFocus; color: "#0cffffff"
+                        visible: editor.activeFocus; color: Qt.rgba(Theme.text.r, Theme.text.g, Theme.text.b, 0.05)
                     }
-                    Rectangle { visible: editor.activeFocus; x: editor.cursorRectangle.x; y: editor.cursorRectangle.y; width: 2; height: editor.cursorRectangle.height; color: "#eeeeee" }
+                    Rectangle { visible: editor.activeFocus; x: editor.cursorRectangle.x; y: editor.cursorRectangle.y; width: 2; height: editor.cursorRectangle.height; color: Theme.text }
                 }
             }
         }
@@ -258,14 +258,14 @@ BwDialog {
             delegate: RowLayout {
                 required property var modelData
                 width: ListView.view.width; spacing: 8
-                BwButton { flat: true; implicitHeight: 24; font.pixelSize: 11; text: modelData.line + ":" + modelData.column; onClicked: root.jumpTo(modelData.line, modelData.column) }
-                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 12; color: modelData.level === "error" ? "#ff8080" : "#e5c07b"; text: modelData.message }
+                StitchButton { flat: true; implicitHeight: 24; font.pixelSize: 11; text: modelData.line + ":" + modelData.column; onClicked: root.jumpTo(modelData.line, modelData.column) }
+                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 12; color: modelData.level === "error" ? Theme.danger : Theme.warning; text: modelData.message }
             }
         }
         Rectangle {
             visible: root.completionOpen
             Layout.fillWidth: true; Layout.preferredHeight: Math.min(190, completionList.contentHeight + hoverDocText.implicitHeight + 16)
-            radius: 6; color: "#24272f"; border.color: Theme.accent; clip: true
+            radius: 8; color: Theme.menu; border.color: Theme.border; clip: true
             ColumnLayout {
                 anchors.fill: parent; anchors.margins: 6; spacing: 4
                 ListView {
@@ -273,12 +273,12 @@ BwDialog {
                     Layout.fillWidth: true; Layout.preferredHeight: Math.min(120, contentHeight); clip: true
                     model: root.completions
                     currentIndex: root.selectedCompletion
-                    highlight: Rectangle { color: "#0cffffff"; radius: 3 }
+                    highlight: Rectangle { color: Theme.hover; radius: 4 }
                     delegate: RowLayout {
                         required property var modelData
                         required property int index
                         width: ListView.view.width; spacing: 8
-                        Text { font.family: "monospace"; font.pixelSize: 12; color: "#61afef"; text: modelData.insert }
+                        Text { font.family: "monospace"; font.pixelSize: 12; color: Theme.accent; text: modelData.insert }
                         Text { Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: 11; color: Theme.textDim; text: modelData.detail }
                         MouseArea {
                             anchors.fill: parent
@@ -304,12 +304,12 @@ BwDialog {
         Text { visible: root.ideNote.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11; text: root.ideNote }
         RowLayout {
             Layout.alignment: Qt.AlignRight; spacing: 8
-            BwButton { text: "Cancel"; onClicked: { root.completionOpen = false; root.close(); } }
-            BwButton { text: "Open in editor"; enabled: !root.busy; onClicked: root.openExternal() }
-            BwButton { text: "Lint"; enabled: !root.busy && (!root.toolchain || !!root.toolchain.clippy_version); onClicked: root.lint() }
-            BwButton { text: "Format"; enabled: !root.busy && (!root.toolchain || !!root.toolchain.rustfmt_version); onClicked: root.format() }
-            BwButton { text: "Check"; enabled: !root.busy; onClicked: root.check() }
-            BwButton { text: "Save"; primary: true; enabled: !root.busy; onClicked: root.save(() => root.close()) }
+            StitchButton { text: "Cancel"; onClicked: { root.completionOpen = false; root.close(); } }
+            StitchButton { text: "Open in editor"; enabled: !root.busy; onClicked: root.openExternal() }
+            StitchButton { text: "Lint"; enabled: !root.busy && (!root.toolchain || !!root.toolchain.clippy_version); onClicked: root.lint() }
+            StitchButton { text: "Format"; enabled: !root.busy && (!root.toolchain || !!root.toolchain.rustfmt_version); onClicked: root.format() }
+            StitchButton { text: "Check"; enabled: !root.busy; onClicked: root.check() }
+            StitchButton { text: "Save"; primary: true; enabled: !root.busy; onClicked: root.save(() => root.close()) }
         }
     }
 }

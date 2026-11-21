@@ -7,7 +7,7 @@ import com.blockworked.Blockstitch 1.0
 // Building the project into a game somebody else can run: which platform, and
 // where to put it. Every platform that isn't available says why. Running on
 // a phone or emulator lives in the Devices tab, not here.
-BwDialog {
+StitchDialog {
     id: root
     required property var app
     property var targets: []
@@ -114,16 +114,16 @@ BwDialog {
             value: root.triple; onChosen: v => root.triple = v
         }
         Text { visible: !!root.chosen; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: root.chosen ? root.chosen.note : "" }
-        BwCheckBox { text: "Compile blocks for maximum speed"; enabled: !root.busy && !!root.chosen && root.chosen.fast_ready; checked: root.fast; onToggled: root.fast = checked }
+        StitchCheckBox { text: "Compile blocks for maximum speed"; enabled: !root.busy && !!root.chosen && root.chosen.fast_ready; checked: root.fast; onToggled: root.fast = checked }
         Text { visible: !!root.chosen; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: root.chosen ? root.chosen.fast_note : "" }
-        BwCheckBox { text: "HDR rendering and output"; enabled: !root.busy && !root.web && !root.android; checked: root.hdr && !root.web && !root.android; onToggled: root.hdr = checked }
+        StitchCheckBox { text: "HDR rendering and output"; enabled: !root.busy && !root.web && !root.android; checked: root.hdr && !root.web && !root.android; onToggled: root.hdr = checked }
         Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
             text: (root.chosen ? root.chosen.hdr_note + " " : "") + "Off makes an SDR-only build: 8-bit frames and no HDR window, for weak GPUs and old displays." }
         Text { visible: !!root.chosen; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: root.chosen ? root.chosen.look2d_note : "" }
         Text { text: "Where to put it"; color: Theme.textDim; font.pixelSize: 12 }
         RowLayout {
             Layout.fillWidth: true
-            BwTextField { id: locationField; enabled: !root.busy; Layout.fillWidth: true; onAccepted: root.submit() }
+            StitchTextField { id: locationField; enabled: !root.busy; Layout.fillWidth: true; onAccepted: root.submit() }
             IconButton { enabled: !root.busy; iconName: "folder-open"; tip: "Browse for a folder"; flat: false; implicitWidth: 34; implicitHeight: 34; onClicked: browse.open() }
         }
         Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
@@ -149,23 +149,23 @@ BwDialog {
                 RowLayout {
                     Layout.fillWidth: true; spacing: 8
                     Text { text: "Keystore password"; color: Theme.textDim; font.pixelSize: 12; Layout.preferredWidth: 130 }
-                    BwTextField { Layout.fillWidth: true; echoMode: TextInput.Password; text: root.storePass; placeholderText: "Asked every build"; onTextChanged: root.storePass = text }
+                    StitchTextField { Layout.fillWidth: true; echoMode: TextInput.Password; text: root.storePass; placeholderText: "Asked every build"; onTextChanged: root.storePass = text }
                 }
                 RowLayout {
                     Layout.fillWidth: true; spacing: 8
                     Text { text: "Key password"; color: Theme.textDim; font.pixelSize: 12; Layout.preferredWidth: 130 }
-                    BwTextField { Layout.fillWidth: true; echoMode: TextInput.Password; text: root.keyPass; placeholderText: "Empty means the keystore password"; onTextChanged: root.keyPass = text }
+                    StitchTextField { Layout.fillWidth: true; echoMode: TextInput.Password; text: root.keyPass; placeholderText: "Empty means the keystore password"; onTextChanged: root.keyPass = text }
                 }
                 RowLayout {
                     visible: root.keyring.available; Layout.fillWidth: true; spacing: 8
-                    BwCheckBox { text: "Remember passwords in the system keyring"; checked: root.remember; onToggled: root.remember = checked }
+                    StitchCheckBox { text: "Remember passwords in the system keyring"; checked: root.remember; onToggled: root.remember = checked }
                     Item { Layout.fillWidth: true }
-                    BwButton { visible: root.keyring.store_saved || root.keyring.key_saved; text: "Forget saved"; onClicked: root.forgetKeyring() }
+                    StitchButton { visible: root.keyring.store_saved || root.keyring.key_saved; text: "Forget saved"; onClicked: root.forgetKeyring() }
                 }
                 Text { visible: !root.keyring.available; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
                     text: "No scriptable system keyring on this machine, so every build asks." }
             }
-            BwButton { text: "Create a new release key..."; onClicked: { newKey.error = ""; newKey.open(); } }
+            StitchButton { text: "Create a new release key..."; onClicked: { newKey.error = ""; newKey.open(); } }
         }
         BuildProgress {
             id: buildProgress
@@ -178,11 +178,11 @@ BwDialog {
         }
         RowLayout {
             Layout.alignment: Qt.AlignRight; Layout.topMargin: 8; spacing: 8
-            BwButton { visible: !root.busy; text: root.built ? "Done" : "Cancel"; onClicked: root.close() }
-            BwButton { objectName: "buildGameButton"; text: root.busy ? "Building..." : "Build"; primary: true; enabled: !root.busy && !!root.chosen && root.chosen.ready; onClicked: root.submit() }
+            StitchButton { visible: !root.busy; text: root.built ? "Done" : "Cancel"; onClicked: root.close() }
+            StitchButton { objectName: "buildGameButton"; text: root.busy ? "Building..." : "Build"; primary: true; enabled: !root.busy && !!root.chosen && root.chosen.ready; onClicked: root.submit() }
         }
     }
-    BwDialog {
+    StitchDialog {
         id: newKey
         property string error: ""
         property string keyPath: ""
@@ -214,20 +214,20 @@ BwDialog {
             Text { text: "Key file"; color: Theme.textDim; font.pixelSize: 12 }
             RowLayout {
                 Layout.fillWidth: true
-                BwTextField { Layout.fillWidth: true; text: newKey.keyPath; placeholderText: "/path/to/release.keystore"; onTextChanged: newKey.keyPath = text }
+                StitchTextField { Layout.fillWidth: true; text: newKey.keyPath; placeholderText: "/path/to/release.keystore"; onTextChanged: newKey.keyPath = text }
                 IconButton { iconName: "folder-open"; tip: "Choose where the key file goes"; implicitWidth: 34; implicitHeight: 34; onClicked: newKeyBrowse.open() }
             }
             Text { text: "Alias"; color: Theme.textDim; font.pixelSize: 12 }
-            BwTextField { Layout.fillWidth: true; text: newKey.keyAlias; placeholderText: "upload"; onTextChanged: newKey.keyAlias = text }
+            StitchTextField { Layout.fillWidth: true; text: newKey.keyAlias; placeholderText: "upload"; onTextChanged: newKey.keyAlias = text }
             Text { text: "Keystore password"; color: Theme.textDim; font.pixelSize: 12 }
-            BwTextField { Layout.fillWidth: true; echoMode: TextInput.Password; text: newKey.keyStorePass; placeholderText: "At least 6 characters"; onTextChanged: newKey.keyStorePass = text }
+            StitchTextField { Layout.fillWidth: true; echoMode: TextInput.Password; text: newKey.keyStorePass; placeholderText: "At least 6 characters"; onTextChanged: newKey.keyStorePass = text }
             Text { text: "Key password"; color: Theme.textDim; font.pixelSize: 12 }
-            BwTextField { Layout.fillWidth: true; echoMode: TextInput.Password; text: newKey.keyKeyPass; placeholderText: "Empty means the keystore password"; onTextChanged: newKey.keyKeyPass = text }
-            BwCheckBox { visible: root.keyring.available; text: "Remember passwords in the system keyring"; checked: newKey.remember; onToggled: newKey.remember = checked }
+            StitchTextField { Layout.fillWidth: true; echoMode: TextInput.Password; text: newKey.keyKeyPass; placeholderText: "Empty means the keystore password"; onTextChanged: newKey.keyKeyPass = text }
+            StitchCheckBox { visible: root.keyring.available; text: "Remember passwords in the system keyring"; checked: newKey.remember; onToggled: newKey.remember = checked }
             RowLayout {
                 Layout.alignment: Qt.AlignRight; Layout.topMargin: 8; spacing: 8
-                BwButton { text: "Cancel"; onClicked: newKey.close() }
-                BwButton { text: newKey.busy ? "Creating..." : "Create key"; primary: true; enabled: !newKey.busy && newKey.keyPath.trim() !== "" && newKey.keyAlias.trim() !== ""; onClicked: newKey.create() }
+                StitchButton { text: "Cancel"; onClicked: newKey.close() }
+                StitchButton { text: newKey.busy ? "Creating..." : "Create key"; primary: true; enabled: !newKey.busy && newKey.keyPath.trim() !== "" && newKey.keyAlias.trim() !== ""; onClicked: newKey.create() }
             }
         }
     }

@@ -4,7 +4,7 @@ import com.blockworked.Blockstitch 1.0
 
 // A dropdown over [{value, label}] that reports the chosen value and keeps
 // showing whatever `value` says, so an undo or a refused change shows too.
-BwComboBox {
+StitchComboBox {
     id: root
     property var options: []
     property var value: ""

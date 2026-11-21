@@ -50,7 +50,7 @@ fn main() {
                 eprintln!("failed to create QML root object from {url}");
             })
             .release();
-        let entry = "qrc:/qt/qml/com/blockworked/Blockloom/qml/Main.qml".to_string();
+        let entry = "qrc:/qt/qml/com/blockworked/Blockloom/qml/Start.qml".to_string();
         // Development harnesses use the real backend with a smaller QML root.
         #[cfg(feature = "qml-preview")]
         let entry = std::env::var("BLOCKLOOM_QML_ENTRY").unwrap_or(entry);

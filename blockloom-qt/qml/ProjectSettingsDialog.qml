@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import com.blockworked.Blockstitch 1.0
 
-BwDialog {
+StitchDialog {
     id: root
     required property var app
     property string page: "project"
@@ -19,15 +19,15 @@ BwDialog {
             color: Theme.panel
             ColumnLayout {
                 anchors.fill: parent; anchors.margins: 8; spacing: 4
-                BwButton { objectName: "settings-general"; Layout.fillWidth: true; text: "General";
+                StitchButton { objectName: "settings-general"; Layout.fillWidth: true; text: "General";
                     primary: root.page === "project"; onClicked: root.page = "project" }
-                BwButton { objectName: "settings-multiplayer"; Layout.fillWidth: true; text: "Multiplayer";
+                StitchButton { objectName: "settings-multiplayer"; Layout.fillWidth: true; text: "Multiplayer";
                     primary: root.page === "multiplayer"; onClicked: root.page = "multiplayer" }
                 Text { text: "Publishing"; color: Theme.text; font.pixelSize: 13; font.weight: Font.DemiBold;
                     Layout.topMargin: 12; Layout.leftMargin: 8 }
-                BwButton { objectName: "settings-app-info"; Layout.fillWidth: true; Layout.leftMargin: 12; text: "App Info";
+                StitchButton { objectName: "settings-app-info"; Layout.fillWidth: true; Layout.leftMargin: 12; text: "App Info";
                     primary: root.page === "publishing"; onClicked: root.page = "publishing" }
-                BwButton { objectName: "settings-android"; Layout.fillWidth: true; Layout.leftMargin: 12; text: "Android";
+                StitchButton { objectName: "settings-android"; Layout.fillWidth: true; Layout.leftMargin: 12; text: "Android";
                     primary: root.page === "android"; onClicked: root.page = "android" }
                 Item { Layout.fillHeight: true }
             }

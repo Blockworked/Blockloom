@@ -5,7 +5,7 @@ import com.blockworked.Blockstitch 1.0
 // A path box an asset dragged out of the tray can land on. While an asset it
 // would take is in flight it shows its outline, so you can see where a file
 // is allowed to go before you get there.
-BwTextField {
+StitchTextField {
     id: root
     required property var app
     property string value: ""
@@ -29,7 +29,7 @@ BwTextField {
         width: 16; height: 16; anchors.left: parent.left; anchors.leftMargin: 10; anchors.verticalCenter: parent.verticalCenter
     }
     background: Rectangle {
-        radius: 5; color: root.enabled ? Theme.field : "#27282a"
+        radius: 5; color: root.enabled ? Theme.field : Theme.panel
         border.color: root.ready ? Theme.accent : (root.activeFocus ? Theme.accent : Theme.border)
         border.width: root.ready ? 2 : (root.activeFocus ? 1.5 : 1)
     }

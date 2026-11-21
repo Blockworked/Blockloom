@@ -92,7 +92,7 @@ Rectangle {
                     selectByKeyboard: true
                     persistentSelection: true
                 }
-                BwButton {
+                StitchButton {
                     visible: path.length > 0
                     flat: true; implicitHeight: 24; font.pixelSize: 11
                     text: "Open script"

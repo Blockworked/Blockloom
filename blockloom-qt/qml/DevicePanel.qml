@@ -94,7 +94,7 @@ ColumnLayout {
                 text: !root.connected ? (root.device ? "Device unavailable" : "No device selected") : root.watching ? "Connecting to screen..." : "Preview paused"
                 color: Theme.text; font.pixelSize: 14
             }
-            BwButton {
+            StitchButton {
                 objectName: "showScreenButton"
                 Layout.alignment: Qt.AlignHCenter; visible: root.connected && !root.watching
                 text: "Show screen"; iconName: "monitor"; onClicked: root.startWatching()

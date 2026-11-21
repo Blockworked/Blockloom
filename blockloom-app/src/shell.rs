@@ -2766,6 +2766,11 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 ty: "block object {\"id\", \"type\", ...}",
                 required: true,
             },
+            ArgSpec {
+                name: "targetY",
+                ty: "number",
+                required: false,
+            },
         ],
     },
     CommandSpec {
@@ -3036,6 +3041,11 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 ty: "[{index, slot?}] address",
                 required: true,
             },
+            ArgSpec {
+                name: "targetY",
+                ty: "number",
+                required: false,
+            },
         ],
     },
     CommandSpec {
@@ -3063,6 +3073,11 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
                 name: "targetPath",
                 ty: "[{index, slot?}] address",
                 required: true,
+            },
+            ArgSpec {
+                name: "targetY",
+                ty: "number",
+                required: false,
             },
         ],
     },

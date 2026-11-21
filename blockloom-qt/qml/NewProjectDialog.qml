@@ -6,7 +6,7 @@ import com.blockworked.Blockstitch 1.0
 
 // Naming a new project, choosing where it goes and which dimension it is.
 // The folder name is not a field: the app names the folder after the project.
-BwDialog {
+StitchDialog {
     id: root
     required property var app
     property string mode: "TwoD"
@@ -46,19 +46,19 @@ BwDialog {
         width: 460; spacing: 8
         Text { visible: root.error.length > 0; text: root.error; color: Theme.danger; Layout.fillWidth: true; wrapMode: Text.WordWrap }
         Text { text: "Name"; color: Theme.textDim; font.pixelSize: 12 }
-        BwTextField { id: nameField; Layout.fillWidth: true; placeholderText: "My Game"; onAccepted: root.submit() }
+        StitchTextField { id: nameField; Layout.fillWidth: true; placeholderText: "My Game"; onAccepted: root.submit() }
         Text { text: "Where to keep it"; color: Theme.textDim; font.pixelSize: 12 }
         RowLayout {
             Layout.fillWidth: true
-            BwTextField { id: locationField; Layout.fillWidth: true; onAccepted: root.submit() }
+            StitchTextField { id: locationField; Layout.fillWidth: true; onAccepted: root.submit() }
             IconButton { iconName: "folder-open"; tip: "Browse for a folder"; flat: false; implicitWidth: 34; implicitHeight: 34; onClicked: browse.open() }
         }
         Text { Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; color: Theme.textDim; font.pixelSize: 12; text: "The project gets a folder of its own: " + root.fullPath }
         Text { text: "Dimension"; color: Theme.textDim; font.pixelSize: 12 }
         RowLayout {
             spacing: 6
-            BwButton { text: "2D"; iconName: "square"; primary: root.mode === "TwoD"; onClicked: root.mode = "TwoD" }
-            BwButton { text: "3D"; iconName: "box"; primary: root.mode === "ThreeD"; onClicked: root.mode = "ThreeD" }
+            StitchButton { text: "2D"; iconName: "square"; primary: root.mode === "TwoD"; onClicked: root.mode = "TwoD" }
+            StitchButton { text: "3D"; iconName: "box"; primary: root.mode === "ThreeD"; onClicked: root.mode = "ThreeD" }
         }
         Text {
             Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
@@ -67,8 +67,8 @@ BwDialog {
         Text { text: "Start from"; color: Theme.textDim; font.pixelSize: 12 }
         RowLayout {
             spacing: 6
-            BwButton { objectName: "sample-empty"; text: "Empty"; primary: root.sample === ""; onClicked: root.sample = "" }
-            BwButton { objectName: "sample-physics"; text: "Physics playground"; primary: root.sample === "physics-playground"; onClicked: root.sample = "physics-playground" }
+            StitchButton { objectName: "sample-empty"; text: "Empty"; primary: root.sample === ""; onClicked: root.sample = "" }
+            StitchButton { objectName: "sample-physics"; text: "Physics playground"; primary: root.sample === "physics-playground"; onClicked: root.sample = "physics-playground" }
         }
         Text {
             visible: root.sample !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
@@ -76,8 +76,8 @@ BwDialog {
         }
         RowLayout {
             Layout.alignment: Qt.AlignRight; Layout.topMargin: 8; spacing: 8
-            BwButton { text: "Cancel"; onClicked: root.close() }
-            BwButton { text: "Create"; primary: true; enabled: !root.busy; onClicked: root.submit() }
+            StitchButton { text: "Cancel"; onClicked: root.close() }
+            StitchButton { text: "Create"; primary: true; enabled: !root.busy; onClicked: root.submit() }
         }
     }
     FolderDialog {

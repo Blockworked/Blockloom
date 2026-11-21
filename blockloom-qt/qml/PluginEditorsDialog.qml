@@ -6,7 +6,7 @@ import com.blockworked.Blockstitch 1.0
 // Editor screens installed plugins ship as QML. That code runs with the
 // editor's own access, so a plugin's modules load only after the user trusts
 // that exact package here; an update asks again. Nothing else loads them.
-BwDialog {
+StitchDialog {
     id: root
     required property var app
     // The module showing: {plugin, pluginName, title, file}, or null for the list.
@@ -81,13 +81,13 @@ BwDialog {
                             RowLayout {
                                 Layout.fillWidth: true
                                 Text { Layout.fillWidth: true; text: entry.modelData.pluginName; color: Theme.text; font.pixelSize: 14; font.bold: true; elide: Text.ElideRight }
-                                BwButton {
+                                StitchButton {
                                     objectName: "editor-trust-" + entry.index
                                     visible: !entry.modelData.trusted
                                     text: entry.modelData.changed ? "Trust the new version" : "Trust"
                                     onClicked: root.trust(entry.modelData.plugin)
                                 }
-                                BwButton {
+                                StitchButton {
                                     objectName: "editor-revoke-" + entry.index
                                     visible: entry.modelData.trusted
                                     text: "Stop trusting"
@@ -96,7 +96,7 @@ BwDialog {
                             }
                             Text {
                                 visible: !entry.modelData.trusted
-                                Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#e0b060"; font.pixelSize: 12
+                                Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.warning; font.pixelSize: 12
                                 text: (entry.modelData.changed ? "This plugin changed since you trusted it. " : "")
                                     + "Its screens run code inside Blockloom with the same access you have. Trust it only if you trust where it came from."
                             }
@@ -110,7 +110,7 @@ BwDialog {
                                 Layout.fillWidth: true; spacing: 6
                                 Repeater {
                                     model: entry.modelData.modules
-                                    delegate: BwButton {
+                                    delegate: StitchButton {
                                         required property var modelData
                                         objectName: "editor-open-" + modelData.title
                                         text: modelData.title
@@ -139,12 +139,12 @@ BwDialog {
             }
             onStatusChanged: if (status === Loader.Error) root.error = "The module could not be loaded. See the log for why."
         }
-        Text { visible: root.error !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#ff8a8a"; font.pixelSize: 12; text: root.error }
+        Text { visible: root.error !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.danger; font.pixelSize: 12; text: root.error }
         RowLayout {
             Layout.fillWidth: true
-            BwButton { visible: !!root.live; text: "Back"; onClicked: root.showing = null }
+            StitchButton { visible: !!root.live; text: "Back"; onClicked: root.showing = null }
             Item { Layout.fillWidth: true }
-            BwButton { text: "Close"; onClicked: root.close() }
+            StitchButton { text: "Close"; onClicked: root.close() }
         }
     }
 }

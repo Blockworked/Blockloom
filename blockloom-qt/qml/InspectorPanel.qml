@@ -519,7 +519,7 @@ Rectangle {
                     width: scroll.availableWidth - 16; x: 8; spacing: 6
                     InspectorRow {
                         label: "Name"; Layout.fillWidth: true
-                        BwTextField {
+                        StitchTextField {
                             Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12
                             text: root.actor ? root.actor.name : ""
                             onEditingFinished: if (root.actor && text !== root.actor.name) root.app.invoke("rename_actor", { actorId: root.actor.id, name: text })
@@ -694,7 +694,7 @@ Rectangle {
                 Repeater { model: 3; delegate: NumberField { required property int index; value: look.v.scale ? look.v.scale[index] : 1; fallback: 1
                     onCommitted: n => root.writeVisual(look.c, { scale: root.withIndex(look.v.scale || [1, 1, 1], index, n) }) } } }
             InspectorRow { visible: look.v.shape === "Model"; label: "Animation"; Layout.fillWidth: true
-                BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "First in the file"; text: look.v.animation || ""
+                StitchTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "First in the file"; text: look.v.animation || ""
                     onEditingFinished: if (text.trim() !== (look.v.animation || "")) root.writeVisual(look.c, { animation: text.trim() }) } }
             Text { visible: look.v.shape === "Model"; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: (look.v.path ? "" : "No file yet, so the actor shows as its box. ")
@@ -715,7 +715,7 @@ Rectangle {
                 InspectorRow { label: "Solid"; Layout.fillWidth: true
                     SwitchField { value: look.t.solid; onToggled: on => root.writeTilemap(look.c, { solid: on }) } Item { Layout.fillWidth: true } }
                 InspectorRow { visible: look.t.solid; label: "Passable"; Layout.fillWidth: true
-                    BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Tiles bodies pass, e.g. 3, 7"
+                    StitchTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Tiles bodies pass, e.g. 3, 7"
                         text: look.t.passable.join(", ")
                         onEditingFinished: { const next = root.tileList(text); if (next.join(",") !== look.t.passable.join(",")) root.writeTilemap(look.c, { passable: next }); else text = look.t.passable.join(", "); } } }
                 Repeater {
@@ -726,14 +726,14 @@ Rectangle {
                         label: "Animated"; Layout.fillWidth: true
                         NumberField { Layout.maximumWidth: 48; value: anim.tile; fallback: 0; ToolTip.visible: hovered; ToolTip.text: "The painted tile that animates"
                             onCommitted: n => root.writeTileAnimation(look.c, index, { tile: Math.max(0, Math.round(n)) }) }
-                        BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Frames, e.g. 4, 5, 6"; text: anim.frames.join(", ")
+                        StitchTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Frames, e.g. 4, 5, 6"; text: anim.frames.join(", ")
                             onEditingFinished: { const next = root.tileList(text); if (next.join(",") !== anim.frames.join(",")) root.writeTileAnimation(look.c, index, { frames: next }); else text = anim.frames.join(", "); } }
                         NumberField { Layout.maximumWidth: 48; value: anim.fps; fallback: 8; ToolTip.visible: hovered; ToolTip.text: "Frames a second"
                             onCommitted: n => root.writeTileAnimation(look.c, index, { fps: n }) }
                         IconButton { iconName: "x"; tip: "Stop animating this tile"; implicitWidth: 24; implicitHeight: 24; onClicked: root.writeTileAnimation(look.c, index, null) }
                     }
                 }
-                BwButton {
+                StitchButton {
                     iconName: "plus"; text: "Animate a tile"; implicitHeight: 28; font.pixelSize: 12
                     onClicked: {
                         const list = root.copy(look.t.animations);
@@ -766,7 +766,7 @@ Rectangle {
                 }
                 InspectorRow { id: autotileRow; label: "Add autotile"; Layout.fillWidth: true
                     property string mode: "Edge"
-                    BwTextField { id: autotileName; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Name, e.g. ground" }
+                    StitchTextField { id: autotileName; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Name, e.g. ground" }
                     ChoiceField { Layout.maximumWidth: 70; options: [{ value: "Edge", label: "16" }, { value: "Blob", label: "47" }]; value: autotileRow.mode; onChosen: v => autotileRow.mode = v
                         ToolTip.visible: hovered; ToolTip.text: "16 edge cases, or 47 blob cases with corners" }
                     NumberField { id: autotileFirst; Layout.maximumWidth: 48; value: 0; fallback: 0; ToolTip.visible: hovered; ToolTip.text: "The strip's first sheet tile" }
@@ -787,7 +787,7 @@ Rectangle {
                         IconButton { iconName: "x"; tip: "Stop marking this tile"; implicitWidth: 24; implicitHeight: 24; onClicked: root.writeRegion(look.c, index, null) }
                     }
                 }
-                BwButton {
+                StitchButton {
                     iconName: "plus"; text: "Mark a region tile"; implicitHeight: 28; font.pixelSize: 12
                     onClicked: {
                         const list = root.copy(look.t.regions);
@@ -812,7 +812,7 @@ Rectangle {
                                 required property int index
                                 readonly property var modelData: look.t.tiles[index]
                                 width: 18; height: 18; radius: 2
-                                color: modelData >= 0 ? "#2b4a6b" : Theme.field; border.color: Theme.borderSoft
+                                color: modelData >= 0 ? Theme.selection : Theme.field; border.color: Theme.borderSoft
                                 Text { anchors.centerIn: parent; text: modelData >= 0 ? modelData : ""; color: Theme.text; font.pixelSize: 9 }
                                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.paintAt(look.c, index) }
                             }
@@ -1069,10 +1069,10 @@ Rectangle {
             }
             AssetField { app: root.app; accept: ["script"]; value: c.path; Layout.fillWidth: true; onCommitted: p => root.write(c.path, { component: "Script", path: p }) }
             RowLayout {
-                BwButton { text: "Edit"; iconName: "file-code"; implicitHeight: 30; onClicked: scriptDialog.openFor(root.actor, c.path) }
-                BwButton { text: "Check"; implicitHeight: 30; onClicked: root.app.invoke("check_script", { actorId: root.actor.id, path: c.path }) }
-                BwButton { visible: scriptIndex > 0; text: "Up"; implicitHeight: 30; onClicked: root.app.invoke("move_script", { actorId: root.actor.id, path: c.path, index: scriptIndex - 1 }) }
-                BwButton { visible: scriptIndex >= 0 && scriptIndex < scriptCount - 1; text: "Down"; implicitHeight: 30; onClicked: root.app.invoke("move_script", { actorId: root.actor.id, path: c.path, index: scriptIndex + 1 }) }
+                StitchButton { text: "Edit"; iconName: "file-code"; implicitHeight: 30; onClicked: scriptDialog.openFor(root.actor, c.path) }
+                StitchButton { text: "Check"; implicitHeight: 30; onClicked: root.app.invoke("check_script", { actorId: root.actor.id, path: c.path }) }
+                StitchButton { visible: scriptIndex > 0; text: "Up"; implicitHeight: 30; onClicked: root.app.invoke("move_script", { actorId: root.actor.id, path: c.path, index: scriptIndex - 1 }) }
+                StitchButton { visible: scriptIndex >= 0 && scriptIndex < scriptCount - 1; text: "Down"; implicitHeight: 30; onClicked: root.app.invoke("move_script", { actorId: root.actor.id, path: c.path, index: scriptIndex + 1 }) }
             }
             Text { visible: scriptCount > 1; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "Script " + (scriptIndex + 1) + " of " + scriptCount + ": `start` runs top to bottom." }
@@ -1152,7 +1152,7 @@ Rectangle {
                 Component.onCompleted: if (active) setSource(root.app.toFileUrl(plug.section.file), { host: sectionHost })
                 onStatusChanged: if (status === Loader.Error) plug.sectionFailed = true
             }
-            BwButton {
+            StitchButton {
                 visible: plug.drawn && !!plug.t && plug.c.record.schema_version === plug.t.version
                 implicitHeight: 24; font.pixelSize: 11
                 text: plug.rawFields ? "Hide fields" : "Fields"
@@ -1173,22 +1173,22 @@ Rectangle {
             readonly property var c: parent.c
             spacing: 6
             InspectorRow { label: "Name"; Layout.fillWidth: true
-                BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; text: custom.c.name; onEditingFinished: if (text !== custom.c.name) root.writeCustom(custom.c, { name: text }) } }
+                StitchTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; text: custom.c.name; onEditingFinished: if (text !== custom.c.name) root.writeCustom(custom.c, { name: text }) } }
             Repeater {
                 model: custom.c.fields.length
                 delegate: RowLayout {
                     required property int index
                     readonly property var modelData: custom.c.fields[index] || { name: "", value: { value: "" } }
                     Layout.fillWidth: true; spacing: 4
-                    BwTextField { Layout.preferredWidth: 90; implicitHeight: 30; font.pixelSize: 12; text: modelData.name
+                    StitchTextField { Layout.preferredWidth: 90; implicitHeight: 30; font.pixelSize: 12; text: modelData.name
                         onEditingFinished: if (text !== modelData.name) { const f = root.copy(custom.c.fields); f[index].name = text; root.writeCustom(custom.c, { fields: f }); } }
-                    BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; text: String(modelData.value.value)
+                    StitchTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; text: String(modelData.value.value)
                         onEditingFinished: if (text !== String(modelData.value.value)) { const f = root.copy(custom.c.fields); f[index].value = root.parsedValue(text); root.writeCustom(custom.c, { fields: f }); } }
                     IconButton { iconName: "x"; tip: "Remove this field"; implicitWidth: 24; implicitHeight: 24
                         onClicked: { const f = root.copy(custom.c.fields); f.splice(index, 1); root.writeCustom(custom.c, { fields: f }); } }
                 }
             }
-            BwButton {
+            StitchButton {
                 iconName: "plus"; text: "Add field"; implicitHeight: 28; font.pixelSize: 12
                 onClicked: {
                     const f = root.copy(custom.c.fields);
@@ -1226,7 +1226,7 @@ Rectangle {
             }
             InspectorRow { visible: sp.source !== ""; label: "Bump"; Layout.fillWidth: true
                 NumberField { value: sp.bumpStrength; fallback: 4; onCommitted: n => { sp.bumpStrength = Math.min(Math.max(n, 0), 32); } }
-                BwButton { text: "Bake normal map"
+                StitchButton { text: "Bake normal map"
                     onClicked: root.app.invoke("bake_normal_map", { path: sp.source, strength: sp.bumpStrength },
                         out => { sp.bumpPath = out; sp.refreshBump(); }, e => root.app.invoke("push_log", { kind: "error", text: String(e) })) } }
             Item {
@@ -1282,10 +1282,10 @@ Rectangle {
                         onCommitted: p => root.writeShader(mat.c, { source: p.trim() }) } }
                 RowLayout {
                     Layout.leftMargin: 84; spacing: 4
-                    BwButton { text: "Export WESL"; iconName: "file-code"; implicitHeight: 28; font.pixelSize: 12
+                    StitchButton { text: "Export WESL"; iconName: "file-code"; implicitHeight: 28; font.pixelSize: 12
                         enabled: !(mat.m.shader && mat.m.shader.source)
                         onClicked: root.app.invoke("export_shader", { actorId: root.actor.id }) }
-                    BwButton { text: "Check"; implicitHeight: 28; font.pixelSize: 12
+                    StitchButton { text: "Check"; implicitHeight: 28; font.pixelSize: 12
                         enabled: !!(mat.m.shader && mat.m.shader.source)
                         onClicked: root.app.invoke("check_shader", { actorId: root.actor.id }) }
                 }
@@ -1388,7 +1388,7 @@ Rectangle {
             InspectorRow { label: "Safe for (s)"; Layout.fillWidth: true
                 NumberField { value: hz.h.invulnerability; fallback: 1; onCommitted: n => root.writeHazard(hz.c, { invulnerability: Math.max(0, n) }) } }
             InspectorRow { label: "Message"; Layout.fillWidth: true
-                BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Broadcast when it hurts"; text: hz.h.message
+                StitchTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Broadcast when it hurts"; text: hz.h.message
                     onEditingFinished: if (text !== hz.h.message) root.writeHazard(hz.c, { message: text }) } }
         }
     }
@@ -1520,12 +1520,12 @@ Rectangle {
                 NumberField { value: ter.talus; fallback: 35; onCommitted: n => { ter.talus = n; if (ter.previewing) ter.preview(); } } }
             RowLayout {
                 Layout.leftMargin: 84; spacing: 4
-                BwButton { text: ter.previewing ? "Clear preview" : "Preview"; implicitHeight: 28; font.pixelSize: 12
+                StitchButton { text: ter.previewing ? "Clear preview" : "Preview"; implicitHeight: 28; font.pixelSize: 12
                     onClicked: {
                         if (ter.previewing) { ter.previewing = false; root.app.invoke("preview_terrain_erosion", { actorId: root.actor.id, erosion: null }); }
                         else ter.preview();
                     } }
-                BwButton { text: "Apply"; implicitHeight: 28; font.pixelSize: 12
+                StitchButton { text: "Apply"; implicitHeight: 28; font.pixelSize: 12
                     onClicked: { ter.previewing = false; root.app.invoke("erode_terrain", { actorId: root.actor.id, erosion: ter.erosion() }); } }
             }
 
@@ -1539,7 +1539,7 @@ Rectangle {
                     Layout.fillWidth: true; spacing: 4
                     RowLayout {
                         Layout.fillWidth: true; spacing: 4
-                        BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "Layer"
+                        StitchTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "Layer"
                             onEditingFinished: root.writeTerrainItem(ter.c, "layers", index, { name: text.trim() }) }
                         ColorField { value: modelData.color; onPicked: col => root.writeTerrainItem(ter.c, "layers", index, { color: col }) }
                         IconButton { visible: ter.t.layers.length > 1; iconName: "x"; tip: "Remove this layer"; implicitWidth: 24; implicitHeight: 24
@@ -1565,7 +1565,7 @@ Rectangle {
                         NumberField { value: r.softness; fallback: 0.3; onCommitted: n => root.writeTerrainItem(ter.c, "layers", index, { rules: Object.assign(root.copy(r), { softness: n }) }) } }
                 }
             }
-            BwButton { visible: ter.t.layers.length < 4; iconName: "plus"; text: "Add layer"; implicitHeight: 28; font.pixelSize: 12
+            StitchButton { visible: ter.t.layers.length < 4; iconName: "plus"; text: "Add layer"; implicitHeight: 28; font.pixelSize: 12
                 onClicked: { const l = root.copy(ter.t.layers); l.push(root.newLayer(l.length)); root.writeTerrain(ter.c, { layers: l }); } }
 
             Text { text: "Grass"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
@@ -1577,7 +1577,7 @@ Rectangle {
                     Layout.fillWidth: true; spacing: 4
                     RowLayout {
                         Layout.fillWidth: true; spacing: 4
-                        BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "Grass"
+                        StitchTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "Grass"
                             onEditingFinished: root.writeTerrainItem(ter.c, "grass", index, { name: text.trim() }) }
                         IconButton { iconName: "x"; tip: "Remove this grass"; implicitWidth: 24; implicitHeight: 24
                             onClicked: { const l = root.copy(ter.t.grass); l.splice(index, 1); root.writeTerrain(ter.c, { grass: l }); } }
@@ -1605,7 +1605,7 @@ Rectangle {
                         NumberField { value: modelData.max_slope; fallback: 40; onCommitted: n => root.writeTerrainItem(ter.c, "grass", index, { max_slope: n }) } }
                 }
             }
-            BwButton { iconName: "plus"; text: "Add grass"; implicitHeight: 28; font.pixelSize: 12
+            StitchButton { iconName: "plus"; text: "Add grass"; implicitHeight: 28; font.pixelSize: 12
                 onClicked: { const l = root.copy(ter.t.grass); l.push({ name: "Grass", layer: 0, density: 16, height: [0.25, 0.6], width: 0.05, base_color: "#2E4A1B", tip_color: "#93AE4F",
                     variation: 0.2, stiffness: 0.5, wind: 1, max_slope: 40, fade_start: 30, cull_distance: 60, density_map: "", seed: l.length + 1 }); root.writeTerrain(ter.c, { grass: l }); } }
 
@@ -1618,7 +1618,7 @@ Rectangle {
                     Layout.fillWidth: true; spacing: 4
                     RowLayout {
                         Layout.fillWidth: true; spacing: 4
-                        BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "Trees"
+                        StitchTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "Trees"
                             onEditingFinished: root.writeTerrainItem(ter.c, "scatter", index, { name: text.trim() }) }
                         IconButton { iconName: "x"; tip: "Remove this scatter layer"; implicitWidth: 24; implicitHeight: 24
                             onClicked: { const l = root.copy(ter.t.scatter); l.splice(index, 1); root.writeTerrain(ter.c, { scatter: l }); } }
@@ -1661,7 +1661,7 @@ Rectangle {
                         SwitchField { value: modelData.avoid_actors; onToggled: on => root.writeTerrainItem(ter.c, "scatter", index, { avoid_actors: on }) } }
                 }
             }
-            BwButton { iconName: "plus"; text: "Add trees"; implicitHeight: 28; font.pixelSize: 12
+            StitchButton { iconName: "plus"; text: "Add trees"; implicitHeight: 28; font.pixelSize: 12
                 onClicked: { const l = root.copy(ter.t.scatter); l.push({ name: "Trees", shape: "Tree", seed: l.length + 1 }); root.writeTerrain(ter.c, { scatter: l }); } }
 
             Text { text: "Texturing"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
@@ -1706,7 +1706,7 @@ Rectangle {
                 SwitchField { value: pr.p.auto_bake; onToggled: on => root.writeProbe(pr.c, { auto_bake: on }) } Item { Layout.fillWidth: true } }
             RowLayout {
                 Layout.fillWidth: true; spacing: 8
-                BwButton { text: "Bake"; iconName: "aperture"; implicitHeight: 30; enabled: root.is3d
+                StitchButton { text: "Bake"; iconName: "aperture"; implicitHeight: 30; enabled: root.is3d
                     onClicked: root.app.invoke("bake_probes", { actors: [root.actor.id] }, () => bakeCheck.restart()) }
                 Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 11
                     color: pr.status && pr.status.dirty ? Theme.warning : Theme.textDim
@@ -1974,7 +1974,7 @@ Rectangle {
                     required property var modelData
                     readonly property var o: root.overrideOf(vo.v, modelData.key)
                     Layout.fillWidth: true; spacing: 4
-                    BwCheckBox { Layout.preferredWidth: 112; text: prop.modelData.label; checked: prop.o.on
+                    StitchCheckBox { Layout.preferredWidth: 112; text: prop.modelData.label; checked: prop.o.on
                         onToggled: root.writeOverride(vo.c, prop.modelData.key, { on: checked }) }
                     Loader {
                         Layout.fillWidth: true
@@ -2075,10 +2075,10 @@ Rectangle {
             InspectorRow { label: "Rig"; Layout.fillWidth: true
                 AssetField { app: root.app; accept: ["text"]; value: an.a.rig || ""; placeholderText: "Spine or DragonBones .json (optional)"; onCommitted: p => root.writeAnimation(an.c, { rig: p }) } }
             InspectorRow { visible: (an.a.rig || "") !== ""; label: "Skin"; Layout.fillWidth: true
-                BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "default"; text: an.a.skin || ""
+                StitchTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "default"; text: an.a.skin || ""
                     onEditingFinished: if (text.trim() !== (an.a.skin || "")) root.writeAnimation(an.c, { skin: text.trim() }) } }
             InspectorRow { visible: (an.a.rig || "") !== ""; label: "Slot tints"; Layout.fillWidth: true
-                BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "cape=#FF4C4C, hand=#FFFFFF"; text: root.formatTints(an.a.slot_tints)
+                StitchTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "cape=#FF4C4C, hand=#FFFFFF"; text: root.formatTints(an.a.slot_tints)
                     onEditingFinished: root.writeAnimation(an.c, { slot_tints: root.parseTints(text) }) } }
             InspectorRow { label: "Starts in"; Layout.fillWidth: true
                 ChoiceField { Layout.fillWidth: true; options: [{ value: "", label: "nothing" }].concat(an.a.states.map(x => ({ value: x.name, label: x.name }))); value: an.a.initial || ""
@@ -2094,7 +2094,7 @@ Rectangle {
                     Layout.fillWidth: true; spacing: 4
                     RowLayout {
                         Layout.fillWidth: true; spacing: 4
-                        BwTextField { Layout.preferredWidth: 90; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "Clip"
+                        StitchTextField { Layout.preferredWidth: 90; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "Clip"
                             onEditingFinished: { const l = root.copy(an.a.clips); l[index].name = text.trim(); root.writeAnimation(an.c, { clips: l }); } }
                         NumberField { Layout.preferredWidth: 56; value: modelData.fps; fallback: 8; onCommitted: n => { const l = root.copy(an.a.clips); l[index].fps = Math.min(60, Math.max(0.1, n)); root.writeAnimation(an.c, { clips: l }); } }
                         ChoiceField { Layout.preferredWidth: 96; options: Blocks.loopModeOptions; value: modelData.loop_mode || "Once"
@@ -2102,7 +2102,7 @@ Rectangle {
                         IconButton { iconName: "x"; tip: "Remove this clip"; implicitWidth: 24; implicitHeight: 24
                             onClicked: { const l = root.copy(an.a.clips); l.splice(index, 1); root.writeAnimation(an.c, { clips: l }); } }
                     }
-                    BwTextField { visible: !modelData.sheet; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Frames, one asset path per line or comma";
+                    StitchTextField { visible: !modelData.sheet; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Frames, one asset path per line or comma";
                         text: (modelData.frames || []).join(", ")
                         onEditingFinished: { const l = root.copy(an.a.clips); l[index].frames = text.split(/[\n,]+/).map(s => s.trim()).filter(s => s !== ""); root.writeAnimation(an.c, { clips: l }); } }
                     AssetField { Layout.fillWidth: true; app: root.app; accept: ["image"]; value: modelData.sheet ? modelData.sheet.image : ""; placeholderText: "Or drag a sprite sheet here"
@@ -2120,10 +2120,10 @@ Rectangle {
                         NumberField { Layout.preferredWidth: 44; value: modelData.sheet ? modelData.sheet.count : 1; fallback: 1; onCommitted: n => root.writeClip(an, index, { sheet: Object.assign({}, modelData.sheet, { count: Math.max(1, Math.round(n)) }) }) }
                     }
                     FlipbookStrip { Layout.fillWidth: true; app: root.app; clip: modelData; hitbox: root.hitboxOf() }
-                    BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Seconds per frame, e.g. 0.1, 0.3 (blank uses fps)"
+                    StitchTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Seconds per frame, e.g. 0.1, 0.3 (blank uses fps)"
                         text: (modelData.durations || []).join(", ")
                         onEditingFinished: root.writeClip(an, index, { durations: root.parseNumbers(text) }) }
-                    BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Markers, frame:name, e.g. 2:step, 5:step"
+                    StitchTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Markers, frame:name, e.g. 2:step, 5:step"
                         text: root.formatMarkers(modelData.markers)
                         onEditingFinished: root.writeClip(an, index, { markers: root.parseMarkers(text) }) }
                     RowLayout {
@@ -2131,12 +2131,12 @@ Rectangle {
                         Text { text: "moves"; color: Theme.textDim; font.pixelSize: 11 }
                         NumberField { Layout.preferredWidth: 52; value: (modelData.motion || [0, 0])[0]; fallback: 0; onCommitted: n => root.writeClip(an, index, { motion: [n, (modelData.motion || [0, 0])[1]] }) }
                         NumberField { Layout.preferredWidth: 52; value: (modelData.motion || [0, 0])[1]; fallback: 0; onCommitted: n => root.writeClip(an, index, { motion: [(modelData.motion || [0, 0])[0], n] }) }
-                        BwTextField { visible: (an.a.rig || "") !== ""; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Rig animation (clip name)"; text: modelData.rig_animation || ""
+                        StitchTextField { visible: (an.a.rig || "") !== ""; Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Rig animation (clip name)"; text: modelData.rig_animation || ""
                             onEditingFinished: root.writeClip(an, index, { rig_animation: text.trim() }) }
                     }
                 }
             }
-            BwButton {
+            StitchButton {
                 iconName: "plus"; text: "Add clip"; implicitHeight: 28; font.pixelSize: 12
                 onClicked: {
                     const l = root.copy(an.a.clips);
@@ -2156,17 +2156,17 @@ Rectangle {
                     Layout.fillWidth: true; spacing: 4
                   RowLayout {
                     Layout.fillWidth: true; spacing: 4
-                    BwTextField { Layout.preferredWidth: 80; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "State"
+                    StitchTextField { Layout.preferredWidth: 80; implicitHeight: 30; font.pixelSize: 12; text: modelData.name; placeholderText: "State"
                         onEditingFinished: { const l = root.copy(an.a.states); l[index].name = text.trim(); root.writeAnimation(an.c, { states: l }); } }
                     ChoiceField { Layout.fillWidth: true; options: [{ value: "", label: "clip…" }].concat(an.a.clips.map(x => ({ value: x.name, label: x.name }))); value: modelData.clip || ""
                         onChosen: v => { const l = root.copy(an.a.states); l[index].clip = v; root.writeAnimation(an.c, { states: l }); } }
                     NumberField { Layout.preferredWidth: 52; value: modelData.speed; fallback: 1; onCommitted: n => { const l = root.copy(an.a.states); l[index].speed = Math.min(8, Math.max(0, n)); root.writeAnimation(an.c, { states: l }); } }
-                    BwTextField { Layout.preferredWidth: 80; implicitHeight: 30; font.pixelSize: 12; text: modelData.next || ""; placeholderText: "Next state"
+                    StitchTextField { Layout.preferredWidth: 80; implicitHeight: 30; font.pixelSize: 12; text: modelData.next || ""; placeholderText: "Next state"
                         onEditingFinished: { const l = root.copy(an.a.states); l[index].next = text.trim(); root.writeAnimation(an.c, { states: l }); } }
                     IconButton { iconName: "x"; tip: "Remove this state"; implicitWidth: 24; implicitHeight: 24
                         onClicked: { const l = root.copy(an.a.states); l.splice(index, 1); root.writeAnimation(an.c, { states: l }); } }
                   }
-                    BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Transitions: run if speed > 2 blend 0.2; jump on trigger jump"
+                    StitchTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Transitions: run if speed > 2 blend 0.2; jump on trigger jump"
                         text: root.formatTransitions(modelData.transitions)
                         onEditingFinished: root.writeState(an, index, { transitions: root.parseTransitions(text) }) }
                     RowLayout {
@@ -2177,7 +2177,7 @@ Rectangle {
                     }
                 }
             }
-            BwButton {
+            StitchButton {
                 iconName: "plus"; text: "Add state"; implicitHeight: 28; font.pixelSize: 12
                 onClicked: {
                     const l = root.copy(an.a.states);

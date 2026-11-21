@@ -4,7 +4,7 @@ import com.blockworked.Blockstitch 1.0
 
 // A number box that commits on Enter or leaving it. `value` is what the
 // document holds; `committed(n)` says what was typed, already parsed.
-BwTextField {
+StitchTextField {
     id: root
     property var value: 0
     property real fallback: 0

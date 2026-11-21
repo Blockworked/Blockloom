@@ -3,7 +3,7 @@ import QtQuick.Controls
 import com.blockworked.Blockstitch 1.0
 
 // A square icon-only button with a tooltip.
-BwButton {
+StitchButton {
     id: control
     property string tip: ""
     text: ""

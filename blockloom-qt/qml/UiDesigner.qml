@@ -971,7 +971,7 @@ Item {
                 Label { text: "Hold Shift to bypass snapping" }
             }
             Rectangle {
-                id: stage; Layout.fillWidth: true; Layout.fillHeight: true; color: "#171a21"; clip: true
+                id: stage; Layout.fillWidth: true; Layout.fillHeight: true; color: Theme.canvas; clip: true
                 // Ctrl+wheel zooms at the pointer; the wheel pans (Shift for sideways); middle-drag pans.
                 WheelHandler {
                     objectName: "interfaceWheel"
@@ -1006,7 +1006,7 @@ Item {
                         width: measures === 0 ? stage.width : 18
                         height: measures === 0 ? 18 : stage.height
                         property int dragging: -1
-                        Rectangle { anchors.fill: parent; color: "#1d222c"; opacity: 0.92 }
+                        Rectangle { anchors.fill: parent; color: Theme.panel; opacity: 0.92 }
                         Repeater {
                             // A tick every 50 preview pixels, labelled every 100.
                             model: Math.ceil((ruler.measures === 0 ? root.previewWidth : root.previewHeight) / 50) + 1
@@ -1018,12 +1018,12 @@ Item {
                                 Rectangle {
                                     width: ruler.measures === 0 ? 1 : (index % 2 ? 6 : 12)
                                     height: ruler.measures === 0 ? (index % 2 ? 6 : 12) : 1
-                                    color: "#8892a6"
+                                    color: Theme.textDim
                                 }
                                 Label {
                                     visible: index % 2 === 0
                                     x: ruler.measures === 0 ? 3 : 1; y: ruler.measures === 0 ? 0 : 3
-                                    text: index * 50; font.pixelSize: 8; color: "#8892a6"
+                                    text: index * 50; font.pixelSize: 8; color: Theme.textDim
                                 }
                             }
                         }
@@ -1175,12 +1175,12 @@ Item {
                     Rectangle {
                         anchors.fill: parent
                         visible: !root.layoutReady && !root.gesture
-                        color: "#252d3a"
-                        Text { anchors.centerIn: parent; color: "white"; text: root.app.appState.running ? "Stop the game to edit the interface" : root.error ? "Preview unavailable" : "Rendering interface…" }
+                        color: Theme.panelRaised
+                        Text { anchors.centerIn: parent; color: Theme.text; text: root.app.appState.running ? "Stop the game to edit the interface" : root.error ? "Preview unavailable" : "Rendering interface..." }
                     }
                 }
             }
-            Label { text: root.error || "Drag to move/resize. Arrows nudge 1 px; Shift+arrows 10 px. Escape cancels. Parent layout controls flow widgets."; color: root.error ? "#ff8888" : Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: root.error || "Drag to move/resize. Arrows nudge 1 px; Shift+arrows 10 px. Escape cancels. Parent layout controls flow widgets."; color: root.error ? Theme.danger : Theme.textDim; wrapMode: Text.Wrap; Layout.fillWidth: true }
         }
         ScrollView {
             Layout.preferredWidth: 245; Layout.fillHeight: true
@@ -1439,7 +1439,7 @@ Item {
                         Rectangle {
                             id: strip
                             objectName: "interfaceTimeline" + index
-                            Layout.fillWidth: true; Layout.preferredHeight: 18; color: "#1d222c"; radius: 3
+                            Layout.fillWidth: true; Layout.preferredHeight: 18; color: Theme.field; radius: 3
                             readonly property real total: Math.max(0.05, ((root.document.animations || {})[animationPick.currentText] || {}).duration || 1)
                             Repeater {
                                 model: modelData.keys

@@ -4665,13 +4665,14 @@ pub(crate) fn add_instruction(
     strand_id: String,
     path: InstrPath,
     instruction: Instruction,
+    target_y: Option<i32>,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     push_undo(&mut s);
     let result = match graph_mut(&mut s) {
         Some(graph) => graph
             .insert_instruction(&strand_id, &path, instruction)
-            .map(|_| ()),
+            .map(|_| hold_top(graph, &strand_id, &path, target_y)),
         None => Ok(()),
     };
     auto_save(&s);
@@ -4888,17 +4889,32 @@ pub(crate) fn split_strand(
     result
 }
 
+/// Keeps a strand's top where a block prepended to it was dropped, so the
+/// stack grows upwards instead of pushing what was there down.
+fn hold_top(graph: &mut ActorGraph, strand_id: &str, path: &InstrPath, target_y: Option<i32>) {
+    if let Some(y) = target_y
+        && path.len() == 1
+        && path[0].index == 0
+        && let Some(strand) = graph.strand_mut(strand_id)
+    {
+        strand.y = y;
+    }
+}
+
 pub(crate) fn merge_strand(
     state: &SharedState,
     app: &AppHandle,
     dragged_id: String,
     target_id: String,
     path: InstrPath,
+    target_y: Option<i32>,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     push_undo(&mut s);
     let result = match graph_mut(&mut s) {
-        Some(graph) => graph.merge_strand(&dragged_id, &target_id, &path),
+        Some(graph) => graph
+            .merge_strand(&dragged_id, &target_id, &path)
+            .map(|_| hold_top(graph, &target_id, &path, target_y)),
         None => Ok(()),
     };
     auto_save(&s);
@@ -4916,11 +4932,14 @@ pub(crate) fn merge_tail(
     path: InstrPath,
     target_id: String,
     target_path: InstrPath,
+    target_y: Option<i32>,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     push_undo(&mut s);
     let result = match graph_mut(&mut s) {
-        Some(graph) => graph.merge_tail(&strand_id, &path, &target_id, &target_path),
+        Some(graph) => graph
+            .merge_tail(&strand_id, &path, &target_id, &target_path)
+            .map(|_| hold_top(graph, &target_id, &target_path, target_y)),
         None => Ok(()),
     };
     auto_save(&s);

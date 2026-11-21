@@ -116,7 +116,7 @@ Rectangle {
         visible: root.open
         RowLayout {
             Layout.fillWidth: true; Layout.margins: 8; spacing: 4
-            BwButton {
+            StitchButton {
                 id: sceneHeader
                 objectName: "hierarchy-scene"
                 readonly property var project: root.appState.project
@@ -138,7 +138,7 @@ Rectangle {
                 Component.onDestruction: { const i = root.app.assetTargets.indexOf(sceneHeader); if (i >= 0) root.app.assetTargets.splice(i, 1); }
                 ToolTip.text: ready ? "Drop to assign this scene's Lighting" : "Select scene components"
             }
-            BwComboBox {
+            StitchComboBox {
                 id: sceneBox
                 Layout.preferredWidth: 28; implicitHeight: 28; font.pixelSize: 12
                 readonly property var scenes: root.appState.project ? root.appState.project.scenes : []
@@ -165,7 +165,7 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true; Layout.margins: 8; spacing: 4
             SectionLabel { label: "Actors"; topPadding: 0; Layout.fillWidth: true }
-            BwComboBox {
+            StitchComboBox {
                 id: addBox
                 implicitWidth: 86; implicitHeight: 28; font.pixelSize: 12
                 readonly property var shapes: root.mode === "ThreeD"
@@ -181,14 +181,14 @@ Rectangle {
             Layout.fillWidth: true; Layout.fillHeight: true; clip: true
             model: root.rows
             ScrollBar.vertical: ScrollBar {}
-            Rectangle { anchors.fill: parent; z: -1; color: root.rootHover ? "#1a1597ff" : "transparent" }
+            Rectangle { anchors.fill: parent; z: -1; color: root.rootHover ? Theme.selection : "transparent" }
             delegate: Rectangle {
                 id: row
                 required property var modelData
                 readonly property string actorId: modelData.actor.id
                 readonly property bool selected: !root.app.inspectScene && !root.app.inspectedLighting && actorId === root.appState.selected_actor
                 width: list.width; height: 32
-                color: selected ? "#2b4a6b" : (rowHover.hovered ? "#303134" : "transparent")
+                color: selected ? Theme.selection : (rowHover.hovered ? Theme.hover : "transparent")
                 border.color: root.hintId === actorId && root.hintPos === "in" ? Theme.accent : "transparent"
                 Rectangle { visible: root.hintId === row.actorId && root.hintPos === "before"; anchors.top: parent.top; width: parent.width; height: 2; color: Theme.accent }
                 Rectangle { visible: root.hintId === row.actorId && root.hintPos === "after"; anchors.bottom: parent.bottom; width: parent.width; height: 2; color: Theme.accent }
@@ -227,7 +227,7 @@ Rectangle {
                     Rectangle {
                         readonly property string badge: root.wrongDimension(row.modelData.actor) ? "!" : root.bodyBadge(row.modelData.actor)
                         visible: badge.length > 0
-                        implicitWidth: 20; implicitHeight: 18; radius: 9; color: badge === "!" ? "#5a2a2a" : Theme.panelRaised; border.color: Theme.border
+                        implicitWidth: 20; implicitHeight: 18; radius: 5; color: badge === "!" ? Theme.dangerBackground : Theme.panelRaised; border.color: Theme.border
                         Text { anchors.centerIn: parent; text: parent.badge; color: parent.badge === "!" ? Theme.danger : Theme.textDim; font.pixelSize: 10; font.weight: Font.Bold }
                     }
                 }
@@ -255,7 +255,7 @@ Rectangle {
         iconName: "chevron-right"; tip: "Show the actors"
         onClicked: root.openRequested(true)
     }
-    BwDialog {
+    StitchDialog {
         id: removeDialog
         readonly property var actor: root.byId(root.appState.selected_actor)
         title: "Delete actor?"

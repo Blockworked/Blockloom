@@ -68,6 +68,9 @@ fn block(id: &str, shape: BlockShape, inputs: &[&str]) -> BlockDef {
             name: name.to_string(),
             value_type: Default::default(),
             default_value: None,
+            component: false,
+            multiline: false,
+            ui: None,
         });
     }
     BlockDef {

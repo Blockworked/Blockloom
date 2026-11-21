@@ -3,12 +3,35 @@
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDebug>
 #include <QtCore/QString>
+#include <QtGui/QFont>
+#include <QtGui/QFontDatabase>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QIcon>
 #include <QtGui/QWindow>
 
+// Blockworked's typeface (Atkinson Hyperlegible Next, OFL, res/fonts), so the
+// editor reads the same on every desktop. Falls back to the platform font.
+static void blockloom_use_bundled_font()
+{
+    static const char *const files[] = {"Regular", "Medium", "SemiBold", "Bold", "ExtraBold", "Italic"};
+    QString family;
+    for (const char *name : files) {
+        const int id = QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/AtkinsonHyperlegibleNext-%1.ttf").arg(QLatin1String(name)));
+        if (id >= 0 && family.isEmpty())
+            family = QFontDatabase::applicationFontFamilies(id).value(0);
+    }
+    if (family.isEmpty()) {
+        qWarning("Blockloom: bundled font missing from :/fonts, using the platform font");
+        return;
+    }
+    QFont font = QGuiApplication::font();
+    font.setFamilies({family});
+    QGuiApplication::setFont(font);
+}
+
 void blockloom_apply_window_icon()
 {
+    blockloom_use_bundled_font();
     // Displayed in about dialogs and used as a fallback identifier.
     QCoreApplication::setApplicationName(QStringLiteral("Blockloom"));
     QCoreApplication::setOrganizationName(QStringLiteral("Blockworked"));

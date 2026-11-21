@@ -118,7 +118,7 @@ ColumnLayout {
             IconButton { iconName: "x"; tip: "Remove this burst"; implicitWidth: 24; implicitHeight: 24; onClicked: root.setBurst(index, null) }
         }
     }
-    BwButton { text: "Add burst"; implicitHeight: 28; font.pixelSize: 12
+    StitchButton { text: "Add burst"; implicitHeight: 28; font.pixelSize: 12
         onClicked: root.edited({ bursts: root.copy(root.bursts).concat([{ time: 0, count: 16, cycles: 1, interval: 1 }]) }) }
 
     // ─── Update ──────────────────────────────────────────────────────────────
@@ -150,7 +150,7 @@ ColumnLayout {
             InspectorRow { visible: mod.m.module === "CurlNoise"; label: "Speed"; Layout.fillWidth: true
                 NumberField { value: mod.m.speed; fallback: 0.3; onCommitted: n => root.setModule(mod.index, { speed: n }) } }
             InspectorRow { visible: mod.m.module === "Attractor"; label: "Target"; Layout.fillWidth: true
-                BwTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Actor name (empty is me)"; text: mod.m.target || ""
+                StitchTextField { Layout.fillWidth: true; implicitHeight: 30; font.pixelSize: 12; placeholderText: "Actor name (empty is me)"; text: mod.m.target || ""
                     onEditingFinished: if (text.trim() !== (mod.m.target || "")) root.setModule(mod.index, { target: text.trim() }) } }
             InspectorRow { visible: mod.m.module === "Attractor"; label: "Radius"; Layout.fillWidth: true
                 NumberField { value: mod.m.radius; fallback: 0; ToolTip.visible: hovered; ToolTip.text: "0 pulls from anywhere"
@@ -234,7 +234,7 @@ ColumnLayout {
             IconButton { iconName: "x"; tip: "Remove this color"; implicitWidth: 24; implicitHeight: 24; onClicked: setKey(null) }
         }
     }
-    BwButton { text: "Add color"; implicitHeight: 28; font.pixelSize: 12
+    StitchButton { text: "Add color"; implicitHeight: 28; font.pixelSize: 12
         onClicked: {
             const keys = root.copy(root.r.color.keys);
             keys.push({ t: keys.length ? 1 : 0, color: "#FFFFFF", alpha: 1 });

@@ -5,7 +5,7 @@ import com.blockworked.Blockstitch 1.0
 // "Make a Block": blockstitch's shared definition editor, limited to what
 // the VM runs. A custom block here has no branches, so the editor offers
 // none (a definition that already has some keeps them).
-BwDialog {
+StitchDialog {
     id: root
     required property var app
     property var editTarget: null

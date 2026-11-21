@@ -185,7 +185,7 @@ RowLayout {
                         Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
                         text: root.booting ? "Emulator is booting..." : root.selectedDevice ? (root.selectedDevice.emulator ? "Android x86_64" : "Android ARM64") : "Select a connected device"
                     }
-                    BwButton {
+                    StitchButton {
                         objectName: "deployButton"
                         Layout.fillWidth: true; iconName: "play"; primary: true
                         text: root.busy ? "Deploying..." : "Build and run"
@@ -218,8 +218,8 @@ RowLayout {
                     Text { text: "Launch mode"; color: Theme.textDim; font.pixelSize: 11 }
                     RowLayout {
                         Layout.fillWidth: true; spacing: 0
-                        BwButton { Layout.fillWidth: true; text: "Embedded"; primary: root.embed; enabled: !root.locked; onClicked: root.embed = true }
-                        BwButton { Layout.fillWidth: true; text: "Window"; primary: !root.embed; enabled: !root.locked; onClicked: root.embed = false }
+                        StitchButton { Layout.fillWidth: true; text: "Embedded"; primary: root.embed; enabled: !root.locked; onClicked: root.embed = true }
+                        StitchButton { Layout.fillWidth: true; text: "Window"; primary: !root.embed; enabled: !root.locked; onClicked: root.embed = false }
                     }
                     Text {
                         objectName: "accelerationNote"
@@ -303,7 +303,7 @@ RowLayout {
         }
     }
     }
-    BwDialog {
+    StitchDialog {
         id: avdDialog
         objectName: "avdDialog"
         title: "Create virtual device"; implicitWidth: Math.min(380, root.width)
@@ -312,16 +312,16 @@ RowLayout {
         closePolicy: root.emuBusy ? Popup.NoAutoClose : Popup.CloseOnEscape | Popup.CloseOnPressOutside
         contentItem: ColumnLayout {
             spacing: 12
-            BwTextField { Layout.fillWidth: true; text: root.newAvd; placeholderText: "Device name"; enabled: !root.emuBusy; onTextChanged: root.newAvd = text; onAccepted: root.createAvd() }
+            StitchTextField { Layout.fillWidth: true; text: root.newAvd; placeholderText: "Device name"; enabled: !root.emuBusy; onTextChanged: root.newAvd = text; onAccepted: root.createAvd() }
             Text { visible: !!root.emulatorError; Layout.fillWidth: true; text: root.emulatorError; color: Theme.danger; wrapMode: Text.WrapAnywhere; font.pixelSize: 12 }
             RowLayout {
                 Layout.alignment: Qt.AlignRight
-                BwButton { text: "Cancel"; enabled: !root.emuBusy; onClicked: avdDialog.close() }
-                BwButton { text: root.emuBusy ? "Creating..." : "Create"; iconName: "plus"; primary: true; enabled: !root.locked && !!root.newAvd.trim(); onClicked: root.createAvd() }
+                StitchButton { text: "Cancel"; enabled: !root.emuBusy; onClicked: avdDialog.close() }
+                StitchButton { text: root.emuBusy ? "Creating..." : "Create"; iconName: "plus"; primary: true; enabled: !root.locked && !!root.newAvd.trim(); onClicked: root.createAvd() }
             }
         }
     }
-    BwDialog {
+    StitchDialog {
         id: manageDialog
         objectName: "manageAvdDialog"
         title: root.deletingAvd ? "Delete virtual device" : "Rename virtual device"
@@ -332,12 +332,12 @@ RowLayout {
         contentItem: ColumnLayout {
             spacing: 12
             Text { visible: root.deletingAvd; Layout.fillWidth: true; text: "Delete " + root.editAvd + " and all its saved data?"; color: Theme.text; wrapMode: Text.WordWrap; font.pixelSize: 12 }
-            BwTextField { visible: !root.deletingAvd; Layout.fillWidth: true; text: root.renamedAvd; enabled: !root.emuBusy; onTextChanged: root.renamedAvd = text; onAccepted: root.manageAvd() }
+            StitchTextField { visible: !root.deletingAvd; Layout.fillWidth: true; text: root.renamedAvd; enabled: !root.emuBusy; onTextChanged: root.renamedAvd = text; onAccepted: root.manageAvd() }
             Text { visible: !!root.emulatorError; Layout.fillWidth: true; text: root.emulatorError; color: Theme.danger; wrapMode: Text.WrapAnywhere; font.pixelSize: 12 }
             RowLayout {
                 Layout.alignment: Qt.AlignRight
-                BwButton { text: "Cancel"; enabled: !root.emuBusy; onClicked: manageDialog.close() }
-                BwButton { text: root.emuBusy ? "Updating..." : root.deletingAvd ? "Delete" : "Rename"; primary: true; enabled: !root.locked && (root.deletingAvd || !!root.renamedAvd.trim()); onClicked: root.manageAvd() }
+                StitchButton { text: "Cancel"; enabled: !root.emuBusy; onClicked: manageDialog.close() }
+                StitchButton { text: root.emuBusy ? "Updating..." : root.deletingAvd ? "Delete" : "Rename"; primary: true; enabled: !root.locked && (root.deletingAvd || !!root.renamedAvd.trim()); onClicked: root.manageAvd() }
             }
         }
     }

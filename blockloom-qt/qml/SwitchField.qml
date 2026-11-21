@@ -14,7 +14,7 @@ Rectangle {
     border.color: value ? Theme.accentHover : Theme.border
     Rectangle {
         x: root.value ? 19 : 2; y: 2
-        width: 17; height: 17; radius: 9; color: "#f4f4f5"
+        width: 17; height: 17; radius: 9; color: "white"
         Behavior on x { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
     }
     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.toggled(!root.value) }

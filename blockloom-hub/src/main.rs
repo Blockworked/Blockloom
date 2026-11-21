@@ -8,8 +8,9 @@ use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QUrl};
 fn main() {
     if std::env::var_os("QT_QUICK_CONTROLS_STYLE").is_none() {
         // No worker exists yet, so setting the environment is safe.
-        unsafe { std::env::set_var("QT_QUICK_CONTROLS_STYLE", "Fusion") };
+        unsafe { std::env::set_var("QT_QUICK_CONTROLS_STYLE", "Basic") };
     }
+    blockstitch_qml::init();
     cxx_qt::init_qml_module!("com.blockworked.BlockloomHub");
     let mut app = QGuiApplication::new();
     let mut engine = QQmlApplicationEngine::new();

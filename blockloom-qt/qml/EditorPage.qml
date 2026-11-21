@@ -25,7 +25,7 @@ Item {
         property bool rightOpen: true
         property real rightWidth: 290
         property bool blocksOpen: true
-        property real blocksWidth: 340
+        property real blocksWidth: 380
         property int tab: 0
     }
 
@@ -71,10 +71,12 @@ Item {
     // ─── Palette drops: the shared controller's edits as backend commands ──
     function submitEdit(edit, reply) {
         const call = (command, args) => invoke(command, args, () => reply(true), error => { app.showError(error); reply(false, error); });
-        if (edit.kind === "insert_instruction") call("add_instruction", { strandId: edit.strandId, path: edit.path, instruction: edit.instruction });
-        else if (edit.kind === "add_strand") call("add_strand", { x: edit.x, y: edit.y, instruction: edit.instruction });
-        else if (edit.kind === "put_value") call("put_value", { location: edit.location, value: edit.value });
-        else if (edit.kind === "create_floating_value") call("create_floating_value", { x: edit.x, y: edit.y, value: edit.value, originBlockId: edit.originBlockId || null });
+        const instruction = Blocks.realInstruction(edit.instruction);
+        const value = Blocks.realValue(edit.value);
+        if (edit.kind === "insert_instruction") call("add_instruction", { strandId: edit.strandId, path: edit.path, instruction: instruction, targetY: edit.targetY === undefined ? null : edit.targetY });
+        else if (edit.kind === "add_strand") call("add_strand", { x: edit.x, y: edit.y, instruction: instruction });
+        else if (edit.kind === "put_value") call("put_value", { location: edit.location, value: value });
+        else if (edit.kind === "create_floating_value") call("create_floating_value", { x: edit.x, y: edit.y, value: value, originBlockId: edit.originBlockId || null });
         else if (edit.kind === "remove_instructions") call("remove_instruction", { strandId: edit.strandId, path: edit.path, count: edit.count });
         else if (edit.kind === "remove_strand") call("remove_strand", { strandId: edit.strandId });
         else if (edit.kind === "take_value") call("take_value", { location: edit.location });
@@ -90,9 +92,14 @@ Item {
         TopBar { Layout.fillWidth: true; app: root.app }
         Rectangle {
             visible: !root.appState.runtime_available
-            Layout.fillWidth: true; implicitHeight: 34; color: "#4a3a1c"
-            Text { anchors.centerIn: parent; color: "#ffd89a"; font.pixelSize: 12
-                text: "The game runtime is missing, so Play has nothing to open. Build the whole workspace (just build), not only the editor." }
+            Layout.fillWidth: true; implicitHeight: 36; color: Theme.warningBackground
+            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.warningBorder }
+            Row {
+                anchors.centerIn: parent; spacing: 8
+                LucideIcon { name: "triangle-alert"; width: 16; height: 16; color: Theme.warning; anchors.verticalCenter: parent.verticalCenter }
+                Text { anchors.verticalCenter: parent.verticalCenter; color: Theme.text; font.pixelSize: 13
+                    text: "The game runtime is missing, so Play has nothing to open. Build the whole workspace (just build), not only the editor." }
+            }
         }
         RowLayout {
             Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
@@ -113,6 +120,13 @@ Item {
                     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.borderSoft }
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6; spacing: 2
+                        IconButton {
+                            visible: panels.tab === 0 && !!root.actor
+                            iconName: "panel-left"; tip: panels.blocksOpen ? "Hide the blocks" : "Show the blocks"
+                            implicitWidth: 28; implicitHeight: 28
+                            iconColor: panels.blocksOpen ? Theme.accent : "transparent"
+                            onClicked: panels.blocksOpen = !panels.blocksOpen
+                        }
                         Repeater {
                             model: [{ label: "Code", icon: "blocks" }, { label: "Game", icon: "gamepad-2" }, { label: "Interface", icon: "layout-grid" }, { label: "Devices", icon: "smartphone" }]
                             delegate: Rectangle {
@@ -156,24 +170,25 @@ Item {
                             visible: !!root.actor
                             BlockSidebar {
                                 id: sidebar
+                                visible: panels.blocksOpen
                                 Layout.fillHeight: true
-                                Layout.preferredWidth: panels.blocksOpen ? panels.blocksWidth : 34
-                                app: root.app; editor: root
-                                open: panels.blocksOpen
+                                Layout.preferredWidth: panels.blocksWidth
+                                app: root.app
+                                trashActive: canvas.dragging
                                 trashArmed: canvas.dragging && sidebar.contains(sidebar.mapFromItem(null, canvas.dragSceneX, canvas.dragSceneY))
-                                onOpenRequested: open => panels.blocksOpen = open
-                                onResizeRequested: w => panels.blocksWidth = Math.max(220, Math.min(640, w))
+                                onResizeRequested: w => panels.blocksWidth = Math.max(280, Math.min(640, w))
                                 onDragStarted: (spec, sx, sy, ox, oy) => dragController.begin(spec, sx, sy, ox, oy)
                                 onDragMoved: (sx, sy) => dragController.move(sx, sy)
                                 onDragEnded: (sx, sy) => dragController.end(sx, sy)
                                 onDragCanceled: dragController.cancel()
                                 onEntryActivated: spec => dragController.addAtView(spec)
-                                onDetailsRequested: (name, identifier, explainer) => details.show(name, identifier, explainer)
+                                onDetailsShown: (name, identifier, explainer) => details.show(name, identifier, explainer)
                             }
                             BlockCanvas {
                                 id: canvas
                                 Layout.fillWidth: true; Layout.fillHeight: true
                                 offerClear: false
+                                documentId: root.actor ? root.actor.id : ""
                                 strands: root.actor ? root.actor.strands : []
                                 comments: root.actor ? root.actor.comments : []
                                 floatingValues: root.actor ? root.actor.floating_values : []
@@ -183,8 +198,8 @@ Item {
                                 blockDefinitions: root.actor ? root.actor.block_defs : []
                                 onStrandMoved: (strandId, x, y) => root.invoke("move_strand", { strandId: strandId, x: x, y: y })
                                 onInstructionSplit: (strandId, path, x, y) => root.invoke("split_strand", { strandId: strandId, path: path, x: x, y: y })
-                                onStrandsMerged: (draggedId, targetId, path) => root.invoke("merge_strand", { draggedId: draggedId, targetId: targetId, path: path })
-                                onTailMerged: (strandId, path, targetId, targetPath) => root.invoke("merge_tail", { strandId: strandId, path: path, targetId: targetId, targetPath: targetPath })
+                                onStrandsMerged: (draggedId, targetId, path, targetY) => root.invoke("merge_strand", { draggedId: draggedId, targetId: targetId, path: path, targetY: targetY === undefined ? null : targetY })
+                                onTailMerged: (strandId, path, targetId, targetPath, targetY) => root.invoke("merge_tail", { strandId: strandId, path: path, targetId: targetId, targetPath: targetPath, targetY: targetY === undefined ? null : targetY })
                                 onInstructionRemoved: (strandId, path) => {
                                     const strand = root.strandById(strandId);
                                     root.invoke("delete_instruction", { strandId: strandId, path: path, x: strand ? strand.x + 40 : 0, y: strand ? strand.y + 40 : 0 });
@@ -197,7 +212,7 @@ Item {
                                 onValueCreateRequested: (x, y, value) => root.invoke("create_floating_value", { x: x, y: y, value: value, originBlockId: null })
                                 onValueMoveRequested: (from, to, x, y, originBlockId) => root.moveValue(from, to, x, y, originBlockId)
                                 onCommentForInstructionRequested: instruction => root.onBlockMenu("note", "", [], instruction)
-                                onDetailsRequested: type => details.show(Blocks.labels[type] || type, type, "")
+                                onDetailsRequested: type => details.show(Blocks.labelFor(type), type, "")
                                 onCanvasNoteRequested: (x, y) => root.invoke("create_comment", { x: x, y: y, text: "" })
                                 onCommentMoved: (commentId, x, y) => root.invoke("move_comment", { commentId: commentId, x: x, y: y })
                                 onCommentEdited: (commentId, text) => root.invoke("edit_comment_text", { commentId: commentId, text: text })
@@ -218,7 +233,7 @@ Item {
                             anchors.fill: parent
                             Column {
                                 anchors.centerIn: parent; spacing: 8
-                                LucideIcon { anchors.horizontalCenter: parent.horizontalCenter; name: "blocks"; color: "#777980"; width: 48; height: 48 }
+                                LucideIcon { anchors.horizontalCenter: parent.horizontalCenter; name: "blocks"; color: Theme.textDim; width: 48; height: 48 }
                                 Text { anchors.horizontalCenter: parent.horizontalCenter; text: "No actor selected"; color: Theme.text; font.pixelSize: 16; font.weight: Font.DemiBold }
                                 Text { text: "Pick an actor on the left, or add one, to see its blocks."; color: Theme.textDim; font.pixelSize: 13 }
                             }
@@ -247,7 +262,7 @@ Item {
         RunLog { Layout.fillWidth: true; app: root.app; onOpenScriptRequested: (path, line) => inspector.openScript(path, line) }
     }
 
-    BwDialog {
+    StitchDialog {
         id: details
         standardButtons: Dialog.NoButton; width: 430; padding: 0; topPadding: 0; bottomPadding: 0; showClose: false
         property string detailName: ""; property string detailIdentifier: ""; property string detailExplainer: ""
@@ -260,7 +275,7 @@ Item {
             Rectangle { width: 394; height: 30; radius: 5; color: Theme.field; border.color: Theme.border
                 Text { anchors.centerIn: parent; text: details.detailIdentifier; color: Theme.accent; font.family: "monospace"; font.pixelSize: 12 } }
             Text { visible: details.detailExplainer.length > 0; width: 394; text: details.detailExplainer; color: Theme.textDim; font.pixelSize: 13; wrapMode: Text.WordWrap }
-            Row { anchors.right: parent.right; anchors.rightMargin: 18; BwButton { text: "Close"; onClicked: details.close() } }
+            Row { anchors.right: parent.right; anchors.rightMargin: 18; StitchButton { text: "Close"; onClicked: details.close() } }
         }
     }
 

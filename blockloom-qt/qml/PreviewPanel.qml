@@ -394,7 +394,7 @@ Rectangle {
                         : !root.appState.preview_enabled ? "Turn the preview on to see the game here."
                         : root.appState.runtime_open ? "Waiting for the first frame…" : "Press Play, or open the scene to edit it here."
                 }
-                BwButton {
+                StitchButton {
                     visible: !frame.showing && !root.appState.runtime_open && root.appState.runtime_available && gameView.error === ""
                     anchors.horizontalCenter: parent.horizontalCenter; anchors.top: parent.verticalCenter; anchors.topMargin: 20
                     text: "Open the scene"; iconName: "box"
@@ -458,7 +458,7 @@ Rectangle {
                     visible: !root.running && root.appState.runtime_open === true
                     anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 8
                     width: tools.implicitWidth + 8; height: tools.implicitHeight + 8; radius: 6
-                    color: "#d0202124"; border.color: Theme.borderSoft
+                    color: Qt.rgba(Theme.panel.r, Theme.panel.g, Theme.panel.b, 0.92); border.color: Theme.borderSoft
                     // Swallows clicks between the buttons, so they never pick in the world.
                     MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }
                     Row {
@@ -528,7 +528,7 @@ Rectangle {
                     visible: root.editing && scene.tool === "brush" && root.is3d
                     anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 8; anchors.topMargin: 48
                     width: brushRows.implicitWidth + 16; height: brushRows.implicitHeight + 16; radius: 6
-                    color: "#d0202124"; border.color: Theme.borderSoft
+                    color: Qt.rgba(Theme.panel.r, Theme.panel.g, Theme.panel.b, 0.92); border.color: Theme.borderSoft
                     MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }
                     ColumnLayout {
                         id: brushRows
@@ -567,7 +567,7 @@ Rectangle {
                     visible: root.editing && scene.tool === "plugin" && root.is3d
                     anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 8; anchors.topMargin: 48
                     width: pluginRows.implicitWidth + 16; height: pluginRows.implicitHeight + 16; radius: 6
-                    color: "#d0202124"; border.color: Theme.borderSoft
+                    color: Qt.rgba(Theme.panel.r, Theme.panel.g, Theme.panel.b, 0.92); border.color: Theme.borderSoft
                     MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }
                     ColumnLayout {
                         id: pluginRows
@@ -600,7 +600,7 @@ Rectangle {
                     visible: root.editing && scene.tool === "tiles"
                     anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 8; anchors.topMargin: 48
                     width: tileRows.implicitWidth + 16; height: tileRows.implicitHeight + 16; radius: 6
-                    color: "#d0202124"; border.color: Theme.borderSoft
+                    color: Qt.rgba(Theme.panel.r, Theme.panel.g, Theme.panel.b, 0.92); border.color: Theme.borderSoft
                     MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }
                     ColumnLayout {
                         id: tileRows
@@ -617,7 +617,7 @@ Rectangle {
                         RowLayout {
                             spacing: 4
                             Text { text: "Tiles"; color: Theme.textDim; font.pixelSize: 11 }
-                            BwTextField { Layout.preferredWidth: 90; implicitHeight: 26; font.pixelSize: 11; text: scene.tileTiles
+                            StitchTextField { Layout.preferredWidth: 90; implicitHeight: 26; font.pixelSize: 11; text: scene.tileTiles
                                 ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: "Sheet tiles to paint with; more than one are variants"
                                 onEditingFinished: scene.tileTiles = root.tileList(text).join(", ") }
                             Text { text: "Size"; color: Theme.textDim; font.pixelSize: 11 }
@@ -637,10 +637,10 @@ Rectangle {
                         }
                         RowLayout {
                             spacing: 2
-                            BwCheckBox { text: "Collision"; checked: scene.tileCollision; onToggled: scene.tileCollision = checked }
-                            BwCheckBox { text: "Regions"; checked: scene.tileRegions; onToggled: scene.tileRegions = checked }
-                            BwCheckBox { text: "Rooms"; checked: scene.tileRooms; onToggled: scene.tileRooms = checked }
-                            BwCheckBox { text: "Parallax"; checked: scene.tileParallax; onToggled: scene.tileParallax = checked
+                            StitchCheckBox { text: "Collision"; checked: scene.tileCollision; onToggled: scene.tileCollision = checked }
+                            StitchCheckBox { text: "Regions"; checked: scene.tileRegions; onToggled: scene.tileRegions = checked }
+                            StitchCheckBox { text: "Rooms"; checked: scene.tileRooms; onToggled: scene.tileRooms = checked }
+                            StitchCheckBox { text: "Parallax"; checked: scene.tileParallax; onToggled: scene.tileParallax = checked
                                 ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: "Scroll parallax layers against this camera, as the game's will" }
                         }
                         // The tileset sliced into its sheet: click a tile to paint with it, Shift-click to add a variant.
@@ -691,7 +691,7 @@ Rectangle {
                     visible: root.pathTracing && root.is3d && root.appState.runtime_open === true
                     anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 8
                     width: pathRow.implicitWidth + 16; height: pathRow.implicitHeight + 10; radius: 4
-                    color: "#e0202124"; border.color: Theme.borderSoft
+                    color: Qt.rgba(Theme.panel.r, Theme.panel.g, Theme.panel.b, 0.94); border.color: Theme.borderSoft
                     RowLayout {
                         id: pathRow
                         anchors.centerIn: parent; spacing: 6
@@ -715,17 +715,17 @@ Rectangle {
                     visible: scene.physicsPanel
                     anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 8
                     width: physicsColumn.implicitWidth + 16; height: physicsColumn.implicitHeight + 16; radius: 6
-                    color: "#e0202124"; border.color: Theme.borderSoft
+                    color: Qt.rgba(Theme.panel.r, Theme.panel.g, Theme.panel.b, 0.94); border.color: Theme.borderSoft
                     MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }
                     ColumnLayout {
                         id: physicsColumn
                         anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 8; spacing: 2
                         Text { text: "Physics debug"; color: Theme.text; font.pixelSize: 12; font.weight: Font.DemiBold }
-                        BwCheckBox { text: "Collider shapes"; checked: scene.physShapes; onToggled: scene.physShapes = checked }
-                        BwCheckBox { text: "Bounding boxes"; checked: scene.physAabbs; onToggled: scene.physAabbs = checked }
-                        BwCheckBox { text: "Contacts and normals"; checked: scene.physContacts; onToggled: scene.physContacts = checked }
-                        BwCheckBox { text: "Joints"; checked: scene.physJoints; onToggled: scene.physJoints = checked }
-                        BwCheckBox { text: "Body axes"; checked: scene.physAxes; onToggled: scene.physAxes = checked }
+                        StitchCheckBox { text: "Collider shapes"; checked: scene.physShapes; onToggled: scene.physShapes = checked }
+                        StitchCheckBox { text: "Bounding boxes"; checked: scene.physAabbs; onToggled: scene.physAabbs = checked }
+                        StitchCheckBox { text: "Contacts and normals"; checked: scene.physContacts; onToggled: scene.physContacts = checked }
+                        StitchCheckBox { text: "Joints"; checked: scene.physJoints; onToggled: scene.physJoints = checked }
+                        StitchCheckBox { text: "Body axes"; checked: scene.physAxes; onToggled: scene.physAxes = checked }
                         Text { text: "Rows for bodies, colliders, joints and step time are in the profiler."; color: Theme.textDim; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.preferredWidth: 220 }
                     }
                 }
@@ -734,7 +734,7 @@ Rectangle {
                     visible: scene.volumePanel && root.appState.runtime_open === true
                     anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 8
                     width: 300; height: Math.min(parent.height - 16, volumeColumn.implicitHeight + 16); radius: 6
-                    color: "#e0202124"; border.color: Theme.borderSoft; clip: true
+                    color: Qt.rgba(Theme.panel.r, Theme.panel.g, Theme.panel.b, 0.94); border.color: Theme.borderSoft; clip: true
                     MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }
                     Flickable {
                         anchors.fill: parent; anchors.margins: 8
@@ -744,9 +744,9 @@ Rectangle {
                             width: parent.width; spacing: 4
                             RowLayout {
                                 spacing: 2
-                                BwCheckBox { text: "Bounds"; checked: scene.volumeBounds; onToggled: scene.volumeBounds = checked }
-                                BwCheckBox { text: "Heat map"; checked: scene.volumeHeatmap; onToggled: scene.volumeHeatmap = checked }
-                                BwCheckBox { text: "Freeze"; checked: root.volumeFreeze; onToggled: root.volumeFreeze = checked
+                                StitchCheckBox { text: "Bounds"; checked: scene.volumeBounds; onToggled: scene.volumeBounds = checked }
+                                StitchCheckBox { text: "Heat map"; checked: scene.volumeHeatmap; onToggled: scene.volumeHeatmap = checked }
+                                StitchCheckBox { text: "Freeze"; checked: root.volumeFreeze; onToggled: root.volumeFreeze = checked
                                     ToolTip.visible: hovered; ToolTip.delay: 500
                                     ToolTip.text: "Holds the blend where it is: the camera can move but the look stays, and each property's lerp shows below." }
                             }
@@ -823,7 +823,7 @@ Rectangle {
         signal clicked()
         width: 26; height: 26; radius: 4
         anchors.verticalCenter: parent ? parent.verticalCenter : undefined
-        color: checked ? Theme.accent : toggleMouse.containsMouse ? "#3b3c40" : "transparent"
+        color: checked ? Theme.accent : toggleMouse.containsMouse ? Theme.hover : "transparent"
         LucideIcon { anchors.centerIn: parent; width: 15; height: 15; name: toggle.icon; color: toggle.checked ? "white" : Theme.text }
         MouseArea { id: toggleMouse; anchors.fill: parent; hoverEnabled: true; onClicked: toggle.clicked() }
         ToolTip.visible: toggleMouse.containsMouse && tip.length > 0
