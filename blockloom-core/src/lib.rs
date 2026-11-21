@@ -79,6 +79,7 @@ pub mod scene;
 pub mod scene_components;
 pub mod script;
 pub mod sense;
+pub mod settings;
 pub mod shader_lib;
 pub mod sky;
 pub mod sound;

@@ -1421,8 +1421,11 @@ impl DisplayOutput {
 /// Everything about the world that isn't an actor.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct World {
-    #[serde(default)]
-    pub quality: crate::quality::Settings,
+    /// Read from scenes written before quality, input, sound and display
+    /// moved to [`crate::settings::GameSettings`]; never written.
+    #[serde(rename = "quality", default, skip_serializing)]
+    #[schema(skip)]
+    pub legacy_quality: Option<crate::quality::Settings>,
     #[serde(default)]
     pub interface: crate::ui::UiDocument,
     #[serde(default)]
@@ -1443,25 +1446,23 @@ pub struct World {
     pub speech_bubble: SpeechBubbleStyle,
     #[serde(default)]
     pub lighting: Lighting,
-    /// The saved mix: one gain per bus. What a `play sound` block's volumes
-    /// scale against, and what the scene inspector edits.
-    #[serde(default)]
-    pub sound: SoundMixer,
+    #[serde(rename = "sound", default, skip_serializing)]
+    #[schema(skip)]
+    pub legacy_sound: Option<SoundMixer>,
     /// What the world's state does to the mix: weather loops, ducking and
     /// the underwater muffle. Neutral by default.
     #[serde(default)]
     pub soundscape: crate::soundscape::Soundscape,
-    /// Named input actions and the bindings that drive them. What the
-    /// `action` reporters read and `when action pressed` fires on.
-    #[serde(default)]
-    pub input: InputConfig,
+    #[serde(rename = "input", default, skip_serializing)]
+    #[schema(skip)]
+    pub legacy_input: Option<InputConfig>,
     /// Post-process on the world camera: exposure, tonemapping, bloom and
     /// vignette. Neutral by default, so old projects look the same.
     #[serde(default)]
     pub post: PostProcess,
-    /// The output signal, peak brightness and paper white.
-    #[serde(default)]
-    pub display: DisplayOutput,
+    #[serde(rename = "display", default, skip_serializing)]
+    #[schema(skip)]
+    pub legacy_display: Option<DisplayOutput>,
     /// Cost regions and explicit links in the navigation plane.
     #[serde(default)]
     pub navigation: crate::nav::NavSettings,
@@ -1524,11 +1525,21 @@ fn default_fixed_rate() -> f32 {
 }
 
 impl World {
+    /// The project-wide settings an old scene carried, taken off it.
+    pub fn take_legacy(&mut self) -> crate::settings::LegacySettings {
+        crate::settings::LegacySettings {
+            quality: self.legacy_quality.take(),
+            input: self.legacy_input.take(),
+            sound: self.legacy_sound.take(),
+            display: self.legacy_display.take(),
+        }
+    }
+}
+
+impl World {
     /// Clamps and tidies every setting the way its own editor command does,
     /// after a generic write (`registry::set_world_property`).
     pub fn normalize_settings(&mut self) {
-        self.quality.normalize();
-        self.input.normalize();
         self.soundscape.normalize();
         self.sky.normalize();
         self.fog.normalize();
@@ -1544,7 +1555,7 @@ impl World {
 impl Default for World {
     fn default() -> Self {
         Self {
-            quality: crate::quality::Settings::default(),
+            legacy_quality: None,
             interface: crate::ui::UiDocument::default(),
             mode: Mode::TwoD,
             background: default_background(),
@@ -1553,11 +1564,11 @@ impl Default for World {
             camera: Camera::default(),
             speech_bubble: SpeechBubbleStyle::default(),
             lighting: Lighting::default(),
-            sound: SoundMixer::default(),
+            legacy_sound: None,
             soundscape: crate::soundscape::Soundscape::default(),
-            input: InputConfig::default(),
+            legacy_input: None,
             post: PostProcess::default(),
-            display: DisplayOutput::default(),
+            legacy_display: None,
             navigation: crate::nav::NavSettings::default(),
             sky: crate::sky::Sky::default(),
             fog: crate::fog::Fog::default(),
@@ -1612,8 +1623,6 @@ mod tests {
         display.normalize();
         assert_eq!(display.paper_white_nits, 150.0);
         assert_eq!(display.headroom(), 1.0);
-        let old: World = serde_json::from_str("{}").unwrap();
-        assert_eq!(old.display, DisplayOutput::default());
     }
 
     #[test]

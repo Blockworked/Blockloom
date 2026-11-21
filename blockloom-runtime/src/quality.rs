@@ -268,7 +268,7 @@ fn feedback(
     lod: Option<ResMut<crate::culling::LodPolicy>>,
     batches: Option<ResMut<crate::batching::BatchPolicy>>,
 ) {
-    let mut settings = engine.project.world.quality.clone();
+    let mut settings = engine.project.settings.quality.clone();
     if engine.rebuild {
         scaling.overrides.clear();
         scaling.dropped = false;
@@ -909,7 +909,7 @@ fn triangle_count(mesh: &Mesh) -> Option<u64> {
 
 fn reset(engine: NonSend<Engine>, mut scaling: ResMut<Scaling>) {
     if engine.rebuild {
-        let mut settings = engine.project.world.quality.clone();
+        let mut settings = engine.project.settings.quality.clone();
         settings.normalize();
         scaling.controller = Controller::new(&settings);
         scaling.geometry = GeometryController::default();
@@ -937,8 +937,8 @@ mod tests {
     fn authoring_uses_full_resolution_and_cancel_restores_game_quality() {
         let (_sender, receiver) = std::sync::mpsc::channel();
         let mut engine = Engine::new(receiver, blockloom_core::scene::Mode::TwoD);
-        engine.project.world.quality.resolution_scale = 0.5;
-        engine.project.world.quality.upscaler = Upscaler::Taa;
+        engine.project.settings.quality.resolution_scale = 0.5;
+        engine.project.settings.quality.upscaler = Upscaler::Taa;
         let saved = engine.project.clone();
         let mut session = crate::ui_design::DesignSession::default();
         session
@@ -1413,9 +1413,9 @@ mod tests {
             let mut engine = Engine::new(incoming, blockloom_core::scene::Mode::ThreeD);
             engine.rebuild = false;
             engine.paused = true;
-            engine.project.world.quality.auto_drop = true;
-            engine.project.world.quality.dynamic_resolution = true;
-            engine.project.world.quality.over_budget_frames = 15;
+            engine.project.settings.quality.auto_drop = true;
+            engine.project.settings.quality.dynamic_resolution = true;
+            engine.project.settings.quality.over_budget_frames = 15;
             let mut app = App::new();
             app.insert_non_send(engine)
                 .init_resource::<Scaling>()

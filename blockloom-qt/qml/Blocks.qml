@@ -25,7 +25,7 @@ QtObject {
     readonly property string optionSource: {
         if (!project) return "";
         const names = xs => (xs || []).map(x => x.name);
-        return JSON.stringify([mode, names(project.actors), names(project.world.input ? project.world.input.actions : []),
+        return JSON.stringify([mode, names(project.actors), names(project.settings ? project.settings.input.actions : []),
             names(project.globals), names(project.global_lists), names(project.global_dicts),
             actor ? [names(actor.variables), names(actor.lists), names(actor.dicts),
                      actor.components.map(c => [componentName(c), (c.fields || []).map(f => f.name)])] : null]);
@@ -112,7 +112,7 @@ QtObject {
         return withMouse ? list.concat([{ value: "mouse", label: "the mouse" }]) : list;
     }
     function actionOptions() {
-        const actions = project && project.world.input ? project.world.input.actions : [];
+        const actions = project && project.settings ? project.settings.input.actions : [];
         return actions.length ? actions.map(a => ({ value: a.name, label: a.name })) : [{ value: "Jump", label: "Jump" }];
     }
     function attachableOptions() {

@@ -21,5 +21,147 @@
   ],
   "globals": [],
   "global_lists": [],
-  "global_dicts": []
+  "global_dicts": [],
+  "settings": {
+    "quality": {
+      "preset": "High",
+      "resolution_scale": 1.0,
+      "dynamic_resolution": false,
+      "min_scale": 0.5,
+      "target_ms": 16.667,
+      "auto_drop": false,
+      "over_budget_frames": 120,
+      "upscaler": "Spatial",
+      "dlss_mode": "Auto",
+      "sharpness": 0.0
+    },
+    "input": {
+      "actions": [
+        {
+          "name": "Jump",
+          "bindings": [
+            {
+              "binding": "Key",
+              "key": "space"
+            },
+            {
+              "binding": "GamepadButton",
+              "button": "south"
+            }
+          ]
+        },
+        {
+          "name": "Fire",
+          "bindings": [
+            {
+              "binding": "Mouse",
+              "button": "Left"
+            },
+            {
+              "binding": "GamepadButton",
+              "button": "righttrigger"
+            }
+          ]
+        },
+        {
+          "name": "Left",
+          "bindings": [
+            {
+              "binding": "Key",
+              "key": "a"
+            },
+            {
+              "binding": "Key",
+              "key": "left arrow"
+            },
+            {
+              "binding": "GamepadButton",
+              "button": "dpadleft"
+            },
+            {
+              "binding": "GamepadAxis",
+              "axis": "leftstickx",
+              "direction": -1
+            }
+          ]
+        },
+        {
+          "name": "Right",
+          "bindings": [
+            {
+              "binding": "Key",
+              "key": "d"
+            },
+            {
+              "binding": "Key",
+              "key": "right arrow"
+            },
+            {
+              "binding": "GamepadButton",
+              "button": "dpadright"
+            },
+            {
+              "binding": "GamepadAxis",
+              "axis": "leftstickx",
+              "direction": 1
+            }
+          ]
+        },
+        {
+          "name": "Up",
+          "bindings": [
+            {
+              "binding": "Key",
+              "key": "w"
+            },
+            {
+              "binding": "Key",
+              "key": "up arrow"
+            },
+            {
+              "binding": "GamepadButton",
+              "button": "dpadup"
+            },
+            {
+              "binding": "GamepadAxis",
+              "axis": "leftsticky",
+              "direction": 1
+            }
+          ]
+        },
+        {
+          "name": "Down",
+          "bindings": [
+            {
+              "binding": "Key",
+              "key": "s"
+            },
+            {
+              "binding": "Key",
+              "key": "down arrow"
+            },
+            {
+              "binding": "GamepadButton",
+              "button": "dpaddown"
+            },
+            {
+              "binding": "GamepadAxis",
+              "axis": "leftsticky",
+              "direction": -1
+            }
+          ]
+        }
+      ]
+    },
+    "sound": {
+      "master_volume": 1.0,
+      "music_volume": 1.0,
+      "sfx_volume": 1.0
+    },
+    "display": {
+      "space": "Sdr",
+      "peak_nits": 1000.0,
+      "paper_white_nits": 200.0
+    }
+  }
 }

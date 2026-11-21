@@ -567,7 +567,6 @@ impl Scene {
                 actor.components.remove("Joint");
             }
         }
-        self.world.input.normalize();
         self.world.soundscape.normalize();
         for actor in &mut self.actors {
             if let Some(ActorComponent::Material { material }) =
@@ -734,6 +733,10 @@ pub struct ProjectFile {
         skip_serializing_if = "crate::locale::Localization::is_default"
     )]
     pub localization: crate::locale::Localization,
+    /// Absent in files written before these left the scenes; see
+    /// [`Project::adopt_scene_settings`].
+    #[serde(default)]
+    pub settings: Option<crate::settings::GameSettings>,
 }
 
 /// A scene asset file: its settings as components plus its actors. Older
@@ -980,6 +983,8 @@ pub struct Project {
     /// Localized interface strings plus the language a fresh run speaks.
     /// Absent (and written absent) for a project with no translations.
     pub localization: crate::locale::Localization,
+    /// Quality, input, sound and display: the same for every scene.
+    pub settings: crate::settings::GameSettings,
 }
 
 // ─── Scene-backed project ────────────────────────────────────────────────
@@ -1033,7 +1038,7 @@ impl Project {
         active_actors: bool,
     ) -> Result<S::Ok, S::Error> {
         let active = self.active_scene_ref();
-        let mut s = serializer.serialize_struct("Project", 14)?;
+        let mut s = serializer.serialize_struct("Project", 15)?;
         s.serialize_field("id", &self.id)?;
         s.serialize_field("name", &self.name)?;
         s.serialize_field("icon", &self.icon)?;
@@ -1076,6 +1081,7 @@ impl Project {
         if !self.localization.is_default() {
             s.serialize_field("localization", &self.localization)?;
         }
+        s.serialize_field("settings", &self.settings)?;
         s.end()
     }
 }
@@ -1116,6 +1122,8 @@ impl<'de> Deserialize<'de> for Project {
             multiplayer: crate::multiplayer::MultiplayerSettings,
             #[serde(default)]
             localization: crate::locale::Localization,
+            #[serde(default)]
+            settings: Option<crate::settings::GameSettings>,
         }
         let de = ProjectDe::deserialize(deserializer)?;
         de.physics
@@ -1160,8 +1168,10 @@ impl<'de> Deserialize<'de> for Project {
             physics: de.physics,
             multiplayer: de.multiplayer,
             localization: de.localization,
+            settings: de.settings.clone().unwrap_or_default(),
         };
         project.ensure_scene_invariants();
+        project.adopt_scene_settings(de.settings.is_some());
         Ok(project)
     }
 }
@@ -1357,7 +1367,6 @@ impl Project {
         let mut world = World {
             mode,
             gravity: World::default_gravity(mode),
-            input: crate::input::InputConfig::starter(),
             ..World::default()
         };
         let (player, ground) = if mode.is_3d() {
@@ -1431,6 +1440,7 @@ impl Project {
             physics: crate::physics::PhysicsSettings::default(),
             multiplayer: Default::default(),
             localization: Default::default(),
+            settings: crate::settings::GameSettings::starter(),
         }
     }
 
@@ -1453,6 +1463,15 @@ impl Project {
             return &mut self.scenes[i];
         }
         &mut self.scenes[0]
+    }
+
+    /// The active scene beside the game settings, for edits that touch both
+    /// (a player preset writes the actor and the input actions).
+    pub fn active_scene_and_settings(&mut self) -> (&mut Scene, &mut crate::settings::GameSettings) {
+        self.ensure_scene_invariants();
+        let active = self.active_scene.clone();
+        let i = self.scenes.iter().position(|s| s.id == active).unwrap_or(0);
+        (&mut self.scenes[i], &mut self.settings)
     }
 
     pub fn scene(&self, id: &str) -> Option<&Scene> {
@@ -1563,11 +1582,6 @@ impl Project {
     pub fn add_scene(&mut self, name: &str, mode: Option<Mode>) -> String {
         let mode = mode.unwrap_or_else(|| self.active_scene_ref().world.mode);
         let mut scene = Scene::new(self.unique_scene_name(name), mode);
-        // A fresh input config per scene; starter bindings when empty so a
-        // new scene plays like the first one.
-        if scene.world.input.actions.is_empty() {
-            scene.world.input = crate::input::InputConfig::starter();
-        }
         scene.path = self.unused_scene_path(&scene.name);
         let id = scene.id.clone();
         self.scenes.push(scene);
@@ -1591,9 +1605,6 @@ impl Project {
         }
         let mode = mode.unwrap_or_else(|| self.active_scene_ref().world.mode);
         let mut scene = Scene::new(self.unique_scene_name(&stem), mode);
-        if scene.world.input.actions.is_empty() {
-            scene.world.input = crate::input::InputConfig::starter();
-        }
         // The tray dedupes the filename; the scene name follows the actual
         // file, with a numeric tail when the name was taken.
         scene.path = normalized.clone();
@@ -2019,9 +2030,43 @@ impl Project {
         !actor_owns && self.global_dicts.iter().any(|dict| dict.name == name)
     }
 
+    /// Moves quality, input, sound and display off old scenes. A file that
+    /// had no project settings yet (`present` false) takes the default
+    /// scene's, or the first scene that carried any, plus any input action
+    /// only another scene had.
+    pub fn adopt_scene_settings(&mut self, present: bool) {
+        let mut taken: Vec<(String, crate::settings::LegacySettings)> = self
+            .scenes
+            .iter_mut()
+            .map(|scene| (scene.id.clone(), scene.world.take_legacy()))
+            .collect();
+        if present {
+            return;
+        }
+        let at = taken
+            .iter()
+            .position(|(id, legacy)| *id == self.default_scene && !legacy.is_empty())
+            .or_else(|| taken.iter().position(|(_, legacy)| !legacy.is_empty()));
+        if let Some(at) = at {
+            let (_, legacy) = taken.remove(at);
+            legacy.adopt_into(&mut self.settings);
+        }
+        // Another scene's actions join under their own names, so a block
+        // naming one still finds it.
+        for (_, legacy) in taken {
+            for action in legacy.input.map(|i| i.actions).unwrap_or_default() {
+                if self.settings.input.find(&action.name).is_none() {
+                    self.settings.input.actions.push(action);
+                }
+            }
+        }
+    }
+
     /// Repairs and canonicalizes a just-loaded document, once. Runs per
     /// scene since each scene has its own world and actors.
     pub fn normalize(&mut self) {
+        self.adopt_scene_settings(true);
+        self.settings.normalize();
         self.ensure_scene_invariants();
         self.migrate_sky();
         for scene in &mut self.scenes {
@@ -2061,35 +2106,19 @@ impl Project {
             }
             world.surface.normalize();
             world.vfx.normalize();
-            world.quality.normalize();
         }
     }
 
-    /// Declares a named input action with no bindings. Input lives per
-    /// scene (each scene has its own `World`), so a new action is added to
-    /// every scene to keep them in sync.
+    /// Declares a named input action with no bindings.
     pub fn create_input_action(&mut self, name: &str) -> Result<String, String> {
-        let renamed = self.active_scene_mut().world.input.add_action(name)?;
-        for scene in &mut self.scenes {
-            if scene.world.input.find(&renamed).is_none() {
-                let _ = scene.world.input.add_action(&renamed);
-            }
-        }
-        Ok(renamed)
+        self.settings.input.add_action(name)
     }
 
     /// Renames an input action and every block that names it: the
     /// `when action pressed` header, the `bind`/`clear` slots holding plain
-    /// text, and the action reporter args. Renames in every scene.
+    /// text, and the action reporter args, in every scene.
     pub fn rename_input_action(&mut self, old: &str, new: &str) -> Result<String, String> {
-        let renamed = self
-            .active_scene_mut()
-            .world
-            .input
-            .rename_action(old, new)?;
-        for scene in &mut self.scenes {
-            let _ = scene.world.input.rename_action(old, &renamed);
-        }
+        let renamed = self.settings.input.rename_action(old, new)?;
         for scene in &mut self.scenes {
             for actor in &mut scene.actors {
                 actor.graph.walk_instructions_mut(&mut |ins| {
@@ -2128,13 +2157,9 @@ impl Project {
     }
 
     /// Drops an input action. Blocks naming it are left alone and read as
-    /// unheld, the same as an unknown key. Removes from every scene.
+    /// unheld, the same as an unknown key.
     pub fn remove_input_action(&mut self, name: &str) -> bool {
-        let mut removed = false;
-        for scene in &mut self.scenes {
-            removed |= scene.world.input.remove_action(name);
-        }
-        removed
+        self.settings.input.remove_action(name)
     }
 
     /// Refreshes shared lighting while preserving inline fallback for missing assets.
@@ -2578,7 +2603,9 @@ pub fn read_project_dir(dir: &Path) -> Result<Project, String> {
         physics: file.physics,
         multiplayer: file.multiplayer,
         localization: file.localization,
+        settings: file.settings.clone().unwrap_or_default(),
     };
+    project.adopt_scene_settings(file.settings.is_some());
     project.normalize();
     project.resolve_lighting_assets(dir);
     Ok(project)
@@ -2610,6 +2637,7 @@ pub fn project_to_file(project: &Project) -> ProjectFile {
         physics: project.physics.clone(),
         multiplayer: project.multiplayer.clone(),
         localization: project.localization.clone(),
+        settings: Some(project.settings.clone()),
     }
 }
 
@@ -2717,6 +2745,56 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn another_scenes_input_actions_join_the_defaults() {
+        use crate::input::{InputAction, InputConfig};
+        let action = |name: &str| -> InputAction {
+            serde_json::from_value(serde_json::json!({ "name": name })).unwrap()
+        };
+        let mut project = Project::starter("Two", Mode::TwoD);
+        let second = project.add_scene("Two", None);
+        project.default_scene = project.scenes[0].id.clone();
+        project.scenes[0].world.legacy_input = Some(InputConfig {
+            actions: vec![action("Forward")],
+        });
+        project.scene_mut(&second).unwrap().world.legacy_input = Some(InputConfig {
+            actions: vec![action("Forward"), action("Jump")],
+        });
+        project.adopt_scene_settings(false);
+        let names: Vec<&str> = project.settings.input.actions.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["Forward", "Jump"]);
+        assert!(project.scenes.iter().all(|s| s.world.legacy_input.is_none()));
+    }
+
+    #[test]
+    fn scene_held_game_settings_move_to_the_project() {
+        let tmp = TempDir::new();
+        let project = Project::starter("Old", Mode::TwoD);
+        let dir = create_project(&project, &tmp.0).unwrap();
+        // Rewrite it the way an older editor saved it.
+        let index_path = project_file(&dir);
+        let mut index: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&index_path).unwrap()).unwrap();
+        index.as_object_mut().unwrap().remove("settings");
+        std::fs::write(&index_path, index.to_string()).unwrap();
+        let scene_path = dir.join(index["scenes"][0]["path"].as_str().unwrap());
+        let mut scene: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&scene_path).unwrap()).unwrap();
+        let components = scene["components"].as_array_mut().unwrap();
+        components.push(serde_json::json!({"component": "Sound", "mixer": {"master_volume": 0.25, "music_volume": 1.0, "sfx_volume": 1.0}}));
+        components.push(serde_json::json!({"component": "Input", "config": {"actions": [{"name": "Fire", "bindings": []}]}}));
+        std::fs::write(&scene_path, scene.to_string()).unwrap();
+
+        let loaded = read_project_dir(&dir).unwrap();
+        assert_eq!(loaded.settings.sound.master_volume, 0.25);
+        assert!(loaded.settings.input.find("Fire").is_some());
+        save_project(&loaded, &dir).unwrap();
+        let scene = std::fs::read_to_string(&scene_path).unwrap();
+        assert!(!scene.contains("\"Sound\"") && !scene.contains("\"Fire\""), "{scene}");
+        let again = read_project_dir(&dir).unwrap();
+        assert_eq!(again.settings, loaded.settings);
     }
 
     #[test]

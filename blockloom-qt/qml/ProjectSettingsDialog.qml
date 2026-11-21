@@ -46,6 +46,7 @@ StitchDialog {
         const out = [
             { id: "project", label: "General", depth: 0, name: "settings-general" },
             { id: "multiplayer", label: "Multiplayer", depth: 0, name: "settings-multiplayer" },
+            { id: "game", label: "Game", depth: 0, name: "settings-game", words: "quality performance scaling resolution upscaler display hdr sound volume bus input actions bindings keys" },
             { label: "Publishing", depth: 0 },
             { id: "publishing", label: "App Info", depth: 1, name: "settings-app-info" },
             { id: "android", label: "Android", depth: 1, name: "settings-android" },

@@ -6,6 +6,7 @@
 
 use crate::components::ActorComponent;
 use crate::scene::{Mode, World};
+use crate::settings::GameSettings;
 use blockloom_plugin_api::schema::{FieldSchema, FieldType, Schema, fill_field_defaults};
 use serde_json::{Value, json};
 
@@ -223,11 +224,23 @@ pub fn world_fields() -> Vec<FieldSchema> {
     fields
 }
 
+/// The project's game settings (quality, input, sound, display), with
+/// defaults from `GameSettings::default()`.
+pub fn settings_fields() -> Vec<FieldSchema> {
+    let FieldType::Struct { mut fields } = GameSettings::field_type() else {
+        return Vec::new();
+    };
+    let default = serde_json::to_value(GameSettings::default()).unwrap_or(Value::Null);
+    fill_field_defaults(&mut fields, &default);
+    fields
+}
+
 /// The whole registry as the frontend, shell and MCP read it.
 pub fn to_json(mode: Mode) -> Value {
     let mut out = json!({
         "components": component_types(mode),
         "world": world_fields(),
+        "settings": settings_fields(),
     });
     blank_ids(&mut out);
     out
@@ -353,6 +366,23 @@ pub fn set_world_property(world: &World, path: &str, value: Value) -> Result<Wor
         serde_json::from_value(current).map_err(|e| format!("world.{path}: {e}"))?;
     world.normalize_settings();
     Ok(world)
+}
+
+/// Sets `path` on the project's game settings, checked against their schema.
+pub fn set_settings_property(
+    settings: &GameSettings,
+    path: &str,
+    value: Value,
+) -> Result<GameSettings, String> {
+    let root = FieldType::Struct {
+        fields: settings_fields(),
+    };
+    let mut current = serde_json::to_value(settings).map_err(|e| e.to_string())?;
+    write_at(&root, &mut current, &split_path(path), value)?;
+    let mut settings: GameSettings =
+        serde_json::from_value(current).map_err(|e| format!("settings.{path}: {e}"))?;
+    settings.normalize();
+    Ok(settings)
 }
 
 #[cfg(test)]

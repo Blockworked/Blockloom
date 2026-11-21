@@ -7,7 +7,7 @@ use super::controller::CharacterControllerSpec;
 use super::material::MaterialLibrary;
 use super::motor::{CharacterMotorSpec, MotorOwner, MoveSpace};
 use crate::components::{ActorComponent, CameraAttach, CameraView};
-use crate::input::InputAction;
+use crate::input::{InputAction, InputConfig};
 use crate::player_camera::PlayerCameraSpec;
 use crate::project::Scene;
 use crate::scene::{Mode, Visual};
@@ -216,7 +216,12 @@ impl PresetPreview {
 
 impl Scene {
     /// What `apply_player_preset` would do to `actor_id`, without doing it.
-    pub fn preview_player_preset(&self, actor_id: &str, preset: PlayerPreset) -> PresetPreview {
+    pub fn preview_player_preset(
+        &self,
+        input: &InputConfig,
+        actor_id: &str,
+        preset: PlayerPreset,
+    ) -> PresetPreview {
         let mut preview = PresetPreview {
             preset,
             actor: actor_id.to_string(),
@@ -287,7 +292,7 @@ impl Scene {
         );
         let missing: Vec<String> = ["Move", "Look", "Jump", "Sprint", "Crouch", "Interact"]
             .iter()
-            .filter(|n| self.world.input.find(n).is_none())
+            .filter(|n| input.find(n).is_none())
             .map(|n| n.to_string())
             .collect();
         if missing.is_empty() {
@@ -339,22 +344,24 @@ impl Scene {
     /// or the actor is left as it was. Conflicts need `convert`.
     pub fn apply_player_preset(
         &mut self,
+        input: &mut InputConfig,
         actor_id: &str,
         preset: PlayerPreset,
         convert: bool,
         library: &MaterialLibrary,
     ) -> Result<PresetPreview, String> {
-        let preview = self.preview_player_preset(actor_id, preset);
+        let preview = self.preview_player_preset(input, actor_id, preset);
         if let Some(why) = &preview.blocked {
             return Err(why.clone());
         }
-        self.install_player(actor_id, preset.parts(), &preview, convert, library)?;
+        self.install_player(input, actor_id, preset.parts(), &preview, convert, library)?;
         Ok(preview)
     }
 
     /// Puts `parts` on the actor; shared by presets and saved profiles.
     pub(crate) fn install_player(
         &mut self,
+        input: &mut InputConfig,
         actor_id: &str,
         parts: PresetParts,
         preview: &PresetPreview,
@@ -373,13 +380,13 @@ impl Scene {
             ));
         }
         let before_actors = self.actors.clone();
-        let before_input = self.world.input.clone();
+        let before_input = input.clone();
         let before_camera = self.world.camera.clone();
         let result = (|| {
-            self.world.input.add_player_actions();
+            input.add_player_actions();
             for action in &parts.actions {
-                if self.world.input.find(&action.name).is_none() {
-                    self.world.input.actions.push(action.clone());
+                if input.find(&action.name).is_none() {
+                    input.actions.push(action.clone());
                 }
             }
             if let Some((position, look_at)) = parts.boom {
@@ -453,7 +460,7 @@ impl Scene {
         });
         if let Err(why) = verdict {
             self.actors = before_actors;
-            self.world.input = before_input;
+            *input = before_input;
             self.world.camera = before_camera;
             return Err(why);
         }
@@ -484,7 +491,12 @@ impl PlayerProfile {
     pub const VERSION: u32 = 1;
 
     /// Reads the player setup off an actor.
-    pub fn capture(scene: &Scene, actor_id: &str, name: &str) -> Result<Self, String> {
+    pub fn capture(
+        scene: &Scene,
+        input: &InputConfig,
+        actor_id: &str,
+        name: &str,
+    ) -> Result<Self, String> {
         let actor = scene
             .actors
             .iter()
@@ -501,7 +513,7 @@ impl PlayerProfile {
         };
         let actions = ["Move", "Look", "Jump", "Sprint", "Crouch", "Interact"]
             .iter()
-            .filter_map(|n| scene.world.input.find(n).cloned())
+            .filter_map(|n| input.find(n).cloned())
             .collect();
         Ok(Self {
             version: Self::VERSION,
@@ -516,13 +528,13 @@ impl PlayerProfile {
     }
 
     /// What applying would do, using the same report a preset gives.
-    pub fn preview(&self, scene: &Scene, actor_id: &str) -> PresetPreview {
+    pub fn preview(&self, scene: &Scene, input: &InputConfig, actor_id: &str) -> PresetPreview {
         let base = match (self.mode, &self.motor) {
             (Mode::TwoD, Some(m)) if m.top_down => PlayerPreset::TopDown2d,
             (Mode::TwoD, _) => PlayerPreset::Platformer2d,
             (Mode::ThreeD, _) => PlayerPreset::ThirdPerson3d,
         };
-        let mut preview = scene.preview_player_preset(actor_id, base);
+        let mut preview = scene.preview_player_preset(input, actor_id, base);
         if self.version > Self::VERSION {
             preview.blocked = Some(format!(
                 "\"{}\" was saved by a newer Blockloom (profile version {})",
@@ -537,11 +549,12 @@ impl PlayerProfile {
     pub fn apply(
         &self,
         scene: &mut Scene,
+        input: &mut InputConfig,
         actor_id: &str,
         convert: bool,
         library: &MaterialLibrary,
     ) -> Result<PresetPreview, String> {
-        let preview = self.preview(scene, actor_id);
+        let preview = self.preview(scene, input, actor_id);
         if let Some(why) = &preview.blocked {
             return Err(why.clone());
         }
@@ -560,7 +573,7 @@ impl PlayerProfile {
             boom: None,
             actions: self.actions.clone(),
         };
-        scene.install_player(actor_id, parts, &preview, convert, library)?;
+        scene.install_player(input, actor_id, parts, &preview, convert, library)?;
         Ok(preview)
     }
 }
@@ -576,6 +589,7 @@ fn dimension(mode: Mode) -> &'static str {
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
+    use crate::input::InputConfig;
     use crate::project::Actor;
 
     fn scene(mode: Mode) -> (Scene, String) {
@@ -603,11 +617,12 @@ mod tests {
 
     #[test]
     fn every_preset_installs_a_valid_player_from_nothing() {
+        let mut input = InputConfig::default();
         for preset in PlayerPreset::ALL {
             let (mut scene, id) = scene(preset.mode());
             scene.actors[1].components.remove("Look");
             let preview = scene
-                .apply_player_preset(&id, preset, false, &MaterialLibrary::default())
+                .apply_player_preset(&mut input, &id, preset, false, &MaterialLibrary::default())
                 .unwrap_or_else(|e| panic!("{}: {e}", preset.name()));
             assert!(preview.conflicts.is_empty());
             let c = &scene.actors[1].components;
@@ -621,7 +636,7 @@ mod tests {
             assert!(c.contains("Camera"));
             assert!(c.player_camera().is_some());
             for name in ["Move", "Look", "Jump", "Sprint", "Crouch", "Interact"] {
-                assert!(scene.world.input.find(name).is_some(), "{name}");
+                assert!(input.find(name).is_some(), "{name}");
             }
             assert!(
                 scene
@@ -636,11 +651,11 @@ mod tests {
 
     #[test]
     fn a_preset_of_the_wrong_dimension_is_refused_untouched() {
+        let mut input = InputConfig::default();
         let (mut scene, id) = scene(Mode::ThreeD);
         let before = scene.clone();
         let err = scene
-            .apply_player_preset(
-                &id,
+            .apply_player_preset(&mut input, &id,
                 PlayerPreset::Platformer2d,
                 false,
                 &MaterialLibrary::default(),
@@ -652,23 +667,24 @@ mod tests {
 
     #[test]
     fn a_dynamic_body_asks_for_conversion_and_gets_it_when_allowed() {
+        let mut input = InputConfig::default();
         let (mut scene, id) = scene(Mode::ThreeD);
         let lib = MaterialLibrary::default();
         let mut body = super::super::spec::RigidbodySpec::default();
         body.body_type = BodyType::Dynamic;
         scene.set_rigidbody(&id, body, &lib).unwrap();
-        let preview = scene.preview_player_preset(&id, PlayerPreset::ThirdPerson3d);
+        let preview = scene.preview_player_preset(&input, &id, PlayerPreset::ThirdPerson3d);
         assert_eq!(preview.conflicts.len(), 1);
         assert_eq!(preview.conflicts[0].component, "Rigidbody");
         let before = scene.clone();
         assert!(
             scene
-                .apply_player_preset(&id, PlayerPreset::ThirdPerson3d, false, &lib)
+                .apply_player_preset(&mut input, &id, PlayerPreset::ThirdPerson3d, false, &lib)
                 .is_err()
         );
         assert_eq!(scene, before, "a refused apply leaves no trace");
         scene
-            .apply_player_preset(&id, PlayerPreset::ThirdPerson3d, true, &lib)
+            .apply_player_preset(&mut input, &id, PlayerPreset::ThirdPerson3d, true, &lib)
             .unwrap();
         assert_eq!(
             scene.actors[1].components.rigidbody().unwrap().body_type,
@@ -678,13 +694,14 @@ mod tests {
 
     #[test]
     fn applying_again_keeps_identities_and_the_camera_moves_over() {
+        let mut input = InputConfig::default();
         let (mut scene, id) = scene(Mode::ThreeD);
         let lib = MaterialLibrary::default();
         scene.actors[0].components.insert(ActorComponent::Camera {
             camera: CameraAttach::default(),
         });
         scene
-            .apply_player_preset(&id, PlayerPreset::FirstPerson3d, false, &lib)
+            .apply_player_preset(&mut input, &id, PlayerPreset::FirstPerson3d, false, &lib)
             .unwrap();
         assert!(!scene.actors[0].components.contains("Camera"), "one camera");
         let controller = scene.actors[1]
@@ -694,7 +711,7 @@ mod tests {
             .id
             .clone();
         scene
-            .apply_player_preset(&id, PlayerPreset::ThirdPerson3d, false, &lib)
+            .apply_player_preset(&mut input, &id, PlayerPreset::ThirdPerson3d, false, &lib)
             .unwrap();
         assert_eq!(
             scene.actors[1]
@@ -713,8 +730,9 @@ mod tests {
 
     #[test]
     fn the_preview_says_what_is_added_and_what_is_kept() {
+        let input = InputConfig::default();
         let (scene, id) = scene(Mode::TwoD);
-        let preview = scene.preview_player_preset(&id, PlayerPreset::Platformer2d);
+        let preview = scene.preview_player_preset(&input, &id, PlayerPreset::Platformer2d);
         let kinds: Vec<_> = preview
             .steps
             .iter()
@@ -726,7 +744,7 @@ mod tests {
         assert!(preview.blocked.is_none());
         assert!(
             scene
-                .preview_player_preset("nobody", PlayerPreset::Platformer2d)
+                .preview_player_preset(&input, "nobody", PlayerPreset::Platformer2d)
                 .blocked
                 .is_some()
         );
@@ -734,6 +752,7 @@ mod tests {
 
     #[test]
     fn preset_names_round_trip() {
+        
         for preset in PlayerPreset::ALL {
             assert_eq!(PlayerPreset::parse(preset.name()), Some(preset));
             assert_eq!(PlayerPreset::parse(preset.label()), Some(preset));
@@ -743,34 +762,37 @@ mod tests {
 
     #[test]
     fn a_profile_carries_a_setup_to_another_actor_through_json() {
+        let mut input = InputConfig::default();
         let library = MaterialLibrary::default();
         let (mut from, id) = scene(Mode::ThreeD);
-        from.apply_player_preset(&id, PlayerPreset::ThirdPerson3d, false, &library)
+        from.apply_player_preset(&mut input, &id, PlayerPreset::ThirdPerson3d, false, &library)
             .unwrap();
-        let profile = PlayerProfile::capture(&from, &id, "Hero").unwrap();
+        let profile = PlayerProfile::capture(&from, &input, &id, "Hero").unwrap();
         let text = serde_json::to_string(&profile).unwrap();
         let loaded: PlayerProfile = serde_json::from_str(&text).unwrap();
         assert_eq!(loaded.name, "Hero");
 
         let (mut to, other) = scene(Mode::ThreeD);
-        assert!(loaded.preview(&to, &other).blocked.is_none());
-        loaded.apply(&mut to, &other, false, &library).unwrap();
+        let mut input = InputConfig::default();
+        assert!(loaded.preview(&to, &input, &other).blocked.is_none());
+        loaded.apply(&mut to, &mut input, &other, false, &library).unwrap();
         let c = &to.actors[1].components;
         assert!(c.character_controller().is_some());
         assert!(c.character_motor().is_some());
         assert!(c.player_camera().is_some());
-        assert!(to.world.input.find("Move").is_some());
+        assert!(input.find("Move").is_some());
     }
 
     #[test]
     fn a_profile_from_a_newer_version_is_blocked_not_applied() {
+        let mut input = InputConfig::default();
         let library = MaterialLibrary::default();
         let (mut scene, id) = scene(Mode::ThreeD);
         scene
-            .apply_player_preset(&id, PlayerPreset::FirstPerson3d, false, &library)
+            .apply_player_preset(&mut input, &id, PlayerPreset::FirstPerson3d, false, &library)
             .unwrap();
-        let mut profile = PlayerProfile::capture(&scene, &id, "Future").unwrap();
+        let mut profile = PlayerProfile::capture(&scene, &input, &id, "Future").unwrap();
         profile.version = PlayerProfile::VERSION + 1;
-        assert!(profile.preview(&scene, &id).blocked.is_some());
+        assert!(profile.preview(&scene, &input, &id).blocked.is_some());
     }
 }

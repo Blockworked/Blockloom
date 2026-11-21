@@ -1225,11 +1225,17 @@ pub(crate) fn set_scene_component(
         let Some(project) = s.project_mut() else {
             return Err("No project is open".to_string());
         };
-        let Some(scene) = project.scene_mut(&target) else {
+        let Some(i) = project.scenes.iter().position(|s| s.id == target) else {
             return Err("Scene not found".to_string());
         };
+        let scene = &mut project.scenes[i];
         if let SceneComponent::Dimension { mode } = component {
             scene.switch_mode(mode);
+        } else if component.is_game_setting() {
+            // Quality, input, sound and display hold for the whole game now.
+            let mut legacy = blockloom_core::scene::World::default();
+            SceneComponents(vec![component]).apply_to_world(&mut legacy);
+            legacy.take_legacy().adopt_into(&mut project.settings);
         } else {
             SceneComponents(vec![component]).apply_to_world(&mut scene.world);
         }
@@ -2053,7 +2059,7 @@ pub(crate) fn set_quality(
     let mut s = lock(state)?;
     push_undo(&mut s);
     if let Some(project) = s.project_mut() {
-        project.world.quality = quality;
+        project.settings.quality = quality;
     }
     auto_save(&mut s);
     sync_runtime(&mut s);
@@ -2094,7 +2100,7 @@ pub(crate) fn set_display_output(
     let mut display = display;
     display.normalize();
     if let Some(project) = s.project_mut() {
-        project.world.display = display;
+        project.settings.display = display;
     }
     auto_save(&mut s);
     sync_runtime(&mut s);
@@ -2113,7 +2119,7 @@ pub(crate) fn set_sound_mixer(
     let mut s = lock(state)?;
     push_undo(&mut s);
     if let Some(project) = s.project_mut() {
-        project.world.sound = SoundMixer {
+        project.settings.sound = SoundMixer {
             master_volume: blockloom_core::sound::clamp_gain(mixer.master_volume),
             music_volume: blockloom_core::sound::clamp_gain(mixer.music_volume),
             sfx_volume: blockloom_core::sound::clamp_gain(mixer.sfx_volume),
@@ -3871,13 +3877,10 @@ fn register_scene_file(
             .project()
             .map(|p| p.world.mode)
             .unwrap_or(blockloom_core::scene::Mode::TwoD);
-        let mut fresh = blockloom_core::project::Scene::new(
+        let fresh = blockloom_core::project::Scene::new(
             if stem.is_empty() { "Scene" } else { &stem },
             mode,
         );
-        if fresh.world.input.actions.is_empty() {
-            fresh.world.input = blockloom_core::input::InputConfig::starter();
-        }
         fresh
     });
     let project = s.project_mut().ok_or("No project is open".to_string())?;
@@ -5578,7 +5581,7 @@ pub(crate) fn add_input_binding(
     let mut s = lock(state)?;
     push_undo(&mut s);
     let result = match s.project_mut() {
-        Some(project) => project.world.input.add_binding(&name, &binding),
+        Some(project) => project.settings.input.add_binding(&name, &binding),
         None => Ok(false),
     };
     auto_save(&mut s);
@@ -5595,7 +5598,7 @@ pub(crate) fn remove_input_binding(
     let mut s = lock(state)?;
     push_undo(&mut s);
     let result = match s.project_mut() {
-        Some(project) => project.world.input.remove_binding(&name, &binding),
+        Some(project) => project.settings.input.remove_binding(&name, &binding),
         None => Ok(false),
     };
     auto_save(&mut s);
@@ -5611,7 +5614,7 @@ pub(crate) fn clear_input_bindings(
     let mut s = lock(state)?;
     push_undo(&mut s);
     let result = match s.project_mut() {
-        Some(project) => project.world.input.clear_bindings(&name),
+        Some(project) => project.settings.input.clear_bindings(&name),
         None => Ok(false),
     };
     auto_save(&mut s);

@@ -400,6 +400,7 @@ pub fn header_of(p: &Project) -> Project {
         physics,
         multiplayer,
         localization,
+        settings,
     } = p;
     Project {
         id: id.clone(),
@@ -416,6 +417,7 @@ pub fn header_of(p: &Project) -> Project {
         physics: physics.clone(),
         multiplayer: multiplayer.clone(),
         localization: localization.clone(),
+        settings: settings.clone(),
     }
 }
 
@@ -435,6 +437,7 @@ fn header_eq(a: &Project, b: &Project) -> bool {
         physics,
         multiplayer,
         localization,
+        settings,
     } = a;
     *id == b.id
         && *name == b.name
@@ -449,6 +452,7 @@ fn header_eq(a: &Project, b: &Project) -> bool {
         && *physics == b.physics
         && *multiplayer == b.multiplayer
         && *localization == b.localization
+        && *settings == b.settings
 }
 
 /// The scene without its actors.

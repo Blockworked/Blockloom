@@ -118,6 +118,7 @@ fn project(actor: impl Fn(usize) -> Actor) -> Project {
         physics: Default::default(),
         multiplayer: Default::default(),
         localization: Default::default(),
+        settings: Default::default(),
     }
 }
 

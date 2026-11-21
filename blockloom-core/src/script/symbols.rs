@@ -28,8 +28,8 @@ pub fn project_symbols(project: &crate::project::Project) -> String {
         }
     }
     let mut actions: Vec<String> = Vec::new();
-    for scene in &project.scenes {
-        for action in &scene.world.input.actions {
+    {
+        for action in &project.settings.input.actions {
             if !actions.contains(&action.name) {
                 actions.push(action.name.clone());
             }
@@ -100,9 +100,9 @@ fn fingerprint_of(project: &crate::project::Project) -> String {
                 }
             }
         }
-        for action in &scene.world.input.actions {
-            action.name.hash(&mut hash);
-        }
+    }
+    for action in &project.settings.input.actions {
+        action.name.hash(&mut hash);
     }
     for v in &project.globals {
         v.name.hash(&mut hash);

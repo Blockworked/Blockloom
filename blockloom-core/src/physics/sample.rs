@@ -51,7 +51,7 @@ fn physics_playground(name: &str, mode: Mode) -> Result<Project, String> {
     let mut library = project.physics.materials.clone();
     // Start from components: the starter's Player and Ground become a body and a
     // collider, so nothing here leans on the legacy Body.
-    let scene = project.active_scene_mut();
+    let (scene, settings) = project.active_scene_and_settings();
     scene.migrate_physics(&mut library);
     let player = scene
         .actors
@@ -64,7 +64,7 @@ fn physics_playground(name: &str, mode: Mode) -> Result<Project, String> {
     } else {
         PlayerPreset::Platformer2d
     };
-    scene.apply_player_preset(&player, preset, true, &library)?;
+    scene.apply_player_preset(&mut settings.input, &player, preset, true, &library)?;
 
     // Metres in 3D, pixels in 2D: the 2D scale is 50 pixels to a metre.
     let k = if mode.is_3d() { 1.0 } else { 50.0 };

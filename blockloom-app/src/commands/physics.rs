@@ -68,6 +68,16 @@ fn with_scene<R>(
     f(project.active_scene_mut(), &library)
 }
 
+/// `with_scene`, with the project's input actions beside the scene.
+fn with_scene_input<R>(
+    project: &mut Project,
+    f: impl FnOnce(&mut Scene, &mut blockloom_core::input::InputConfig, &MaterialLibrary) -> Result<R, String>,
+) -> Result<R, String> {
+    let library = project.physics.materials.clone();
+    let (scene, settings) = project.active_scene_and_settings();
+    f(scene, &mut settings.input, &library)
+}
+
 /// Whether any collider in the project refers to material `id`.
 fn material_in_use(project: &Project, id: &str) -> Option<String> {
     for scene in &project.scenes {
@@ -595,7 +605,7 @@ pub(crate) fn preview_player_preset(
     let project = s.project().ok_or("No project is open")?;
     let preview = project
         .active_scene()
-        .preview_player_preset(&actor_id, preset);
+        .preview_player_preset(&project.settings.input, &actor_id, preset);
     serde_json::to_value(preview).map_err(|e| e.to_string())
 }
 
@@ -610,8 +620,8 @@ pub(crate) fn apply_player_preset(
 ) -> Result<Value, String> {
     let preset = preset_named(&preset)?;
     let preview = edit(state, app, None, |project| {
-        with_scene(project, |scene, library| {
-            scene.apply_player_preset(&actor_id, preset, convert, library)
+        with_scene_input(project, |scene, input, library| {
+            scene.apply_player_preset(input, &actor_id, preset, convert, library)
         })
     })?;
     serde_json::to_value(preview).map_err(|e| e.to_string())
@@ -654,7 +664,7 @@ pub(crate) fn save_player_profile(
     let profile = {
         let s = lock(state)?;
         let project = s.project().ok_or("No project is open")?;
-        PlayerProfile::capture(project.active_scene(), &actor_id, name.trim())?
+        PlayerProfile::capture(project.active_scene(), &project.settings.input, &actor_id, name.trim())?
     };
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -718,8 +728,8 @@ pub(crate) fn apply_player_profile(
     let profile: PlayerProfile =
         serde_json::from_str(&text).map_err(|e| format!("The profile is unreadable: {e}"))?;
     let preview = edit(state, app, None, |project| {
-        with_scene(project, |scene, library| {
-            profile.apply(scene, &actor_id, convert, library)
+        with_scene_input(project, |scene, input, library| {
+            profile.apply(scene, input, &actor_id, convert, library)
         })
     })?;
     serde_json::to_value(preview).map_err(|e| e.to_string())

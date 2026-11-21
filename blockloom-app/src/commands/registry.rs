@@ -29,16 +29,19 @@ pub(crate) fn type_registry(state: &SharedState) -> Result<Value, String> {
 /// What a `set-property` target names.
 enum Target {
     World,
+    Settings,
     Component { actor: String, name: String },
 }
 
 fn parse_target(target: &str) -> Result<Target, String> {
-    if target == "world" {
-        return Ok(Target::World);
+    match target {
+        "world" => return Ok(Target::World),
+        "settings" | "project" => return Ok(Target::Settings),
+        _ => {}
     }
     let rest = target
         .strip_prefix("actor:")
-        .ok_or("A target is \"world\" or \"actor:<id>/<Component>\"")?;
+        .ok_or("A target is \"world\", \"settings\" or \"actor:<id>/<Component>\"")?;
     let (actor, name) = rest
         .split_once('/')
         .ok_or("An actor target names its component: actor:<id>/<Component>")?;
@@ -73,6 +76,31 @@ pub(crate) fn write_world(
     Ok(())
 }
 
+/// One checked write to the project's game settings, coalesced per path.
+fn write_settings(
+    state: &SharedState,
+    app: &AppHandle,
+    path: &str,
+    value: Value,
+) -> Result<(), String> {
+    let mut s = lock(state)?;
+    let current = &s.project().ok_or("No project is open")?.settings;
+    let next = registry::set_settings_property(current, path, value)?;
+    push_undo_for(
+        &mut s,
+        Some(EditSession::Comment {
+            comment_id: format!("settings:{path}"),
+        }),
+    );
+    if let Some(project) = s.project_mut() {
+        project.settings = next;
+    }
+    auto_save(&mut s);
+    sync_runtime(&mut s);
+    emit(app, &mut s);
+    Ok(())
+}
+
 /// `set-property`: one checked write anywhere the registry describes. A
 /// built-in component goes through `set_actor_component`, so it gets that
 /// command's checks, normalization and undo; a plugin component through
@@ -88,6 +116,7 @@ pub(crate) fn set_property(
         Target::World => write_world(state, app, Some(&path), |world| {
             registry::set_world_property(world, &path, value)
         }),
+        Target::Settings => write_settings(state, app, &path, value),
         Target::Component { actor, name } => {
             if let Some(qualified) = name.strip_prefix("plugin:") {
                 let payload = {

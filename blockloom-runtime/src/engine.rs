@@ -778,7 +778,7 @@ impl Engine {
             return Some(bindings.clone());
         }
         self.project
-            .world
+            .settings
             .input
             .find(action)
             .map(|found| found.bindings.clone())

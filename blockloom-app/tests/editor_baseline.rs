@@ -241,11 +241,32 @@ fn saved_project_round_trips() {
         .dispatch("open_project", json!({ "path": dir.to_string_lossy() }))
         .expect("open");
     backend.dispatch("save_project", json!({})).expect("save");
+    let parse = |p: PathBuf| -> Value {
+        serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+    };
+    // The scene's game settings move to the project's `settings`.
+    let index = parse(dir.join("project.blockloom"));
+    let moved = [
+        ("Quality", "settings", "quality"),
+        ("Input", "config", "input"),
+        ("Sound", "mixer", "sound"),
+        ("Display", "display", "display"),
+    ];
     for rel in ["project.blockloom", "assets/scenes/Scene 1.blockscene"] {
-        let parse = |p: PathBuf| -> Value {
-            serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
-        };
-        let old = parse(source.join(rel));
+        let mut old = parse(source.join(rel));
+        if rel.ends_with(".blockscene") {
+            let components = old["components"].as_array_mut().expect("scene components");
+            for (kind, key, setting) in moved {
+                if let Some(at) = components.iter().position(|c| c["component"] == kind) {
+                    let component = components.remove(at);
+                    assert_preserved(
+                        &component[key],
+                        &index["settings"][setting],
+                        &format!("settings/{setting}"),
+                    );
+                }
+            }
+        }
         let mut new = parse(dir.join(rel));
         if rel.ends_with(".blockscene") {
             let components = new["components"].as_array_mut().expect("scene components");

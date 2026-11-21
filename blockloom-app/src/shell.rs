@@ -1580,7 +1580,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "set-property",
         cmd: "set_property",
         aliases: &["set_property"],
-        summary: "Set one field anywhere type-registry describes, checked against its schema: target \"world\" (path like fog.height.density) or \"actor:<id>/<Component>\" (path like light.intensity; plugin:<plugin>/<Type> for a plugin component).",
+        summary: "Set one field anywhere type-registry describes, checked against its schema: target \"world\" (a scene setting, path like fog.height.density), \"settings\" (the project's quality, input, sound and display, path like quality.resolution_scale) or \"actor:<id>/<Component>\" (path like light.intensity; plugin:<plugin>/<Type> for a plugin component).",
         args: &[
             ArgSpec {
                 name: "target",

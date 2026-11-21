@@ -1860,6 +1860,7 @@ fn project_with_headers(
         physics: Default::default(),
         multiplayer: Default::default(),
         localization: Default::default(),
+        settings: Default::default(),
     }
 }
 

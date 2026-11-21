@@ -1277,7 +1277,7 @@ pub fn sync_audio_scale(
 
 /// The saved mix, for reseeding the runtime's live gains on a rebuild.
 fn project_sound(engine: &Engine) -> blockloom_core::sound::SoundMixer {
-    engine.project.world.sound
+    engine.project.settings.sound
 }
 
 /// Opens every actor's compiled scripts, in component order. The editor
@@ -2031,7 +2031,7 @@ pub fn publish_sensors(
     // Pressed/released are edges against last frame's held.
     let mut actions: HashMap<String, ActionSense> = HashMap::new();
     let mut fired_actions: Vec<String> = Vec::new();
-    let action_defs = engine.project.world.input.actions.clone();
+    let action_defs = engine.project.settings.input.actions.clone();
     for action in &action_defs {
         let bindings = engine
             .input_overrides
@@ -2095,7 +2095,7 @@ pub fn publish_sensors(
     // Remapped-away actions leave no stale edge behind.
     let valid_actions: HashSet<String> = engine
         .project
-        .world
+        .settings
         .input
         .actions
         .iter()
@@ -5205,7 +5205,7 @@ pub fn apply_input_effects(mut engine: NonSendMut<Engine>, effects: Res<PendingE
             } => {
                 let Some(found) = engine
                     .project
-                    .world
+                    .settings
                     .input
                     .find(action)
                     .map(|found| found.name.clone())
@@ -5222,7 +5222,7 @@ pub fn apply_input_effects(mut engine: NonSendMut<Engine>, effects: Res<PendingE
                         if !engine.input_overrides.contains_key(&key) {
                             let defaults = engine
                                 .project
-                                .world
+                                .settings
                                 .input
                                 .find(&found)
                                 .map(|found| found.bindings.clone())
@@ -5246,7 +5246,7 @@ pub fn apply_input_effects(mut engine: NonSendMut<Engine>, effects: Res<PendingE
             Effect::ClearActionBindings { action, actor } => {
                 let Some(found) = engine
                     .project
-                    .world
+                    .settings
                     .input
                     .find(action)
                     .map(|found| found.name.clone())

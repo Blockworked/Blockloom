@@ -51,6 +51,7 @@ fn project_with(strands: Vec<Strand>) -> Project {
         physics: Default::default(),
         multiplayer: Default::default(),
         localization: Default::default(),
+        settings: Default::default(),
     }
 }
 
@@ -1068,6 +1069,7 @@ fn project_with_two(first: Vec<Strand>, second: Vec<Strand>) -> Project {
         physics: Default::default(),
         multiplayer: Default::default(),
         localization: Default::default(),
+        settings: Default::default(),
     }
 }
 

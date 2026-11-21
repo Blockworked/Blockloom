@@ -130,7 +130,7 @@ fn replayed_patches_match_the_whole_snapshot() {
     }));
     let mut state: Value = serde_json::from_str(&backend.frontend_state().unwrap()).unwrap();
     let mut state = state["full"].take();
-    let mut check = |backend: &Backend, what: &str, state: &mut Value| {
+    let check = |backend: &Backend, what: &str, state: &mut Value| {
         for message in messages.lock().unwrap().drain(..) {
             apply(state, &serde_json::from_str(&message).unwrap());
         }

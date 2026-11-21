@@ -239,6 +239,17 @@ MCP and the attach socket still read whole `state_dto` snapshots. Instruction
 `==` ignores ids, so the diff hashes them as well (`same_actor`). A document
 read off disk (live reload) is committed with nothing owed to the disk.
 
+### Game settings
+
+Quality, input actions, the sound buses and the display output hold for the
+whole game: `Project.settings` (`blockloom-core/src/settings.rs`,
+`GameSettings`), saved in the index. Older documents kept them on every
+scene's `World`; those load into `World::legacy_*` (never written) and
+`Project::adopt_scene_settings` takes the default scene's values, so the next
+save drops them from the scene files. A `set_scene_component` of one of the
+four writes the project's settings. Project Settings draws them on its Game
+page.
+
 ### Components
 
 An actor is a list of components, not a fixed set of fields
@@ -291,14 +302,14 @@ default.
 
 `blockloom-core/src/registry.rs` lists them: `COMPONENTS` (name, label,
 dimension, repeatable), `default_component(name, mode)`, the world settings
-(`world_fields`), `to_json(mode)` (what `type-registry` returns, ids blanked so
+(`world_fields`), the project's game settings (`settings_fields`), `to_json(mode)` (what `type-registry` returns, ids blanked so
 it is stable) and checked writes (`set_component_property`,
-`set_world_property`, paths like `light.beam.motes.count`). The app's
+`set_world_property`, `set_settings_property`, paths like `light.beam.motes.count`). The app's
 `commands/registry.rs` adds the open project's plugin types (`plugins`) and
 the generic commands: `type-registry`, `set-property
-target=world|actor:<id>/<Component> path=... value=...` (a built-in component
+target=world|settings|actor:<id>/<Component> path=... value=...` (a built-in component
 through `set_actor_component`, a plugin one through `set_plugin_component`, a
-world setting through `write_world`, coalesced per path into one undo step)
+world setting through `write_world`, a game setting through `write_settings`, coalesced per path into one undo step)
 and `add-component` (registry defaults; Script and Collider keep their own
 commands). The `set_*` setters stay, and `set_fog` is a wrapper over
 `write_world`. MCP gets a `blockloom://types` resource, and `src/plugins.ts`'s
@@ -1171,7 +1182,7 @@ stays the one EV on `Environment`; `set exposure to` (and a script's
 `set_exposure`) takes `ExposureClaims::director` for the rest of the run, and
 the atmosphere slot's `exposure` reading reports the resolved value.
 
-`World.display` is the project's output: SDR, HDR10 (PQ) or scRGB, peak
+`GameSettings.display` is the project's output: SDR, HDR10 (PQ) or scRGB, peak
 brightness and paper white in nits. `hdr::HdrFrame` resolves it, with `set HDR
 output`/`set peak brightness` laid over it for the run, against what the
 window's display offers (`DisplayOffers`), and is extracted so both worlds
@@ -2179,7 +2190,7 @@ test) and the open list; GPU numbers there are inferred until profiled.
 ### Sound
 
 `blockloom-core/src/sound.rs` is the model: a `SoundBus` (`Master`, `Music`,
-`Sfx`), a `SoundMixer` of one linear gain per bus saved on the `World`, and
+`Sfx`), a `SoundMixer` of one linear gain per bus saved in the project's `settings`, and
 the 0-100 block scale both ways (`user_to_gain`/`gain_to_user`). Blocks are
 `play sound` (global), `play sound at` (positional: follows an actor, panned
 by Bevy spatial audio with per-frame distance falloff), `stop sound` (empty

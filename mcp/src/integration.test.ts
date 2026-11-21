@@ -59,6 +59,7 @@ test("a shell session creates actors and reads state back", async (t) => {
     const registry = types.result as {
       components: { name: string; fields: PluginField[]; default: unknown }[];
       world: PluginField[];
+      settings: PluginField[];
     };
     for (const kind of registry.components) {
       const schema = typeSchema({ name: kind.name, type: "struct", fields: kind.fields });
@@ -70,6 +71,10 @@ test("a shell session creates actors and reads state back", async (t) => {
     for (const field of registry.world) {
       const parsed = typeSchema(field).safeParse(field.default);
       assert.ok(parsed.success, `world.${field.name}'s default fits its schema: ${parsed.error}`);
+    }
+    for (const field of registry.settings) {
+      const parsed = typeSchema(field).safeParse(field.default);
+      assert.ok(parsed.success, `settings.${field.name}'s default fits its schema: ${parsed.error}`);
     }
 
     const bad = await session.run("add-actor name=A shape=Wibble");

@@ -27,18 +27,14 @@ use serde::{Deserialize, Serialize};
 
 /// The scene components every project knows about by name.
 pub const BUILT_IN_SCENE_NAMES: &[&str] = &[
-    "Quality",
     "Dimension",
     "Background",
     "Physics",
     "Camera",
     "SpeechBubble",
     "Lighting",
-    "Sound",
     "Soundscape",
-    "Input",
     "Post",
-    "Display",
     "Navigation",
     "Sky",
     "Fog",
@@ -60,6 +56,9 @@ pub const BUILT_IN_SCENE_NAMES: &[&str] = &[
 #[serde(tag = "component")]
 #[allow(clippy::large_enum_variant)]
 pub enum SceneComponent {
+    /// Quality, Sound, Input and Display are project settings now
+    /// ([`crate::settings::GameSettings`]); these four are only read, from
+    /// older scene files, and moved there on load.
     Quality {
         settings: crate::quality::Settings,
     },
@@ -160,6 +159,18 @@ pub enum SceneComponent {
 
 impl SceneComponent {
     /// What the inspector and the blocks call this component.
+    /// Quality, input, sound and display: project settings that older
+    /// documents kept on each scene.
+    pub fn is_game_setting(&self) -> bool {
+        matches!(
+            self,
+            SceneComponent::Quality { .. }
+                | SceneComponent::Input { .. }
+                | SceneComponent::Sound { .. }
+                | SceneComponent::Display { .. }
+        )
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             SceneComponent::Quality { .. } => "Quality",
@@ -203,9 +214,6 @@ impl SceneComponents {
     /// simply reads as its default.
     pub fn from_world(world: &World) -> Self {
         Self(vec![
-            SceneComponent::Quality {
-                settings: world.quality.clone(),
-            },
             SceneComponent::Dimension { mode: world.mode },
             SceneComponent::Background {
                 color: world.background.clone(),
@@ -223,18 +231,11 @@ impl SceneComponents {
             SceneComponent::Lighting {
                 lighting: world.lighting.clone(),
             },
-            SceneComponent::Sound { mixer: world.sound },
             SceneComponent::Soundscape {
                 soundscape: world.soundscape.clone(),
             },
-            SceneComponent::Input {
-                config: world.input.clone(),
-            },
             SceneComponent::Post {
                 post: world.post.clone(),
-            },
-            SceneComponent::Display {
-                display: world.display,
             },
             SceneComponent::Navigation {
                 settings: world.navigation.clone(),
@@ -302,7 +303,7 @@ impl SceneComponents {
     pub fn apply_to_world(&self, world: &mut World) {
         for component in &self.0 {
             match component {
-                SceneComponent::Quality { settings } => world.quality.clone_from(settings),
+                SceneComponent::Quality { settings } => world.legacy_quality = Some(settings.clone()),
                 SceneComponent::Dimension { mode } => world.mode = *mode,
                 SceneComponent::Background { color } => world.background.clone_from(color),
                 SceneComponent::Physics {
@@ -317,13 +318,13 @@ impl SceneComponents {
                     world.speech_bubble.clone_from(style);
                 }
                 SceneComponent::Lighting { lighting } => world.lighting.clone_from(lighting),
-                SceneComponent::Sound { mixer } => world.sound.clone_from(mixer),
+                SceneComponent::Sound { mixer } => world.legacy_sound = Some(*mixer),
                 SceneComponent::Soundscape { soundscape } => {
                     world.soundscape.clone_from(soundscape);
                 }
-                SceneComponent::Input { config } => world.input.clone_from(config),
+                SceneComponent::Input { config } => world.legacy_input = Some(config.clone()),
                 SceneComponent::Post { post } => world.post.clone_from(post),
-                SceneComponent::Display { display } => world.display = *display,
+                SceneComponent::Display { display } => world.legacy_display = Some(*display),
                 SceneComponent::Navigation { settings } => {
                     world.navigation.clone_from(settings);
                 }
@@ -382,10 +383,6 @@ mod tests {
         let world = World {
             background: "#102030".to_string(),
             fixed_rate: 120.0,
-            quality: crate::quality::Settings {
-                resolution_scale: 0.75,
-                ..Default::default()
-            },
             ..World::default()
         };
         let components = SceneComponents::from_world(&world);

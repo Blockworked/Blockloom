@@ -23,13 +23,17 @@ Item {
         return ({ "Performance and scaling": "Quality", "Dimension": "Dimension", "Background": "Background", "Physics": "Physics", "Camera": "Camera",
             "Navigation": "Navigation", "Lighting": "Lighting", "Sky": "Sky", "Volumetric clouds": "Clouds", "Cloud layers": "CloudLayers",
             "Fog": "Fog", "Lightning": "Lightning", "Wind": "Wind", "Time of day and weather": "Director", "Particles": "Vfx",
-            "Post-process": "Post", "Display": "Display", "Sound": "Sound", "Input actions": "Input" })[heading] || "";
+            "Post-process": "Post" })[heading] || "";
     }
+    // Project settings, not scene ones: they live on the Game page.
+    readonly property var gameSections: ["Performance and scaling", "Display", "Sound", "Input actions"]
     function showSection(heading) {
         if (page === "project") return heading === "Project";
         if (page === "publishing") return heading === "App Info";
         if (page === "multiplayer") return heading === "Multiplayer";
         if (page === "android") return heading === "Android";
+        if (page === "game") return gameSections.indexOf(heading) >= 0;
+        if (gameSections.indexOf(heading) >= 0) return false;
         const lighting = ["Sun and ambient", "Shadows", "Ray tracing"];
         if (page === "lighting") return lighting.indexOf(heading) >= 0;
         return ["Project", "App Info", "Android", "Multiplayer"].indexOf(heading) < 0
@@ -40,13 +44,13 @@ Item {
     function writeMultiplayer(next) { invoke("set_multiplayer", { settings: Object.assign(multiplayerOf(), next) }); }
     function sceneComponent(command, args) {
         const fields = {
-            set_quality: ["Quality", "settings", "quality"], set_camera: ["Camera", "camera", "camera"],
+            set_camera: ["Camera", "camera", "camera"],
             set_navigation: ["Navigation", "settings", "navigation"], set_sky: ["Sky", "sky", "sky"],
             set_fog: ["Fog", "fog", "fog"], set_clouds: ["Clouds", "clouds", "clouds"],
             set_cloud_layers: ["CloudLayers", "layers", "layers"], set_lightning: ["Lightning", "lightning", "lightning"],
             set_wind: ["Wind", "wind", "wind"], set_director: ["Director", "director", "director"],
             set_vfx: ["Vfx", "settings", "vfx"], set_post_process: ["Post", "post", "post"],
-            set_display_output: ["Display", "display", "display"], set_sound_mixer: ["Sound", "mixer", "mixer"], set_soundscape: ["Soundscape", "soundscape", "soundscape"]
+            set_soundscape: ["Soundscape", "soundscape", "soundscape"]
         };
         if (fields[command]) { const f = fields[command]; const c = { component: f[0] }; c[f[1]] = args[f[2]]; return c; }
         if (command === "set_mode") return { component: "Dimension", mode: args.mode };
@@ -85,10 +89,10 @@ Item {
     Component.onCompleted: loadLighting()
     function withIndex(array, index, value) { const next = array.slice(); next[index] = value; return next; }
     function clamp(n, lo, hi) { return Math.min(Math.max(n, lo), hi); }
-    function qualityOf() { return Object.assign({ preset: "High", resolution_scale: 1, dynamic_resolution: false, min_scale: 0.5, target_ms: 16.667, auto_drop: false, over_budget_frames: 120, upscaler: "Spatial", dlss_mode: "Auto", sharpness: 0 }, world ? world.quality || {} : {}); }
+    function qualityOf() { return Object.assign({ preset: "High", resolution_scale: 1, dynamic_resolution: false, min_scale: 0.5, target_ms: 16.667, auto_drop: false, over_budget_frames: 120, upscaler: "Spatial", dlss_mode: "Auto", sharpness: 0 }, project && project.settings ? project.settings.quality || {} : {}); }
     function writeQuality(next) { invoke("set_quality", { quality: Object.assign(qualityOf(), next) }); }
     function postOf() { return Object.assign({ exposure_ev: 9.7, tonemapping: "TonyMcMapface", bloom_enabled: false, bloom_threshold: 1, bloom_intensity: 0.15, bloom_knee: 0.5, bloom_scatter: 0.7, bloom_dirt: "", bloom_dirt_intensity: 0, vignette_strength: 0, chromatic_aberration: 0, sharpen: 0 }, world && world.post ? world.post : {}); }
-    function soundOf() { return Object.assign({ master_volume: 1, music_volume: 1, sfx_volume: 1 }, world && world.sound ? world.sound : {}); }
+    function soundOf() { return Object.assign({ master_volume: 1, music_volume: 1, sfx_volume: 1 }, project && project.settings ? project.settings.sound || {} : {}); }
     function navigationOf() { return Object.assign({ areas: [], links: [] }, world && world.navigation ? world.navigation : {}); }
     function writeNavigation(next) { invoke("set_navigation", { navigation: Object.assign(navigationOf(), next) }); }
     function writeCamera(next) { invoke("set_camera", { camera: Object.assign(JSON.parse(JSON.stringify(world.camera)), next) }); }
@@ -131,7 +135,7 @@ Item {
         } else invoke("set_lighting", { lighting: value });
     }
     function writePost(next) { invoke("set_post_process", { post: Object.assign(postOf(), next) }); }
-    function displayOf() { return Object.assign({ space: "Sdr", peak_nits: 1000, paper_white_nits: 200 }, world && world.display ? world.display : {}); }
+    function displayOf() { return Object.assign({ space: "Sdr", peak_nits: 1000, paper_white_nits: 200 }, project && project.settings ? project.settings.display || {} : {}); }
     function writeDisplay(next) { invoke("set_display_output", { display: Object.assign(displayOf(), next) }); }
     function soundscapeOf() {
         const base = { weather: [], ducking: [], underwater: { buses: [], amount: 0.7, fade: 0.1 }, reverb: { mix: 0, size: 0.5, decay: 1.5, damping: 0.5, excursion: 0.2 },
@@ -1363,7 +1367,7 @@ Item {
             Section {
                 heading: "Input actions"; enabled: root.activeScene; available: !!root.world
                 Repeater {
-                    model: root.world && root.world.input ? root.world.input.actions : []
+                    model: root.project && root.project.settings ? root.project.settings.input.actions : []
                     delegate: ColumnLayout {
                         id: action
                         required property var modelData

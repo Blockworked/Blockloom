@@ -1856,7 +1856,7 @@ mod tests {
                 "Interface",
                 blockloom_core::scene::Mode::TwoD,
             );
-            project.world.quality.resolution_scale = scale;
+            project.settings.quality.resolution_scale = scale;
             let (set, index, reports) = run_world_reporting(
                 project,
                 |_| {},
@@ -2137,8 +2137,8 @@ mod tests {
                 SIZE.y as usize,
             );
             let mut project = project;
-            project.world.quality.resolution_scale = 0.5;
-            project.world.quality.upscaler = blockloom_core::quality::Upscaler::Taa;
+            project.settings.quality.resolution_scale = 0.5;
+            project.settings.quality.upscaler = blockloom_core::quality::Upscaler::Taa;
             let (set, index, errors) = run_world(project, |_| {}, game_camera(), 60, |_| false);
             assert!(errors.is_empty(), "{errors:?}");
             let set = set.expect("scaled view produced no frame");
@@ -2172,7 +2172,7 @@ mod tests {
                 actor.components.remove("Look");
                 actor.components.remove("Body");
             }
-            project.world.quality.resolution_scale = 0.5;
+            project.settings.quality.resolution_scale = 0.5;
             let mut blocks = vec![Instruction::new(K::WhenStarted)];
             for (id, x, width, color) in [
                 ("stripe", 31.0, 1.0, "#ffffff"),
@@ -2282,7 +2282,7 @@ mod tests {
         use blockloom_core::sky::SkyKind;
         for scale in [1.0, 0.53] {
             let mut room = dark_room(false);
-            room.world.quality.resolution_scale = scale;
+            room.settings.quality.resolution_scale = scale;
             room.world.post.ssr.enabled = true;
             room.world.sky.kind = SkyKind::Gradient;
             room.world.sky.lighting = false;

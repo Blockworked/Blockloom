@@ -23,7 +23,149 @@
           "name": "Scene 1",
           "path": "assets/scenes/Scene 1.blockscene"
         }
-      ]
+      ],
+      "settings": {
+        "display": {
+          "paper_white_nits": 200.0,
+          "peak_nits": 1000.0,
+          "space": "Sdr"
+        },
+        "input": {
+          "actions": [
+            {
+              "bindings": [
+                {
+                  "binding": "Key",
+                  "key": "space"
+                },
+                {
+                  "binding": "GamepadButton",
+                  "button": "south"
+                }
+              ],
+              "name": "Jump"
+            },
+            {
+              "bindings": [
+                {
+                  "binding": "Mouse",
+                  "button": "Left"
+                },
+                {
+                  "binding": "GamepadButton",
+                  "button": "righttrigger"
+                }
+              ],
+              "name": "Fire"
+            },
+            {
+              "bindings": [
+                {
+                  "binding": "Key",
+                  "key": "a"
+                },
+                {
+                  "binding": "Key",
+                  "key": "left arrow"
+                },
+                {
+                  "binding": "GamepadButton",
+                  "button": "dpadleft"
+                },
+                {
+                  "axis": "leftstickx",
+                  "binding": "GamepadAxis",
+                  "direction": -1
+                }
+              ],
+              "name": "Left"
+            },
+            {
+              "bindings": [
+                {
+                  "binding": "Key",
+                  "key": "d"
+                },
+                {
+                  "binding": "Key",
+                  "key": "right arrow"
+                },
+                {
+                  "binding": "GamepadButton",
+                  "button": "dpadright"
+                },
+                {
+                  "axis": "leftstickx",
+                  "binding": "GamepadAxis",
+                  "direction": 1
+                }
+              ],
+              "name": "Right"
+            },
+            {
+              "bindings": [
+                {
+                  "binding": "Key",
+                  "key": "w"
+                },
+                {
+                  "binding": "Key",
+                  "key": "up arrow"
+                },
+                {
+                  "binding": "GamepadButton",
+                  "button": "dpadup"
+                },
+                {
+                  "axis": "leftsticky",
+                  "binding": "GamepadAxis",
+                  "direction": 1
+                }
+              ],
+              "name": "Up"
+            },
+            {
+              "bindings": [
+                {
+                  "binding": "Key",
+                  "key": "s"
+                },
+                {
+                  "binding": "Key",
+                  "key": "down arrow"
+                },
+                {
+                  "binding": "GamepadButton",
+                  "button": "dpaddown"
+                },
+                {
+                  "axis": "leftsticky",
+                  "binding": "GamepadAxis",
+                  "direction": -1
+                }
+              ],
+              "name": "Down"
+            }
+          ]
+        },
+        "quality": {
+          "auto_drop": false,
+          "dlss_mode": "Auto",
+          "dynamic_resolution": false,
+          "min_scale": 0.5,
+          "over_budget_frames": 120,
+          "preset": "High",
+          "resolution_scale": 1.0,
+          "sharpness": 0.0,
+          "target_ms": 16.667,
+          "upscaler": "Spatial"
+        },
+        "sound": {
+          "master_volume": 1.0,
+          "music_volume": 1.0,
+          "sfx_volume": 1.0
+        }
+      }
     },
     "scene": {
       "actors": [
@@ -663,21 +805,6 @@
       ],
       "components": [
         {
-          "component": "Quality",
-          "settings": {
-            "auto_drop": false,
-            "dlss_mode": "Auto",
-            "dynamic_resolution": false,
-            "min_scale": 0.5,
-            "over_budget_frames": 120,
-            "preset": "High",
-            "resolution_scale": 1.0,
-            "sharpness": 0.0,
-            "target_ms": 16.667,
-            "upscaler": "Spatial"
-          }
-        },
-        {
           "component": "Dimension",
           "mode": "TwoD"
         },
@@ -771,14 +898,6 @@
           }
         },
         {
-          "component": "Sound",
-          "mixer": {
-            "master_volume": 1.0,
-            "music_volume": 1.0,
-            "sfx_volume": 1.0
-          }
-        },
-        {
           "component": "Soundscape",
           "soundscape": {
             "ducking": [],
@@ -804,127 +923,6 @@
               "fade": 0.1
             },
             "weather": []
-          }
-        },
-        {
-          "component": "Input",
-          "config": {
-            "actions": [
-              {
-                "bindings": [
-                  {
-                    "binding": "Key",
-                    "key": "space"
-                  },
-                  {
-                    "binding": "GamepadButton",
-                    "button": "south"
-                  }
-                ],
-                "name": "Jump"
-              },
-              {
-                "bindings": [
-                  {
-                    "binding": "Mouse",
-                    "button": "Left"
-                  },
-                  {
-                    "binding": "GamepadButton",
-                    "button": "righttrigger"
-                  }
-                ],
-                "name": "Fire"
-              },
-              {
-                "bindings": [
-                  {
-                    "binding": "Key",
-                    "key": "a"
-                  },
-                  {
-                    "binding": "Key",
-                    "key": "left arrow"
-                  },
-                  {
-                    "binding": "GamepadButton",
-                    "button": "dpadleft"
-                  },
-                  {
-                    "axis": "leftstickx",
-                    "binding": "GamepadAxis",
-                    "direction": -1
-                  }
-                ],
-                "name": "Left"
-              },
-              {
-                "bindings": [
-                  {
-                    "binding": "Key",
-                    "key": "d"
-                  },
-                  {
-                    "binding": "Key",
-                    "key": "right arrow"
-                  },
-                  {
-                    "binding": "GamepadButton",
-                    "button": "dpadright"
-                  },
-                  {
-                    "axis": "leftstickx",
-                    "binding": "GamepadAxis",
-                    "direction": 1
-                  }
-                ],
-                "name": "Right"
-              },
-              {
-                "bindings": [
-                  {
-                    "binding": "Key",
-                    "key": "w"
-                  },
-                  {
-                    "binding": "Key",
-                    "key": "up arrow"
-                  },
-                  {
-                    "binding": "GamepadButton",
-                    "button": "dpadup"
-                  },
-                  {
-                    "axis": "leftsticky",
-                    "binding": "GamepadAxis",
-                    "direction": 1
-                  }
-                ],
-                "name": "Up"
-              },
-              {
-                "bindings": [
-                  {
-                    "binding": "Key",
-                    "key": "s"
-                  },
-                  {
-                    "binding": "Key",
-                    "key": "down arrow"
-                  },
-                  {
-                    "binding": "GamepadButton",
-                    "button": "dpaddown"
-                  },
-                  {
-                    "axis": "leftsticky",
-                    "binding": "GamepadAxis",
-                    "direction": -1
-                  }
-                ],
-                "name": "Down"
-              }
-            ]
           }
         },
         {
@@ -1007,14 +1005,6 @@
             },
             "tonemapping": "TonyMcMapface",
             "vignette_strength": 0.0
-          }
-        },
-        {
-          "component": "Display",
-          "display": {
-            "paper_white_nits": 200.0,
-            "peak_nits": 1000.0,
-            "space": "Sdr"
           }
         },
         {

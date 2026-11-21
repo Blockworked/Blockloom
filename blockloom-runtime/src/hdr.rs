@@ -375,7 +375,7 @@ pub struct HdrMetadata {
 /// The project's display settings with this run's `set HDR output` and
 /// `set peak brightness` laid over them.
 pub fn wanted_output(engine: &Engine) -> DisplayOutput {
-    let mut display = engine.project.world.display;
+    let mut display = engine.project.settings.display;
     if let Some(nits) = engine.peak_nits {
         display.peak_nits = nits;
     }
@@ -871,7 +871,7 @@ mod tests {
         let wanted = wanted_output(&engine);
         assert_eq!(wanted.space, OutputSpace::Scrgb);
         assert_eq!(wanted.peak_nits, 10_000.0);
-        engine.project.world.display.space = OutputSpace::Hdr10;
+        engine.project.settings.display.space = OutputSpace::Hdr10;
         assert_eq!(wanted_output(&engine).space, OutputSpace::Hdr10);
         engine.hdr_output = Some(false);
         assert_eq!(wanted_output(&engine).space, OutputSpace::Sdr);
