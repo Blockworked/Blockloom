@@ -49,6 +49,7 @@ use std::sync::atomic::Ordering;
 
 pub(crate) mod physics;
 pub(crate) mod plugins;
+pub(crate) mod prefabs;
 pub(crate) mod problems;
 pub(crate) mod registry;
 
@@ -75,6 +76,7 @@ fn push_undo_for(s: &mut AppState, session: Option<EditSession>) {
 /// what the frontend is owed. Saves and snapshots call it, so a command
 /// never has to.
 fn commit(s: &mut AppState) {
+    prefabs::mark_overrides(s);
     if let Some(open) = &mut s.open {
         open.tracker.commit(&open.project);
     }
@@ -512,6 +514,15 @@ pub(crate) fn open_project(
         sync_ide(&dir);
         if owns_lock && !attached {
             reindex(&dir);
+            // A prefab edited outside the editor reaches its instances.
+            let changed = s
+                .open
+                .as_mut()
+                .map(|open| prefabs::sync_instances(&mut open.project, &dir, None))
+                .unwrap_or(0);
+            if changed > 0 {
+                auto_save(&mut s);
+            }
         }
         // Undo is empty on open, so grids nothing names can go. Another
         // owner's history might still name some.

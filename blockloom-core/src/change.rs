@@ -296,7 +296,7 @@ fn diff_scene(id: &str, before: Option<&Scene>, after: Option<&Scene>) -> SceneC
 
 /// `==`, plus instruction ids, which an instruction's own `==` ignores but
 /// the canvas addresses blocks by.
-fn same_actor(a: &Actor, b: &Actor) -> bool {
+pub fn same_actor(a: &Actor, b: &Actor) -> bool {
     if a != b {
         return false;
     }

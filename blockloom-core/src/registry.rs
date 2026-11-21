@@ -66,6 +66,7 @@ pub const COMPONENTS: &[&str] = &[
     "Parallax",
     "Room",
     "Persist",
+    "Prefab",
     "Custom",
 ];
 
@@ -120,6 +121,7 @@ fn spec_key(name: &str) -> Option<&'static str> {
         "Parallax" => "parallax",
         "Room" => "room",
         "SoundZone" => "zone",
+        "Prefab" => "prefab",
         _ => return None,
     })
 }
@@ -135,7 +137,7 @@ pub fn default_component(name: &str, mode: Mode) -> Option<ActorComponent> {
         Value::Object(object)
     };
     let value = match name {
-        "Collider" | "Script" => return None,
+        "Collider" | "Script" | "Prefab" => return None,
         "Look" if three => {
             tag(json!({"visual": {"shape": "Cuboid", "color": "#4C97FF", "size": [1, 1, 1]}}))
         }
@@ -205,7 +207,7 @@ pub fn component_types(mode: Mode) -> Vec<ComponentType> {
                 label: label(name).to_string(),
                 dimension: dimension(name),
                 repeatable: matches!(*name, "Custom" | "Collider" | "Constraint" | "Script"),
-                special: matches!(*name, "Collider" | "Script"),
+                special: matches!(*name, "Collider" | "Script" | "Prefab"),
                 fields,
                 default,
             }

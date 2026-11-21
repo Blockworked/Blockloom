@@ -218,6 +218,7 @@ fn default_components(player: &str) -> (Vec<serde_json::Value>, Vec<String>) {
         .map(|(name, key, value)| json!({ "component": name, key: value }))
         .collect();
     tags.push(json!({ "component": "Persist" }));
+    tags.push(json!({ "component": "Prefab", "prefab": { "source": { "path": "assets/crate.blockprefab" } } }));
     let mut made = Vec::new();
     let mut skipped = Vec::new();
     for tag in tags {

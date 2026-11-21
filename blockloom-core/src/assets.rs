@@ -44,6 +44,8 @@ pub enum AssetKind {
     Scene,
     /// Reusable sun, ambient, shadows and ray tracing settings.
     Lighting,
+    /// An actor saved to place again (`.blockprefab`).
+    Prefab,
     Other,
 }
 
@@ -164,6 +166,7 @@ pub fn kind_of(name: &str) -> AssetKind {
         "r16" | "r32" | "raw" => AssetKind::Height,
         "blockscene" => AssetKind::Scene,
         "blocklighting" => AssetKind::Lighting,
+        "blockprefab" => AssetKind::Prefab,
         _ => AssetKind::Other,
     }
 }

@@ -497,6 +497,34 @@ impl Backend {
                 arg(&args, "shape")?,
                 arg(&args, "name").ok(),
             )?),
+            "create_prefab" => to_json(commands::prefabs::create_prefab(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg::<Option<String>>(&args, "path")?,
+            )?),
+            "instantiate_prefab" => to_json(commands::prefabs::instantiate_prefab(
+                state,
+                app,
+                arg(&args, "path")?,
+                arg::<Option<[f32; 3]>>(&args, "position")?,
+            )?),
+            "apply_prefab" => to_json(commands::prefabs::apply_prefab(
+                state,
+                app,
+                arg(&args, "actorId")?,
+            )?),
+            "revert_prefab" => to_json(commands::prefabs::revert_prefab(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg::<Option<String>>(&args, "path")?,
+            )?),
+            "unpack_prefab" => to_json(commands::prefabs::unpack_prefab(
+                state,
+                app,
+                arg(&args, "actorId")?,
+            )?),
             "duplicate_actor" => to_json(commands::duplicate_actor(
                 state,
                 app,

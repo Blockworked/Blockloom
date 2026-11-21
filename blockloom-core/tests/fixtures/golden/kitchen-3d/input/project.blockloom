@@ -1,5 +1,5 @@
 {
-  "id": "d54430c284c64a9b940dcd4318bf08f8",
+  "id": "6710edcee4d14d6cb367ef708bb8007d",
   "name": "kitchen-3d",
   "icon": "",
   "android": {
@@ -9,17 +9,17 @@
     "keystore": "",
     "key_alias": ""
   },
-  "active_scene": "f3fe9d131d0b4d2fb6aac398dfeb3312",
-  "default_scene": "69f72bb5b0b440d6acda5a5d3ebcc330",
+  "active_scene": "170f94aee9d5435092f2b7a2c4531a48",
+  "default_scene": "4b2369bbb5d44c84a83c4e8e6b1a1098",
   "scenes": [
     {
-      "id": "69f72bb5b0b440d6acda5a5d3ebcc330",
+      "id": "4b2369bbb5d44c84a83c4e8e6b1a1098",
       "name": "Scene 1",
       "path": "assets/scenes/Scene 1.blockscene",
       "mode": "ThreeD"
     },
     {
-      "id": "f3fe9d131d0b4d2fb6aac398dfeb3312",
+      "id": "170f94aee9d5435092f2b7a2c4531a48",
       "name": "Level 2",
       "path": "assets/scenes/Level 2.blockscene",
       "mode": "ThreeD"

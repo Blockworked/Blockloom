@@ -341,7 +341,22 @@ pub fn uses(project: &Project, index: &ResourceIndex) -> BTreeMap<String, Vec<Us
             } else {
                 continue;
             };
-            out.entry(path.to_string()).or_default().push(make(at));
+            let found = make(at);
+            // A ResourceRef names its file twice, by id and by path.
+            let stem = |at: &str| {
+                at.strip_suffix(".id")
+                    .or_else(|| at.strip_suffix(".path"))
+                    .unwrap_or(at)
+                    .to_string()
+            };
+            let list = out.entry(path.to_string()).or_default();
+            if !list.iter().any(|u| {
+                u.scene_id == found.scene_id
+                    && u.actor_id == found.actor_id
+                    && stem(&u.at) == stem(&found.at)
+            }) {
+                list.push(found);
+            }
         }
     };
     let default = project

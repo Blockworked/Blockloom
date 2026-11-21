@@ -255,6 +255,26 @@ document's JSON for strings naming an indexed path or id, which is "used by"
 `Project::repoint_asset` follows a rename by the same walk. The plugin import
 ledger (`.blockloom/imports.json`) is still its own file.
 
+### Prefabs
+
+`blockloom-core/src/prefab.rs`, commands in `blockloom-app/src/commands/
+prefabs.rs`. A prefab is one actor saved as a `.blockprefab` resource. An
+instance is a whole actor carrying a `Prefab` component (`PrefabLink`: the
+source `ResourceRef` and the sorted property paths it overrides), so the
+runtime and everything else see a plain actor. A path is one top-level
+field (`Look.visual`, `Collider#1.collider`, a graph key like `strands`);
+`Place`, `Parent` and the name are always the instance's own.
+`prefabs::mark_overrides` runs before every commit and compares each touched
+instance with the tracker's committed copy: a changed path that differs from
+the prefab becomes an override, one set back to the prefab's value stops
+being one. `prefab::rebuild` is the prefab plus the instance's overrides,
+which `apply-prefab` (instance into file, then every instance), `revert-
+prefab` and `open_project` (a file edited outside the editor) use. The
+inspector draws the link as a card with Apply and per-override Revert, the
+actor list has Make prefab and the tray Place in scene. One actor per
+prefab so far: children, nested prefabs and a prefab editing mode are not
+done.
+
 ### Game settings
 
 Quality, input actions, the sound buses and the display output hold for the

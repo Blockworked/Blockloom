@@ -142,6 +142,11 @@ impl Tracker {
     }
 
     /// Diffs `project` against the committed copy and files the result.
+    /// The last committed copy of the project.
+    pub(crate) fn shadow(&self) -> Option<&Project> {
+        self.shadow.as_ref()
+    }
+
     pub(crate) fn commit(&mut self, project: &Project) -> Option<Change> {
         let mark = self.mark.take();
         let Some(shadow) = &mut self.shadow else {

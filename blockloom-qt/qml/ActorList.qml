@@ -239,6 +239,9 @@ Rectangle {
             visible: !!root.appState.selected_actor
             Layout.fillWidth: true; Layout.margins: 8; spacing: 4
             IconButton { iconName: "copy"; tip: "Duplicate this actor"; flat: false; onClicked: root.app.invoke("duplicate_actor", { actorId: root.appState.selected_actor }) }
+            IconButton { objectName: "make-prefab"; iconName: "package"; tip: "Save as a prefab you can place again"; flat: false
+                visible: { const a = root.appState.project ? root.appState.project.actors.find(x => x.id === root.appState.selected_actor) : null; return !!a && !(a.components || []).some(c => c.component === "Prefab"); }
+                onClicked: root.app.invoke("create_prefab", { actorId: root.appState.selected_actor }) }
             IconButton { iconName: "trash-2"; tip: "Delete this actor"; flat: false; danger: true; onClicked: removeDialog.open() }
         }
     }

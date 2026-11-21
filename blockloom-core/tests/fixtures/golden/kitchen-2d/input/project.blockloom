@@ -1,5 +1,5 @@
 {
-  "id": "53754373292d4b81b146b5305254e5fb",
+  "id": "815676a02f2f4f5489c226536628253f",
   "name": "kitchen-2d",
   "icon": "",
   "android": {
@@ -9,17 +9,17 @@
     "keystore": "",
     "key_alias": ""
   },
-  "active_scene": "994e7df745894b0c972f4b8c12c244d6",
-  "default_scene": "e8f8788ff92f409682cb1204cbb1e7c9",
+  "active_scene": "abbea690c8944bbcb6fe919ec048e155",
+  "default_scene": "f493ca58ebe34f1686e8422ed86f304b",
   "scenes": [
     {
-      "id": "e8f8788ff92f409682cb1204cbb1e7c9",
+      "id": "f493ca58ebe34f1686e8422ed86f304b",
       "name": "Scene 1",
       "path": "assets/scenes/Scene 1.blockscene",
       "mode": "TwoD"
     },
     {
-      "id": "994e7df745894b0c972f4b8c12c244d6",
+      "id": "abbea690c8944bbcb6fe919ec048e155",
       "name": "Level 2",
       "path": "assets/scenes/Level 2.blockscene",
       "mode": "TwoD"

@@ -537,7 +537,7 @@ Rectangle {
                                 Layout.fillWidth: true
                                 readonly property var c: card.c
                                 sourceComponent: ({ Place: placeCard, Look: lookCard, Parent: parentCard, Render: renderCard, Body: bodyCard, Rigidbody: rigidbodyCard, Collider: colliderCard, Constraint: constraintCard, CharacterController: controllerCard, CharacterMotor: motorCard, PlayerCamera: playerCameraCard, Joint: jointCard, Brain: brainCard, Camera: cameraCard,
-                                                    Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Light2d: light2dCard, Conveyor: conveyorCard, Hazard: hazardCard, SoundZone: soundZoneCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard, Plugin: pluginCard })[card.c.component] || null
+                                                    Script: scriptCard, Custom: customCard, Material: materialCard, Emitter: emitterCard, Trail: trailCard, Light: lightCard, Light2d: light2dCard, Conveyor: conveyorCard, Hazard: hazardCard, SoundZone: soundZoneCard, Animation: animationCard, Sprite: spriteCard, Volume: volumeCard, Probe: probeCard, Terrain: terrainCard, Fracture: fractureCard, Water: waterCard, Buoyancy: buoyancyCard, Parallax: parallaxCard, Room: roomCard, Persist: persistCard, Prefab: prefabCard, Plugin: pluginCard })[card.c.component] || null
                             }
                         }
                     }
@@ -1876,6 +1876,38 @@ Rectangle {
             spacing: 6
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "Keeps this actor across scene switches: a `switch scene to` carries it - live position, variables and attached components included - into the new scene instead of unloading it. Clones still die with the old scene." }
+        }
+    }
+    Component {
+        id: prefabCard
+        ColumnLayout {
+            id: pf
+            readonly property var c: parent.c
+            readonly property var link: c.prefab || ({})
+            readonly property string path: link.source ? link.source.path : ""
+            readonly property var overrides: link.overrides || []
+            spacing: 6
+            InspectorRow { label: "Prefab"; Layout.fillWidth: true
+                Text { Layout.fillWidth: true; elide: Text.ElideMiddle; color: Theme.text; font.pixelSize: 12; text: pf.path || "missing" } }
+            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                text: pf.overrides.length ? "This copy sets " + pf.overrides.length + (pf.overrides.length === 1 ? " property" : " properties") + " itself. The rest follows the prefab." : "Everything but its place and name follows the prefab." }
+            Repeater {
+                model: pf.overrides
+                delegate: RowLayout {
+                    required property var modelData
+                    Layout.fillWidth: true; spacing: 6
+                    Text { Layout.fillWidth: true; elide: Text.ElideRight; color: Theme.text; font.pixelSize: 12; text: modelData }
+                    StitchButton { text: "Revert"; implicitHeight: 26; font.pixelSize: 11
+                        onClicked: root.app.invoke("revert_prefab", { actorId: root.actor.id, path: modelData }) }
+                }
+            }
+            RowLayout {
+                spacing: 6
+                StitchButton { objectName: "prefab-apply"; text: "Apply to prefab"; iconName: "upload"; implicitHeight: 30
+                    onClicked: root.app.invoke("apply_prefab", { actorId: root.actor.id }) }
+                StitchButton { visible: pf.overrides.length > 0; text: "Revert all"; implicitHeight: 30
+                    onClicked: root.app.invoke("revert_prefab", { actorId: root.actor.id }) }
+            }
         }
     }
     Component {

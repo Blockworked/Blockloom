@@ -38,7 +38,7 @@ Rectangle {
     property string previewing: ""
     property var dropTarget: null  // A folder path while an asset drag hovers one, else null - null rather than "" so the project root ("") stays hoverable without reading as hovered.
 
-    readonly property var icons: ({ folder: "folder", image: "image", audio: "music", font: "file-type", model: "box", script: "file-code", shader: "sparkles", text: "file-text", hdr: "sun", volume: "layers", light: "zap", height: "trending-up", scene: "map", lighting: "sun", other: "file" })
+    readonly property var icons: ({ folder: "folder", image: "image", audio: "music", font: "file-type", model: "box", script: "file-code", shader: "sparkles", text: "file-text", hdr: "sun", volume: "layers", light: "zap", height: "trending-up", scene: "map", lighting: "sun", prefab: "package", other: "file" })
     function parentOf(p) { const cut = p.lastIndexOf("/"); return cut === -1 ? "" : p.slice(0, cut); }
     readonly property var crumbs: { const parts = path.split("/").filter(p => p.length); return parts.map((name, i) => ({ name: name, path: parts.slice(0, i + 1).join("/") })); }
     function fileSize(bytes) {
@@ -428,6 +428,7 @@ Rectangle {
             onTriggered: { biasDialog.entry = root.menuEntry; const r = root.report(root.menuEntry); biasDialog.ev = r && r.exposure_bias ? r.exposure_bias : 0; biasDialog.open(); } }
         StitchMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "folder"; iconName: "folder"; text: "Open"; onTriggered: root.goTo(root.menuEntry.path) }
         StitchMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "scene"; iconName: "map"; text: "Open scene"; onTriggered: root.openSceneAsset(root.menuEntry) }
+        StitchMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "prefab"; iconName: "package"; text: "Place in scene"; onTriggered: root.run("instantiate_prefab", { path: root.menuEntry.path }) }
         StitchMenuItem { visible: !!root.menuEntry; iconName: "pencil"; text: "Rename"; onTriggered: root.startRename(root.menuEntry) }
         StitchMenuItem { visible: !!root.menuEntry && root.path.length > 0; iconName: "upload"; text: "Move up one folder"; onTriggered: root.run("move_asset", { path: root.menuEntry.path, parent: root.parentOf(root.parentOf(root.menuEntry.path)) }) }
         StitchMenuItem { visible: !!root.menuEntry; iconName: "trash-2"; danger: true; text: root.menuEntry ? "Delete “" + root.menuEntry.name + "”" : ""; onTriggered: { deleteDialog.entry = root.menuEntry; deleteDialog.users = []; deleteDialog.open(); deleteDialog.lookUp(); } }

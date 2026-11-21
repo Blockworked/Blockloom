@@ -482,6 +482,12 @@ pub enum ActorComponent {
     /// new scene instead of unloading it with the old one. Opt-in per actor,
     /// the DontDestroyOnLoad half of multi-scene support.
     Persist,
+    /// Placed from a `.blockprefab`: which one, and what this copy overrides.
+    /// The editor rebuilds the actor when the prefab changes; the runtime
+    /// ignores it.
+    Prefab {
+        prefab: crate::prefab::PrefabLink,
+    },
     /// A component a plugin owns. The document stores its payload as the
     /// plugin's schema describes it and never interprets it, so a project
     /// whose plugin is missing still opens, saves and round-trips it intact.
@@ -526,6 +532,7 @@ impl ActorComponent {
             ActorComponent::Parallax { .. } => "Parallax",
             ActorComponent::Room { .. } => "Room",
             ActorComponent::Persist => "Persist",
+            ActorComponent::Prefab { .. } => "Prefab",
             ActorComponent::Plugin { record } => record.name(),
             ActorComponent::Custom { name, .. } => name,
         }

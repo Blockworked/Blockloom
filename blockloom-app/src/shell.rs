@@ -1459,6 +1459,66 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[A],
     },
     CommandSpec {
+        name: "create-prefab",
+        cmd: "create_prefab",
+        aliases: &["create_prefab"],
+        summary: "Save an actor as a .blockprefab (default assets/prefabs/<name>.blockprefab) and make it the first instance.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "instantiate-prefab",
+        cmd: "instantiate_prefab",
+        aliases: &["instantiate_prefab", "place-prefab"],
+        summary: "Place a prefab in the open scene; answers the new actor's id.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+            ArgSpec {
+                name: "position",
+                ty: "[x, y, z]",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "apply-prefab",
+        cmd: "apply_prefab",
+        aliases: &["apply_prefab"],
+        summary: "Write an instance's state into its prefab and rebuild every other instance (their overrides stay).",
+        args: &[A],
+    },
+    CommandSpec {
+        name: "revert-prefab",
+        cmd: "revert_prefab",
+        aliases: &["revert_prefab"],
+        summary: "Drop one override (path like Look.visual) or all of them, taking the prefab's values back.",
+        args: &[
+            A,
+            ArgSpec {
+                name: "path",
+                ty: "string",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "unpack-prefab",
+        cmd: "unpack_prefab",
+        aliases: &["unpack_prefab"],
+        summary: "Keep an instance as it is but forget its prefab.",
+        args: &[A],
+    },
+    CommandSpec {
         name: "remove-actor",
         cmd: "remove_actor",
         aliases: &["remove_actor"],

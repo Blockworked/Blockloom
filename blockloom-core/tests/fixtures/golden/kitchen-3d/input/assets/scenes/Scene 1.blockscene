@@ -1,5 +1,5 @@
 {
-  "id": "69f72bb5b0b440d6acda5a5d3ebcc330",
+  "id": "4b2369bbb5d44c84a83c4e8e6b1a1098",
   "name": "Scene 1",
   "format": 1,
   "components": [
@@ -601,7 +601,7 @@
   ],
   "actors": [
     {
-      "id": "17b50a7b6c054723ba9898fd80f901d7",
+      "id": "c5b2dc33b8a94328a3c35c43d2e43922",
       "name": "Player",
       "components": [
         {
@@ -970,7 +970,7 @@
       ]
     },
     {
-      "id": "d1e1a0510b8341d1a8adb9ee6c5b0d99",
+      "id": "5b1aeba0e3c146d9b84b1eed8be8226b",
       "name": "Ground",
       "components": [
         {
@@ -1032,7 +1032,7 @@
       "block_defs": []
     },
     {
-      "id": "50c527b976cb43edb0113e6ee16dc75d",
+      "id": "5c75b22bd1ac4f0f9f02a9dbe623c27a",
       "name": "With Render",
       "components": [
         {
@@ -1091,7 +1091,7 @@
       "block_defs": []
     },
     {
-      "id": "b3a5276995864971ac562d2f6564519a",
+      "id": "60e6f3f156c24f8dadb2ce85409aee19",
       "name": "With Body",
       "components": [
         {
@@ -1150,7 +1150,7 @@
       "block_defs": []
     },
     {
-      "id": "9e16c6c60e47413786042f026ab3f0e5",
+      "id": "e3d29bd0cc81430a844fd62c44ca68ac",
       "name": "With Rigidbody",
       "components": [
         {
@@ -1202,7 +1202,7 @@
         {
           "component": "Rigidbody",
           "rigidbody": {
-            "id": "5416ce0542104ecdbb05eefb8b46c4a8",
+            "id": "fac2089883074d9bae7306b77669123d",
             "body_type": "Dynamic",
             "simulated": true,
             "mass": {
@@ -1243,7 +1243,7 @@
       "block_defs": []
     },
     {
-      "id": "42695556c54b40f38dd520d859b436c3",
+      "id": "7a9cd84bfb6345569b9714202d959969",
       "name": "With Constraint",
       "components": [
         {
@@ -1295,7 +1295,7 @@
         {
           "component": "Constraint",
           "constraint": {
-            "id": "46df1eb09fc84cf39e637b5db21a47cf",
+            "id": "23c6acd86bb64160b8a475915ba120f8",
             "name": "",
             "enabled": true,
             "kind": "Fixed",
@@ -1390,7 +1390,7 @@
       "block_defs": []
     },
     {
-      "id": "255dc3e6c86d436881e0769d77c86314",
+      "id": "e24454f736074d7c8132941d944734c6",
       "name": "With CharacterController",
       "components": [
         {
@@ -1442,7 +1442,7 @@
         {
           "component": "CharacterController",
           "controller": {
-            "id": "62153533d44143868854bbf1147e772b",
+            "id": "874c323989584320bab9c817b7bbfe15",
             "enabled": true,
             "center": [
               0.0,
@@ -1475,7 +1475,7 @@
       "block_defs": []
     },
     {
-      "id": "6c7b28d998474b4295732154be128785",
+      "id": "0652c5dd1f1b41b9b7e495c0e257546e",
       "name": "With CharacterMotor",
       "components": [
         {
@@ -1527,7 +1527,7 @@
         {
           "component": "CharacterMotor",
           "motor": {
-            "id": "7aee1fcbfa98460b9731b96d9455408d",
+            "id": "5ed473caadd74afd91c46b6c7e0f5de0",
             "enabled": true,
             "owner": "Player",
             "player": 0,
@@ -1566,7 +1566,7 @@
       "block_defs": []
     },
     {
-      "id": "3e061cc94fe94656b002d005aab9c8bb",
+      "id": "cd921579e88d4a838ad843d1d77a8aa0",
       "name": "With PlayerCamera",
       "components": [
         {
@@ -1654,7 +1654,7 @@
       "block_defs": []
     },
     {
-      "id": "9b24be53749d4ff993a769f816f9830b",
+      "id": "35a589475194456aa02f1d55095f62d1",
       "name": "With Brain",
       "components": [
         {
@@ -1743,7 +1743,7 @@
       "block_defs": []
     },
     {
-      "id": "17c3bb6c37514da7bf27ecf926f633e6",
+      "id": "19046bffc6434080960728665e71a5f4",
       "name": "With Camera",
       "components": [
         {
@@ -1816,7 +1816,7 @@
       "block_defs": []
     },
     {
-      "id": "a2a825d732864b02ad042e70a8e6afbe",
+      "id": "8c8e9209020b46ceb74621b52abcbe07",
       "name": "With Script",
       "components": [
         {
@@ -1879,7 +1879,7 @@
       "block_defs": []
     },
     {
-      "id": "bb48f274622d4eab93af77cbcb3de3b8",
+      "id": "439069b5628c4051825623762dcd9c8e",
       "name": "With Parent",
       "components": [
         {
@@ -1930,7 +1930,7 @@
         },
         {
           "component": "Parent",
-          "parent": "17b50a7b6c054723ba9898fd80f901d7",
+          "parent": "c5b2dc33b8a94328a3c35c43d2e43922",
           "offset": null
         }
       ],
@@ -1943,7 +1943,7 @@
       "block_defs": []
     },
     {
-      "id": "9f174acd5d8648dc9724c843c2271e09",
+      "id": "e667ac935e794cc882fb48d276d08176",
       "name": "With Health",
       "components": [
         {
@@ -2007,7 +2007,7 @@
       "block_defs": []
     },
     {
-      "id": "5e59f5b065c440f2b0334975ef65070a",
+      "id": "10b318af1df246308e124fc953274b6e",
       "name": "With Material",
       "components": [
         {
@@ -2149,7 +2149,7 @@
       "block_defs": []
     },
     {
-      "id": "832a9d1664764d37af9568d4bc300b10",
+      "id": "914481f4b12b4479bc8a64202937202c",
       "name": "With Fracture",
       "components": [
         {
@@ -2300,7 +2300,7 @@
       "block_defs": []
     },
     {
-      "id": "cf4570ccc39e4556bf58a9700c466349",
+      "id": "f13eb766fb9c4d3dbfe6b521855e4061",
       "name": "With Emitter",
       "components": [
         {
@@ -2460,7 +2460,7 @@
       "block_defs": []
     },
     {
-      "id": "08026ba4200d458a83af91ab285a4453",
+      "id": "aae1d30e90e8489ab54c3e9be722a379",
       "name": "With Trail",
       "components": [
         {
@@ -2527,7 +2527,7 @@
       "block_defs": []
     },
     {
-      "id": "6f855bcb16af43d3a11de5da4d944307",
+      "id": "fec3a6fac2274f68b56bbec181579b0a",
       "name": "With Light",
       "components": [
         {
@@ -2630,7 +2630,7 @@
       "block_defs": []
     },
     {
-      "id": "a8a01ab8f8844b7c88caccf102a922ef",
+      "id": "a510c6be879046bd83e05088fddd0d72",
       "name": "With Light2D",
       "components": [
         {
@@ -2708,7 +2708,7 @@
       "block_defs": []
     },
     {
-      "id": "5599622c980741e1bfec7e9f4acd0672",
+      "id": "a99cba5631e14e6bb5ab618b6d38b2c2",
       "name": "With Conveyor",
       "components": [
         {
@@ -2774,7 +2774,7 @@
       "block_defs": []
     },
     {
-      "id": "797abdc9bf43420ba02849604d180bde",
+      "id": "11349f66c7754562b8c71c7cb6dc5574",
       "name": "With Hazard",
       "components": [
         {
@@ -2843,7 +2843,7 @@
       "block_defs": []
     },
     {
-      "id": "442a8e97bcaa4777b3f8daa5cad0a566",
+      "id": "7bca4e53511a49d4953b700e4166990e",
       "name": "With Animation",
       "components": [
         {
@@ -2914,7 +2914,7 @@
       "block_defs": []
     },
     {
-      "id": "dd47f80d239e49eb9f7cafad1322c8a8",
+      "id": "761da3a5b9054bbe8eb83d3412ecdfca",
       "name": "With Volume",
       "components": [
         {
@@ -3253,7 +3253,7 @@
       "block_defs": []
     },
     {
-      "id": "3cd48fc65ba549a7ba6444e27e1949c2",
+      "id": "5dacbe3e06c44e70a2c779cf18106cd8",
       "name": "With Probe",
       "components": [
         {
@@ -3333,7 +3333,7 @@
       "block_defs": []
     },
     {
-      "id": "abc9c47454004eadbb5a536502c9b4de",
+      "id": "9898fd743dba43e89e0d29037e24d66f",
       "name": "With Terrain",
       "components": [
         {
@@ -3490,7 +3490,7 @@
       "block_defs": []
     },
     {
-      "id": "4b913887e09b4702a21961842ec29e91",
+      "id": "476881207f3647158b6d262c5ec0c686",
       "name": "With Sprite",
       "components": [
         {
@@ -3566,7 +3566,7 @@
       "block_defs": []
     },
     {
-      "id": "3d6553f26eb24c179ba90f398e682cb8",
+      "id": "9d39a9221fb340f3b5092c4299347370",
       "name": "With Water",
       "components": [
         {
@@ -3703,7 +3703,7 @@
       "block_defs": []
     },
     {
-      "id": "cc0fede9353b41dd903ecf08a3016fc8",
+      "id": "08e5dbab1e0843d5aa45573bcffa29af",
       "name": "With Buoyancy",
       "components": [
         {
@@ -3772,7 +3772,7 @@
       "block_defs": []
     },
     {
-      "id": "05e0b85dbccc4ec2955a409a054f205b",
+      "id": "8d0894b950454f0a930375bc45efb357",
       "name": "With Parallax",
       "components": [
         {
@@ -3845,7 +3845,7 @@
       "block_defs": []
     },
     {
-      "id": "db0cba14d2a04e5aa0b67b6edca81f38",
+      "id": "b8823ee896964f71806caea76db9b01d",
       "name": "With Room",
       "components": [
         {
@@ -3917,7 +3917,7 @@
       "block_defs": []
     },
     {
-      "id": "8ed4f76372f9457986f5f66a32621937",
+      "id": "db17b42e18504753870dbf85d56db7cb",
       "name": "With SoundZone",
       "components": [
         {
@@ -4003,7 +4003,7 @@
       "block_defs": []
     },
     {
-      "id": "c3d4f2e95d4345b7a7ad120f5b98d1be",
+      "id": "bff33534e827426687be691978e60768",
       "name": "With Persist",
       "components": [
         {
@@ -4054,6 +4054,73 @@
         },
         {
           "component": "Persist"
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "d52c90c79cc14117a071ffbfa4e0007d",
+      "name": "With Prefab",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Prefab",
+          "prefab": {
+            "source": {
+              "path": "assets/crate.blockprefab"
+            }
+          }
         }
       ],
       "strands": [],
