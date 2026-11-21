@@ -722,10 +722,9 @@ impl ActivePlugins {
                 ));
             };
             let manifest = &p.package.manifest;
+            // Linked into the player itself, so nothing of it ships beside.
             if manifest.tier == blockloom_plugin_api::manifest::Tier::Adapter {
-                return Err(format!(
-                    "{id} is an engine plugin, and builds don't link those yet"
-                ));
+                continue;
             }
             let support = manifest.support_for(target);
             if let blockloom_plugin_api::manifest::TargetSupport::Unsupported { reason } = &support

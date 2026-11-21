@@ -304,8 +304,10 @@ package changes. From an install this takes seconds: the engine is already
 compiled. From a source checkout the first build compiles the engine and takes
 minutes. A package installed from anywhere but a `path:` folder
 must be trusted first, at its exact content: it runs with the editor's own
-access. Builds of the game, web and Android don't take engine plugins yet, and
-the engine API is not stable, so a crate is built for one engine build.
+access. A game build for the computer you build on ships that runtime as its
+player; builds for other platforms, the web and Android don't take engine
+plugins yet. The engine API is not stable, so a crate is built for one engine
+build.
 
 An installed Blockloom builds engine plugins from the engine kit it carries
 (`engine/` beside the editor): no source checkout, no network and no Cargo.

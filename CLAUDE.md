@@ -938,7 +938,10 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   package not installed from a `path:` folder must be in the `TrustLedger`
   at its hash before it builds (`project_runtime::needs_trust`, granted by
   the Plugin Manager's Engine plugins section, which also builds; the
-  snapshot's `plugins.engine`). Builds refuse engine plugins for now. The
+  snapshot's `plugins.engine`). A desktop build for this machine ships the
+  built project runtime as its player (`BuildRequest::engine_player`; the
+  ship plan leaves adapter packages out, being linked in); other targets are
+  refused for now. The
   engine is a source tree (`BLOCKLOOM_ENGINE_SOURCE`, else the one the editor
   was built from) or, in an install, the engine kit beside the editor
   (`engine/`, `BLOCKLOOM_ENGINE_KIT`), written by `engine-kit out=...`

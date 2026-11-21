@@ -3296,6 +3296,8 @@ pub(crate) struct BuildRequest {
     project: Project,
     dir: PathBuf,
     target: &'static build::Target,
+    /// The project's own runtime, when engine plugins are linked into it.
+    engine_player: Option<PathBuf>,
     params: crate::build_jobs::BuildParams,
 }
 
@@ -3323,11 +3325,19 @@ pub(crate) fn prepare_build_game(
     if params.device.is_some() && !target.is_android() {
         return Err("Deploying to a device requires an Android target".to_string());
     }
+    let engine_player = project_runtime_for(&s)?;
+    if engine_player.is_some() && !build::is_host(target) {
+        return Err(format!(
+            "This project's engine plugins are linked into a runtime for this computer only, so it can't be built for {} yet",
+            target.label
+        ));
+    }
     auto_save(&mut s);
     Ok(BuildRequest {
         project,
         dir,
         target,
+        engine_player,
         params,
     })
 }
@@ -3341,6 +3351,7 @@ pub(crate) fn run_build_game(
         project,
         dir,
         target,
+        engine_player,
         params,
     } = request;
     let crate::build_jobs::BuildParams {
@@ -3353,7 +3364,10 @@ pub(crate) fn run_build_game(
         ..
     } = params;
     blockloom_core::build_control::step("Checking build requirements")?;
-    let player = if target.is_android() {
+    let player = if let Some(player) = engine_player {
+        // The project's runtime is the stock player with its plugins linked in.
+        player
+    } else if target.is_android() {
         // Fail fast on a release row with no password, before the long NDK
         // cross-build below: the build would refuse it anyway.
         android::resolve_signing(&project.android, store_pass.as_deref(), key_pass.as_deref())?;
