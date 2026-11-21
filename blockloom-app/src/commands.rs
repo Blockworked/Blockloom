@@ -95,6 +95,7 @@ fn save_open(s: &mut AppState) -> Result<(), String> {
     let Some(open) = &mut s.open else {
         return Ok(());
     };
+    open.save_due = None;
     let unsaved = &open.tracker.unsaved;
     if unsaved.is_empty() {
         return Ok(());
@@ -142,10 +143,56 @@ fn save_everything(s: &mut AppState) -> Result<(), String> {
 }
 
 /// [`save_open`] for an edit: failures are logged, not surfaced, since an
-/// unwritable folder shouldn't stop the editor working.
+/// unwritable folder shouldn't stop the editor working. With a save delay
+/// the edit is only marked owed, and [`save_if_due`] writes it once edits
+/// go quiet (or `IDLE_SAVE_LONGEST` after the first, during a long drag).
 fn auto_save(s: &mut AppState) {
+    let Some(delay) = s.save_delay else {
+        flush_save(s);
+        return;
+    };
+    commit(s);
+    let Some(open) = &mut s.open else {
+        return;
+    };
+    if open.tracker.unsaved.is_empty() {
+        return;
+    }
+    // Owed to the disk: a reload now would lose it, like a failed save.
+    open.dirty.store(true, Ordering::SeqCst);
+    let now = std::time::Instant::now();
+    let first = open.save_due.map_or(now, |(_, first)| first);
+    let due = (now + delay).min(first + IDLE_SAVE_LONGEST);
+    open.save_due = Some((due, first));
+}
+
+/// Writes whatever edits are owed now: Play, Build and Close, and the idle
+/// timer. Failures are logged.
+fn flush_save(s: &mut AppState) {
     if let Err(e) = save_open(s) {
         tracing::warn!("Couldn't save the project: {e}");
+    }
+}
+
+/// How often the idle saver looks, and the longest edits wait while they
+/// keep coming.
+pub(crate) const IDLE_SAVE_TICK: std::time::Duration = std::time::Duration::from_millis(250);
+const IDLE_SAVE_LONGEST: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Saves the owed edits once their deadline has passed.
+pub(crate) fn save_if_due(state: &SharedState, app: &AppHandle) {
+    let Ok(mut s) = state.lock() else {
+        return;
+    };
+    let due = s
+        .open
+        .as_ref()
+        .and_then(|open| open.save_due)
+        .is_some_and(|(due, _)| std::time::Instant::now() >= due);
+    if due {
+        flush_save(&mut s);
+        // The snapshot's dirty flag moved.
+        emit(app, &mut s);
     }
 }
 
@@ -467,6 +514,8 @@ pub(crate) fn open_project(
     rebind: bool,
 ) -> Result<OpenReport, String> {
     let dir = std::path::PathBuf::from(path);
+    // Reopening the open project reads its folder, so owed edits go first.
+    flush_save(&mut *lock(state)?);
     if let Some(why) = blockloom_core::hub::conflict(&dir) {
         if !other_editor {
             return Err(format!("{WRONG_EDITOR} {why}"));
@@ -2711,7 +2760,7 @@ pub(crate) fn run_project(
     // Missing plugin data is a report, not a game that quietly does less.
     plugins::preflight_run(&s)?;
     physics::preflight(&project, s.project_dir(), "Play")?;
-    auto_save(&mut s);
+    flush_save(&mut s);
     // Built before the world is handed over, so a script that won't compile
     // shows its errors in the log instead of silently doing nothing.
     let _ = build_scripts(&mut s);
@@ -3254,6 +3303,8 @@ pub(crate) fn prepare_build_game(
     params: crate::build_jobs::BuildParams,
 ) -> Result<BuildRequest, String> {
     let mut s = lock(state)?;
+    // The build reads the folder as well as the document.
+    flush_save(&mut s);
     let project = s
         .project()
         .cloned()
@@ -6717,18 +6768,26 @@ fn project_runtime_for(s: &AppState) -> Result<Option<std::path::PathBuf>, Strin
     if crate::project_runtime::engine_crates(&open.plugins)?.is_empty() {
         return Ok(None);
     }
-    let binary = crate::project_runtime::binary(&open.dir);
-    if !binary.exists() {
-        return Err(
-            "This project's engine plugins need its own runtime: run build-project-runtime first"
+    use crate::project_runtime::{Built, built};
+    let crates = crate::project_runtime::engine_crates(&open.plugins)?;
+    match built(&open.dir, &crates) {
+        Built::Current => Ok(Some(crate::project_runtime::binary(&open.dir))),
+        Built::Missing => Err(
+            "This project's engine plugins need its own runtime: build it in the Plugin Manager (build-project-runtime)"
                 .to_string(),
-        );
+        ),
+        Built::Stale => Err(
+            "An engine plugin changed since this project's runtime was built: rebuild it in the Plugin Manager (build-project-runtime)"
+                .to_string(),
+        ),
     }
-    Ok(Some(binary))
 }
 
 /// Builds the open project's runtime with its engine plugins linked in.
-pub fn build_project_runtime(state: &SharedState) -> Result<serde_json::Value, String> {
+pub fn build_project_runtime(
+    state: &SharedState,
+    app: &AppHandle,
+) -> Result<serde_json::Value, String> {
     let (dir, crates) = {
         let s = lock(state)?;
         let open = s.open.as_ref().ok_or("No project is open")?;
@@ -6740,11 +6799,26 @@ pub fn build_project_runtime(state: &SharedState) -> Result<serde_json::Value, S
     if crates.is_empty() {
         return Err("No active plugin carries an engine crate".to_string());
     }
+    let ledger = blockloom_plugin_host::trust::TrustLedger::read(
+        &blockloom_plugin_host::trust::default_path(),
+    );
+    let untrusted: Vec<_> = crates
+        .iter()
+        .filter(|c| crate::project_runtime::needs_trust(c, &ledger))
+        .map(|c| c.plugin.as_str())
+        .collect();
+    if !untrusted.is_empty() {
+        return Err(format!(
+            "{} would be compiled into this project's runtime with full access to this computer: trust it in the Plugin Manager first",
+            untrusted.join(", ")
+        ));
+    }
     // Outside the lock: a link takes a while.
     let binary = crate::project_runtime::build(&dir, &crates)?;
     let mut s = lock(state)?;
     // The next world starts on the new binary.
     s.runtime = None;
+    emit(app, &mut s);
     Ok(serde_json::json!({
         "binary": binary.to_string_lossy(),
         "plugins": crates.iter().map(|c| c.plugin.clone()).collect::<Vec<_>>(),

@@ -240,6 +240,7 @@ mod tests {
                 scene_view: Default::default(),
                 picked_tile: None,
                 publisher: Default::default(),
+                save_delay: None,
             })),
             app: crate::AppHandle::new(|_| {}),
             builds: BuildJobs::default(),

@@ -19,6 +19,7 @@ StitchDialog {
     property string message: ""
     property string error: ""
     property bool busy: false
+    readonly property var engine: listing && listing.engine ? listing.engine : null
     title: "Plugins"
     standardButtons: Dialog.NoButton
     width: Math.min(parent ? parent.width - 80 : 700, 700)
@@ -242,6 +243,60 @@ StitchDialog {
                 visible: !!root.check && !root.check.canRun
                 Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.warning; font.pixelSize: 12
                 text: "Play and Build are stopped until these are fixed. The data is kept: reinstalling the plugin brings it back."
+            }
+
+            // Engine plugins are compiled into the project's own runtime, so
+            // one from elsewhere is trusted first and the runtime is built here.
+            Text {
+                visible: !!root.engine
+                text: "Engine plugins"; color: Theme.text; font.pixelSize: 14; font.weight: Font.Bold; Layout.topMargin: 6
+            }
+            Text {
+                visible: !!root.engine
+                Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
+                text: "These are Rust code built into this project's own game runtime. They run with full access to this computer, so only trust ones you know."
+            }
+            Repeater {
+                model: root.engine ? root.engine.plugins : []
+                delegate: RowLayout {
+                    id: engineRow
+                    required property var modelData
+                    objectName: "engine-" + modelData.plugin
+                    Layout.fillWidth: true; spacing: 8
+                    Text {
+                        Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 12
+                        color: engineRow.modelData.needsTrust ? Theme.warning : Theme.text
+                        text: engineRow.modelData.plugin + (engineRow.modelData.local ? " (from a folder on this computer)"
+                            : engineRow.modelData.needsTrust ? " is not trusted yet" : " (trusted)")
+                    }
+                    StitchButton {
+                        visible: engineRow.modelData.needsTrust
+                        text: "Trust"; enabled: !root.busy
+                        onClicked: root.app.invoke("plugin_trust", { id: engineRow.modelData.plugin }, () => root.refresh(), e => root.error = String(e))
+                    }
+                }
+            }
+            RowLayout {
+                visible: !!root.engine
+                Layout.fillWidth: true; spacing: 8
+                Text {
+                    Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 12
+                    color: root.engine && root.engine.runtime === "current" ? Theme.textDim : Theme.warning
+                    text: !root.engine ? "" : root.engine.runtime === "current" ? "The project's runtime is up to date."
+                        : root.engine.runtime === "stale" ? "An engine plugin changed: rebuild the runtime before Play."
+                        : "Play needs the project's runtime. The first build takes several minutes."
+                }
+                StitchButton {
+                    objectName: "build-runtime"
+                    text: root.busy ? "Building..." : root.engine && root.engine.runtime === "current" ? "Rebuild runtime" : "Build runtime"
+                    enabled: !root.busy && !!root.engine && !root.engine.plugins.some(p => p.needsTrust)
+                    onClicked: {
+                        root.busy = true; root.message = ""; root.error = "";
+                        root.app.invoke("build_project_runtime", {}, () => {
+                            root.busy = false; root.message = "Built the project's runtime."; root.refresh();
+                        }, e => { root.busy = false; root.error = String(e); root.refresh(); });
+                    }
+                }
             }
 
             // Settings live in Project settings, one page per plugin.

@@ -18,7 +18,8 @@ at once and installs with `plugin-install id=com.example.greeter source=path:./g
 `template=native` writes a crate that builds a native `cdylib` (and still the
 portable module, so web and Android work); `plugin-add-native path=./greeter
 target=aarch64-apple-darwin library=native/libgreeter.dylib` adds a library for
-another target to the manifest and seals again.
+another target to the manifest and seals again. `template=engine` writes an
+engine plugin (see Engine plugins below).
 
 ## Tiers
 
@@ -27,6 +28,7 @@ another target to the manifest and seals again.
 | `declarative` | schemas only | everywhere, no code |
 | `portable` | a `.wasm` module | sandboxed (wasmi) on every platform, web and Android included |
 | `native` | a library per target | desktop only, needs the `native-execution` capability |
+| `adapter` | a Rust crate against `blockloom-engine` | compiled into the project's own runtime, desktop only |
 
 One SDK source builds as a native `cdylib` or a portable module. A package
 with both uses the library where there is one for the target and the module
@@ -254,6 +256,55 @@ The rules, all checked when the package is sealed, installed and loaded:
   the run log and the ones after it still run.
 - The same buffer may not be both written and bound twice in one dispatch.
 - A run's end drops your buffers; kernels are loaded again with the project.
+
+## Engine plugins
+
+An engine plugin adds its own Bevy resources and systems to the game world
+rather than answering ops. It is a crate, not a library: a project that
+installs one gets its own runtime, the stock one with the crate linked in.
+
+```sh
+blockloom-shell --no-state --eval 'plugin-new path=./ticker id=com.example.ticker template=engine'
+cd ticker
+./build.sh          # cargo test in engine/, then plugin-seal
+```
+
+The manifest's tier is `adapter` and `runtime.adapter` names the crate
+(`crate_dir`, here `engine/`) and the engine build it was written for. The
+crate asks for `blockloom-engine` at that version and `bevy` at the engine's
+exact version without default features (Bevy's derives look for `bevy` in
+your own manifest). Implement `BlockloomModule` and name it with
+`export_module!`:
+
+```rust
+use blockloom_engine::prelude::*;
+use blockloom_engine::SimulationSet;
+
+struct Ticker;
+impl BlockloomModule for Ticker {
+    fn name(&self) -> &'static str { "ticker" }
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Ticks>()
+            .add_systems(FixedUpdate, count.in_set(SimulationSet));
+    }
+}
+export_module!(Ticker);
+```
+
+The facade gives you the engine's Bevy, `blockloom_core`, `RunState` (is a
+run live or paused), `SceneDocument` (the open scene's settings),
+`WorldRebuilt` (drop run state when it arrives), `SimulationSet`,
+`PendingEffects` and `say`. Keep run state in your own resources and reset it
+on `WorldRebuilt`, as the built-in wind module does.
+
+After `plugin-install`, the Plugin Manager's Engine plugins section (or
+`build-project-runtime`) builds the project's runtime into
+`.blockloom/runtime/bin/`; Play refuses until it is built and again whenever a
+package changes. The first build compiles the engine and takes minutes; later
+ones relink in seconds. A package installed from anywhere but a `path:` folder
+must be trusted first, at its exact content: it runs with the editor's own
+access. Builds of the game, web and Android don't take engine plugins yet, and
+the engine API is not stable, so a crate is built for one engine build.
 
 ## Isolation, limits and reload
 

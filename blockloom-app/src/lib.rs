@@ -118,12 +118,33 @@ impl Backend {
             scene_view: Default::default(),
             picked_tile: None,
             publisher: Default::default(),
+            save_delay: None,
         };
         Backend {
             state: Arc::new(Mutex::new(state)),
             app,
             builds: Default::default(),
         }
+    }
+
+    /// Saves edits once they have been quiet for `delay` (and on Play, Build
+    /// and Close) instead of after each one. The editor window turns it on.
+    pub fn save_when_idle(&self, delay: std::time::Duration) {
+        if let Ok(mut s) = self.state.lock() {
+            s.save_delay = Some(delay);
+        }
+        let backend = self.clone();
+        let _ = std::thread::Builder::new()
+            .name("blockloom-idle-save".into())
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(commands::IDLE_SAVE_TICK);
+                    if std::sync::Arc::strong_count(&backend.state) <= 1 {
+                        break;
+                    }
+                    commands::save_if_due(&backend.state, &backend.app);
+                }
+            });
     }
 
     /// The current snapshot as JSON - what a newly connected frontend asks for.

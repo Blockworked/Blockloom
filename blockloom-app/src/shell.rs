@@ -4330,7 +4330,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "build-project-runtime",
         cmd: "build_project_runtime",
         aliases: &[],
-        summary: "Build the open project's own runtime with its plugins' engine crates linked in; Play then starts it as a child process.",
+        summary: "Build the open project's own runtime with its plugins' engine crates linked in; Play then starts it as a child process. An engine plugin not installed from a path: folder must be trusted in the editor first.",
         args: &[],
     },
     CommandSpec {
@@ -4495,7 +4495,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "plugin-new",
         cmd: "plugin_new",
         aliases: &[],
-        summary: "Author tool: write a starter package folder (template declarative, sealed and installable; portable, a Rust crate with a test harness and build.sh; or native, the same crate plus native libraries).",
+        summary: "Author tool: write a starter package folder (template declarative, sealed and installable; portable, a Rust crate with a test harness and build.sh; native, the same crate plus native libraries; or engine, a sealed crate against blockloom-engine linked into the project runtime).",
         args: &[
             ArgSpec {
                 name: "path",

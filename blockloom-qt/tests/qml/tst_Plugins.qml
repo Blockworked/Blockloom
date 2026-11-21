@@ -16,6 +16,7 @@ TestCase {
         id: "com.example.health", name: "Health", version: "1.0.0", description: "Hit points.", license: "MIT", tier: "declarative",
         dev: false, support: { kind: "native" }, dependencies: [], components: ["com.example.health/Health"], blocks: 1, commands: 3
     }]
+    property var engine: null
     property var types: [
         { name: "com.example.health/Health", plugin: "com.example.health", pluginName: "Health", type: "Health", displayName: "Health", kind: "component", version: 2, fields: [], defaults: {} },
         { name: "com.example.health/Difficulty", plugin: "com.example.health", pluginName: "Health", type: "Difficulty", displayName: "Difficulty", kind: "resource", version: 1,
@@ -28,7 +29,7 @@ TestCase {
         function fromFileUrl(path) { return String(path).replace("file://", ""); }
         function invoke(command, args, done, failed) {
             test.calls = test.calls.concat([{ command: command, args: args }]);
-            if (command === "plugin_list") done({ installed: test.installed, types: test.types, problems: [], history: 1, offline: false });
+            if (command === "plugin_list") done({ installed: test.installed, types: test.types, problems: [], history: 1, offline: false, engine: test.engine });
             else if (command === "plugin_check") done({ ok: true, canRun: true, issues: [], problems: [] });
             else if (command === "plugin_commands") done({ commands: [{ name: "com.example.health/set_hp", summary: "Set hit points." }] });
             else if (command === "plugin_update") done({ changes: [{ change: "changed", id: "com.example.health", from: "1.0.0", to: "1.1.0" }] });
@@ -38,7 +39,7 @@ TestCase {
     }
     Component { id: factory; Editor.PluginManagerDialog { app: backend } }
     function init() {
-        calls = [];
+        calls = []; engine = null;
         dialog = createTemporaryObject(factory, test);
         verify(dialog !== null);
         dialog.open();
@@ -46,6 +47,19 @@ TestCase {
     }
     function cleanup() { dialog.destroy(); dialog = null; }
     function count(command) { return calls.filter(c => c.command === command).length; }
+    function test_anEngineFromElsewhereIsTrustedBeforeTheRuntimeBuilds() {
+        engine = { runtime: "missing", plugins: [{ plugin: "com.example.ticker", hash: "h", local: false, needsTrust: true }] };
+        dialog.refresh();
+        const build = findChild(dialog.contentItem, "build-runtime");
+        verify(build.visible);
+        verify(!build.enabled);
+        engine = { runtime: "missing", plugins: [{ plugin: "com.example.ticker", hash: "h", local: false, needsTrust: false }] };
+        dialog.refresh();
+        verify(build.enabled);
+        build.clicked();
+        compare(count("build_project_runtime"), 1);
+        compare(dialog.message, "Built the project's runtime.");
+    }
     function test_openingListsEverything() {
         compare(count("plugin_list"), 1);
         compare(count("plugin_check"), 1);

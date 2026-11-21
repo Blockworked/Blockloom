@@ -933,9 +933,16 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   Cargo into the engine's own target directory, so only the plugin and the
   link are new; the binary lands in `.blockloom/runtime/bin/`. While the
   project has one, the editor starts that binary as a child instead of the
-  embedded world, and refuses Play until it is built. Builds refuse engine
-  plugins for now, and the build uses the engine's source tree
-  (`BLOCKLOOM_ENGINE_SOURCE`) rather than shipped rlibs.
+  embedded world, and refuses Play until it is built and whenever a package
+  changed since (`bin/plugins.json` stamps each plugin's content hash). A
+  package not installed from a `path:` folder must be in the `TrustLedger`
+  at its hash before it builds (`project_runtime::needs_trust`, granted by
+  the Plugin Manager's Engine plugins section, which also builds; the
+  snapshot's `plugins.engine`). Builds refuse engine plugins for now, and the
+  build uses the engine's source tree (`BLOCKLOOM_ENGINE_SOURCE`) rather than
+  shipped rlibs. `plugin-new template=engine` writes a sealed starter from
+  `blockloom-engine/templates/lib.rs` (compiled by that crate's
+  `tests/template.rs`); `docs/plugin-api.md` has the author's side.
   `plugins/examples/tally-engine` counts a run's ticks and says the total.
 - **Not yet**: a faster browser host (the page's own WebAssembly instead of wasmi
   in wasm; it needs a fuel substitute, since a browser instance has no budget to
@@ -2667,8 +2674,13 @@ migration of pre-folder `<id>.blockloom` files.
 
 The app opens on the Dashboard (`Dashboard.qml`); the editor
 appears once a project is open, and `state.project` being null is what decides
-which of the two shows. Every edit is still written to disk right after it
-lands.
+which of the two shows. The window saves on idle (`Backend::save_when_idle`,
+1.5 s): `auto_save` only marks an edit owed (and the copy dirty, so a live
+reload waits), `save_if_due` writes it once edits go quiet or 10 s after the
+first, and Play, Build, Close, quit and reopening write it at once
+(`flush_save`). The shell and tests keep saving every edit, so a folder
+attached from another process lags the window by up to that delay; one
+attached over the socket shares its backend and sees every edit.
 
 ### Hub coordination
 

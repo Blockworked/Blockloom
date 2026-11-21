@@ -44,6 +44,8 @@ pub(crate) struct OpenProject {
     pub(crate) script_statuses: std::collections::BTreeMap<String, ScriptStatus>,
     /// Undo, and what the disk and the frontend haven't seen yet.
     pub(crate) tracker: crate::history::Tracker,
+    /// When the pending edits are saved, and when the first of them landed.
+    pub(crate) save_due: Option<(std::time::Instant, std::time::Instant)>,
 }
 
 impl OpenProject {
@@ -69,6 +71,7 @@ impl OpenProject {
             modules: Default::default(),
             script_statuses: Default::default(),
             tracker,
+            save_due: None,
         }
     }
 
@@ -141,6 +144,9 @@ pub(crate) struct AppState {
     pub(crate) picked_tile: Option<PickedTile>,
     /// What the window was last sent, so the next message is a patch.
     pub(crate) publisher: crate::stream::Publisher,
+    /// How long edits wait for a quiet spell before they are saved. None
+    /// saves every edit at once (the shell, tests).
+    pub(crate) save_delay: Option<std::time::Duration>,
 }
 
 /// One pick of the Tiles tool. `serial` counts picks, so picking the same

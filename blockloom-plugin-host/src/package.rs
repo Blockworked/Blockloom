@@ -74,6 +74,15 @@ pub fn content_hash(manifest_bytes: &[u8], files: &BTreeMap<String, String>) -> 
 
 /// Hashes every file under `root` except the manifest, by package path.
 /// Symlinks are refused: a package must be self-contained.
+/// Build output (a Cargo target folder) and version control never belong to
+/// a package, so sealing, archiving and copying skip them.
+fn left_out(dir: &Path) -> bool {
+    dir.join("CACHEDIR.TAG").is_file()
+        || dir
+            .file_name()
+            .is_some_and(|n| n == ".git" || n == ".cargo")
+}
+
 pub fn scan_files(root: &Path) -> Result<BTreeMap<String, String>, String> {
     let mut out = BTreeMap::new();
     let mut stack = vec![root.to_path_buf()];
@@ -90,7 +99,9 @@ pub fn scan_files(root: &Path) -> Result<BTreeMap<String, String>, String> {
                 ));
             }
             if kind.is_dir() {
-                stack.push(path);
+                if !left_out(&path) {
+                    stack.push(path);
+                }
                 continue;
             }
             let relative = path
@@ -325,7 +336,9 @@ pub fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
         if kind.is_symlink() {
             return Err(format!("{} is a symlink", entry.path().display()));
         } else if kind.is_dir() {
-            copy_dir(&entry.path(), &target)?;
+            if !left_out(&entry.path()) {
+                copy_dir(&entry.path(), &target)?;
+            }
         } else {
             fs::copy(entry.path(), &target)
                 .map_err(|e| format!("{}: {e}", entry.path().display()))?;

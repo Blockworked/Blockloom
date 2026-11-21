@@ -254,6 +254,8 @@ impl qobject::AppBridge {
             Some(host) => Backend::start_embedded(handle, host),
             None => Backend::start(handle),
         };
+        // The window saves once edits go quiet, and on Play, Build and Close.
+        backend.save_when_idle(std::time::Duration::from_millis(1500));
 
         let (tx, rx) = mpsc::channel::<Job>();
         let worker = backend.clone();

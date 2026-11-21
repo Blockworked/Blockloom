@@ -850,7 +850,7 @@ impl Backend {
                 arg(&args, "dryRun").unwrap_or_default(),
             )?),
             "plugin_gc" => to_json(commands::plugins::plugin_gc(state)?),
-            "build_project_runtime" => commands::build_project_runtime(state),
+            "build_project_runtime" => commands::build_project_runtime(state, app),
             "plugin_inspect" => to_json(commands::plugins::plugin_inspect(arg(&args, "path")?)?),
             "plugin_new" => to_json(commands::plugins::plugin_new(
                 arg(&args, "path")?,

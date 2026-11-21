@@ -1,11 +1,14 @@
 //! Engine-tier (adapter) plugins: a project whose plugins carry engine
 //! crates gets its own runtime, the stock one with those crates linked in,
 //! built into `.blockloom/runtime/` and started as the editor's child.
-//! Spike: it builds with Cargo against the engine's source tree; the
-//! install's prebuilt engine rlibs replace that later.
+//! It builds with Cargo against the engine's source tree; the install's
+//! prebuilt engine rlibs replace that later.
 
 use blockloom_plugin_api::manifest::Tier;
 use blockloom_plugin_host::active::ActivePlugins;
+use blockloom_plugin_host::source::Source;
+use blockloom_plugin_host::trust::TrustLedger;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -16,6 +19,10 @@ pub struct EngineCrate {
     pub dir: PathBuf,
     /// The crate's library name (`-` as `_`).
     pub lib: String,
+    /// The package's content hash, which a trust grant and the build stamp name.
+    pub hash: String,
+    /// Installed from a folder on this machine (`path:`): the author's own code.
+    pub local: bool,
 }
 
 /// The engine crates the active plugins carry, in plugin-id order.
@@ -37,6 +44,8 @@ pub fn engine_crates(active: &ActivePlugins) -> Result<Vec<EngineCrate>, String>
             plugin: id.clone(),
             dir,
             lib,
+            hash: loaded.package.content_hash.clone(),
+            local: matches!(loaded.locked.source, Source::Path(_)),
         });
     }
     Ok(crates)
@@ -65,6 +74,47 @@ pub fn engine_source() -> Option<PathBuf> {
     dir.join("blockloom-engine/Cargo.toml")
         .exists()
         .then(|| dir.canonicalize().unwrap_or(dir))
+}
+
+/// An engine crate is compiled into the runtime with the editor's own access,
+/// so one that came from elsewhere must be trusted at this exact content
+/// first. A `path:` package is the author's own folder and needs none.
+pub fn needs_trust(engine_crate: &EngineCrate, ledger: &TrustLedger) -> bool {
+    !engine_crate.local && !ledger.is_trusted(&engine_crate.plugin, &engine_crate.hash)
+}
+
+/// What the runtime was last built from: plugin id to content hash.
+fn stamp_path(project: &Path) -> PathBuf {
+    crate_dir(project).join("bin/plugins.json")
+}
+
+fn stamp_of(crates: &[EngineCrate]) -> BTreeMap<String, String> {
+    crates
+        .iter()
+        .map(|c| (c.plugin.clone(), c.hash.clone()))
+        .collect()
+}
+
+/// Whether the built runtime is missing, or was built from other packages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Built {
+    Missing,
+    Stale,
+    Current,
+}
+
+pub fn built(project: &Path, crates: &[EngineCrate]) -> Built {
+    if !binary(project).exists() {
+        return Built::Missing;
+    }
+    let stamp = std::fs::read(stamp_path(project))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<BTreeMap<String, String>>(&bytes).ok());
+    if stamp.as_ref() == Some(&stamp_of(crates)) {
+        Built::Current
+    } else {
+        Built::Stale
+    }
 }
 
 /// Where a project's runtime is built and where its binary lands.
@@ -141,6 +191,26 @@ fn engine_tables(engine: &Path) -> Result<String, String> {
         .join("\n"))
 }
 
+/// A Cargo config for a plugin author's own crate, so `cargo test` in it
+/// finds `blockloom-engine` (and the engine's patched dependencies) here.
+pub fn author_config(engine: &Path) -> Result<String, String> {
+    let tables = engine_tables(engine)?;
+    let mut out = String::from(
+        "# Points this crate at this machine's Blockloom engine. Local, not packaged.\n",
+    );
+    let mut keep = false;
+    for line in tables.lines() {
+        if line.starts_with('[') {
+            keep = line.starts_with("[patch");
+        }
+        if keep {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    Ok(out)
+}
+
 /// Builds the project's runtime, sharing the engine's target directory so
 /// only the plugin crates and the link are new. Returns the binary.
 pub fn build(project: &Path, crates: &[EngineCrate]) -> Result<PathBuf, String> {
@@ -158,7 +228,9 @@ pub fn build(project: &Path, crates: &[EngineCrate]) -> Result<PathBuf, String> 
         .arg("build")
         .arg("--manifest-path")
         .arg(dir.join("Cargo.toml"))
-        .env("CARGO_TARGET_DIR", &target);
+        .env("CARGO_TARGET_DIR", &target)
+        // Nobody iterates on the generated crate; incremental caches only fill the disk.
+        .env("CARGO_INCREMENTAL", "0");
     if release {
         cargo.arg("--release");
     }
@@ -177,6 +249,8 @@ pub fn build(project: &Path, crates: &[EngineCrate]) -> Result<PathBuf, String> 
     std::fs::create_dir_all(out.parent().unwrap_or(project)).map_err(|e| e.to_string())?;
     // Copied rather than linked: the shared target is rebuilt by others.
     std::fs::copy(&built, &out).map_err(|e| format!("{}: {e}", built.display()))?;
+    let stamp = serde_json::to_vec_pretty(&stamp_of(crates)).map_err(|e| e.to_string())?;
+    blockloom_core::files::replace_file(&stamp_path(project), &stamp).map_err(|e| e.to_string())?;
     Ok(out)
 }
 
@@ -197,6 +271,8 @@ mod tests {
             plugin: "com.example.tally".into(),
             dir: PathBuf::from("/plugins/tally/engine"),
             lib: "tally_engine".into(),
+            hash: "h1".into(),
+            local: false,
         }];
         let dir = generate(project.path(), engine.path(), &crates).unwrap();
         let main = std::fs::read_to_string(dir.join("main.rs")).unwrap();
@@ -206,6 +282,49 @@ mod tests {
         let root = engine.path().to_string_lossy();
         assert!(manifest.contains(&format!("foo = {{ path = \"{root}/vendor/foo\" }}")));
         assert!(manifest.contains("[profile.release]\nlto = true"));
+        let config = author_config(engine.path()).unwrap();
+        assert!(config.contains(&format!("foo = {{ path = \"{root}/vendor/foo\" }}")));
+        assert!(!config.contains("[profile"));
+    }
+
+    #[test]
+    fn a_stamp_says_whether_the_runtime_matches_its_packages() {
+        let project = tempfile::tempdir().unwrap();
+        let mut crates = vec![EngineCrate {
+            plugin: "com.example.tally".into(),
+            dir: PathBuf::new(),
+            lib: "tally".into(),
+            hash: "h1".into(),
+            local: false,
+        }];
+        assert_eq!(built(project.path(), &crates), Built::Missing);
+        std::fs::create_dir_all(binary(project.path()).parent().unwrap()).unwrap();
+        std::fs::write(binary(project.path()), b"").unwrap();
+        assert_eq!(built(project.path(), &crates), Built::Stale);
+        let stamp = serde_json::to_vec(&stamp_of(&crates)).unwrap();
+        std::fs::write(stamp_path(project.path()), stamp).unwrap();
+        assert_eq!(built(project.path(), &crates), Built::Current);
+        crates[0].hash = "h2".into();
+        assert_eq!(built(project.path(), &crates), Built::Stale);
+    }
+
+    #[test]
+    fn only_a_package_from_elsewhere_needs_trust() {
+        let mut ledger = TrustLedger::default();
+        let mut engine_crate = EngineCrate {
+            plugin: "com.example.tally".into(),
+            dir: PathBuf::new(),
+            lib: "tally".into(),
+            hash: "h1".into(),
+            local: true,
+        };
+        assert!(!needs_trust(&engine_crate, &ledger));
+        engine_crate.local = false;
+        assert!(needs_trust(&engine_crate, &ledger));
+        ledger.grant("com.example.tally", "h1");
+        assert!(!needs_trust(&engine_crate, &ledger));
+        engine_crate.hash = "h2".into();
+        assert!(needs_trust(&engine_crate, &ledger));
     }
 
     #[test]

@@ -15,6 +15,11 @@ use std::path::Path;
 
 /// The portable template's source, which the SDK's own tests compile.
 const STARTER_SOURCE: &str = include_str!("../../blockloom-plugin-sdk/templates/lib.rs");
+/// The engine template's source, which `blockloom-engine`'s tests compile.
+const ENGINE_SOURCE: &str = include_str!("../../blockloom-engine/templates/lib.rs");
+/// The engine build an engine plugin is written against, and its Bevy.
+const ENGINE_BUILD: &str = env!("CARGO_PKG_VERSION");
+const ENGINE_BEVY: &str = "0.20.1";
 const SDK_GIT: &str = "https://github.com/Blockworked/Blockloom";
 
 /// What `plugin-new` made.
@@ -170,7 +175,34 @@ fn manifest(id: &str, name: &str, template: &str, slug: &str) -> Value {
     if template == "native" {
         manifest["capabilities"] = json!(["native-execution"]);
     }
+    if template == "engine" {
+        manifest["tier"] = json!("adapter");
+        manifest["contributions"] = json!([]);
+        manifest["runtime"] = json!({
+            "adapter": {"engine_build": ENGINE_BUILD, "crate_dir": "engine"}
+        });
+        manifest["capabilities"] = json!(["native-execution"]);
+    }
     manifest
+}
+
+/// An engine plugin's crate: standalone, built inside the project runtime.
+fn engine_cargo_toml(slug: &str) -> String {
+    format!(
+        r#"[package]
+name = "{slug}"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# The project runtime links this against the editor's own engine build.
+blockloom-engine = "{ENGINE_BUILD}"
+# Bevy's derives look for `bevy` in this crate's own manifest. The engine's
+# exact version, no default features: the engine's features unify.
+bevy = {{ version = "={ENGINE_BEVY}", default-features = false }}
+"#
+    )
 }
 
 fn cargo_toml(slug: &str, sdk: Option<&str>) -> String {
@@ -250,6 +282,18 @@ fn readme(name: &str, id: &str, template: &str, slug: &str) -> String {
              Edit `schemas/{slug}.json`, then reseal:\n\n    blockloom-shell --no-state --eval 'plugin-seal path=.'\n\n\
              Install it in a project with `plugin-install id={id} source=path:<this folder>`.\n"
         )
+    } else if template == "engine" {
+        format!(
+            "# {name}\n\nAn engine plugin (`{id}`): a Rust crate in `engine/` that adds its own resources and \
+             systems to the game world through `blockloom-engine`. A project that installs it gets its own runtime \
+             with this crate linked in (`build-project-runtime`), so it runs at native speed with full access, and \
+             a project must trust it (the `native-execution` capability). The engine API is unstable: a crate is \
+             built for the engine build its manifest names.\n\n\
+             - Edit `engine/src/lib.rs`, then reseal: `blockloom-shell --no-state --eval 'plugin-seal path=.'` \
+             (or `./build.sh`).\n\
+             - `plugin-install id={id} source=path:<this folder>` adds it to a project, then \
+             `build-project-runtime` builds that project's runtime.\n"
+        )
     } else if template == "native" {
         format!(
             "# {name}\n\nA native plugin (`{id}`): Rust in `src/lib.rs`, schemas in `schemas/{slug}.json`. \
@@ -300,9 +344,9 @@ pub fn plugin_new(
     if name.trim().is_empty() {
         return Err("a plugin needs a name".to_string());
     }
-    if !matches!(template, "declarative" | "portable" | "native") {
+    if !matches!(template, "declarative" | "portable" | "native" | "engine") {
         return Err(format!(
-            "template must be declarative, portable or native, not \"{template}\""
+            "template must be declarative, portable, native or engine, not \"{template}\""
         ));
     }
     if path.exists()
@@ -326,6 +370,43 @@ pub fn plugin_new(
         MANIFEST_FILE,
         &pretty(&manifest(id, name, template, &slug)),
     )?;
+    if template == "engine" {
+        write(
+            path,
+            &mut files,
+            "engine/Cargo.toml",
+            &engine_cargo_toml(&slug),
+        )?;
+        write(path, &mut files, "engine/src/lib.rs", ENGINE_SOURCE)?;
+        write(
+            path,
+            &mut files,
+            "README.md",
+            &readme(name, id, template, &slug),
+        )?;
+        write(
+            path,
+            &mut files,
+            "build.sh",
+            "#!/bin/sh\n# Checks the crate builds and its tests pass, then seals the package. Needs\n# blockloom-shell on PATH (or set BLOCKLOOM_SHELL).\nset -eu\n(cd engine && cargo test)\n\"${BLOCKLOOM_SHELL:-blockloom-shell}\" --no-state --eval \"plugin-seal path=\\\"$(pwd)\\\"\"\n",
+        )?;
+        write(path, &mut files, ".gitignore", "target/\n.cargo/\n")?;
+        // Where this machine's engine is, for the author's own cargo runs.
+        if let Some(engine) = crate::project_runtime::engine_source() {
+            let config = crate::project_runtime::author_config(&engine)?;
+            write(path, &mut files, "engine/.cargo/config.toml", &config)?;
+            // The engine's toolchain, which its dependencies are built for.
+            if let Ok(toolchain) = fs::read_to_string(engine.join("rust-toolchain.toml")) {
+                write(path, &mut files, "engine/rust-toolchain.toml", &toolchain)?;
+            }
+        }
+        // The source is the code, so it can be sealed now.
+        package::seal(path)?;
+        return Ok(Scaffold {
+            files,
+            sealed: true,
+        });
+    }
     write(
         path,
         &mut files,
@@ -430,6 +511,32 @@ mod tests {
         let cargo = fs::read_to_string(root.join("Cargo.toml")).unwrap();
         assert!(cargo.contains("name = \"greeter\""), "{cargo}");
         assert!(cargo.contains("features = [\"testing\"]"), "{cargo}");
+    }
+
+    #[test]
+    fn an_engine_package_is_a_sealed_crate_on_the_engine_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("ticker");
+        let made = plugin_new(&root, "com.example.ticker", "Ticker", "engine", None).unwrap();
+        assert!(made.sealed);
+        let package = package::Package::load(&root).unwrap();
+        let adapter = package.manifest.runtime.adapter.as_ref().unwrap();
+        assert_eq!(adapter.crate_dir, "engine");
+        let cargo = fs::read_to_string(root.join("engine/Cargo.toml")).unwrap();
+        assert!(
+            cargo.contains(&format!("bevy = {{ version = \"={ENGINE_BEVY}\"")),
+            "{cargo}"
+        );
+        // The pins must follow the workspace, or a new plugin won't link.
+        let workspace = include_str!("../../Cargo.toml");
+        assert!(workspace.contains(&format!("bevy = \"{ENGINE_BEVY}\"")));
+        let engine = include_str!("../../blockloom-engine/Cargo.toml");
+        let build = engine
+            .lines()
+            .chain(workspace.lines())
+            .find_map(|l| l.strip_prefix("version = \""))
+            .unwrap();
+        assert_eq!(build.trim_end_matches('"'), ENGINE_BUILD);
     }
 
     #[test]

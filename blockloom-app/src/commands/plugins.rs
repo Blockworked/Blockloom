@@ -359,6 +359,32 @@ fn editor_modules_json(active: &ActivePlugins) -> Vec<Value> {
         .collect()
 }
 
+/// The engine plugins and the project runtime they need: each plugin with
+/// whether it needs trust first, and whether the runtime is built.
+fn engine_json(dir: &Path, active: &ActivePlugins) -> Value {
+    let Ok(crates) = crate::project_runtime::engine_crates(active) else {
+        return Value::Null;
+    };
+    if crates.is_empty() {
+        return Value::Null;
+    }
+    let ledger = trust::TrustLedger::read(&trust::default_path());
+    let built = match crate::project_runtime::built(dir, &crates) {
+        crate::project_runtime::Built::Missing => "missing",
+        crate::project_runtime::Built::Stale => "stale",
+        crate::project_runtime::Built::Current => "current",
+    };
+    json!({
+        "runtime": built,
+        "plugins": crates.iter().map(|c| json!({
+            "plugin": c.plugin,
+            "hash": c.hash,
+            "local": c.local,
+            "needsTrust": crate::project_runtime::needs_trust(c, &ledger),
+        })).collect::<Vec<_>>(),
+    })
+}
+
 /// `PluginPanel` -> `Plugin panel`: a file's name as a title.
 fn module_title(stem: &str) -> String {
     let mut out = String::new();
@@ -389,8 +415,12 @@ pub(crate) fn plugin_trust(
         let loaded = active
             .get(id)
             .ok_or_else(|| format!("{id} is not installed in this project"))?;
-        if loaded.package.manifest.editor.modules.is_empty() {
-            return Err(format!("{id} ships no editor modules"));
+        let manifest = &loaded.package.manifest;
+        if manifest.editor.modules.is_empty()
+            && manifest.editor.inspectors.is_empty()
+            && manifest.runtime.adapter.is_none()
+        {
+            return Err(format!("{id} ships no editor modules or engine crate"));
         }
         loaded.package.content_hash.clone()
     };
@@ -549,6 +579,7 @@ pub(crate) fn summary(s: &AppState) -> Value {
         "surfaces": surfaces_json(active),
         "conflicts": active.conflicts(),
         "editorModules": editor_modules_json(active),
+        "engine": engine_json(&open.dir, active),
         "problems": active.problems,
         "issues": active.audit(project.plugin_records()),
     })
@@ -572,6 +603,7 @@ pub(crate) fn plugin_list(state: &SharedState) -> Result<Value, String> {
         "surfaces": surfaces_json(active),
         "conflicts": active.conflicts(),
         "editorModules": editor_modules_json(active),
+        "engine": engine_json(&dir, active),
         "problems": active.problems,
         "direct": plugins.plugins,
         "registries": plugins.registries,
