@@ -719,24 +719,31 @@ void GameView::fail(const QString &message)
     }, Qt::QueuedConnection);
 }
 
-void GameView::renderExternal()
+// Render thread. Uses the window that emitted, since window() goes null on
+// the GUI thread as soon as the item leaves the scene (a tab switch).
+void GameView::renderExternal(QQuickWindow *window)
 {
 #ifdef __linux__
     offerModifiers();
 #endif
-    if (!m_node || m_node->pending < 0)
+    GameViewNode *node = m_node;
+    if (!node || node->pending < 0)
         return;
-    window()->beginExternalCommands();
-    m_node->drawPending();
-    window()->endExternalCommands();
+    window->beginExternalCommands();
+    node->drawPending();
+    window->endExternalCommands();
 }
 
 void GameView::itemChange(ItemChange change, const ItemChangeData &value)
 {
     // Hooked as soon as there is a window, before anything is drawn, so the
     // modifier offer reaches the world early.
-    if (change == ItemSceneChange && value.window)
-        hook(value.window);
+    if (change == ItemSceneChange) {
+        if (value.window)
+            hook(value.window);
+        else
+            unhook();
+    }
     QQuickItem::itemChange(change, value);
     if ((change == ItemSceneChange && value.window) || change == ItemDevicePixelRatioHasChanged
         || (change == ItemVisibleHasChanged && value.boolValue))
@@ -765,8 +772,20 @@ void GameView::hook(QQuickWindow *window)
         m_sharingOffered = false;
         game_view_enable_sharing(false);
     }, Qt::DirectConnection);
-    connect(window, &QQuickWindow::beforeRendering, this, &GameView::renderExternal, Qt::DirectConnection);
+    connect(window, &QQuickWindow::beforeRendering, this, [this, window] { renderExternal(window); }, Qt::DirectConnection);
     connect(window, &QQuickWindow::frameSwapped, this, &GameView::framePresented, Qt::DirectConnection);
+}
+
+// Out of the scene: the window's node for this item is going, so stop
+// drawing into it from the render thread.
+void GameView::unhook()
+{
+    if (m_hooked)
+        disconnect(m_hooked, nullptr, this, nullptr);
+    m_hooked = nullptr;
+    m_node = nullptr;
+    m_generation = 0;
+    m_shmGeneration = 0;
 }
 
 void GameView::framePresented()

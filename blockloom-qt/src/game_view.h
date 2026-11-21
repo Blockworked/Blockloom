@@ -66,8 +66,9 @@ private:
     void fail(const QString &message);
     // Follows `window`'s render and swap signals. GUI thread.
     void hook(QQuickWindow *window);
+    void unhook();
     // Before Qt draws: copies an external-only frame into a plain texture.
-    void renderExternal();
+    void renderExternal(QQuickWindow *window);
     // After each swap: paces the world, and asks for the next frame while one runs.
     void framePresented();
     // Tells the world what size to draw at. The first size goes straight
