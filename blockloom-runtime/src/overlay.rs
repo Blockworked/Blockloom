@@ -323,7 +323,7 @@ pub fn despawn_dropped(commands: &mut Commands, manager: &mut UiManager) {
 pub fn draw_ui(
     mut commands: Commands,
     mut manager: ResMut<UiManager>,
-    engine: NonSend<Engine>,
+    document: Res<crate::engine::SceneDocument>,
     assets: Res<AssetServer>,
     roots: Query<Entity, With<UiRoot>>,
     // An element's own node, told apart from the two pieces inside one that
@@ -337,7 +337,7 @@ pub fn draw_ui(
 ) {
     despawn_dropped(&mut commands, &mut manager);
 
-    let dir = engine.project_dir.clone();
+    let dir = document.dir.clone();
     let focused = manager.focus().unwrap_or_default().to_string();
     let theme = manager.theme();
     let mut screen = roots.iter().next();

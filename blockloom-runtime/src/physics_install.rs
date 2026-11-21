@@ -6,6 +6,8 @@
 //! Rigidbody or Collider components, and validation refuses an actor with both.
 //! Core decides everything (poses, dimensions, mass, groups); this file only maps
 //! those answers onto the backend.
+#[cfg(test)]
+use crate::engine::InsertEngine;
 
 use crate::engine::{Engine, PendingEffects};
 use bevy::ecs::system::SystemParam;
@@ -976,6 +978,7 @@ pub mod d2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use bevy_rapier3d::prelude as rp;
     use blockloom_core::physics::{
         ColliderShape, ColliderSpec, MassSource, PhysicsMaterial, RigidbodySpec,
@@ -1542,7 +1545,7 @@ mod tests {
         let mut engine = Engine::new(rx, Mode::ThreeD);
         engine.running = true;
         engine.entities = ids.clone();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.insert_resource(PendingEffects(vec![effect]));
         let mut system = IntoSystem::into_system(d3::apply_forces);
         system.initialize(app.world_mut());
@@ -1870,7 +1873,7 @@ mod tests {
             ids.insert(actor.id.clone(), entity);
             engine.entities.insert(actor.id.clone(), entity);
         }
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         let mut commands = app.world_mut().commands();
         install(&mut commands, project, &ids);
         app.world_mut().flush();
@@ -2217,7 +2220,7 @@ mod tests_2d {
             ids.insert(actor.id.clone(), entity);
             engine.entities.insert(actor.id.clone(), entity);
         }
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         let mut commands = app.world_mut().commands();
         install(&mut commands, &p, &ids);
         app.world_mut().flush();
@@ -2314,7 +2317,7 @@ mod tests_2d {
         let mut engine = Engine::new(rx, Mode::TwoD);
         engine.running = true;
         engine.entities = ids.clone();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.insert_resource(PendingEffects(vec![effect]));
         let mut system = IntoSystem::into_system(d2::apply_forces);
         system.initialize(app.world_mut());
@@ -3231,7 +3234,7 @@ mod controller_tests {
         );
         app.world_mut().flush();
         let (_sender, incoming) = std::sync::mpsc::channel();
-        app.insert_non_send(crate::engine::Engine::new(incoming, Mode::ThreeD));
+        app.insert_engine(crate::engine::Engine::new(incoming, Mode::ThreeD));
         let actor = project
             .actors
             .iter()
@@ -3575,7 +3578,7 @@ mod controller_tests_2d {
         let mut engine = crate::engine::Engine::new(incoming, Mode::TwoD);
         engine.running = motors;
         engine.entities = ids.clone();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         let actor = project
             .actors
             .iter()
@@ -3782,7 +3785,7 @@ mod constraint_tests {
         let (_sender, incoming) = std::sync::mpsc::channel();
         let mut engine = crate::engine::Engine::new(incoming, Mode::ThreeD);
         engine.entities = ids.clone();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.add_systems(
             FixedUpdate,
             crate::constraints::d3::drive.after(rp::PhysicsSet::Writeback),

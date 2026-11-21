@@ -137,13 +137,13 @@ pub fn register(app: &mut App) {
 
 /// Reads or bakes every layer's coverage and flow when what they name changes.
 fn load_layers(
-    engine: NonSend<Engine>,
+    document: Res<crate::engine::SceneDocument>,
     mut loaded: ResMut<LoadedLayers>,
     mut render: ResMut<LayerRender>,
 ) {
-    let layers = &engine.project.world.cloud_layers;
+    let layers = &document.world.cloud_layers;
     let key: TextureKey = (
-        engine.project_dir.clone(),
+        document.dir.clone(),
         layers
             .iter()
             .take(MAX_LAYERS)

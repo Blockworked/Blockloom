@@ -496,13 +496,13 @@ fn cancel(job: &Job, service: &mut ProbeService) {
 
 /// Picks captures up as they land, and finishes the jobs they complete.
 pub fn collect_bakes(
-    engine: NonSend<Engine>,
+    document: Res<crate::engine::SceneDocument>,
     mut baker: ResMut<ProbeBaker>,
     mut loaded: ResMut<LoadedProbes>,
     mut images: ResMut<Assets<Image>>,
     mut captured: MessageReader<ProbeCaptured>,
 ) {
-    let dir = engine.project_dir.clone();
+    let dir = document.dir.clone();
     for message in captured.read() {
         let Some(cube) = message.cube.as_ref() else {
             continue;
@@ -705,6 +705,7 @@ fn grid_image(grid: &IrradianceGrid) -> Image {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use crate::probes;
 
     #[test]
@@ -753,7 +754,7 @@ mod tests {
             .or_default()
             .insert("Probe".to_string());
         let mut app = App::new();
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .init_resource::<Assets<Image>>()
             .init_resource::<crate::environment::Environment>();
         probes::register(&mut app);

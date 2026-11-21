@@ -2234,7 +2234,10 @@ the same place as the VM.
 `engine::SceneDocument` is the open scene's `World`, the game settings and
 the project folder as a plain resource, republished by `rebuild_world`, so a
 system that only reads settings needn't take the main-thread `Engine`. The
-sky systems read it; moving the rest is the Engine split.
+sky, fog views, moon, clouds, cloud layers, beams, post, camera quality,
+timestep and the asset-folder readers (sprites, rigs, terrain, water, the
+interface) read it; a test app gets it through `InsertEngine::insert_engine`.
+What's left on `Engine` is run state and run overrides.
 
 `volumes::VolumeEye` says where volumes are weighed: the world camera (the
 default), a named actor or a point, so a world with no camera blends the same

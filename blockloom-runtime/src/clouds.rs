@@ -1,7 +1,6 @@
 //! Half-resolution cloud scattering with persistent, per-view temporal history.
 use crate::{
-    engine::Engine, environment::Environment, passes::*, sky::SkyRender, wind::WindField,
-    world::WorldCamera,
+    environment::Environment, passes::*, sky::SkyRender, wind::WindField, world::WorldCamera,
 };
 use bevy::asset::RenderAssetUsages;
 use bevy::core_pipeline::{
@@ -181,14 +180,14 @@ fn load_noise(dir: &std::path::Path, relative: &str) -> Result<NoiseVolume, Stri
 }
 /// Reads the clouds' authored volumes when their paths change.
 fn load_volumes(
-    engine: NonSend<Engine>,
+    document: Res<crate::engine::SceneDocument>,
     mut cells: ResMut<crate::streaming::StreamingCells>,
     mut loaded: ResMut<LoadedVolumes>,
     mut render: ResMut<CloudRender>,
 ) {
-    let clouds = &engine.project.world.clouds;
+    let clouds = &document.world.clouds;
     let key = (
-        engine.project_dir.clone(),
+        document.dir.clone(),
         if clouds.enabled {
             clouds.shape_volume.clone()
         } else {
@@ -315,7 +314,7 @@ fn resolve(
     mut commands: Commands,
     env: Res<Environment>,
     wind: Res<WindField>,
-    engine: NonSend<Engine>,
+    document: Res<crate::engine::SceneDocument>,
     moon: Option<Res<crate::space::MoonState>>,
     scaling: Option<Res<crate::quality::Scaling>>,
     mut render: ResMut<CloudRender>,
@@ -361,7 +360,7 @@ fn resolve(
             drift: Vec3::from(wind.clouds.advection).extend(0.0),
             erosion_drift: (Vec3::from(wind.clouds.erosion) * c.detail_speed).extend(0.0),
             shear: Vec4::new(c.shear[0], c.shear[1], 0.0, 0.0),
-            steps: UVec4::new(primary, light, 0, engine.project.world.wind.clouds.seed),
+            steps: UVec4::new(primary, light, 0, document.world.wind.clouds.seed),
             shadow: Vec4::new(
                 c.shadow_range,
                 if c.shadows { c.shadow_strength } else { 0.0 },

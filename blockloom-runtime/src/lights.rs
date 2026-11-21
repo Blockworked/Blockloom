@@ -484,6 +484,7 @@ fn sample_tiled(image: &image::GrayImage, u: f32, v: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::components::{ActorComponent, LightUnit};
     use blockloom_core::pipeline::ies::parse_ies;
     use blockloom_core::scene::Mode;
@@ -501,7 +502,7 @@ mod tests {
             .or_default()
             .insert("Light".to_string());
         let mut app = App::new();
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .init_resource::<PendingEffects>()
             .init_resource::<LightMasks>()
             .init_resource::<Assets<Image>>()

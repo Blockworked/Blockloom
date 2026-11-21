@@ -687,6 +687,7 @@ fn floor_material(deep: Vec3) -> StandardMaterial {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::shader_lib;
 
     fn live(kind: WaterKind, size: [f32; 2]) -> LiveBody {
@@ -770,7 +771,7 @@ mod tests {
         let engine = Engine::new(incoming, blockloom_core::scene::Mode::ThreeD);
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
-            .insert_non_send(engine)
+            .insert_engine(engine)
             .init_asset::<Mesh>()
             .init_asset::<Image>()
             .init_asset::<StandardMaterial>()

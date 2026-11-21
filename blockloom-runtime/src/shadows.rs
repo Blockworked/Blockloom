@@ -211,6 +211,7 @@ fn load_cookie(engine: &Engine, relative: &str) -> Option<Image> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use bevy::light::CascadeShadowConfig;
     use blockloom_core::scene::Mode;
 
@@ -218,7 +219,7 @@ mod tests {
         let (_tx, rx) = std::sync::mpsc::channel();
         let engine = Engine::new(rx, Mode::ThreeD);
         let mut app = App::new();
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .init_resource::<Assets<Image>>()
             .add_systems(Update, apply_shadows);
         app.world_mut().spawn((

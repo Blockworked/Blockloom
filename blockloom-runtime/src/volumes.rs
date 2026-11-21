@@ -426,6 +426,7 @@ fn draw_bounds(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::components::ActorComponent;
     use blockloom_core::project::Actor;
     use blockloom_core::scene::Visual;
@@ -484,7 +485,7 @@ mod tests {
             );
             engine.project.actors.push(actor);
         }
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.world_mut().spawn((WorldCamera, Transform::default()));
         app.add_systems(
             Update,

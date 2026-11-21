@@ -324,6 +324,7 @@ fn feed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use crate::plugins::MeshOp;
     use blockloom_core::scene::Mode;
     use blockloom_plugin_api::mesh::{ColliderKind, GpuVertices, MeshData};
@@ -419,7 +420,7 @@ mod tests {
                 body: None,
             },
         });
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .init_resource::<crate::plugin_meshes::PluginMeshes>()
             .add_systems(Update, crate::plugin_meshes::sync);
         register(&mut app);

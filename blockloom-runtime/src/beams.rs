@@ -7,7 +7,6 @@
 //! pose each frame without the actor's scale, so a stretched actor doesn't
 //! stretch its beam.
 
-use crate::engine::Engine;
 use crate::environment::Environment;
 use crate::lights::Lit;
 use crate::world::{WorldCamera, parse_color};
@@ -404,7 +403,7 @@ pub struct BeamGeometry {
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn sync_beams(
     mut commands: Commands,
-    engine: NonSend<Engine>,
+    document: Res<crate::engine::SceneDocument>,
     environment: Res<Environment>,
     lit: Query<(Entity, &Lit)>,
     transforms: Query<&GlobalTransform>,
@@ -420,7 +419,7 @@ fn sync_beams(
     mut shafts: ResMut<Assets<ShaftMaterial>>,
     mut motes: ResMut<Assets<MoteMaterial>>,
 ) {
-    let fog = &engine.project.world.fog.volumetric;
+    let fog = &document.world.fog.volumetric;
     let lights: HashMap<Entity, &Lit> = lit.iter().collect();
     let mut have = HashSet::new();
     for (entity, geometry, mut transform, mut visibility, shaft, mote) in &mut parts_query {
@@ -527,7 +526,7 @@ pub struct HeightDust {
 #[allow(clippy::type_complexity)]
 fn sync_dust(
     mut commands: Commands,
-    engine: NonSend<Engine>,
+    document: Res<crate::engine::SceneDocument>,
     environment: Res<Environment>,
     cameras: Query<&GlobalTransform, With<WorldCamera>>,
     mut dust: Query<(
@@ -539,7 +538,7 @@ fn sync_dust(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<MoteMaterial>>,
 ) {
-    let fog = &engine.project.world.fog.volumetric;
+    let fog = &document.world.fog.volumetric;
     let wanted = fog.dust.enabled && fog.dust.count > 0;
     let camera = cameras
         .iter()

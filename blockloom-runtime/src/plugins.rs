@@ -1074,6 +1074,7 @@ pub fn stage(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::scene::Mode;
     #[test]
     #[cfg(feature = "plugins")]
@@ -1230,7 +1231,7 @@ mod tests {
         assert_eq!(engine.plugins.meshes.len(), 4);
 
         let mut app = App::new();
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .init_resource::<PluginMeshes>()
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
@@ -1288,7 +1289,7 @@ mod tests {
         install(&mut engine, world);
         assert!(engine.plugins.meshes.is_empty());
         let mut app = App::new();
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .init_resource::<PluginMeshes>()
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()

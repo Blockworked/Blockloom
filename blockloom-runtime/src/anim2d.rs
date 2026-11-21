@@ -1178,6 +1178,7 @@ fn set_material(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use bevy::time::{TimePlugin, TimeUpdateStrategy};
     use blockloom_core::components::ActorComponent;
     use blockloom_core::project::Actor;
@@ -1220,7 +1221,7 @@ mod tests {
             .spawn((ActorId(id.clone()), Transform::default(), Sprite::default()))
             .id();
         engine.entities.insert(id, entity);
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.add_systems(
             FixedUpdate,
             (apply_animation_effects, step_animations).chain(),
@@ -1390,7 +1391,7 @@ mod tests {
         app.init_asset::<Mesh>();
         app.init_asset::<SpriteFxMaterial>();
         app.init_resource::<RigCache>();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.add_systems(Update, (ensure_rigs, draw_rigs).chain());
         let dials = blockloom_core::sprite2d::SpriteSpec {
             outline_width: 1.0,

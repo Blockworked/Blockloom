@@ -205,11 +205,11 @@ fn apply_space_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engi
 /// light to give.
 fn sync_moon(
     mut commands: Commands,
-    engine: NonSend<Engine>,
+    document: Res<crate::engine::SceneDocument>,
     mut state: ResMut<MoonState>,
     mut moons: Query<(Entity, &mut DirectionalLight, &mut Transform), With<MoonLight>>,
 ) {
-    let sky = &engine.project.world.sky;
+    let sky = &document.world.sky;
     let lux = sky.moon_illuminance();
     let direction = Vec3::from_array(sky.moon_direction())
         .try_normalize()
@@ -304,6 +304,7 @@ fn resolve_space(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::scene::{Mode, World};
     use blockloom_core::sky::{SkyKind, SunMode};
 
@@ -380,7 +381,7 @@ mod tests {
         sky.kind = SkyKind::Physical;
         sky.physical.moon = true;
         sky.physical.moon_elevation = 40.0;
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .init_resource::<MoonState>()
             .add_systems(Update, sync_moon);
         app.update();
@@ -391,13 +392,11 @@ mod tests {
         assert!((lux - 0.25).abs() < 1e-4, "{lux}");
         assert!(app.world().resource::<MoonState>().lux.x > 0.0);
 
+        let mut world = (*app.world().resource::<crate::engine::SceneDocument>().world).clone();
+        world.sky.physical.moon_elevation = -20.0;
         app.world_mut()
-            .non_send_mut::<Engine>()
-            .project
-            .world
-            .sky
-            .physical
-            .moon_elevation = -20.0;
+            .resource_mut::<crate::engine::SceneDocument>()
+            .world = world.into();
         app.update();
         assert_eq!(moons.iter(app.world()).count(), 0);
     }

@@ -560,7 +560,7 @@ fn warn_if_dlss_off(engine: &Engine, scaling: &Scaling, warned: &mut bool) {
 #[cfg(feature = "dlss")]
 fn configure_cameras(
     mut commands: Commands,
-    engine: NonSend<Engine>,
+    document: Res<crate::engine::SceneDocument>,
     scaling: Res<Scaling>,
     tracing: Option<Res<crate::ray_tracing::RayTracingState>>,
     rr_supported: Option<Res<bevy::anti_alias::dlss::DlssRayReconstructionSupported>>,
@@ -582,9 +582,8 @@ fn configure_cameras(
 ) {
     use bevy::anti_alias::dlss::{Dlss, DlssRayReconstructionFeature, DlssSuperResolutionFeature};
     let hybrid = tracing.as_ref().is_some_and(|state| state.active)
-        && engine.project.world.lighting.ray_tracing.enabled
-        && engine.project.world.lighting.ray_tracing.mode
-            == blockloom_core::scene::TracingMode::Hybrid;
+        && document.world.lighting.ray_tracing.enabled
+        && document.world.lighting.ray_tracing.mode == blockloom_core::scene::TracingMode::Hybrid;
     let rr = rr_supported.is_some();
     let mode = dlss_perf_mode(dlss_effective_mode(
         &scaling.settings,
@@ -927,6 +926,7 @@ fn reset(engine: NonSend<Engine>, mut scaling: ResMut<Scaling>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use bevy::asset::RenderAssetUsages;
     use bevy::mesh::Indices;
     use bevy::render::render_resource::PrimitiveTopology;
@@ -958,7 +958,7 @@ mod tests {
             )
             .unwrap();
         let mut app = App::new();
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .insert_resource(session)
             .init_resource::<Scaling>();
         app.add_systems(Update, feedback);
@@ -1294,7 +1294,7 @@ mod tests {
         let mut app = App::new();
         // The DLSS build reads the engine for its Hybrid check; without the
         // feature this resource just sits unused.
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .init_resource::<Scaling>()
             .init_resource::<crate::environment::Environment>()
             .add_systems(Update, configure_cameras);
@@ -1327,7 +1327,7 @@ mod tests {
         engine.project.world.lighting.ray_tracing.enabled = true;
         engine.project.world.lighting.ray_tracing.mode = TracingMode::Hybrid;
         let mut app = App::new();
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .init_resource::<Scaling>()
             .init_resource::<crate::environment::Environment>()
             .init_resource::<crate::ray_tracing::RayTracingState>()
@@ -1417,7 +1417,7 @@ mod tests {
             engine.project.settings.quality.dynamic_resolution = true;
             engine.project.settings.quality.over_budget_frames = 15;
             let mut app = App::new();
-            app.insert_non_send(engine)
+            app.insert_engine(engine)
                 .init_resource::<Scaling>()
                 .init_resource::<crate::performance::LoopPace>()
                 .add_systems(Update, feedback);
@@ -1552,7 +1552,7 @@ mod tests {
         let mut engine = Engine::new(incoming, blockloom_core::scene::Mode::ThreeD);
         engine.rebuild = true;
         let mut app = App::new();
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .init_resource::<Scaling>()
             .add_systems(Update, reset);
         {

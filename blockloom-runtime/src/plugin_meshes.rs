@@ -552,6 +552,7 @@ pub fn publish_poses(state: Res<PluginMeshes>, query: Query<(&Transform, Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::scene::Mode;
     use blockloom_plugin_api::rendering::InstanceData;
 
@@ -579,7 +580,7 @@ mod tests {
     fn app() -> App {
         let (_tx, rx) = std::sync::mpsc::channel();
         let mut app = App::new();
-        app.insert_non_send(Engine::new(rx, Mode::ThreeD))
+        app.insert_engine(Engine::new(rx, Mode::ThreeD))
             .init_resource::<PluginMeshes>()
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()

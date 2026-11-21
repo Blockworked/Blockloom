@@ -318,6 +318,7 @@ fn flash_environment(flash: Res<LightningFlash>, mut environment: ResMut<Environ
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::vm::Effect;
 
     fn app(mode: Mode) -> App {
@@ -328,7 +329,7 @@ mod tests {
             AssetPlugin::default(),
             bevy::audio::AudioPlugin::default(),
         ))
-        .insert_non_send(Engine::new(rx, mode))
+        .insert_engine(Engine::new(rx, mode))
         .insert_resource(Dimension(mode))
         .init_resource::<PendingEffects>()
         .init_resource::<Environment>()

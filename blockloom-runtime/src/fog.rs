@@ -474,7 +474,7 @@ fn resolve_fog(
 #[allow(clippy::type_complexity)]
 fn apply_fog_views(
     mut commands: Commands,
-    engine: NonSend<Engine>,
+    document: Res<crate::engine::SceneDocument>,
     render: Res<FogRender>,
     cameras: Query<(Entity, Has<FogView>, Has<DepthPrepass>), With<WorldCamera>>,
     suns: Query<
@@ -498,7 +498,7 @@ fn apply_fog_views(
             _ => {}
         }
     }
-    let volumetric = &engine.project.world.fog.volumetric;
+    let volumetric = &document.world.fog.volumetric;
     let lit = on && volumetric.sun;
     for (sun, has) in &suns {
         match (lit, has) {

@@ -595,6 +595,26 @@ pub struct Engine {
     pub survivor_keep: std::collections::HashSet<String>,
 }
 
+/// Inserts an engine with its `SceneDocument`, as `add_simulation` does.
+pub trait InsertEngine {
+    fn insert_engine(&mut self, engine: Engine) -> &mut Self;
+}
+
+impl InsertEngine for App {
+    fn insert_engine(&mut self, engine: Engine) -> &mut Self {
+        self.insert_resource(engine.document());
+        self.insert_non_send(engine)
+    }
+}
+
+impl InsertEngine for World {
+    fn insert_engine(&mut self, engine: Engine) -> &mut Self {
+        self.insert_resource(engine.document());
+        self.insert_non_send(engine);
+        self
+    }
+}
+
 impl Engine {
     /// The open scene's settings as a `SceneDocument`.
     pub fn document(&self) -> SceneDocument {

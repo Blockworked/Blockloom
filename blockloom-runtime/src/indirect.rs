@@ -260,6 +260,7 @@ fn count_render_indirect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
 
     fn groups(pairs: &[((usize, &'static str), u32)]) -> HashMap<(usize, &'static str), u32> {
         pairs.iter().cloned().collect()
@@ -407,7 +408,7 @@ mod tests {
         let mut engine = crate::engine::Engine::new(incoming, Mode::ThreeD);
         engine.rebuild = true;
         let mut app = App::new();
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .init_resource::<IndirectDrawCounters>()
             .add_systems(Update, reset_indirect);
         {

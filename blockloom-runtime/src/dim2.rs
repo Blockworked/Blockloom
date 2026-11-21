@@ -1132,8 +1132,11 @@ pub fn sync_pause(engine: NonSend<Engine>, mut configs: Query<&mut rp::RapierCon
 
 /// Steps the physics pipeline at the project's own fixed rate, the same rate
 /// the blocks run at, so a body and a `move` never fight over time.
-pub fn sync_timestep(engine: NonSend<Engine>, mut timestep: ResMut<rp::TimestepMode>) {
-    let rate = engine.project.world.fixed_rate;
+pub fn sync_timestep(
+    document: Res<crate::engine::SceneDocument>,
+    mut timestep: ResMut<rp::TimestepMode>,
+) {
+    let rate = document.world.fixed_rate;
     if !rate.is_finite() {
         return;
     }

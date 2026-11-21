@@ -887,6 +887,7 @@ pub fn maintain_voices(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::scene::Mode;
 
     fn app() -> App {
@@ -902,7 +903,7 @@ mod tests {
         app.insert_resource(Dimension(Mode::TwoD));
         app.init_resource::<PendingEffects>();
         app.init_resource::<SoundState>();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app
     }
 

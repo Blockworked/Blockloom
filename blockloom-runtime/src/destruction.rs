@@ -1003,6 +1003,7 @@ fn flush_on_exit(mut exit: MessageReader<AppExit>, mut state: ResMut<Destruction
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::destruction::FractureSpec;
 
     fn app() -> (App, String) {
@@ -1052,7 +1053,7 @@ mod tests {
             ))
             .id();
         engine.entities.insert(id.clone(), entity);
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         (app, id)
     }
 

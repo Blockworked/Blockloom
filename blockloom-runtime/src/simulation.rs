@@ -7,6 +7,7 @@
 //! system now sits in a `SimStep`, the steps are chained in the old order, and
 //! presentation systems order themselves against the steps they used to sit
 //! between (`add_presentation` in lib.rs), so the order is unchanged.
+use crate::engine::InsertEngine;
 
 use crate::engine::{Dimension, Engine, PendingEffects};
 use crate::{
@@ -49,8 +50,7 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
         .init_resource::<world::NavMesh>()
         .init_resource::<crate::player_camera::BodyFacing>()
         .init_resource::<physics_install::PhysicsLayers>()
-        .insert_resource(engine.document())
-        .insert_non_send(engine);
+        .insert_engine(engine);
     atmosphere::register(app);
     crate::lan::register(app);
     app.init_resource::<crate::environment::Environment>();

@@ -5954,6 +5954,7 @@ fn key_name(code: &KeyCode) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use bevy::time::{TimePlugin, TimeUpdateStrategy};
 
     #[test]
@@ -5995,7 +5996,7 @@ mod tests {
             std::time::Duration::from_secs_f64(1.0 / 60.0),
         ));
         app.init_resource::<PendingEffects>();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.add_systems(FixedUpdate, step_vm);
         app
     }
@@ -6013,7 +6014,7 @@ mod tests {
         app.init_resource::<PendingEffects>();
         app.init_resource::<crate::ui::UiManager>();
         app.init_resource::<Time<Real>>();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.add_systems(Update, pump_editor);
         app.update();
 
@@ -6181,7 +6182,7 @@ mod tests {
         app.init_resource::<Time<Real>>();
         app.init_resource::<PendingEffects>();
         app.init_resource::<crate::ui::UiManager>();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         // No PreviewState resource: the sidecar arms are skipped, nothing panics.
         app.add_systems(Update, (pump_editor, finish_step).chain());
 
@@ -6222,7 +6223,7 @@ mod tests {
         app.init_resource::<Time>();
         app.init_resource::<crate::player_camera::BodyFacing>();
         app.add_message::<MouseWheel>();
-        app.insert_non_send(Engine::new(incoming, mode));
+        app.insert_engine(Engine::new(incoming, mode));
         let camera = app
             .world_mut()
             .spawn((WorldCamera, Transform::default()))
@@ -6319,7 +6320,7 @@ mod tests {
                 component: "Body".to_string(),
             },
         ]));
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         let actor = app
             .world_mut()
             .spawn((
@@ -6368,7 +6369,7 @@ mod tests {
                 view: blockloom_core::components::CameraView::FirstPerson,
             },
         ]));
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         let player = app
             .world_mut()
             .spawn((
@@ -6429,7 +6430,7 @@ mod tests {
         app.insert_resource(PendingEffects(vec![Effect::SetMouseLocked {
             locked: true,
         }]));
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         let window_entity = app
             .world_mut()
             .spawn((Window::default(), CursorOptions::default(), PrimaryWindow))
@@ -6495,7 +6496,7 @@ mod tests {
         app.insert_resource(PendingEffects(vec![Effect::SetMouseLocked {
             locked: true,
         }]));
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         let window_entity = app
             .world_mut()
             .spawn((Window::default(), CursorOptions::default(), PrimaryWindow))
@@ -6527,7 +6528,7 @@ mod tests {
         app.insert_resource(PendingEffects(vec![Effect::SetMouseLocked {
             locked: true,
         }]));
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         let window_entity = app
             .world_mut()
             .spawn((Window::default(), CursorOptions::default(), PrimaryWindow))
@@ -6577,7 +6578,7 @@ mod tests {
         app.init_resource::<crate::ui::UiManager>();
         app.init_resource::<crate::sound::SoundState>();
         app.init_resource::<bevy::input::touch::Touches>();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         let window_entity = app
             .world_mut()
             .spawn((Window::default(), PrimaryWindow))
@@ -6654,7 +6655,7 @@ mod tests {
                 .parents
                 .insert((*child).to_string(), (*parent).to_string());
         }
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.add_systems(Update, apply_parenting);
         app.update();
 
@@ -6913,7 +6914,7 @@ mod tests {
             ))
             .id();
         engine.entities.insert("walker".into(), entity);
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.add_systems(Update, apply_common);
         app.update();
         assert_eq!(
@@ -6963,7 +6964,7 @@ mod tests {
             ))
             .id();
         engine.entities.insert("walker".into(), entity);
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.add_systems(Update, apply_common);
         app.update();
         let body = app.world().entity(entity);
@@ -7009,7 +7010,7 @@ mod tests {
             actor: "child".to_string(),
             parent: "parent".to_string(),
         }]));
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         for (id, x, y) in [("parent", 100.0, 50.0), ("child", 7.0, 7.0)] {
             let entity = app
                 .world_mut()
@@ -7165,7 +7166,7 @@ mod tests {
                 ExternalImpulse::default(),
             ))
             .id();
-        app.world_mut().insert_non_send(engine);
+        app.world_mut().insert_engine(engine);
         app.world_mut()
             .non_send_mut::<Engine>()
             .entities
@@ -7262,7 +7263,7 @@ mod tests {
                 ExternalImpulse::default(),
             ))
             .id();
-        app.world_mut().insert_non_send(engine);
+        app.world_mut().insert_engine(engine);
         app.world_mut()
             .non_send_mut::<Engine>()
             .entities
@@ -7363,7 +7364,7 @@ mod tests {
                 ExternalImpulse::default(),
             ))
             .id();
-        app.world_mut().insert_non_send(engine);
+        app.world_mut().insert_engine(engine);
         app.world_mut()
             .non_send_mut::<Engine>()
             .entities
@@ -7441,7 +7442,7 @@ mod tests {
                 ExternalImpulse::default(),
             ))
             .id();
-        app.world_mut().insert_non_send(engine);
+        app.world_mut().insert_engine(engine);
         app.world_mut()
             .non_send_mut::<Engine>()
             .entities
@@ -7540,7 +7541,7 @@ mod tests {
                 ExternalImpulse::default(),
             ))
             .id();
-        app.world_mut().insert_non_send(engine);
+        app.world_mut().insert_engine(engine);
         {
             let mut engine = app.world_mut().non_send_mut::<Engine>();
             engine.entities.insert("player".to_string(), player);
@@ -7727,7 +7728,7 @@ mod tests {
             .spawn((ActorId("a1".to_string()), Transform::default()))
             .id();
         engine.entities.insert("a1".to_string(), entity);
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
 
         let mut window = Window::default();
         window.set_physical_cursor_position(Some(bevy::math::DVec2::new(
@@ -7943,7 +7944,7 @@ mod tests {
         app.init_resource::<crate::ui::UiManager>();
         app.init_resource::<crate::sound::SoundState>();
         app.init_resource::<bevy::input::touch::Touches>();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
 
         let mut window = Window::default();
         window.set_physical_cursor_position(Some(bevy::math::DVec2::new(115.0, 100.0)));
@@ -8052,7 +8053,7 @@ mod tests {
         app.insert_resource(Dimension(Mode::TwoD));
         app.init_resource::<ButtonInput<MouseButton>>();
         app.init_resource::<bevy::input::touch::Touches>();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.insert_resource(manager);
         app.world_mut().spawn((Window::default(), PrimaryWindow));
         app.world_mut().spawn((
@@ -8180,7 +8181,7 @@ mod tests {
         app.insert_resource(Dimension(Mode::TwoD));
         app.init_resource::<Messages<KeyboardInput>>();
         app.init_resource::<crate::ui::UiManager>();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.add_systems(Update, type_into_focused_input);
 
         let mut manager = app.world_mut().resource_mut::<crate::ui::UiManager>();
@@ -8396,7 +8397,7 @@ mod tests {
         app.insert_resource(Time::<()>::default());
         app.init_resource::<Messages<KeyboardInput>>();
         app.init_resource::<crate::ui::UiManager>();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.add_systems(Update, back_button);
         app
     }
@@ -8526,7 +8527,7 @@ mod tests {
         app.init_resource::<crate::ui::UiManager>();
         app.init_resource::<crate::sound::SoundState>();
         app.init_resource::<bevy::input::touch::Touches>();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.world_mut().spawn((Window::default(), PrimaryWindow));
         app.init_resource::<Time<Real>>();
         app.add_systems(Update, publish_sensors);
@@ -8580,7 +8581,7 @@ mod tests {
                 .id();
             engine.entities.insert(id.clone(), entity);
         }
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.world_mut().spawn((Window::default(), PrimaryWindow));
         app.init_resource::<Time<Real>>();
         app.add_systems(Update, (publish_simulation_actors, publish_sensors).chain());

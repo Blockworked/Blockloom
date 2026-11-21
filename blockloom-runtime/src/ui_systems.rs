@@ -705,12 +705,13 @@ fn touch_slider(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     fn app() -> App {
         let mut app = App::new();
         let (_tx, rx) = std::sync::mpsc::channel();
         let mut engine = Engine::new(rx, blockloom_core::scene::Mode::TwoD);
         engine.running = true;
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .init_resource::<UiManager>()
             .init_resource::<PendingEffects>();
         app
@@ -925,7 +926,7 @@ pub struct UiAtlas {
 /// Packs loaded UI images once per source set; Bevy batches nodes sharing the sheet.
 pub fn atlas(
     manager: Res<UiManager>,
-    engine: NonSend<Engine>,
+    document: Res<crate::engine::SceneDocument>,
     server: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
     mut nodes: Query<&mut ImageNode>,
@@ -940,10 +941,7 @@ pub fn atlas(
         if path.is_empty() || sources.iter().any(|(p, _)| p == path) {
             continue;
         }
-        let handle = server.load(crate::world::asset_path(
-            engine.project_dir.as_deref(),
-            path,
-        ));
+        let handle = server.load(crate::world::asset_path(document.dir.as_deref(), path));
         if images.get(&handle).is_some_and(|image| {
             image.width() <= 512 && image.height() <= 512 && image.data.is_some()
         }) {
@@ -989,10 +987,7 @@ pub fn atlas(
         let (handle, rect) = match (&cache.sheet, cache.rects.get(path)) {
             (Some(sheet), Some(rect)) => (sheet.clone(), Some(*rect)),
             _ => (
-                server.load(crate::world::asset_path(
-                    engine.project_dir.as_deref(),
-                    path,
-                )),
+                server.load(crate::world::asset_path(document.dir.as_deref(), path)),
                 None,
             ),
         };

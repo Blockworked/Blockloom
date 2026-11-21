@@ -183,12 +183,13 @@ fn sample(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::scene::Mode;
 
     fn app() -> App {
         let (_tx, rx) = std::sync::mpsc::channel();
         let mut app = App::new();
-        app.insert_non_send(Engine::new(rx, Mode::ThreeD))
+        app.insert_engine(Engine::new(rx, Mode::ThreeD))
             .init_resource::<Environment>();
         register(&mut app);
         app.add_systems(Update, sample_atmosphere);

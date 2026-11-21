@@ -142,6 +142,7 @@ fn step_wind(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::wind::WindProperty;
 
     fn app(mode: Mode) -> App {
@@ -155,7 +156,7 @@ mod tests {
             profile: false,
             ..Wind::default()
         };
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .insert_resource(Dimension(mode))
             .init_resource::<PendingEffects>()
             .init_resource::<AtmosphereSources>()

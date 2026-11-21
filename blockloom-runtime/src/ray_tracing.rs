@@ -1245,6 +1245,7 @@ pub fn report_ray_tracing(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use bevy::mesh::MeshBuilder;
 
     #[test]
@@ -1351,7 +1352,7 @@ mod tests {
         let mut engine = Engine::new(rx, Mode::ThreeD);
         engine.running = true;
         let mut app = App::new();
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .init_resource::<crate::engine::PendingEffects>()
             .add_systems(Update, apply_ray_tracing_effects);
         app.world_mut()

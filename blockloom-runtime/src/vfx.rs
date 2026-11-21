@@ -1260,6 +1260,7 @@ fn sim_params(spec: &ParticleSpec, input: SimInput) -> SimParams {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
 
     #[test]
     fn local_density_resizes_cpu_pools_and_enforces_the_total_allocation() {
@@ -1290,7 +1291,7 @@ mod tests {
             .init_asset::<Mesh>()
             .init_asset::<ShaderBuffer>()
             .init_asset::<ParticleMaterial>()
-            .insert_non_send(engine)
+            .insert_engine(engine)
             .insert_resource(Dimension(Mode::ThreeD))
             .init_resource::<crate::quality::Scaling>()
             .init_resource::<Draws>()

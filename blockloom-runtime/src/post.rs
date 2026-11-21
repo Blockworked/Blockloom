@@ -358,7 +358,7 @@ pub struct LoadedLut {
 #[allow(clippy::too_many_arguments)]
 pub fn apply_post(
     mut commands: Commands,
-    engine: NonSend<Engine>,
+    document: Res<crate::engine::SceneDocument>,
     environment: Res<Environment>,
     debug: Res<HdrDebug>,
     frame: Res<HdrFrame>,
@@ -373,12 +373,12 @@ pub fn apply_post(
     let post = &environment.post;
     // Baked into the SSAO shader, so it is the project's, not blended.
     if let Some(mut patches) = patches {
-        let intensity = engine.project.world.post.ao.intensity;
+        let intensity = document.world.post.ao.intensity;
         if patches.ao_intensity != intensity {
             patches.ao_intensity = intensity;
         }
     }
-    let dir = engine.project_dir.clone();
+    let dir = document.dir.clone();
     let key = (dir.clone(), post.grading.lut.trim().to_string());
     if loaded.key.as_ref() != Some(&key) {
         loaded.lut = match (&key.0, key.1.as_str()) {

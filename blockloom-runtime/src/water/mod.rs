@@ -506,6 +506,7 @@ fn apply_water_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::components::ActorComponent;
     use blockloom_core::water::WaterProperty;
 
@@ -526,7 +527,7 @@ mod tests {
         engine
             .attached
             .insert("pool".to_string(), ["Water".to_string()].into());
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .insert_resource(Dimension(mode))
             .init_resource::<Time<Fixed>>()
             .init_resource::<PendingEffects>()

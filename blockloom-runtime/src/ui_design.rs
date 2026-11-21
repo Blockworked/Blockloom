@@ -210,6 +210,7 @@ pub(crate) fn report(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::scene::Mode;
 
     fn fixture(revision: u64) -> InterfaceDesign {
@@ -491,7 +492,7 @@ mod tests {
         app.init_resource::<bevy::input::touch::Touches>();
         app.init_asset::<Image>();
         app.init_asset::<TextureAtlasLayout>();
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.insert_resource(manager);
         app.insert_resource(session);
         app.world_mut()

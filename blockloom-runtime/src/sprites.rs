@@ -25,7 +25,7 @@ use blockloom_core::sprite2d::{
     y_sort_depths,
 };
 
-use crate::engine::{ActorId, Engine};
+use crate::engine::ActorId;
 use crate::world::{asset_path, parse_color};
 use std::collections::HashMap;
 
@@ -231,7 +231,7 @@ pub fn slice_uniforms(sprite: &Sprite, frame: Vec2) -> [Vec4; 3] {
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn sync_sprites(
     mut commands: Commands,
-    engine: NonSend<Engine>,
+    document: Res<crate::engine::SceneDocument>,
     assets: Res<AssetServer>,
     images: Res<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -253,7 +253,7 @@ pub fn sync_sprites(
         (With<StackSlice>, Without<ActorId>),
     >,
 ) {
-    let dir = engine.project_dir.clone();
+    let dir = document.dir.clone();
     for (entity, transform, dials, sprite, decor, layers, rig) in &mut actors {
         let spec = dials.map(|dials| &dials.0);
         let rig_active = rig.is_some_and(|rig| rig.active);
@@ -465,7 +465,7 @@ struct PartWants {
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn sync_part_effects(
     mut commands: Commands,
-    engine: NonSend<Engine>,
+    document: Res<crate::engine::SceneDocument>,
     assets: Res<AssetServer>,
     images: Res<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -489,7 +489,7 @@ pub fn sync_part_effects(
         Or<(With<StackSlice>, With<crate::anim2d::RigPart>)>,
     >,
 ) {
-    let dir = engine.project_dir.clone();
+    let dir = document.dir.clone();
     let mut wanted: HashMap<Entity, PartWants> = HashMap::default();
     for (dials, decor, rig) in &actors {
         let spec = &dials.0;
@@ -758,6 +758,8 @@ fn draw_stack(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::Engine;
+    use crate::engine::InsertEngine;
     use blockloom_core::shader_lib;
 
     const SPRITE_STUB: &str = "struct View { world_position: vec3<f32> }\n\
@@ -868,7 +870,7 @@ struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) world
         app.init_asset::<Image>();
         app.init_asset::<Mesh>();
         app.init_asset::<SpriteFxMaterial>();
-        app.insert_non_send(Engine::new(incoming, blockloom_core::scene::Mode::TwoD));
+        app.insert_engine(Engine::new(incoming, blockloom_core::scene::Mode::TwoD));
         app.add_systems(Update, sync_part_effects);
         let image = app
             .world_mut()
@@ -957,7 +959,7 @@ struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) world
         app.init_asset::<Image>();
         app.init_asset::<Mesh>();
         app.init_asset::<SpriteFxMaterial>();
-        app.insert_non_send(Engine::new(incoming, blockloom_core::scene::Mode::TwoD));
+        app.insert_engine(Engine::new(incoming, blockloom_core::scene::Mode::TwoD));
         app.add_systems(Update, sync_part_effects);
         let image = app
             .world_mut()

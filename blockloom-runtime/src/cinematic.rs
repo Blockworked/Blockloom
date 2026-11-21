@@ -618,6 +618,7 @@ fn shake_camera(camera: &mut Transform, dimension: &Res<Dimension>, trauma: f32,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::cinematic::Cutscene;
     use blockloom_core::scene::Mode;
 
@@ -625,7 +626,7 @@ mod tests {
         let (_tx, rx) = std::sync::mpsc::channel();
         let mut app = App::new();
         let engine = Engine::new(rx, Mode::ThreeD);
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .init_resource::<PendingEffects>()
             .init_resource::<CinePlayer>()
             .init_resource::<Time<Real>>()

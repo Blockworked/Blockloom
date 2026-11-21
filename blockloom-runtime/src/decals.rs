@@ -219,6 +219,7 @@ pub fn patch_shader(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::decals::{DecalPreset, Spawn};
 
     #[test]
@@ -238,7 +239,7 @@ mod tests {
         let mut engine = Engine::new(rx, Mode::ThreeD);
         engine.running = true;
         engine.rebuild = false;
-        app.insert_non_send(engine)
+        app.insert_engine(engine)
             .init_resource::<Decals>()
             .init_resource::<Time<Fixed>>()
             .init_resource::<PendingEffects>()

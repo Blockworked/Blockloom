@@ -1756,6 +1756,7 @@ pub fn draw_overlays(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
     use blockloom_core::components::ActorComponent;
     use blockloom_core::project::Actor;
 
@@ -1836,7 +1837,7 @@ mod tests {
                 .id();
             engine.entities.insert(id.into(), entity);
         }
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.insert_resource(level);
         app.add_systems(Update, track_rooms);
 
@@ -1878,7 +1879,7 @@ mod tests {
             let entity = app.world_mut().spawn((ActorId(id.to_string()), *t)).id();
             engine.entities.insert(id.to_string(), entity);
         }
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.insert_resource(level);
         app
     }

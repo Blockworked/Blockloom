@@ -2293,6 +2293,7 @@ pub fn configure(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InsertEngine;
 
     #[test]
     fn the_nearest_point_on_an_axis_is_where_the_ray_passes_it() {
@@ -2406,7 +2407,7 @@ mod tests {
                 .id();
             engine.entities.insert(id.clone(), entity);
         }
-        app.insert_non_send(engine);
+        app.insert_engine(engine);
         app.add_systems(Update, interact);
         (app, parent, child)
     }
