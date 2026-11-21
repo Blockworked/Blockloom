@@ -190,8 +190,33 @@ fn post_latest(
     });
 }
 
-fn apply_state(bridge: Pin<&mut qobject::AppBridge>, json: String) {
-    bridge.set_state_json(QString::from(&json));
+/// State messages waiting for the Qt thread. Unlike status, none may be
+/// dropped: each patches the one before. A whole message makes everything
+/// before it moot.
+type Queue = Arc<Mutex<Vec<String>>>;
+
+fn post_state(queue: &Queue, thread: &cxx_qt::CxxQtThread<qobject::AppBridge>, message: String) {
+    let Ok(mut held) = queue.lock() else { return };
+    if message.starts_with("{\"full\"") {
+        held.clear();
+    }
+    let already_queued = !held.is_empty();
+    held.push(message);
+    if already_queued {
+        return;
+    }
+    drop(held);
+    let queue = queue.clone();
+    let _ = thread.queue(move |bridge| {
+        let taken = queue.lock().map(|mut held| std::mem::take(&mut *held));
+        if let Ok(messages) = taken
+            && !messages.is_empty()
+        {
+            // One property change per burst: a JSON array of messages.
+            let json = format!("[{}]", messages.join(","));
+            bridge.set_state_json(QString::from(&json));
+        }
+    });
 }
 
 fn apply_status(bridge: Pin<&mut qobject::AppBridge>, json: String) {
@@ -208,14 +233,14 @@ impl qobject::AppBridge {
             return;
         }
         let thread = self.qt_thread();
-        let pending: Latest = Arc::new(Mutex::new(None));
+        let pending: Queue = Arc::new(Mutex::new(Vec::new()));
         let status: Latest = Arc::new(Mutex::new(None));
         let log: Latest = Arc::new(Mutex::new(None));
         let sink_thread = thread.clone();
         let sink_pending = pending.clone();
         let handle = BackendHandle::new(move |event| match event {
             Event::State(json) => {
-                post_latest(&sink_pending, &sink_thread, json.to_string(), apply_state);
+                post_state(&sink_pending, &sink_thread, json.to_string());
             }
             Event::Status(json) => {
                 post_latest(&status, &sink_thread, json.to_string(), apply_status);
@@ -249,8 +274,9 @@ impl qobject::AppBridge {
             })
             .expect("failed to start the backend thread");
 
-        if let Ok(json) = backend.state_json() {
-            self.as_mut().set_state_json(QString::from(&json));
+        if let Ok(json) = backend.frontend_state() {
+            self.as_mut()
+                .set_state_json(QString::from(&format!("[{json}]")));
         }
         // Lets `blockloom-shell --attach` drive this backend instead of
         // forking a second copy. Best effort: a second editor just works

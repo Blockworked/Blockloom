@@ -999,19 +999,68 @@ impl DerefMut for Project {
 
 impl Serialize for Project {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.serialize_as(serializer, true, true)
+    }
+}
+
+/// A project as the editor's window reads it: scenes listed without their
+/// actors, and the active scene's actors included only when `actors`.
+pub struct FrontendView<'a> {
+    pub project: &'a Project,
+    pub actors: bool,
+}
+
+impl Serialize for FrontendView<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.project.serialize_as(serializer, false, self.actors)
+    }
+}
+
+/// A scene without its actors.
+#[derive(Serialize)]
+struct SceneSummary<'a> {
+    id: &'a str,
+    name: &'a str,
+    path: &'a str,
+    world: &'a World,
+}
+
+impl Project {
+    fn serialize_as<S: Serializer>(
+        &self,
+        serializer: S,
+        scene_actors: bool,
+        active_actors: bool,
+    ) -> Result<S::Ok, S::Error> {
         let active = self.active_scene_ref();
         let mut s = serializer.serialize_struct("Project", 14)?;
         s.serialize_field("id", &self.id)?;
         s.serialize_field("name", &self.name)?;
         s.serialize_field("icon", &self.icon)?;
         s.serialize_field("android", &self.android)?;
-        s.serialize_field("scenes", &self.scenes)?;
+        if scene_actors {
+            s.serialize_field("scenes", &self.scenes)?;
+        } else {
+            let scenes: Vec<SceneSummary> = self
+                .scenes
+                .iter()
+                .map(|scene| SceneSummary {
+                    id: &scene.id,
+                    name: &scene.name,
+                    path: &scene.path,
+                    world: &scene.world,
+                })
+                .collect();
+            s.serialize_field("scenes", &scenes)?;
+        }
         s.serialize_field("active_scene", &self.active_scene)?;
         s.serialize_field("default_scene", &self.default_scene)?;
         // Compat: the active scene flattened, so older readers and the
         // current QML (`project.world`, `project.actors`) keep working.
         s.serialize_field("world", &active.world)?;
-        s.serialize_field("actors", &active.actors)?;
+        if active_actors {
+            s.serialize_field("actors", &active.actors)?;
+        }
         s.serialize_field("globals", &self.globals)?;
         s.serialize_field("global_lists", &self.global_lists)?;
         s.serialize_field("global_dicts", &self.global_dicts)?;
@@ -2574,12 +2623,31 @@ pub fn project_to_file(project: &Project) -> ProjectFile {
 /// a crash leaves every file whole. Scenes go first and the index last, so
 /// the index never names a scene that isn't on disk yet.
 pub fn save_project(project: &Project, dir: &Path) -> Result<u64, String> {
+    save_project_parts(project, dir, true, |_| true).map(|r| r.unwrap_or_default())
+}
+
+/// [`save_project`] for only the index (when `index`) and the scenes
+/// `scene` picks: what an edit that touched one actor writes. Answers the
+/// new revision, or `None` when there was nothing to write.
+pub fn save_project_parts(
+    project: &Project,
+    dir: &Path,
+    index: bool,
+    scene: impl Fn(&Scene) -> bool,
+) -> Result<Option<u64>, String> {
+    let scenes: Vec<&Scene> = project.scenes.iter().filter(|s| scene(s)).collect();
+    if !index && scenes.is_empty() {
+        return Ok(None);
+    }
     std::fs::create_dir_all(assets_dir(dir)).map_err(|e| format!("{}: {e}", dir.display()))?;
     std::fs::create_dir_all(scenes_dir(dir)).map_err(|e| format!("{}: {e}", dir.display()))?;
     crate::files::sweep_temp_files(dir);
     crate::files::sweep_temp_files(&scenes_dir(dir));
-    for scene in &project.scenes {
+    for scene in scenes {
         save_scene_file(dir, scene)?;
+    }
+    if !index {
+        return Ok(Some(crate::sync::bump_revision(dir)));
     }
     // Renames move their file in the command that asked (see
     // `commands::rename_scene`); anything else under the scenes folder is
@@ -2588,7 +2656,7 @@ pub fn save_project(project: &Project, dir: &Path) -> Result<u64, String> {
     let json =
         serde_json::to_string_pretty(&project_to_file(project)).map_err(|e| e.to_string())?;
     crate::files::write_atomic(&path, json)?;
-    Ok(crate::sync::bump_revision(dir))
+    Ok(Some(crate::sync::bump_revision(dir)))
 }
 
 /// Writes a project to an arbitrary path, for "Export".

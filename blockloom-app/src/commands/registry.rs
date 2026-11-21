@@ -67,9 +67,9 @@ pub(crate) fn write_world(
     if let Some(project) = s.project_mut() {
         project.world = next;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 

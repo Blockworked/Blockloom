@@ -1,6 +1,6 @@
-//! One edit through `Backend::dispatch` on a large project, end to end: undo
-//! snapshot, save, runtime sync (no runtime attached) and the state snapshot
-//! the window gets. Numbers go in `docs/performance.md`.
+//! One edit through `Backend::dispatch` on a large project, end to end: undo,
+//! save, runtime sync (no runtime attached) and the message the window gets.
+//! Numbers go in `docs/performance.md`.
 //!
 //! ```sh
 //! cargo test --release -p blockloom-app --test edit_latency -- --ignored --nocapture
@@ -67,13 +67,19 @@ fn edit_latency_baseline() {
     unsafe {
         std::env::set_var("BLOCKLOOM_DATA_DIR", &data);
     }
-    println!("| actors | state snapshot | rename (edit) | undo |");
-    println!("| --- | --- | --- | --- |");
+    println!("| actors | state snapshot | rename (edit) | rename message | undo |");
+    println!("| --- | --- | --- | --- | --- |");
     for per_scene in [100, 400, 1600] {
         let dir = scratch("project");
         let source = large_project(per_scene);
         project::save_project(&source, &dir).unwrap();
-        let backend = Backend::start(AppHandle::new(|_| {}));
+        let sent = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let size = sent.clone();
+        let backend = Backend::start(AppHandle::new(move |event| {
+            if let blockloom_app::Event::State(json) = event {
+                size.store(json.len(), std::sync::atomic::Ordering::SeqCst);
+            }
+        }));
         backend
             .dispatch("open_project", json!({ "path": dir, "force": true }))
             .expect("open the project");
@@ -93,6 +99,7 @@ fn edit_latency_baseline() {
                 .unwrap();
             renames.push(start.elapsed());
         }
+        let message = sent.load(std::sync::atomic::Ordering::SeqCst);
         let mut undos = Vec::new();
         for _ in 0..runs {
             let start = Instant::now();
@@ -100,10 +107,11 @@ fn edit_latency_baseline() {
             undos.push(start.elapsed());
         }
         println!(
-            "| {} | {:.0} KiB | {} | {} |",
+            "| {} | {:.0} KiB | {} | {:.1} KiB | {} |",
             per_scene * source.scenes.len(),
             snapshot as f64 / 1024.0,
             ms(median(renames)),
+            message as f64 / 1024.0,
             ms(median(undos)),
         );
         drop(backend);

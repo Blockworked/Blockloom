@@ -8,9 +8,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub(crate) use blockstitch_core::editor::{
-    EditSession, History, InstrPath, ValueBuffers, ValueLocation,
-};
+pub(crate) use blockstitch_core::editor::{EditSession, InstrPath, ValueBuffers, ValueLocation};
 
 pub(crate) type SharedState = Arc<Mutex<AppState>>;
 
@@ -44,6 +42,8 @@ pub(crate) struct OpenProject {
     pub(crate) plugins: blockloom_plugin_host::active::ActivePlugins,
     pub(crate) modules: crate::commands::plugins::Modules,
     pub(crate) script_statuses: std::collections::BTreeMap<String, ScriptStatus>,
+    /// Undo, and what the disk and the frontend haven't seen yet.
+    pub(crate) tracker: crate::history::Tracker,
 }
 
 impl OpenProject {
@@ -55,6 +55,8 @@ impl OpenProject {
         attached: bool,
     ) -> Self {
         let plugins = crate::commands::plugins::load_active(&dir);
+        let mut tracker = crate::history::Tracker::default();
+        tracker.reset(&project);
         Self {
             project,
             dir,
@@ -66,6 +68,7 @@ impl OpenProject {
             plugins,
             modules: Default::default(),
             script_statuses: Default::default(),
+            tracker,
         }
     }
 
@@ -104,9 +107,6 @@ pub(crate) struct AppState {
     pub(crate) open: Option<OpenProject>,
     /// Actor whose canvas the editor is showing.
     pub(crate) selected_actor: Option<String>,
-    /// Undo/redo over whole-project snapshots: an edit can touch a canvas, an
-    /// actor's placement or the world, and all three belong to one step.
-    pub(crate) history: History<Project>,
     pub(crate) invalid_field_buffers: ValueBuffers,
     /// The game world's process, while one is up.
     pub(crate) runtime: Option<crate::runtime::RuntimeHandle>,
@@ -139,6 +139,8 @@ pub(crate) struct AppState {
     pub(crate) scene_view: blockloom_protocol::SceneView,
     /// What the Tiles tool's pick last read, for the tile palette to take up.
     pub(crate) picked_tile: Option<PickedTile>,
+    /// What the window was last sent, so the next message is a patch.
+    pub(crate) publisher: crate::stream::Publisher,
 }
 
 /// One pick of the Tiles tool. `serial` counts picks, so picking the same
@@ -173,6 +175,25 @@ impl AppState {
             Some(id) if project.actor(id).is_some() => Some(id.clone()),
             _ => project.actors.first().map(|actor| actor.id.clone()),
         }
+    }
+
+    /// Ends the run of keystrokes undo is coalescing, if any.
+    pub(crate) fn end_session(&mut self) {
+        if let Some(open) = &mut self.open {
+            open.tracker.history.end_session();
+        }
+    }
+
+    pub(crate) fn can_undo(&self) -> bool {
+        self.open
+            .as_ref()
+            .is_some_and(|o| o.tracker.history.can_undo())
+    }
+
+    pub(crate) fn can_redo(&self) -> bool {
+        self.open
+            .as_ref()
+            .is_some_and(|o| o.tracker.history.can_redo())
     }
 
     pub(crate) fn push_log(&mut self, line: LogLine) {
@@ -426,6 +447,11 @@ pub(crate) fn state_dto(s: &AppState) -> StateDto {
             .map_err(|e| tracing::warn!("Couldn't serialize the project: {e}"))
             .ok()
     });
+    state_dto_with(s, project)
+}
+
+/// [`state_dto`] carrying `project` as the document.
+pub(crate) fn state_dto_with(s: &AppState, project: Option<serde_json::Value>) -> StateDto {
     StateDto {
         script_statuses: s
             .open
@@ -447,8 +473,8 @@ pub(crate) fn state_dto(s: &AppState) -> StateDto {
             .map(|dir| dir.to_string_lossy().into_owned()),
         project,
         selected_actor: s.actor_id(),
-        can_undo: s.history.can_undo(),
-        can_redo: s.history.can_redo(),
+        can_undo: s.can_undo(),
+        can_redo: s.can_redo(),
         invalid_field_buffers: s
             .invalid_field_buffers
             .iter()

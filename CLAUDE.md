@@ -137,8 +137,9 @@ uploads those bytes as an image. Elsewhere it is a child process.
   entry point: Qt Quick over cxx-qt. It owns `blockloom-app` directly - there
   is no daemon. `src/app_bridge.rs` is the one QObject QML talks to:
   `invokeCommand` runs a `Backend::dispatch` command on a worker thread, in
-  order, and answers with `replied(token, {ok, result, error})`; state the
-  backend publishes lands in the `stateJson` property, coalesced per burst.
+  order, and answers with `replied(token, {ok, result, error})`; the
+  backend's change stream lands in the `stateJson` property as a JSON array
+  of the messages since the last burst (see Saving below).
   `src/preview.rs` follows a child runtime's MJPEG preview stream into
   `previewFrame`. `src/game_view.rs`/`.cpp` are the in-process Game view, and
   `src/pointer_lock.cpp` its pointer lock.
@@ -218,6 +219,25 @@ project under `blockloom-core/tests/fixtures/golden` to its saved bytes; a
 deliberate format change is `BLOCKLOOM_BLESS=1 cargo test -p blockloom-core
 --test golden`, and a new component kind goes in its generator. The edit
 cost baseline is in `docs/performance.md`.
+
+Commands edit `open.project` in place; nothing describes its own edit.
+`blockloom-app/src/history.rs`'s `Tracker` keeps the last committed copy, and
+`commit` (run by every save and every publish) diffs against it with
+`blockloom_core::change::diff`: a `Change` is the parts an edit replaced
+(the index fields, a scene's settings, single actors, the order of scenes
+and actors), each before and after, so it is its own inverse. `push_undo`
+marks the next commit undoable (a session joins one step), undo and redo
+apply a change backwards or forwards, `save_open` writes only the scenes and
+index the commits since the last save touched (`save_project_parts`; an
+explicit Save writes everything), and `stream.rs` sends the window only what
+changed: `{"full": state}` once, then `{"patch": ...}` with the top-level
+fields whose JSON moved and, for the project, the changed fields and actors
+of the active scene. The window's copy lists scenes without their actors
+(`FrontendView`); `Main.qml`'s `applyMessage` folds each message in, and
+`tests/stream.rs` replays the stream against whole snapshots. The shell,
+MCP and the attach socket still read whole `state_dto` snapshots. Instruction
+`==` ignores ids, so the diff hashes them as well (`same_actor`). A document
+read off disk (live reload) is committed with nothing owed to the disk.
 
 ### Components
 

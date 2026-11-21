@@ -6,16 +6,18 @@ pub mod attach;
 mod build_jobs;
 mod commands;
 mod dispatch;
+mod history;
 pub mod keymap;
 mod runtime;
 mod scaffold;
 pub mod screen;
 pub mod shell;
 mod state;
+mod stream;
 
 pub use runtime::EmbeddedRuntime;
 
-use crate::state::{AppState, SharedState, UNDO_STACK_LIMIT, state_dto};
+use crate::state::{AppState, SharedState, state_dto};
 use blockloom_core::library;
 use std::sync::{Arc, Mutex};
 
@@ -49,10 +51,11 @@ impl AppHandle {
         }
     }
 
-    pub(crate) fn emit_state<T: serde::Serialize>(&self, dto: &T) {
-        match serde_json::to_string(dto) {
-            Ok(json) => self.send(Event::State(json.into())),
-            Err(e) => tracing::warn!("Couldn't serialize the app state: {e}"),
+    /// Sends the window what changed since its last message. Call it under
+    /// the state lock, so messages leave in the order they were made.
+    pub(crate) fn publish(&self, s: &mut AppState) {
+        if let Some(message) = stream::next_message(s) {
+            self.send(Event::State(message.into()));
         }
     }
 
@@ -92,7 +95,6 @@ impl Backend {
             open: None,
             session_id: blockloom_core::sync::new_session(),
             selected_actor: None,
-            history: state::History::new(UNDO_STACK_LIMIT),
             invalid_field_buffers: Default::default(),
             runtime: None,
             running: false,
@@ -114,6 +116,7 @@ impl Backend {
             embedded,
             scene_view: Default::default(),
             picked_tile: None,
+            publisher: Default::default(),
         };
         Backend {
             state: Arc::new(Mutex::new(state)),
@@ -123,6 +126,14 @@ impl Backend {
     }
 
     /// The current snapshot as JSON - what a newly connected frontend asks for.
+    /// The window's first message: everything, as `{"full": state}`. Later
+    /// [`Event::State`]s patch it.
+    pub fn frontend_state(&self) -> Result<String, String> {
+        let mut s = self.state.lock().map_err(|e| e.to_string())?;
+        s.publisher.reset();
+        stream::next_message(&mut s).ok_or_else(|| "No state to send".to_string())
+    }
+
     pub fn state_json(&self) -> Result<String, String> {
         let s = self.state.lock().map_err(|e| e.to_string())?;
         serde_json::to_string(&state_dto(&s)).map_err(|e| e.to_string())

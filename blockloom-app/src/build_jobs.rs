@@ -210,7 +210,7 @@ impl BuildJobs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{AppState, History};
+    use crate::state::AppState;
 
     fn backend() -> Backend {
         Backend {
@@ -219,7 +219,6 @@ mod tests {
                 session_id: "build-test".into(),
                 open: None,
                 selected_actor: None,
-                history: History::new(50),
                 invalid_field_buffers: Default::default(),
                 runtime: None,
                 running: false,
@@ -240,6 +239,7 @@ mod tests {
                 embedded: None,
                 scene_view: Default::default(),
                 picked_tile: None,
+                publisher: Default::default(),
             })),
             app: crate::AppHandle::new(|_| {}),
             builds: BuildJobs::default(),

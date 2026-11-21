@@ -1,7 +1,7 @@
 {
   "saved_document": {
     "project": {
-      "active_scene": "id#35",
+      "active_scene": "id#37",
       "android": {
         "application_id": "",
         "key_alias": "",
@@ -9,16 +9,16 @@
         "version_code": 1,
         "version_name": "1.0.0"
       },
-      "default_scene": "id#35",
+      "default_scene": "id#37",
       "global_dicts": [],
       "global_lists": [],
       "globals": [],
       "icon": "",
-      "id": "id#36",
+      "id": "id#38",
       "name": "Baseline",
       "scenes": [
         {
-          "id": "id#35",
+          "id": "id#37",
           "mode": "TwoD",
           "name": "Scene 1",
           "path": "assets/scenes/Scene 1.blockscene"
@@ -83,7 +83,7 @@
           ],
           "dicts": [],
           "floating_values": [],
-          "id": "id#37",
+          "id": "id#39",
           "lists": [],
           "name": "Player",
           "strands": [],
@@ -145,7 +145,7 @@
           ],
           "dicts": [],
           "floating_values": [],
-          "id": "id#38",
+          "id": "id#40",
           "lists": [],
           "name": "Ground",
           "strands": [],
@@ -404,6 +404,47 @@
                     ],
                     "type": "IfElse"
                   }
+                },
+                {
+                  "id": "id#15",
+                  "kind": {
+                    "name": "points",
+                    "type": "SetVariable",
+                    "value": {
+                      "args": [
+                        {
+                          "kind": "Number",
+                          "value": 4.0
+                        },
+                        {
+                          "kind": "Bool"
+                        }
+                      ],
+                      "block_id": "id#11",
+                      "branches": [],
+                      "kind": "Call",
+                      "saved": {
+                        "kind": "Number",
+                        "value": 0.0
+                      }
+                    }
+                  }
+                },
+                {
+                  "id": "id#16",
+                  "kind": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 7.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "type": "CallBlock"
+                  }
                 }
               ],
               "x": 0,
@@ -475,54 +516,6 @@
               ],
               "x": 600,
               "y": 300
-            },
-            {
-              "id": "id#22",
-              "instructions": [
-                {
-                  "id": "id#15",
-                  "kind": {
-                    "name": "points",
-                    "type": "SetVariable",
-                    "value": {
-                      "args": [
-                        {
-                          "kind": "Number",
-                          "value": 4.0
-                        },
-                        {
-                          "kind": "Bool"
-                        }
-                      ],
-                      "block_id": "id#11",
-                      "branches": [],
-                      "kind": "Call",
-                      "saved": {
-                        "kind": "Number",
-                        "value": 0.0
-                      }
-                    }
-                  }
-                },
-                {
-                  "id": "id#16",
-                  "kind": {
-                    "args": [
-                      {
-                        "kind": "Number",
-                        "value": 7.0
-                      },
-                      {
-                        "kind": "Bool"
-                      }
-                    ],
-                    "block_id": "id#11",
-                    "type": "CallBlock"
-                  }
-                }
-              ],
-              "x": 0,
-              "y": 400
             },
             {
               "id": "id#25",
@@ -609,6 +602,47 @@
                       }
                     ],
                     "type": "IfElse"
+                  }
+                },
+                {
+                  "id": "id#32",
+                  "kind": {
+                    "name": "points",
+                    "type": "SetVariable",
+                    "value": {
+                      "args": [
+                        {
+                          "kind": "Number",
+                          "value": 4.0
+                        },
+                        {
+                          "kind": "Bool"
+                        }
+                      ],
+                      "block_id": "id#11",
+                      "branches": [],
+                      "kind": "Call",
+                      "saved": {
+                        "kind": "Number",
+                        "value": 0.0
+                      }
+                    }
+                  }
+                },
+                {
+                  "id": "id#33",
+                  "kind": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 7.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "type": "CallBlock"
                   }
                 }
               ],
@@ -1377,7 +1411,7 @@
         }
       ],
       "format": 1,
-      "id": "id#35",
+      "id": "id#37",
       "name": "Scene 1"
     }
   },
@@ -8855,7 +8889,16 @@
                   "type": "WhenStarted"
                 },
                 {
-                  "body": [],
+                  "body": [
+                    {
+                      "id": "id#5",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      },
+                      "type": "Move"
+                    }
+                  ],
                   "count": {
                     "kind": "Number",
                     "value": 3.0
@@ -9212,6 +9255,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
                 }
               ],
               "x": 0,
@@ -9275,50 +9355,6 @@
               ],
               "x": 600,
               "y": 300
-            },
-            {
-              "id": "id#22",
-              "instructions": [
-                {
-                  "id": "id#15",
-                  "name": "points",
-                  "type": "SetVariable",
-                  "value": {
-                    "args": [
-                      {
-                        "kind": "Number",
-                        "value": 4.0
-                      },
-                      {
-                        "kind": "Bool"
-                      }
-                    ],
-                    "block_id": "id#11",
-                    "branches": [],
-                    "kind": "Call",
-                    "saved": {
-                      "kind": "Number",
-                      "value": 0.0
-                    }
-                  }
-                },
-                {
-                  "args": [
-                    {
-                      "kind": "Number",
-                      "value": 7.0
-                    },
-                    {
-                      "kind": "Bool"
-                    }
-                  ],
-                  "block_id": "id#11",
-                  "id": "id#16",
-                  "type": "CallBlock"
-                }
-              ],
-              "x": 0,
-              "y": 400
             }
           ],
           "variables": [
@@ -9544,6 +9580,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
                 }
               ],
               "x": 0,
@@ -9607,50 +9680,6 @@
               ],
               "x": 600,
               "y": 300
-            },
-            {
-              "id": "id#22",
-              "instructions": [
-                {
-                  "id": "id#15",
-                  "name": "points",
-                  "type": "SetVariable",
-                  "value": {
-                    "args": [
-                      {
-                        "kind": "Number",
-                        "value": 4.0
-                      },
-                      {
-                        "kind": "Bool"
-                      }
-                    ],
-                    "block_id": "id#11",
-                    "branches": [],
-                    "kind": "Call",
-                    "saved": {
-                      "kind": "Number",
-                      "value": 0.0
-                    }
-                  }
-                },
-                {
-                  "args": [
-                    {
-                      "kind": "Number",
-                      "value": 7.0
-                    },
-                    {
-                      "kind": "Bool"
-                    }
-                  ],
-                  "block_id": "id#11",
-                  "id": "id#16",
-                  "type": "CallBlock"
-                }
-              ],
-              "x": 0,
-              "y": 400
             }
           ],
           "variables": [
@@ -9888,6 +9917,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
                 }
               ],
               "x": 0,
@@ -9951,50 +10017,6 @@
               ],
               "x": 600,
               "y": 300
-            },
-            {
-              "id": "id#22",
-              "instructions": [
-                {
-                  "id": "id#15",
-                  "name": "points",
-                  "type": "SetVariable",
-                  "value": {
-                    "args": [
-                      {
-                        "kind": "Number",
-                        "value": 4.0
-                      },
-                      {
-                        "kind": "Bool"
-                      }
-                    ],
-                    "block_id": "id#11",
-                    "branches": [],
-                    "kind": "Call",
-                    "saved": {
-                      "kind": "Number",
-                      "value": 0.0
-                    }
-                  }
-                },
-                {
-                  "args": [
-                    {
-                      "kind": "Number",
-                      "value": 7.0
-                    },
-                    {
-                      "kind": "Bool"
-                    }
-                  ],
-                  "block_id": "id#11",
-                  "id": "id#16",
-                  "type": "CallBlock"
-                }
-              ],
-              "x": 0,
-              "y": 400
             }
           ],
           "variables": [
@@ -10238,6 +10260,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
                 }
               ],
               "x": 0,
@@ -10301,50 +10360,6 @@
               ],
               "x": 600,
               "y": 300
-            },
-            {
-              "id": "id#22",
-              "instructions": [
-                {
-                  "id": "id#15",
-                  "name": "points",
-                  "type": "SetVariable",
-                  "value": {
-                    "args": [
-                      {
-                        "kind": "Number",
-                        "value": 4.0
-                      },
-                      {
-                        "kind": "Bool"
-                      }
-                    ],
-                    "block_id": "id#11",
-                    "branches": [],
-                    "kind": "Call",
-                    "saved": {
-                      "kind": "Number",
-                      "value": 0.0
-                    }
-                  }
-                },
-                {
-                  "args": [
-                    {
-                      "kind": "Number",
-                      "value": 7.0
-                    },
-                    {
-                      "kind": "Bool"
-                    }
-                  ],
-                  "block_id": "id#11",
-                  "id": "id#16",
-                  "type": "CallBlock"
-                }
-              ],
-              "x": 0,
-              "y": 400
             }
           ],
           "variables": [
@@ -10560,6 +10575,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
                 }
               ],
               "x": 0,
@@ -10623,50 +10675,6 @@
               ],
               "x": 600,
               "y": 300
-            },
-            {
-              "id": "id#22",
-              "instructions": [
-                {
-                  "id": "id#15",
-                  "name": "points",
-                  "type": "SetVariable",
-                  "value": {
-                    "args": [
-                      {
-                        "kind": "Number",
-                        "value": 4.0
-                      },
-                      {
-                        "kind": "Bool"
-                      }
-                    ],
-                    "block_id": "id#11",
-                    "branches": [],
-                    "kind": "Call",
-                    "saved": {
-                      "kind": "Number",
-                      "value": 0.0
-                    }
-                  }
-                },
-                {
-                  "args": [
-                    {
-                      "kind": "Number",
-                      "value": 7.0
-                    },
-                    {
-                      "kind": "Bool"
-                    }
-                  ],
-                  "block_id": "id#11",
-                  "id": "id#16",
-                  "type": "CallBlock"
-                }
-              ],
-              "x": 0,
-              "y": 400
             }
           ],
           "variables": [
@@ -10882,6 +10890,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
                 }
               ],
               "x": 0,
@@ -10945,50 +10990,6 @@
               ],
               "x": 600,
               "y": 300
-            },
-            {
-              "id": "id#22",
-              "instructions": [
-                {
-                  "id": "id#15",
-                  "name": "points",
-                  "type": "SetVariable",
-                  "value": {
-                    "args": [
-                      {
-                        "kind": "Number",
-                        "value": 4.0
-                      },
-                      {
-                        "kind": "Bool"
-                      }
-                    ],
-                    "block_id": "id#11",
-                    "branches": [],
-                    "kind": "Call",
-                    "saved": {
-                      "kind": "Number",
-                      "value": 0.0
-                    }
-                  }
-                },
-                {
-                  "args": [
-                    {
-                      "kind": "Number",
-                      "value": 7.0
-                    },
-                    {
-                      "kind": "Bool"
-                    }
-                  ],
-                  "block_id": "id#11",
-                  "id": "id#16",
-                  "type": "CallBlock"
-                }
-              ],
-              "x": 0,
-              "y": 400
             }
           ],
           "variables": [
@@ -11241,6 +11242,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
                 }
               ],
               "x": 0,
@@ -11304,50 +11342,6 @@
               ],
               "x": 600,
               "y": 300
-            },
-            {
-              "id": "id#22",
-              "instructions": [
-                {
-                  "id": "id#15",
-                  "name": "points",
-                  "type": "SetVariable",
-                  "value": {
-                    "args": [
-                      {
-                        "kind": "Number",
-                        "value": 4.0
-                      },
-                      {
-                        "kind": "Bool"
-                      }
-                    ],
-                    "block_id": "id#11",
-                    "branches": [],
-                    "kind": "Call",
-                    "saved": {
-                      "kind": "Number",
-                      "value": 0.0
-                    }
-                  }
-                },
-                {
-                  "args": [
-                    {
-                      "kind": "Number",
-                      "value": 7.0
-                    },
-                    {
-                      "kind": "Bool"
-                    }
-                  ],
-                  "block_id": "id#11",
-                  "id": "id#16",
-                  "type": "CallBlock"
-                }
-              ],
-              "x": 0,
-              "y": 400
             }
           ],
           "variables": [
@@ -11592,6 +11586,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
                 }
               ],
               "x": 0,
@@ -11655,50 +11686,6 @@
               ],
               "x": 600,
               "y": 300
-            },
-            {
-              "id": "id#22",
-              "instructions": [
-                {
-                  "id": "id#15",
-                  "name": "points",
-                  "type": "SetVariable",
-                  "value": {
-                    "args": [
-                      {
-                        "kind": "Number",
-                        "value": 4.0
-                      },
-                      {
-                        "kind": "Bool"
-                      }
-                    ],
-                    "block_id": "id#11",
-                    "branches": [],
-                    "kind": "Call",
-                    "saved": {
-                      "kind": "Number",
-                      "value": 0.0
-                    }
-                  }
-                },
-                {
-                  "args": [
-                    {
-                      "kind": "Number",
-                      "value": 7.0
-                    },
-                    {
-                      "kind": "Bool"
-                    }
-                  ],
-                  "block_id": "id#11",
-                  "id": "id#16",
-                  "type": "CallBlock"
-                }
-              ],
-              "x": 0,
-              "y": 400
             }
           ],
           "variables": [
@@ -11939,50 +11926,6 @@
               ],
               "x": 600,
               "y": 300
-            },
-            {
-              "id": "id#22",
-              "instructions": [
-                {
-                  "id": "id#15",
-                  "name": "points",
-                  "type": "SetVariable",
-                  "value": {
-                    "args": [
-                      {
-                        "kind": "Number",
-                        "value": 4.0
-                      },
-                      {
-                        "kind": "Bool"
-                      }
-                    ],
-                    "block_id": "id#11",
-                    "branches": [],
-                    "kind": "Call",
-                    "saved": {
-                      "kind": "Number",
-                      "value": 0.0
-                    }
-                  }
-                },
-                {
-                  "args": [
-                    {
-                      "kind": "Number",
-                      "value": 7.0
-                    },
-                    {
-                      "kind": "Bool"
-                    }
-                  ],
-                  "block_id": "id#11",
-                  "id": "id#16",
-                  "type": "CallBlock"
-                }
-              ],
-              "x": 0,
-              "y": 400
             }
           ],
           "variables": [
@@ -12217,6 +12160,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
                 }
               ],
               "x": 0,
@@ -12280,50 +12260,6 @@
               ],
               "x": 600,
               "y": 300
-            },
-            {
-              "id": "id#22",
-              "instructions": [
-                {
-                  "id": "id#15",
-                  "name": "points",
-                  "type": "SetVariable",
-                  "value": {
-                    "args": [
-                      {
-                        "kind": "Number",
-                        "value": 4.0
-                      },
-                      {
-                        "kind": "Bool"
-                      }
-                    ],
-                    "block_id": "id#11",
-                    "branches": [],
-                    "kind": "Call",
-                    "saved": {
-                      "kind": "Number",
-                      "value": 0.0
-                    }
-                  }
-                },
-                {
-                  "args": [
-                    {
-                      "kind": "Number",
-                      "value": 7.0
-                    },
-                    {
-                      "kind": "Bool"
-                    }
-                  ],
-                  "block_id": "id#11",
-                  "id": "id#16",
-                  "type": "CallBlock"
-                }
-              ],
-              "x": 0,
-              "y": 400
             }
           ],
           "variables": [
@@ -12549,6 +12485,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
                 }
               ],
               "x": 0,
@@ -12612,50 +12585,6 @@
               ],
               "x": 600,
               "y": 300
-            },
-            {
-              "id": "id#22",
-              "instructions": [
-                {
-                  "id": "id#15",
-                  "name": "points",
-                  "type": "SetVariable",
-                  "value": {
-                    "args": [
-                      {
-                        "kind": "Number",
-                        "value": 4.0
-                      },
-                      {
-                        "kind": "Bool"
-                      }
-                    ],
-                    "block_id": "id#11",
-                    "branches": [],
-                    "kind": "Call",
-                    "saved": {
-                      "kind": "Number",
-                      "value": 0.0
-                    }
-                  }
-                },
-                {
-                  "args": [
-                    {
-                      "kind": "Number",
-                      "value": 7.0
-                    },
-                    {
-                      "kind": "Bool"
-                    }
-                  ],
-                  "block_id": "id#11",
-                  "id": "id#16",
-                  "type": "CallBlock"
-                }
-              ],
-              "x": 0,
-              "y": 400
             }
           ],
           "variables": [
@@ -12768,6 +12697,43 @@
               }
             ],
             "type": "IfElse"
+          },
+          {
+            "id": "id#15",
+            "name": "points",
+            "type": "SetVariable",
+            "value": {
+              "args": [
+                {
+                  "kind": "Number",
+                  "value": 4.0
+                },
+                {
+                  "kind": "Bool"
+                }
+              ],
+              "block_id": "id#11",
+              "branches": [],
+              "kind": "Call",
+              "saved": {
+                "kind": "Number",
+                "value": 0.0
+              }
+            }
+          },
+          {
+            "args": [
+              {
+                "kind": "Number",
+                "value": 7.0
+              },
+              {
+                "kind": "Bool"
+              }
+            ],
+            "block_id": "id#11",
+            "id": "id#16",
+            "type": "CallBlock"
           }
         ]
       },
@@ -12985,6 +12951,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
                 }
               ],
               "x": 0,
@@ -13048,50 +13051,6 @@
               ],
               "x": 600,
               "y": 300
-            },
-            {
-              "id": "id#22",
-              "instructions": [
-                {
-                  "id": "id#15",
-                  "name": "points",
-                  "type": "SetVariable",
-                  "value": {
-                    "args": [
-                      {
-                        "kind": "Number",
-                        "value": 4.0
-                      },
-                      {
-                        "kind": "Bool"
-                      }
-                    ],
-                    "block_id": "id#11",
-                    "branches": [],
-                    "kind": "Call",
-                    "saved": {
-                      "kind": "Number",
-                      "value": 0.0
-                    }
-                  }
-                },
-                {
-                  "args": [
-                    {
-                      "kind": "Number",
-                      "value": 7.0
-                    },
-                    {
-                      "kind": "Bool"
-                    }
-                  ],
-                  "block_id": "id#11",
-                  "id": "id#16",
-                  "type": "CallBlock"
-                }
-              ],
-              "x": 0,
-              "y": 400
             },
             {
               "id": "id#25",
@@ -13169,6 +13128,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#32",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#33",
+                  "type": "CallBlock"
                 }
               ],
               "x": 600,
@@ -13258,9 +13254,9 @@
               "y": 0
             },
             {
-              "attached_to": "id#32",
+              "attached_to": "id#34",
               "collapsed": false,
-              "id": "id#33",
+              "id": "id#35",
               "text": "attached note",
               "x": 0,
               "y": 0
@@ -13380,7 +13376,7 @@
                 {
                   "body": [
                     {
-                      "id": "id#34",
+                      "id": "id#36",
                       "steps": {
                         "kind": "Number",
                         "value": 1.5
@@ -13406,7 +13402,7 @@
                       "value": 3.0
                     }
                   },
-                  "id": "id#32",
+                  "id": "id#34",
                   "type": "Repeat"
                 },
                 {
@@ -13450,6 +13446,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
                 }
               ],
               "x": 0,
@@ -13513,50 +13546,6 @@
               ],
               "x": 600,
               "y": 300
-            },
-            {
-              "id": "id#22",
-              "instructions": [
-                {
-                  "id": "id#15",
-                  "name": "points",
-                  "type": "SetVariable",
-                  "value": {
-                    "args": [
-                      {
-                        "kind": "Number",
-                        "value": 4.0
-                      },
-                      {
-                        "kind": "Bool"
-                      }
-                    ],
-                    "block_id": "id#11",
-                    "branches": [],
-                    "kind": "Call",
-                    "saved": {
-                      "kind": "Number",
-                      "value": 0.0
-                    }
-                  }
-                },
-                {
-                  "args": [
-                    {
-                      "kind": "Number",
-                      "value": 7.0
-                    },
-                    {
-                      "kind": "Bool"
-                    }
-                  ],
-                  "block_id": "id#11",
-                  "id": "id#16",
-                  "type": "CallBlock"
-                }
-              ],
-              "x": 0,
-              "y": 400
             },
             {
               "id": "id#25",
@@ -13634,6 +13623,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#32",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#33",
+                  "type": "CallBlock"
                 }
               ],
               "x": 600,
@@ -13879,6 +13905,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#15",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#16",
+                  "type": "CallBlock"
                 }
               ],
               "x": 0,
@@ -13942,50 +14005,6 @@
               ],
               "x": 600,
               "y": 300
-            },
-            {
-              "id": "id#22",
-              "instructions": [
-                {
-                  "id": "id#15",
-                  "name": "points",
-                  "type": "SetVariable",
-                  "value": {
-                    "args": [
-                      {
-                        "kind": "Number",
-                        "value": 4.0
-                      },
-                      {
-                        "kind": "Bool"
-                      }
-                    ],
-                    "block_id": "id#11",
-                    "branches": [],
-                    "kind": "Call",
-                    "saved": {
-                      "kind": "Number",
-                      "value": 0.0
-                    }
-                  }
-                },
-                {
-                  "args": [
-                    {
-                      "kind": "Number",
-                      "value": 7.0
-                    },
-                    {
-                      "kind": "Bool"
-                    }
-                  ],
-                  "block_id": "id#11",
-                  "id": "id#16",
-                  "type": "CallBlock"
-                }
-              ],
-              "x": 0,
-              "y": 400
             },
             {
               "id": "id#25",
@@ -14063,6 +14082,43 @@
                     }
                   ],
                   "type": "IfElse"
+                },
+                {
+                  "id": "id#32",
+                  "name": "points",
+                  "type": "SetVariable",
+                  "value": {
+                    "args": [
+                      {
+                        "kind": "Number",
+                        "value": 4.0
+                      },
+                      {
+                        "kind": "Bool"
+                      }
+                    ],
+                    "block_id": "id#11",
+                    "branches": [],
+                    "kind": "Call",
+                    "saved": {
+                      "kind": "Number",
+                      "value": 0.0
+                    }
+                  }
+                },
+                {
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 7.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "block_id": "id#11",
+                  "id": "id#33",
+                  "type": "CallBlock"
                 }
               ],
               "x": 600,

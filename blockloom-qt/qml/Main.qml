@@ -6,8 +6,8 @@ import com.blockworked.Blockstitch 1.0
 import com.blockworked.Blockloom 1.0
 
 // Two pages: the Dashboard the app starts on, and the editor a project opens
-// into. `appState` is the one copy of backend state, replaced wholesale
-// whenever the backend publishes a new snapshot; nothing here edits it.
+// into. `appState` is the one copy of backend state, rebuilt from each
+// message the backend publishes (see `applyMessage`); nothing here edits it.
 ApplicationWindow {
     id: root
     width: 1480
@@ -142,10 +142,45 @@ ApplicationWindow {
         return same ? old : next;
     }
 
+    // One message of the backend's change stream (blockloom-app's
+    // `stream.rs`): `{full}` replaces the state, `{patch}` replaces only the
+    // fields and actors it names. A bare object is a whole state (tests).
+    function applyMessage(state, message) {
+        if (message.full) return reuse(state, message.full);
+        if (!message.patch) return reuse(state, message);
+        const patch = message.patch;
+        const next = Object.assign({}, state);
+        const set = patch.set || {};
+        for (const key in set) next[key] = reuse(state[key], set[key]);
+        if (patch.project && next.project) next.project = patchProject(next.project, patch.project);
+        return next;
+    }
+    function patchProject(project, patch) {
+        const next = Object.assign({}, project);
+        const set = patch.set || {};
+        for (const key in set) next[key] = reuse(project[key], set[key]);
+        const actors = patch.actors;
+        if (actors) {
+            const byId = new Map();
+            for (const actor of project.actors || []) byId.set(actor.id, actor);
+            const changed = actors.set || {};
+            for (const id in changed) byId.set(id, reuse(byId.get(id) || null, changed[id]));
+            const removed = new Set(actors.remove || []);
+            const order = actors.order || (project.actors || []).map(a => a.id);
+            next.actors = order.filter(id => !removed.has(id) && byId.has(id)).map(id => byId.get(id));
+        }
+        return next;
+    }
+
     AppBridge {
         id: bridge
         onStateJsonChanged: {
-            try { root.appState = root.reuse(root.appState, JSON.parse(stateJson)); }
+            try {
+                const parsed = JSON.parse(stateJson);
+                let next = root.appState;
+                for (const message of Array.isArray(parsed) ? parsed : [parsed]) next = root.applyMessage(next, message);
+                root.appState = next;
+            }
             catch (error) { console.warn("Invalid Blockloom state", error); return; }
             Blocks.appState = root.appState;
             root.status = root.appState.status || null;

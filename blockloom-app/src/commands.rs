@@ -57,37 +57,56 @@ fn lock(state: &SharedState) -> Result<Guard<'_>, String> {
     state.lock().map_err(|e| e.to_string())
 }
 
-/// Checkpoints the whole project for undo.
+/// Makes the edit that follows one undo step.
 fn push_undo(s: &mut AppState) {
     push_undo_for(s, None);
 }
 
 /// [`push_undo`] for an edit that coalesces with the keystrokes already in
-/// progress at `session` - only the first one checkpoints.
+/// progress at `session` - they all join one step.
 fn push_undo_for(s: &mut AppState, session: Option<EditSession>) {
-    let snapshot = s.project().cloned();
-    match (snapshot, session) {
-        (Some(snapshot), Some(session)) => {
-            s.history.push_for_session(snapshot, session);
-        }
-        (Some(snapshot), None) => s.history.push(snapshot),
-        (None, _) => s.history.end_session(),
+    if let Some(open) = &mut s.open {
+        open.tracker.checkpoint(&open.project, session);
     }
 }
 
-/// Writes the open project to its folder, tracking the new revision. A failed
-/// save marks the copy dirty, which is what makes the next reload a conflict
-/// with a choice instead of a quiet overwrite.
-fn save_open(s: &AppState) -> Result<(), String> {
-    let Some(open) = &s.open else {
+/// Files whatever changed since the last commit: undo, unsaved files and
+/// what the frontend is owed. Saves and snapshots call it, so a command
+/// never has to.
+fn commit(s: &mut AppState) {
+    if let Some(open) = &mut s.open {
+        open.tracker.commit(&open.project);
+    }
+}
+
+/// Writes what changed since the last save to the project's folder, tracking
+/// the new revision. A failed save marks the copy dirty, which is what makes
+/// the next reload a conflict with a choice instead of a quiet overwrite.
+fn save_open(s: &mut AppState) -> Result<(), String> {
+    commit(s);
+    let session = s.session_id.clone();
+    let Some(open) = &mut s.open else {
         return Ok(());
     };
-    match project::save_project(&open.project, &open.dir) {
+    let unsaved = &open.tracker.unsaved;
+    if unsaved.is_empty() {
+        return Ok(());
+    }
+    let written = project::save_project_parts(
+        &open.project,
+        &open.dir,
+        unsaved.everything || unsaved.index,
+        |scene| unsaved.everything || unsaved.scenes.contains(&scene.id),
+    );
+    match written {
         Ok(revision) => {
-            open.revision.store(revision, Ordering::SeqCst);
+            if let Some(revision) = revision {
+                open.revision.store(revision, Ordering::SeqCst);
+            }
+            open.tracker.unsaved = Default::default();
             open.dirty.store(false, Ordering::SeqCst);
             open.touched.store(sync::now_secs(), Ordering::SeqCst);
-            sync::refresh_heartbeat(&open.dir, &s.session_id, "");
+            sync::refresh_heartbeat(&open.dir, &session, "");
             Ok(())
         }
         Err(e) => {
@@ -97,9 +116,27 @@ fn save_open(s: &AppState) -> Result<(), String> {
     }
 }
 
+/// Commits a document just read off disk: undoable like any edit, but
+/// nothing about it is owed to the disk.
+fn loaded_from_disk(s: &mut AppState) {
+    commit(s);
+    if let Some(open) = &mut s.open {
+        open.tracker.unsaved = Default::default();
+    }
+}
+
+/// Writes every file of the open project, whatever changed: an explicit Save.
+fn save_everything(s: &mut AppState) -> Result<(), String> {
+    commit(s);
+    if let Some(open) = &mut s.open {
+        open.tracker.unsaved.everything = true;
+    }
+    save_open(s)
+}
+
 /// [`save_open`] for an edit: failures are logged, not surfaced, since an
 /// unwritable folder shouldn't stop the editor working.
-fn auto_save(s: &AppState) {
+fn auto_save(s: &mut AppState) {
     if let Err(e) = save_open(s) {
         tracing::warn!("Couldn't save the project: {e}");
     }
@@ -165,10 +202,11 @@ pub(crate) fn poll_live_reload(backend: &Backend) {
         open.project = project;
         open.revision.store(disk, Ordering::SeqCst);
     }
+    loaded_from_disk(&mut s);
     // The other side may have changed packages as well as the document.
     plugins::reload(&mut s, false);
     sync_runtime(&mut s);
-    emit(&backend.app, &s);
+    emit(&backend.app, &mut s);
 }
 
 /// Regenerates the analysis project rust-analyzer opens: the root `Cargo.toml`
@@ -189,8 +227,9 @@ fn touches_scripts(path: &str) -> bool {
         || (path.ends_with(".rs") && script::is_valid_path(&path))
 }
 
-fn emit(app: &AppHandle, s: &AppState) {
-    app.emit_state(&state_dto(s));
+fn emit(app: &AppHandle, s: &mut AppState) {
+    commit(s);
+    app.publish(s);
 }
 
 /// The open actor's canvas - what almost every canvas command edits.
@@ -368,7 +407,7 @@ pub(crate) fn refresh_library(state: &SharedState, app: &AppHandle) -> Result<()
     let before = crate::state::library_dtos(&s);
     s.library = library::list();
     if crate::state::library_dtos(&s) != before {
-        emit(app, &s);
+        emit(app, &mut s);
     }
     Ok(())
 }
@@ -482,7 +521,7 @@ pub(crate) fn open_project(
             }
         }
     }
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(OpenReport {
         attached,
         took_over,
@@ -530,7 +569,7 @@ pub(crate) fn create_project(
     if let Some(dir) = s.project_dir().map(Path::to_path_buf) {
         sync_ide(&dir);
     }
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -544,7 +583,7 @@ pub(crate) fn close_project(
     let mut s = lock(state)?;
     close_open_project(&mut s, !discard)?;
     s.library = library::list();
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -563,7 +602,7 @@ pub(crate) fn forget_project(
     }
     library::forget(&dir);
     s.library = library::list();
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -585,7 +624,7 @@ pub(crate) fn locate_project(
     let mut s = lock(state)?;
     library::moved(&from, &to);
     s.library = library::list();
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -625,7 +664,7 @@ pub(crate) fn delete_project(
     }
     library::forget(&dir);
     s.library = library::list();
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -647,19 +686,15 @@ pub(crate) fn set_project_name(
     let from = open.dir.clone();
     // Save first, so the rename moves a folder that already says the new name.
     // A failed save stops the rename rather than moving an unsaved project.
-    match project::save_project(&open.project, &from) {
-        Ok(revision) => {
-            open.revision.store(revision, Ordering::SeqCst);
-            open.dirty.store(false, Ordering::SeqCst);
-        }
-        Err(e) => {
-            open.dirty.store(true, Ordering::SeqCst);
-            return Err(format!(
-                "{SAVE_FAILED} Couldn't save \"{name}\" to {}: {e}",
-                from.display()
-            ));
-        }
+    if let Err(e) = save_open(&mut s) {
+        return Err(format!(
+            "{SAVE_FAILED} Couldn't save \"{name}\" to {}: {e}",
+            from.display()
+        ));
     }
+    let Some(open) = &mut s.open else {
+        return Ok(());
+    };
     match project::rename_project_dir(&from, &name) {
         Ok(to) => {
             if to != from {
@@ -672,7 +707,7 @@ pub(crate) fn set_project_name(
         Err(e) => tracing::warn!("Couldn't rename the project folder: {e}"),
     }
     s.library = library::list();
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -689,8 +724,8 @@ pub(crate) fn set_multiplayer(
     }
     push_undo(&mut s);
     s.project_mut().unwrap().multiplayer = settings;
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -724,19 +759,15 @@ pub(crate) fn set_project_icon(
     if let Some(project) = s.project_mut() {
         project.icon = normalized;
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
 pub(crate) fn save_open_project(state: &SharedState, app: &AppHandle) -> Result<u64, String> {
-    let s = lock(state)?;
-    if let Some(open) = &s.open {
-        let revision = project::save_project(&open.project, &open.dir)?;
-        open.revision.store(revision, Ordering::SeqCst);
-        open.dirty.store(false, Ordering::SeqCst);
-    }
-    emit(app, &s);
+    let mut s = lock(state)?;
+    save_everything(&mut s)?;
+    emit(app, &mut s);
     Ok(s.open
         .as_ref()
         .map(|open| open.loaded_revision())
@@ -786,7 +817,7 @@ pub(crate) fn import_project(
     if let Some(dir) = s.project_dir().map(Path::to_path_buf) {
         sync_ide(&dir);
     }
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -843,8 +874,9 @@ pub(crate) fn reload_project(
         open.revision.store(disk, Ordering::SeqCst);
         open.dirty.store(false, Ordering::SeqCst);
     }
+    loaded_from_disk(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(ReloadReport {
         reloaded: true,
         revision: disk,
@@ -863,7 +895,7 @@ pub(crate) fn take_over_lock(state: &SharedState, app: &AppHandle) -> Result<Loc
         open.owns_lock = true;
         open.attached = false;
     }
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(info)
 }
 
@@ -894,7 +926,6 @@ fn close_open_project(s: &mut AppState, save: bool) -> Result<(), String> {
     s.interface_edit = None;
     s.open = None;
     s.selected_actor = None;
-    s.history.clear();
     s.invalid_field_buffers.clear();
     s.runtime = None;
     s.running = false;
@@ -929,11 +960,11 @@ pub(crate) fn set_mode(
         };
         project.switch_mode(mode);
     }
-    auto_save(&s);
+    auto_save(&mut s);
     // Both pipelines live side by side now, so a dimension change is just a
     // reload: the runtime swaps live under the next rebuild.
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -955,9 +986,9 @@ pub(crate) fn add_scene(
     };
     let id = project.add_scene(&name, mode);
     s.selected_actor = None;
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(id)
 }
 
@@ -973,9 +1004,9 @@ pub(crate) fn duplicate_scene(
     };
     let id = project.duplicate_scene(&scene_id)?;
     s.selected_actor = None;
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(id)
 }
 
@@ -1014,8 +1045,8 @@ pub(crate) fn rename_scene(
                 .map_err(|e| format!("{} -> {}: {e}", from.display(), to.display()))?;
         }
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(renamed)
 }
 
@@ -1046,9 +1077,9 @@ pub(crate) fn remove_scene(
             std::fs::remove_file(&file).map_err(|e| format!("{}: {e}", file.display()))?;
         }
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1065,8 +1096,8 @@ pub(crate) fn set_default_scene(
         return Err("No project is open".to_string());
     };
     project.set_default_scene(&scene_id)?;
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1091,9 +1122,9 @@ pub(crate) fn set_active_scene(
         project.set_active_scene(&scene_id)?;
     }
     s.selected_actor = Some(String::new());
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1204,12 +1235,12 @@ pub(crate) fn set_scene_component(
         }
         scene.world.mode
     };
-    auto_save(&s);
+    auto_save(&mut s);
     {
         let _ = (old_mode, new_mode);
         sync_runtime(&mut s);
     }
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(name)
 }
 
@@ -1252,9 +1283,9 @@ pub(crate) fn remove_scene_component(
         scene.world = components.to_world();
         scene.world.mode
     };
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1318,9 +1349,9 @@ pub(crate) fn import_scene(
     {
         let _ = std::fs::remove_file(&source);
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(id)
 }
 
@@ -1335,9 +1366,9 @@ pub(crate) fn set_background(
     if let Some(project) = s.project_mut() {
         project.world.background = color;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1351,9 +1382,9 @@ pub(crate) fn set_gravity(
     if let Some(project) = s.project_mut() {
         project.world.gravity = gravity;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1367,9 +1398,9 @@ pub(crate) fn set_fixed_rate(
     if let Some(project) = s.project_mut() {
         project.world.fixed_rate = fixed_rate.clamp(1.0, 1000.0);
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1401,9 +1432,9 @@ pub(crate) fn set_navigation(
     if let Some(project) = s.project_mut() {
         project.world.navigation = navigation;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1417,9 +1448,9 @@ pub(crate) fn set_camera(
     if let Some(project) = s.project_mut() {
         project.world.camera = camera;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1441,9 +1472,9 @@ pub(crate) fn write_lighting_asset(
     if let Some(project) = s.project_mut() {
         project.resolve_lighting_assets(&dir);
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1475,9 +1506,9 @@ pub(crate) fn set_scene_lighting_asset(
         .ok_or("Scene not found")?
         .world
         .lighting = lighting;
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1527,9 +1558,9 @@ pub(crate) fn set_lighting(
         // Editing inline settings detaches them from the shared asset.
         project.world.lighting.asset.clear();
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1546,9 +1577,9 @@ pub(crate) fn set_sky(state: &SharedState, app: &AppHandle, sky: Sky) -> Result<
     if let Some(project) = s.project_mut() {
         project.world.sky = sky;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1580,9 +1611,9 @@ pub(crate) fn set_clouds(
     if let Some(project) = s.project_mut() {
         project.world.clouds = clouds;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1598,9 +1629,9 @@ pub(crate) fn set_lighting_2d(
     if let Some(project) = s.project_mut() {
         project.world.lighting2d = lighting;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1616,9 +1647,9 @@ pub(crate) fn set_post_2d(
     if let Some(project) = s.project_mut() {
         project.world.post2d = post;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1634,9 +1665,9 @@ pub(crate) fn set_camera_2d(
     if let Some(project) = s.project_mut() {
         project.world.camera2d = camera;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1652,9 +1683,9 @@ pub(crate) fn set_cloud_layers(
     if let Some(project) = s.project_mut() {
         project.world.cloud_layers = layers;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1687,9 +1718,9 @@ pub(crate) fn paint_cloud_layer(
         l.coverage_texture = path.clone();
         l.revision = l.revision.wrapping_add(1);
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(path)
 }
 
@@ -1730,9 +1761,9 @@ pub(crate) fn bake_cloud_noise(
         project.world.clouds.shape_volume = written[0].clone();
         project.world.clouds.detail_volume = written[1].clone();
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(written)
 }
 
@@ -1751,9 +1782,9 @@ pub(crate) fn set_lightning(
     if let Some(project) = s.project_mut() {
         project.world.lightning = lightning;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1767,9 +1798,9 @@ pub(crate) fn set_wind(state: &SharedState, app: &AppHandle, wind: Wind) -> Resu
     if let Some(project) = s.project_mut() {
         project.world.wind = wind;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1788,9 +1819,9 @@ pub(crate) fn set_director(
     if let Some(project) = s.project_mut() {
         project.world.director = director;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1876,9 +1907,9 @@ pub(crate) fn set_locale(
     if let Some(project) = s.project_mut() {
         project.localization = next;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(true)
 }
 
@@ -1904,9 +1935,9 @@ pub(crate) fn remove_locale(
     if let Some(project) = s.project_mut() {
         project.localization = next;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(true)
 }
 
@@ -1933,9 +1964,9 @@ pub(crate) fn remove_language(
     if let Some(project) = s.project_mut() {
         project.localization = next;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(changed)
 }
 
@@ -1952,9 +1983,9 @@ pub(crate) fn set_default_language(
     if let Some(project) = s.project_mut() {
         let tag = Localization::normalize_language(&language);
         project.localization.default_language = tag.clone();
-        auto_save(&s);
+        auto_save(&mut s);
         sync_runtime(&mut s);
-        emit(app, &s);
+        emit(app, &mut s);
         return Ok(if tag.is_empty() {
             DEFAULT_LANGUAGE.to_string()
         } else {
@@ -2006,9 +2037,9 @@ pub(crate) fn set_vfx(
     if let Some(project) = s.project_mut() {
         project.world.vfx = vfx;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2024,9 +2055,9 @@ pub(crate) fn set_quality(
     if let Some(project) = s.project_mut() {
         project.world.quality = quality;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2045,9 +2076,9 @@ pub(crate) fn set_post_process(
     if let Some(project) = s.project_mut() {
         project.world.post = post;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2065,9 +2096,9 @@ pub(crate) fn set_display_output(
     if let Some(project) = s.project_mut() {
         project.world.display = display;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2088,9 +2119,9 @@ pub(crate) fn set_sound_mixer(
             sfx_volume: blockloom_core::sound::clamp_gain(mixer.sfx_volume),
         };
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2107,9 +2138,9 @@ pub(crate) fn set_soundscape(
     if let Some(project) = s.project_mut() {
         project.world.soundscape = soundscape;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2122,9 +2153,9 @@ pub(crate) fn select_actor(
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     s.selected_actor = Some(actor_id);
-    s.history.end_session();
+    s.end_session();
     send_selection(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2189,9 +2220,9 @@ pub(crate) fn add_actor(
     let name = name.unwrap_or_else(|| shape_label(&shape).to_string());
     let id = project.add_actor(Actor::new(name, visual));
     s.selected_actor = Some(id.clone());
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(id)
 }
 
@@ -2223,9 +2254,9 @@ pub(crate) fn duplicate_actor(
     copy.refresh_physics_ids();
     let id = project.add_actor(copy);
     s.selected_actor = Some(id.clone());
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(id)
 }
 
@@ -2242,9 +2273,9 @@ pub(crate) fn remove_actor(
     if s.selected_actor.as_deref() == Some(actor_id.as_str()) {
         s.selected_actor = None;
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2265,9 +2296,9 @@ pub(crate) fn move_actor(
         Some(project) => project.move_actor(&actor_id, &parent, &before)?,
         None => return Err("No project is open".to_string()),
     };
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(moved)
 }
 
@@ -2288,9 +2319,9 @@ pub(crate) fn rename_actor(
         Some(project) => project.rename_actor(&actor_id, &name).map(|_| ()),
         None => Ok(()),
     };
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     result
 }
 
@@ -2305,9 +2336,9 @@ pub(crate) fn set_actor_visual(
     if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
         actor.components.set_visual(visual);
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2327,9 +2358,9 @@ pub(crate) fn set_actor_placement(
     if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
         actor.components.set_placement(placement);
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2344,9 +2375,9 @@ pub(crate) fn set_actor_physics(
     if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
         actor.components.set_physics(physics);
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2361,9 +2392,9 @@ pub(crate) fn set_actor_visible(
     if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
         actor.components.set_visible(visible);
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2398,9 +2429,9 @@ pub(crate) fn add_actor_component(
             .expect("checked above")
             .claim_camera(&actor_id);
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(name)
 }
 
@@ -2442,9 +2473,9 @@ pub(crate) fn set_actor_component(
         return Err("Actor not found".to_string());
     };
     let result = rename_or_replace(&mut actor.components, &name, component);
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     result
 }
 
@@ -2567,9 +2598,9 @@ pub(crate) fn remove_actor_component(
     if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
         actor.components.remove(&name);
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2651,7 +2682,7 @@ pub(crate) fn run_project(
     // Missing plugin data is a report, not a game that quietly does less.
     plugins::preflight_run(&s)?;
     physics::preflight(&project, s.project_dir(), "Play")?;
-    auto_save(&s);
+    auto_save(&mut s);
     // Built before the world is handed over, so a script that won't compile
     // shows its errors in the log instead of silently doing nothing.
     let _ = build_scripts(&mut s);
@@ -2705,7 +2736,7 @@ pub(crate) fn run_project(
     s.log.clear();
     s.running = true;
     s.paused = false;
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2720,7 +2751,7 @@ pub(crate) fn stop_project(state: &SharedState, app: &AppHandle) -> Result<(), S
     }
     s.running = false;
     s.paused = false;
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2762,11 +2793,11 @@ pub(crate) fn pause_project(
         s.running = false;
         s.paused = false;
         s.status = None;
-        emit(app, &s);
+        emit(app, &mut s);
         return Err("Lost the connection to the game runtime".to_string());
     }
     s.paused = paused && s.running;
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2806,7 +2837,7 @@ pub(crate) fn open_world(
         });
     if !alive {
         s.runtime = None;
-        emit(app, &s);
+        emit(app, &mut s);
         return Err("Lost the connection to the game runtime".to_string());
     }
     if s.preview_enabled {
@@ -2823,7 +2854,7 @@ pub(crate) fn open_world(
     }
     s.running = false;
     s.paused = false;
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2952,7 +2983,7 @@ pub(crate) fn close_runtime(state: &SharedState, app: &AppHandle) -> Result<(), 
     s.status = None;
     s.preview_port = None;
     s.preview_enabled = s.embedded.is_some();
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -2980,10 +3011,10 @@ pub(crate) fn set_preview_enabled(
         s.paused = false;
         s.status = None;
         s.preview_port = None;
-        emit(app, &s);
+        emit(app, &mut s);
         return Err("Lost the connection to the game runtime".to_string());
     }
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -3007,10 +3038,10 @@ pub(crate) fn set_preview_headless(
         s.paused = false;
         s.status = None;
         s.preview_port = None;
-        emit(app, &s);
+        emit(app, &mut s);
         return Err("Lost the connection to the game runtime".to_string());
     }
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -3045,10 +3076,10 @@ pub(crate) fn step_project(state: &SharedState, app: &AppHandle) -> Result<(), S
         s.paused = false;
         s.status = None;
         s.preview_port = None;
-        emit(app, &s);
+        emit(app, &mut s);
         return Err("Lost the connection to the game runtime".to_string());
     }
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -3185,7 +3216,7 @@ pub(crate) fn prepare_build_game(
     state: &SharedState,
     params: crate::build_jobs::BuildParams,
 ) -> Result<BuildRequest, String> {
-    let s = lock(state)?;
+    let mut s = lock(state)?;
     let project = s
         .project()
         .cloned()
@@ -3203,7 +3234,7 @@ pub(crate) fn prepare_build_game(
     if params.device.is_some() && !target.is_android() {
         return Err("Deploying to a device requires an Android target".to_string());
     }
-    auto_save(&s);
+    auto_save(&mut s);
     Ok(BuildRequest {
         project,
         dir,
@@ -3301,7 +3332,7 @@ pub(crate) fn run_build_game(
                     path,
                     format!("{path} didn't compile:\n{error}"),
                 ));
-                emit(app, &s);
+                emit(app, &mut s);
             }
         }
     }
@@ -3386,7 +3417,7 @@ pub(crate) fn run_build_game(
                 ""
             },
         )));
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(built)
 }
 
@@ -3458,7 +3489,7 @@ pub(crate) fn android_logcat_tail(
                 line.trim().to_string(),
             ));
         }
-        emit(app, &s);
+        emit(app, &mut s);
     }
     Ok(dumped)
 }
@@ -3637,8 +3668,8 @@ pub(crate) fn set_android_settings(
     if let Some(project) = s.project_mut() {
         project.android = next;
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -3751,9 +3782,9 @@ pub(crate) fn create_asset(
             project.add_scene_at(&made, None)?
         };
         s.selected_actor = None;
-        auto_save(&s);
+        auto_save(&mut s);
         sync_runtime(&mut s);
-        emit(app, &s);
+        emit(app, &mut s);
         let _ = id;
         return Ok(made);
     }
@@ -3816,9 +3847,9 @@ pub(crate) fn import_assets(
             }
         }
         s.selected_actor = None;
-        auto_save(&s);
+        auto_save(&mut s);
         sync_runtime(&mut s);
-        emit(app, &s);
+        emit(app, &mut s);
     }
     drop(s);
     plugins::auto_import(state, app, &made);
@@ -3934,9 +3965,9 @@ pub(crate) fn rename_asset(
                 }
             }
         }
-        auto_save(&s);
+        auto_save(&mut s);
         sync_runtime(&mut s);
-        emit(app, &s);
+        emit(app, &mut s);
         return Ok(moved);
     }
     // A plain file renamed onto `.blockscene` becomes a scene.
@@ -3946,9 +3977,9 @@ pub(crate) fn rename_asset(
         match register_scene_file(&mut s, &dir, &moved) {
             Ok(_) => {
                 s.selected_actor = None;
-                auto_save(&s);
+                auto_save(&mut s);
                 sync_runtime(&mut s);
-                emit(app, &s);
+                emit(app, &mut s);
             }
             Err(e) => {
                 tracing::warn!("Couldn't register scene {moved}: {e}");
@@ -4008,9 +4039,9 @@ pub(crate) fn move_asset(
                 scene.path = new;
             }
         }
-        auto_save(&s);
+        auto_save(&mut s);
         sync_runtime(&mut s);
-        emit(app, &s);
+        emit(app, &mut s);
         return Ok(moved);
     }
     repoint_assets(&mut s, app, &path, &moved);
@@ -4057,9 +4088,9 @@ pub(crate) fn delete_asset(
         let dir = project_dir(&s)?;
         assets::delete(&dir, &path)?;
         pipeline::note_removed(&dir, &path);
-        auto_save(&s);
+        auto_save(&mut s);
         sync_runtime(&mut s);
-        emit(app, &s);
+        emit(app, &mut s);
         return Ok(());
     }
     let dir = project_dir(&s)?;
@@ -4296,9 +4327,9 @@ pub(crate) fn export_shader(
             .components
             .insert(ActorComponent::Material { material });
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(path)
 }
 
@@ -4334,7 +4365,7 @@ pub(crate) fn check_shader(
         Err(error) => LogLine::error(name, format!("{source} doesn't compile:\n{error}")),
     };
     s.push_log(line);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -4423,10 +4454,10 @@ pub(crate) fn create_script(
     actor
         .components
         .insert(ActorComponent::Script { path: path.clone() });
-    auto_save(&s);
+    auto_save(&mut s);
     sync_ide(&dir);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(path)
 }
 
@@ -4493,10 +4524,10 @@ pub(crate) fn add_script(
     actor.components.insert(ActorComponent::Script {
         path: wanted.clone(),
     });
-    auto_save(&s);
+    auto_save(&mut s);
     sync_ide(&dir);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(wanted)
 }
 
@@ -4515,9 +4546,9 @@ pub(crate) fn remove_script(
     if !actor.components.remove_script(&path) {
         return Err(format!("This actor doesn't run {path}"));
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -4537,9 +4568,9 @@ pub(crate) fn move_script(
     if !actor.components.move_script(&path, index) {
         return Err(format!("This actor doesn't run {path}"));
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -4600,7 +4631,7 @@ pub(crate) fn check_script(
         }
     };
     s.push_log(line);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -4657,7 +4688,7 @@ pub(crate) fn write_script(
         open.script_statuses.remove(&path);
     }
     sync_ide(&dir);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -4723,7 +4754,7 @@ pub(crate) fn format_script(
         }
     }
     sync_ide(&dir);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(formatted)
 }
 
@@ -4881,8 +4912,8 @@ pub(crate) fn add_instruction(
             .map(|_| hold_top(graph, &strand_id, &path, target_y)),
         None => Ok(()),
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -4904,8 +4935,8 @@ pub(crate) fn edit_instruction(
     if let Some(graph) = graph_mut(&mut s) {
         graph.replace_instruction(&strand_id, &path, instruction);
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -4927,7 +4958,7 @@ pub(crate) fn remove_instruction(
             count,
         },
     );
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -4947,8 +4978,8 @@ pub(crate) fn delete_instruction(
         Some(graph) => graph.delete_instruction(&strand_id, &path, x, y),
         None => Ok(None),
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -4980,7 +5011,7 @@ pub(crate) fn paste_fragment(
 ) -> Result<String, String> {
     let mut s = lock(state)?;
     let outcome = run_edit(&mut s, EditCommand::PasteFragment { fragment, x, y });
-    emit(app, &s);
+    emit(app, &mut s);
     outcome?
         .created
         .into_iter()
@@ -5015,7 +5046,7 @@ pub(crate) fn duplicate_instruction(
         &mut s,
         EditCommand::DuplicateInstruction { strand_id, path },
     );
-    emit(app, &s);
+    emit(app, &mut s);
     outcome.map(|_| ()).map_err(String::from)
 }
 
@@ -5038,8 +5069,8 @@ pub(crate) fn add_strand(
         }
         None => return Err("No actor is open".to_string()),
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(id)
 }
 
@@ -5054,8 +5085,8 @@ pub(crate) fn remove_strand(
         graph.remove_strand(&strand_id);
     }
     blockstitch_core::editor::drop_strand_buffers(&mut s.invalid_field_buffers, &strand_id);
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -5071,8 +5102,8 @@ pub(crate) fn move_strand(
     if let Some(graph) = graph_mut(&mut s) {
         graph.move_strand(&strand_id, x, y);
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -5090,8 +5121,8 @@ pub(crate) fn split_strand(
         Some(graph) => graph.split_strand(&strand_id, &path, x, y),
         None => Err("No actor is open".to_string()),
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5123,8 +5154,8 @@ pub(crate) fn merge_strand(
             .map(|_| hold_top(graph, &target_id, &path, target_y)),
         None => Ok(()),
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5148,8 +5179,8 @@ pub(crate) fn merge_tail(
             .map(|_| hold_top(graph, &target_id, &target_path, target_y)),
         None => Ok(()),
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5165,7 +5196,7 @@ pub(crate) fn edit_value_field(
     // Keystrokes into one field coalesce into one undo step; a half-written
     // number is kept as raw text without touching the project.
     let _ = run_edit(&mut s, EditCommand::EditFieldText { location, text });
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -5183,8 +5214,8 @@ pub(crate) fn set_value_kind(
         None => Ok(()),
     };
     prune_value_buffers(&mut s.invalid_field_buffers, &location);
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5197,8 +5228,8 @@ pub(crate) fn take_value(
     push_undo(&mut s);
     let taken = graph_mut(&mut s).and_then(|graph| graph.take_value(&location));
     prune_value_buffers(&mut s.invalid_field_buffers, &location);
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     taken.ok_or_else(|| "Nothing to take at that location".to_string())
 }
 
@@ -5214,8 +5245,8 @@ pub(crate) fn put_value(
         graph.put_value(&location, value);
     }
     prune_value_buffers(&mut s.invalid_field_buffers, &location);
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -5240,7 +5271,7 @@ pub(crate) fn move_value(
         },
     };
     let result = run_edit(&mut s, EditCommand::MoveValue { from, to });
-    emit(app, &s);
+    emit(app, &mut s);
     result.map(|_| ()).map_err(String::from)
 }
 
@@ -5275,8 +5306,8 @@ pub(crate) fn create_floating_value(
         Some(graph) => graph.add_floating_value(x, y, value, origin_block_id),
         None => return Err("No actor is open".to_string()),
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(id)
 }
 
@@ -5292,8 +5323,8 @@ pub(crate) fn move_floating_value(
     if let Some(graph) = graph_mut(&mut s) {
         graph.move_floating_value(&floating_id, x, y);
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -5307,8 +5338,8 @@ pub(crate) fn remove_floating_value(
     if let Some(graph) = graph_mut(&mut s) {
         graph.remove_floating_value(&floating_id);
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -5328,8 +5359,8 @@ pub(crate) fn create_comment(
         Some(graph) => graph.add_comment(x, y, text, attached_to),
         None => return Err("No actor is open".to_string()),
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(id)
 }
 
@@ -5345,8 +5376,8 @@ pub(crate) fn move_comment(
     if let Some(graph) = graph_mut(&mut s) {
         graph.move_comment(&comment_id, x, y);
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -5366,8 +5397,8 @@ pub(crate) fn edit_comment_text(
     if let Some(graph) = graph_mut(&mut s) {
         graph.set_comment_text(&comment_id, text);
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -5382,8 +5413,8 @@ pub(crate) fn set_comment_collapsed(
     if let Some(graph) = graph_mut(&mut s) {
         graph.set_comment_collapsed(&comment_id, collapsed);
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -5397,8 +5428,8 @@ pub(crate) fn remove_comment(
     if let Some(graph) = graph_mut(&mut s) {
         graph.remove_comment(&comment_id);
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -5431,8 +5462,8 @@ pub(crate) fn create_variable(
             None => Ok(()),
         }
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5460,8 +5491,8 @@ pub(crate) fn rename_variable(
             None => Ok(()),
         }
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5481,8 +5512,8 @@ pub(crate) fn delete_variable(
     } else if let Some(project) = s.project_mut() {
         project.remove_global(&name);
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -5499,8 +5530,8 @@ pub(crate) fn create_input_action(
         Some(project) => project.create_input_action(&name).map(|_| ()),
         None => Ok(()),
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5518,8 +5549,8 @@ pub(crate) fn rename_input_action(
             .map(|_| ()),
         None => Ok(()),
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5533,8 +5564,8 @@ pub(crate) fn delete_input_action(
     if let Some(project) = s.project_mut() {
         project.remove_input_action(&name);
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -5550,8 +5581,8 @@ pub(crate) fn add_input_binding(
         Some(project) => project.world.input.add_binding(&name, &binding),
         None => Ok(false),
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5567,8 +5598,8 @@ pub(crate) fn remove_input_binding(
         Some(project) => project.world.input.remove_binding(&name, &binding),
         None => Ok(false),
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5583,8 +5614,8 @@ pub(crate) fn clear_input_bindings(
         Some(project) => project.world.input.clear_bindings(&name),
         None => Ok(false),
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5621,8 +5652,8 @@ pub(crate) fn create_list(
             None => Ok(()),
         }
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5647,8 +5678,8 @@ pub(crate) fn rename_list(
             None => Ok(()),
         }
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5668,8 +5699,8 @@ pub(crate) fn delete_list(
     } else if let Some(project) = s.project_mut() {
         project.remove_global_list(&name);
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -5707,8 +5738,8 @@ pub(crate) fn set_list_items(
             None => Ok(()),
         }
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5748,8 +5779,8 @@ pub(crate) fn set_list_editor_state(
             None => Ok(()),
         }
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5786,8 +5817,8 @@ pub(crate) fn create_dict(
             None => Ok(()),
         }
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5812,8 +5843,8 @@ pub(crate) fn rename_dict(
             None => Ok(()),
         }
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5833,8 +5864,8 @@ pub(crate) fn delete_dict(
     } else if let Some(project) = s.project_mut() {
         project.remove_global_dict(&name);
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -5872,8 +5903,8 @@ pub(crate) fn set_dict_entries(
             None => Ok(()),
         }
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5913,8 +5944,8 @@ pub(crate) fn set_dict_editor_state(
             None => Ok(()),
         }
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -5966,8 +5997,8 @@ pub(crate) fn create_block(
         }
         None => return Err("No actor is open".to_string()),
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(id)
 }
 
@@ -5988,8 +6019,8 @@ pub(crate) fn edit_block(
             .and_then(|()| apply_block_details(graph, &block_id, details)),
         None => Ok(()),
     };
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     result
 }
 
@@ -6003,39 +6034,33 @@ pub(crate) fn delete_block(
     if let Some(graph) = graph_mut(&mut s) {
         graph.remove_block(&block_id);
     }
-    auto_save(&s);
-    emit(app, &s);
+    auto_save(&mut s);
+    emit(app, &mut s);
     Ok(())
 }
 
 // ─── Undo/redo ─────────────────────────────────────────────────────────────
 
 pub(crate) fn undo(state: &SharedState, app: &AppHandle) -> Result<(), String> {
-    step_history(state, app, crate::state::History::undo)
+    step_history(state, app, true)
 }
 
 pub(crate) fn redo(state: &SharedState, app: &AppHandle) -> Result<(), String> {
-    step_history(state, app, crate::state::History::redo)
+    step_history(state, app, false)
 }
 
-fn step_history(
-    state: &SharedState,
-    app: &AppHandle,
-    step: fn(&mut crate::state::History<Project>, Project) -> Option<Project>,
-) -> Result<(), String> {
+fn step_history(state: &SharedState, app: &AppHandle, back: bool) -> Result<(), String> {
     let mut s = lock(state)?;
-    let Some(current) = s.project().cloned() else {
+    let Some(open) = s.open.as_mut() else {
         return Ok(());
     };
-    if let Some(previous) = step(&mut s.history, current) {
-        let open = s.open.as_mut().ok_or("No project is open")?;
-        open.project = previous;
+    if open.tracker.step(&mut open.project, back) {
         blockloom_core::cloud_layers::restore_painted(&open.dir, &open.project.world.cloud_layers);
         s.invalid_field_buffers.clear();
-        auto_save(&s);
+        auto_save(&mut s);
         sync_runtime(&mut s);
     }
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -6054,14 +6079,14 @@ pub(crate) fn push_log(
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     s.push_log(LogLine::with_kind(kind, "Blockloom".to_string(), text));
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
 pub(crate) fn clear_log(state: &SharedState, app: &AppHandle) -> Result<(), String> {
     let mut s = lock(state)?;
     s.log.clear();
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -6211,13 +6236,13 @@ pub(crate) fn commit_interface_edit(
     }
     push_undo(&mut s);
     s.project_mut().unwrap().world.interface = draft.document;
-    auto_save(&s);
+    auto_save(&mut s);
     // The design session already shows this document, and Play loads the whole
     // project, so an open session needs no world reload.
     if s.interface_design.is_none() || s.runtime.is_none() {
         sync_runtime(&mut s);
     }
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -6249,9 +6274,9 @@ pub(crate) fn set_interface(
     }
     push_undo(&mut s);
     s.project_mut().unwrap().world.interface = document;
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -6333,7 +6358,7 @@ pub(crate) fn paint_tiles(
 ) -> Result<usize, String> {
     let mut s = lock(state)?;
     let changed = tile_stroke(&mut s, &actor_id, &brush, &segments)?;
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(changed)
 }
 
@@ -6379,7 +6404,7 @@ pub(crate) fn import_tileset(
     let mut map = tilemap_of(&s, &actor_id)?;
     map.apply_import(&import);
     store_tilemap(&mut s, &actor_id, map);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(import.skipped)
 }
 
@@ -6425,7 +6450,7 @@ pub(crate) fn add_autotile(
         .retain(|other| !other.name.eq_ignore_ascii_case(name));
     map.autotiles.push(set);
     store_tilemap(&mut s, &actor_id, map);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -6492,7 +6517,7 @@ pub(crate) fn paint_terrain(
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     terrain_stroke(&mut s, &actor_id, stroke)?;
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -6513,7 +6538,7 @@ pub(crate) fn import_terrain_heightmap(
     let field = Heightfield::from_heightmap(&map, spec.resolution);
     spec.heights = store::save(&dir, &store::Grid::from_heights(&field))?;
     store_terrain(&mut s, &actor_id, spec);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -6539,7 +6564,7 @@ pub(crate) fn erode_terrain(
             erosion: None,
         });
     }
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 

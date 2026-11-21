@@ -311,7 +311,7 @@ impl Backend {
                     return;
                 }
                 s.selected_actor = Some(actor);
-                s.history.end_session();
+                s.end_session();
             }
             RuntimeMessage::Placed {
                 actor,
@@ -397,9 +397,7 @@ impl Backend {
                 s.push_log(LogLine::error("Blockloom".to_string(), message));
             }
         }
-        let dto = crate::state::state_dto(&s);
-        drop(s);
-        self.app.emit_state(&dto);
+        self.app.publish(&mut s);
     }
 
     /// Adds a line and sends the log on its own, leaving the snapshot alone.
@@ -437,10 +435,8 @@ impl Backend {
         s.preview_port = None;
         s.pointer_locked = false;
         s.ray_tracing = None;
-        let dto = crate::state::state_dto(&s);
-        drop(s);
         self.app.send(Event::RuntimeClosed);
-        self.app.emit_state(&dto);
+        self.app.publish(&mut s);
     }
 }
 

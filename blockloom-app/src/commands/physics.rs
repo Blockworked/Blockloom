@@ -38,6 +38,10 @@ fn edit<R>(
 ) -> Result<R, String> {
     let mut s = lock(state)?;
     let snapshot = s.project().cloned().ok_or("No project is open")?;
+    super::push_undo_for(
+        &mut s,
+        session.map(|comment_id| EditSession::Comment { comment_id }),
+    );
     let project = s.project_mut().ok_or("No project is open")?;
     let result = match edit(project) {
         Ok(result) => {
@@ -49,16 +53,9 @@ fn edit<R>(
             return Err(error);
         }
     };
-    match session {
-        Some(comment_id) => {
-            s.history
-                .push_for_session(snapshot, EditSession::Comment { comment_id });
-        }
-        None => s.history.push(snapshot),
-    }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(result)
 }
 

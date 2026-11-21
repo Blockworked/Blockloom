@@ -383,7 +383,7 @@ pub(crate) fn plugin_trust(
     app: &AppHandle,
     id: &str,
 ) -> Result<Value, String> {
-    let s = lock(state)?;
+    let mut s = lock(state)?;
     let hash = {
         let active = active(&s)?;
         let loaded = active
@@ -398,7 +398,7 @@ pub(crate) fn plugin_trust(
     let mut ledger = trust::TrustLedger::read(&path);
     ledger.grant(id, &hash);
     ledger.write(&path)?;
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(json!({ "id": id, "hash": hash }))
 }
 
@@ -408,14 +408,14 @@ pub(crate) fn plugin_untrust(
     app: &AppHandle,
     id: &str,
 ) -> Result<Value, String> {
-    let s = lock(state)?;
+    let mut s = lock(state)?;
     let path = trust::default_path();
     let mut ledger = trust::TrustLedger::read(&path);
     let removed = ledger.revoke(id);
     if removed {
         ledger.write(&path)?;
     }
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(json!({ "id": id, "removed": removed }))
 }
 
@@ -844,7 +844,7 @@ pub(crate) fn plugin_change(
         let mut s = lock(state)?;
         reload(&mut s, true);
         sync_runtime(&mut s);
-        emit(app, &s);
+        emit(app, &mut s);
     }
     Ok(json!({
         "dryRun": dry_run,
@@ -953,7 +953,7 @@ pub(crate) fn plugin_rollback(state: &SharedState, app: &AppHandle) -> Result<Va
     let mut s = lock(state)?;
     reload(&mut s, true);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(json!({ "changes": changes_json(&changes) }))
 }
 
@@ -977,7 +977,7 @@ pub(crate) fn plugin_registry(
     project.commit(&plugins, &lock_file)?;
     let mut s = lock(state)?;
     reload(&mut s, true);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1232,9 +1232,9 @@ pub(crate) fn add_plugin_component(
     if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
         actor.components.insert(ActorComponent::Plugin { record });
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(component)
 }
 
@@ -1264,9 +1264,9 @@ pub(crate) fn set_plugin_component(
     if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
         actor.components.insert(ActorComponent::Plugin { record });
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1283,9 +1283,9 @@ pub(crate) fn set_plugin_resource(
     if let Some(project) = s.project_mut() {
         project.set_plugin_resource(record);
     }
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(())
 }
 
@@ -1299,9 +1299,9 @@ pub(crate) fn remove_plugin_resource(
     let removed = s
         .project_mut()
         .is_some_and(|p| p.remove_plugin_resource(&resource));
-    auto_save(&s);
+    auto_save(&mut s);
     sync_runtime(&mut s);
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(removed)
 }
 
@@ -1456,7 +1456,7 @@ fn with_module<T>(
                 message,
             ));
         }
-        emit(app, &s);
+        emit(app, &mut s);
     }
     answer
 }
@@ -1672,9 +1672,9 @@ pub(crate) fn plugin_migrate(
         if let Some(project) = s.project_mut() {
             project.replace_plugin_records(&migrated);
         }
-        auto_save(&s);
+        auto_save(&mut s);
         sync_runtime(&mut s);
-        emit(app, &s);
+        emit(app, &mut s);
     }
     Ok(json!({
         "dryRun": dry_run,
@@ -1767,7 +1767,7 @@ pub(crate) fn plugin_import(
         plugin.clone(),
         format!("Imported {path}: {} file(s)", imported.outputs.len()),
     ));
-    emit(app, &s);
+    emit(app, &mut s);
     Ok(imported)
 }
 
@@ -1809,7 +1809,7 @@ pub(crate) fn auto_import(state: &SharedState, app: &AppHandle, paths: &[String]
                 "Blockloom".to_string(),
                 format!("Couldn't import {path}: {error}"),
             ));
-            emit(app, &s);
+            emit(app, &mut s);
         }
     }
 }
@@ -1896,7 +1896,7 @@ pub(crate) fn refresh_imports(state: &SharedState, app: &AppHandle) {
                 format!("Couldn't import {failure}"),
             ));
         }
-        emit(app, &s);
+        emit(app, &mut s);
     }
 }
 
@@ -1946,7 +1946,7 @@ pub(crate) fn run_build_hooks(
                     format!("{}: {warning}", hook.name),
                 ));
             }
-            emit(app, &s);
+            emit(app, &mut s);
         }
         for file in run.files {
             let to = format!("{PLUGINS_DIR}/{plugin}/cooked/{}", file.path);
