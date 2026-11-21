@@ -4,6 +4,7 @@
 //! support are run state and live in the world, never here, so Play and Stop can
 //! restore the document exactly. Every number is finite (see `validate`).
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 use super::ids::{ColliderId, ComponentId};
@@ -13,7 +14,7 @@ use crate::scene::Mode;
 // ─── Rigidbody ──────────────────────────────────────────────────────────────
 
 /// How a body moves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum BodyType {
     #[default]
     Dynamic,
@@ -24,7 +25,7 @@ pub enum BodyType {
     Static,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum Interpolation {
     #[default]
     None,
@@ -36,7 +37,7 @@ pub enum Interpolation {
 /// backend, and where it stops short, is the compatibility ledger's CCD table;
 /// the runtime (Phase 2) reports an unsupported combination rather than
 /// quietly aliasing it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum CollisionDetection {
     #[default]
     Discrete,
@@ -47,7 +48,7 @@ pub enum CollisionDetection {
 
 /// Where the body's mass comes from. Mass is body-owned: collider edits never
 /// multiply an explicit mass by the number of shapes.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "mode")]
 pub enum MassSource {
     /// A fixed mass in kilograms.
@@ -64,7 +65,7 @@ impl Default for MassSource {
 }
 
 /// Axes the solver may not move or turn the body along.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub struct Constraints {
     #[serde(default)]
     pub freeze_position: [bool; 3],
@@ -78,7 +79,7 @@ impl Constraints {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct RigidbodySpec {
     #[serde(default)]
     pub id: ComponentId,
@@ -198,7 +199,7 @@ impl Default for RigidbodySpec {
 
 // ─── Collider ───────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum Axis {
     X,
     #[default]
@@ -208,7 +209,7 @@ pub enum Axis {
 
 /// An authored shape. Sizes are full extents, in metres (3D) or world units (2D);
 /// a capsule's `height` is end to end, caps included.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "kind")]
 pub enum ColliderShape {
     // 3D
@@ -316,7 +317,7 @@ impl ColliderShape {
 }
 
 /// Where a collider's shape comes from.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "kind")]
 pub enum ColliderGeometry {
     /// A saved shape. The default for new colliders.
@@ -328,7 +329,7 @@ pub enum ColliderGeometry {
 
 /// Include and exclude layers laid over a collider's own layer and the project
 /// matrix. A set bit is a layer slot (bit `n - 1` for layer `n`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub struct LayerOverrides {
     #[serde(default)]
     pub include: u32,
@@ -348,7 +349,7 @@ impl LayerOverrides {
 /// Layer slots a project has.
 pub const LAYER_SLOTS: u8 = 32;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ColliderSpec {
     #[serde(default)]
     pub id: ColliderId,

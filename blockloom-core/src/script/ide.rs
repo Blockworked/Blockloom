@@ -8,6 +8,7 @@
 //! an answer, not an error.
 
 use super::abi;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -32,14 +33,14 @@ pub struct IdeScript {
 }
 
 /// What syncing the analysis project did.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct SyncReport {
     pub scripts: usize,
     pub manifest: String,
 }
 
 /// One error or warning pinned to a line, for the editor to show inline.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ScriptDiagnostic {
     /// Forward-slash script path, as the project holds it.
     pub path: String,
@@ -54,7 +55,7 @@ pub struct ScriptDiagnostic {
 }
 
 /// Whether this machine can build scripts at all, and with what.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ToolchainStatus {
     pub available: bool,
     pub rustc_version: Option<String>,

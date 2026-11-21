@@ -1,11 +1,12 @@
 //! Transient surface marks. Only the blocks that create them are saved.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 pub const CAPACITY: usize = 256;
 pub const ATLAS_CELL: u32 = 128;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum DecalPreset {
     #[default]
     Blood,
@@ -32,7 +33,7 @@ impl DecalPreset {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Spawn {
     pub preset: DecalPreset,
     pub at: [f32; 3],

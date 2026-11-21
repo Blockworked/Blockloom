@@ -1,9 +1,10 @@
 //! Typed property edits, the edit enum and applying it to a document.
 use super::*;
+use blockloom_schema_derive::Schema;
 use std::collections::HashSet;
 
 /// Canonical authored property paths with their accepted value types.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "path", content = "value", deny_unknown_fields)]
 pub enum UiPropertyEdit {
     #[serde(rename = "element.kind")]
@@ -286,7 +287,7 @@ fn deserialize_edit_layout<'de, D: serde::Deserializer<'de>>(
 }
 
 /// Free placement uses explicit pixel dimensions; flow retains authored sizing.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "mode", deny_unknown_fields)]
 pub enum UiPlacement {
     Free { offset: [f32; 2], size: [f32; 2] },
@@ -294,7 +295,7 @@ pub enum UiPlacement {
 }
 
 /// Absolute authored values, applied to a transaction's starting document.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub enum UiEdit {
     Reorder {
@@ -859,7 +860,7 @@ impl UiDocument {
 /// What changed in a document since a base the caller already holds: every
 /// field but the widgets, the widget ids in order, and the widgets that differ.
 /// A drag then costs what it changed, not the whole document.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct UiPatch {
     /// The document with its widget list left empty.
     pub document: UiDocument,

@@ -10,10 +10,11 @@
 
 use crate::pipeline::hdr::HdrCube;
 use crate::project::Project;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum ProbeKind {
     /// A box-projected cubemap: sharp reflections for what is inside.
     #[default]
@@ -22,7 +23,7 @@ pub enum ProbeKind {
     Irradiance,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ProbeSpec {
     #[serde(default)]
     pub kind: ProbeKind,
@@ -124,7 +125,7 @@ impl ProbeSpec {
 pub const PROBE_DIR: &str = ".blockloom/probes";
 
 /// What a bake was made from, beside its data.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct BakeInfo {
     pub kind: ProbeKind,
     pub stamp: u64,
@@ -383,7 +384,7 @@ pub fn stamp(project: &Project, actor: &str) -> Option<u64> {
 }
 
 /// Where a probe's bake stands.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ProbeStatus {
     pub actor: String,
     pub name: String,

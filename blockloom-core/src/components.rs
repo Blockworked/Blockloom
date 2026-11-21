@@ -32,6 +32,7 @@ use crate::value::Evaluated;
 use crate::volume::VolumeSpec;
 use crate::water::{BuoyancySpec, WaterSpec};
 use blockloom_plugin_api::record::PluginRecord;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// The components every project knows about by name. A custom component
@@ -73,7 +74,7 @@ pub const BUILT_IN_NAMES: &[&str] = &[
     "SoundZone",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum JointKind {
     #[default]
     Fixed,
@@ -81,7 +82,7 @@ pub enum JointKind {
     Rope,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct JointSpec {
     /// Actor id at the other end of the joint.
     pub target: String,
@@ -110,7 +111,7 @@ impl Default for JointSpec {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum LightKind {
     /// Shines every way from the actor.
     #[default]
@@ -126,7 +127,7 @@ pub enum LightKind {
 }
 
 /// What a light's `intensity` is measured in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum LightUnit {
     /// Luminous power, all directions together.
     #[default]
@@ -137,73 +138,122 @@ pub enum LightUnit {
 }
 
 /// A light in physical units. 3D only: a 2D world has no lights.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct LightSpec {
     #[serde(default)]
+    #[schema(label = "Kind")]
     pub kind: LightKind,
     #[serde(default = "default_light_color")]
     pub color: String,
     /// Luminous power in lumens. A household bulb is about 800. A spot's
     /// power isn't gathered into its cone, so a narrow one is no brighter.
     #[serde(default = "default_lumens")]
+    #[schema(min = 0)]
     pub intensity: f32,
     /// Metres past which the light no longer reaches.
     #[serde(default = "default_light_range")]
+    #[schema(unit = "m", min = 0.01)]
     pub range: f32,
     /// Metres. A bigger emitter softens highlights and shadow edges.
     #[serde(default)]
+    #[schema(unit = "m", min = 0, show_if = "kind in [Point, Spot]")]
     pub radius: f32,
     /// Degrees from the spot's axis where the falloff starts.
     #[serde(default = "default_inner_angle")]
+    #[schema(
+        label = "Cone inner",
+        unit = "°",
+        min = 0,
+        max = 179,
+        show_if = "kind = Spot"
+    )]
     pub inner_angle: f32,
     /// Degrees from the spot's axis where the light ends.
     #[serde(default = "default_outer_angle")]
+    #[schema(
+        label = "Cone outer",
+        unit = "°",
+        min = 0,
+        max = 179,
+        show_if = "kind = Spot"
+    )]
     pub outer_angle: f32,
     /// Whether the light casts shadow maps. An area light casts a point
     /// light's, from its centre.
     #[serde(default)]
+    #[schema(show_if = "kind in [Point, Spot]")]
     pub shadows: bool,
     #[serde(default)]
+    #[schema(label = "Unit")]
     pub unit: LightUnit,
     /// Metres across a rect light (or a disk's diameter), and a rect's height.
     #[serde(default = "default_area_side")]
+    #[schema(
+        label = "Size",
+        unit = "m",
+        min = 0.01,
+        show_if = "kind in [Rect, Disk]"
+    )]
     pub width: f32,
     #[serde(default = "default_area_side")]
+    #[schema(unit = "m", min = 0.01, show_if = "kind = Rect")]
     pub height: f32,
     /// An image asset projected through the light like a gobo; only its red
     /// channel counts. A point light repeats it on each of its six sides.
     /// Empty for none.
     #[serde(default)]
+    #[schema(asset = "image", show_if = "kind = Spot")]
     pub cookie: String,
     /// How many times the cookie repeats across the beam.
     #[serde(default = "default_cookie_tiling")]
+    #[schema(label = "Tiling", min = 0.01, show_if = "kind = Spot && cookie")]
     pub cookie_tiling: f32,
     /// An `.ies` profile shaping a spot's beam. With [`LightUnit::Candela`],
     /// `intensity` is the profile's peak.
     #[serde(default)]
+    #[schema(
+        label = "IES profile",
+        asset = "light",
+        show_if = "kind in [Point, Spot]"
+    )]
     pub ies: String,
     /// Screen-space shadows under feet and small clutter, which shadow maps
     /// are too coarse to catch. Needs the project's contact shadows on.
     #[serde(default)]
+    #[schema(label = "Contact", show_if = "kind in [Point, Spot]")]
     pub contact_shadows: bool,
     /// Shadows that soften with distance from their caster (PCSS). Needs the
     /// light's `radius` above zero to have a size to soften by.
     #[serde(default)]
+    #[schema(label = "Soft (PCSS)", show_if = "kind in [Point, Spot] && shadows")]
     pub soft_shadows: bool,
     /// Overrides Bevy's own shadow biases when set.
     #[serde(default)]
+    #[schema(
+        label = "Depth bias",
+        min = 0,
+        show_if = "kind in [Point, Spot] && shadows"
+    )]
     pub shadow_depth_bias: Option<f32>,
     #[serde(default)]
+    #[schema(
+        label = "Normal bias",
+        min = 0,
+        show_if = "kind in [Point, Spot] && shadows"
+    )]
     pub shadow_normal_bias: Option<f32>,
     /// Whether ray-traced lighting traces this light. Off leaves it out of
     /// the traced world, lighting only what the raster rig still draws.
     #[serde(default = "default_true")]
+    #[schema(label = "Traced")]
     pub ray_traced: bool,
     /// Whether it lights volumetric fog.
     #[serde(default = "default_true")]
+    #[schema(label = "Lights fog")]
     pub volumetric: bool,
     /// A visible beam of its own, and the dust drifting in it.
     #[serde(default)]
+    #[schema(show_if = "kind in [Point, Spot]")]
     pub beam: crate::fog::Beam,
 }
 
@@ -308,7 +358,7 @@ impl LightSpec {
 
 /// One component on an actor. Serialized internally-tagged, so a component
 /// reads as `{"component": "Body", "physics": {...}}`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "component")]
 #[allow(clippy::large_enum_variant)]
 pub enum ActorComponent {
@@ -504,7 +554,7 @@ impl ActorComponent {
 
 /// How the camera sits on the actor it is attached to. In a 2D project all
 /// three views centre the camera on the actor: there is no depth to stand in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum CameraView {
     /// Keeps the world camera's own offset, centred on the actor.
     #[default]
@@ -518,7 +568,7 @@ pub enum CameraView {
 }
 
 /// The camera component's settings.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct CameraAttach {
     #[serde(default)]
     pub view: CameraView,
@@ -567,7 +617,7 @@ impl Default for CameraAttach {
 }
 
 /// One value on a custom component.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ComponentField {
     pub name: String,
     pub value: Evaluated,
@@ -585,7 +635,7 @@ impl ComponentField {
 /// An actor's components, in the order the editor shows them. Kept as a list
 /// rather than a map so the inspector has a stable order to draw, and so a
 /// component's name can live on the component itself.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Schema)]
 #[serde(transparent)]
 pub struct Components(pub Vec<ActorComponent>);
 

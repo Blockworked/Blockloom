@@ -17,6 +17,7 @@
 //! folder, so assets and built libraries keep their project spelling.
 
 use crate::project::Project;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -36,7 +37,7 @@ pub const PACK_FILE: &str = "game.pack";
 
 /// One plugin a built game carries, recorded so a player can check it has
 /// what the game was made with.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub struct PackedPlugin {
     pub id: String,
     pub version: String,
@@ -54,7 +55,7 @@ pub struct PackedPlugin {
 pub const PLUGINS_DIR: &str = "plugins";
 
 /// A project, ready to run on its own.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct GamePack {
     /// [`PACK_VERSION`] at the time it was built.
     pub pack: u32,

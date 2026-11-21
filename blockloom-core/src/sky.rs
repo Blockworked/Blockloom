@@ -8,11 +8,12 @@
 //! moon stand and how much sunlight gets through the air to the ground. The
 //! runtime renders the rest (`blockloom-runtime/src/sky.rs`).
 
+use blockloom_schema_derive::Schema;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 /// Which sky a world has.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum SkyKind {
     /// The world's background color and flat ambient light: no sky at all.
     #[default]
@@ -26,7 +27,7 @@ pub enum SkyKind {
 }
 
 /// Where the sun's position comes from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum SunMode {
     /// The lighting's own light direction.
     #[default]
@@ -39,7 +40,7 @@ pub enum SunMode {
 
 /// Where the sun stands. Azimuth is degrees clockwise from north (-Z)
 /// towards east (+X), elevation degrees above the horizon.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct SunPlacement {
     pub mode: SunMode,
@@ -75,7 +76,7 @@ impl Default for SunPlacement {
 
 /// A physically based atmosphere, in the units of Hillaire's model:
 /// scattering in 1/Mm, heights and radii in km.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct PhysicalSky {
     /// Degrees across. The real sun is about 0.53.
@@ -171,7 +172,7 @@ impl Default for PhysicalSky {
 }
 
 /// Three color stops around a horizon line.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct GradientSky {
     pub top: String,
@@ -208,7 +209,7 @@ impl Default for GradientSky {
 
 /// An HDR image: an equirectangular panorama, or a 6:1 / 1:6 strip of cube
 /// faces.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct HdriSky {
     /// `.hdr` or `.exr` asset.
@@ -243,7 +244,7 @@ impl Default for HdriSky {
 
 /// A procedural star field over any sky but a flat one, fading in as the
 /// sun goes down.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Stars {
     pub enabled: bool,
@@ -294,7 +295,7 @@ impl Default for Stars {
 }
 
 /// Curtains of aurora high over the camera, flowing slowly.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Aurora {
     pub enabled: bool,
@@ -342,7 +343,7 @@ impl Default for Aurora {
 }
 
 /// The sky, and how much of the world it lights.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Sky {
     pub kind: SkyKind,

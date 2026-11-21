@@ -14,6 +14,7 @@
 //! Samples run along X by column and Z by row, row 0 at the north (-Z) edge,
 //! which is how a heightmap image reads with north up.
 
+use blockloom_schema_derive::Schema;
 pub mod mesh;
 pub mod scatter;
 pub mod sculpt;
@@ -31,7 +32,7 @@ pub const MAX_RESOLUTION: u32 = 4097;
 
 /// A terrain actor's ground. Centred on the actor: X and Z run
 /// `-size/2..size/2`, and a full-scale sample stands `height` metres up.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct TerrainSpec {
     /// Metres along X and Z.
@@ -128,7 +129,7 @@ pub fn snap_resolution(resolution: u32) -> u32 {
 }
 
 /// One paint layer: what the ground looks like wherever it wins.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct TerrainLayer {
     pub name: String,
@@ -173,7 +174,7 @@ impl TerrainLayer {
 /// Where a layer covers the ground by itself, before any paint: between two
 /// slopes, between two heights, and on ridges or in hollows. Layers stack in
 /// order, so a later layer's rule covers an earlier one.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct LayerRules {
     pub enabled: bool,

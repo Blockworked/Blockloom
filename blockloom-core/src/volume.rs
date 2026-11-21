@@ -9,10 +9,11 @@
 //! checked properties in at its weight at the camera.
 
 use crate::scene::{TonemapName, World};
+use blockloom_schema_derive::Schema;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum VolumeShape {
     /// A box around the actor, in its own frame.
     #[default]
@@ -25,7 +26,7 @@ pub enum VolumeShape {
 
 /// One overridable property: a checkbox beside a value. The value is kept
 /// while unchecked, so ticking it back on brings back what was typed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Override<T> {
     #[serde(default)]
     pub on: bool,
@@ -45,7 +46,7 @@ impl<T: Clone> Override<T> {
 
 /// Every property a volume can take over, named as the project settings
 /// name them. Unchecked values start at the project defaults.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct VolumeOverrides {
     pub background: Override<String>,
@@ -265,7 +266,7 @@ impl VolumeOverrides {
 }
 
 /// The `Volume` component.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct VolumeSpec {
     #[serde(default)]
     pub shape: VolumeShape,

@@ -3,6 +3,7 @@
 //! all, and a record of each spawned emulator so a start that died is
 //! reported instead of waited on.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Child;
@@ -144,7 +145,7 @@ fn host_memory_mb() -> Option<u64> {
 /// Whether the host can run the x86_64 guest with a hypervisor: without
 /// one the emulator either refuses to start or translates every
 /// instruction in software, which is the slowest an emulator gets.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub struct Acceleration {
     pub ok: bool,
     pub detail: String,

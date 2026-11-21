@@ -8,6 +8,7 @@
 //! a slot name doubles as a profile name, so "Slot 1" and a player name
 //! are the same file either way.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -16,7 +17,7 @@ pub const DEFAULT_LANGUAGE: &str = "en";
 
 /// One project's string table. Written only when not default, so an
 /// untouched project re-saves byte for byte.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Localization {
     #[serde(default)]
     pub default_language: String,

@@ -5,38 +5,58 @@
 //! This is the model and the CPU half of the maths. The runtime renders it
 //! in one pass over the frame (`blockloom-runtime/src/fog.rs`).
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// Everything in the air.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Schema)]
 #[serde(default)]
 pub struct Fog {
+    #[schema(label = "Height fog")]
     pub height: HeightFog,
+    #[schema(label = "Volumetric fog")]
     pub volumetric: VolumetricFog,
+    #[schema(label = "Aerial haze")]
     pub aerial: AerialPerspective,
 }
 
 /// Exponential height fog, integrated exactly along each view ray: thick
 /// at its base, thinning upwards, lit by the sun and the ambient light.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct HeightFog {
+    #[schema(label = "On")]
     pub enabled: bool,
     /// World height where the fog is as thick as `distance` says.
+    #[schema(label = "Base", unit = "m", show_if = "enabled")]
     pub base_height: f32,
     /// Per metre: how fast it thins going up. 0 is the same everywhere.
+    #[schema(unit = "/m", min = 0, max = 10, show_if = "enabled")]
     pub falloff: f32,
     /// Metres of fog at the base that swallow 95% of what is behind it.
+    #[schema(
+        label = "See through",
+        unit = "m",
+        min = 0.1,
+        max = 10000000,
+        show_if = "enabled"
+    )]
     pub distance: f32,
     /// Metres from the camera before any fog starts.
+    #[schema(label = "Starts at", unit = "m", min = 0, show_if = "enabled")]
     pub start: f32,
     /// The fog's color with the sun high, low and gone.
+    #[schema(label = "Day", show_if = "enabled")]
     pub day_color: String,
+    #[schema(label = "Dusk", show_if = "enabled")]
     pub dusk_color: String,
+    #[schema(label = "Night", show_if = "enabled")]
     pub night_color: String,
     /// Extra glow looking towards the sun, as a fraction of its light.
+    #[schema(label = "Sun glow", min = 0, max = 100, show_if = "enabled")]
     pub sun_boost: f32,
     /// How tight that glow is, 0-0.99.
+    #[schema(label = "Sun glow g", min = 0, max = 0.99, show_if = "enabled")]
     pub sun_boost_g: f32,
 }
 
@@ -58,7 +78,7 @@ impl Default for HeightFog {
 }
 
 /// Resolution of the froxel grid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum FogQuality {
     Low,
     #[default]
@@ -81,40 +101,63 @@ impl FogQuality {
 /// metres: shadowed sunlight and moonlight, the lights that ask for it and
 /// the ambient light scatter in it, it glows by itself, and noise drifts
 /// through it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct VolumetricFog {
+    #[schema(label = "On")]
     pub enabled: bool,
     /// Extinction per metre at the base height.
+    #[schema(unit = "/m", min = 0, max = 10, show_if = "enabled")]
     pub density: f32,
+    #[schema(label = "Base", unit = "m", show_if = "enabled")]
     pub base_height: f32,
     /// Per metre going up, as for height fog.
+    #[schema(unit = "/m", min = 0, max = 10, show_if = "enabled")]
     pub falloff: f32,
     /// Henyey-Greenstein g, -0.9 to 0.9: positive glows towards the light.
+    #[schema(label = "g", min = -0.9, max = 0.9, show_if = "enabled")]
     pub anisotropy: f32,
     /// How much of what it stops it scatters, per channel.
+    #[schema(color, show_if = "enabled")]
     pub albedo: String,
     /// Glow of its own, for neon smog.
+    #[schema(label = "Glow", color, show_if = "enabled")]
     pub emissive: String,
     /// Nits of the emissive color at a density of 1 per metre.
+    #[schema(label = "Glow nits", min = 0, show_if = "enabled")]
     pub emissive_strength: f32,
     /// 0-1: how much noise carves the fog.
+    #[schema(min = 0, max = 1, show_if = "enabled")]
     pub noise: f32,
     /// Metres across one noise feature.
+    #[schema(unit = "m", min = 0.1, max = 10000, show_if = "enabled")]
     pub noise_scale: f32,
     /// Metres per second the noise drifts.
+    #[schema(label = "Drift", unit = "m/s", show_if = "enabled")]
     pub noise_wind: [f32; 3],
     /// Metres from the camera the grid covers.
+    #[schema(unit = "m", min = 4, max = 2000, show_if = "enabled")]
     pub range: f32,
+    #[schema(show_if = "enabled")]
     pub quality: FogQuality,
     /// Whether the sun and moon light it. Each light has its own switch.
+    #[schema(label = "Sun & moon", show_if = "enabled")]
     pub sun: bool,
     /// Multiplier on the ambient light it scatters.
+    #[schema(min = 0, max = 100, show_if = "enabled")]
     pub ambient: f32,
     /// Dust motes hanging in the air near the ground around the camera,
     /// whether or not the froxels are on.
+    #[schema(label = "Height dust")]
     pub dust: Motes,
     /// Metres above `base_height` the dust reaches.
+    #[schema(
+        label = "Dust up to",
+        unit = "m",
+        min = 0,
+        max = 10000,
+        show_if = "dust.enabled"
+    )]
     pub dust_height: f32,
 }
 
@@ -147,20 +190,38 @@ impl Default for VolumetricFog {
 
 /// Distance haze: far things take on the sky's color and lose theirs,
 /// less so higher up.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct AerialPerspective {
+    #[schema(label = "On")]
     pub enabled: bool,
     /// Metres at which half of a far object's own light is gone.
+    #[schema(
+        label = "Half gone",
+        unit = "m",
+        min = 1,
+        max = 10000000,
+        show_if = "enabled"
+    )]
     pub distance: f32,
     /// The haze's color where there is no sky to take it from, and a tint
     /// on the sky's where there is.
+    #[schema(color, show_if = "enabled")]
     pub tint: String,
     /// 0-1: how gray far things turn.
+    #[schema(label = "Gray", min = 0, max = 1, show_if = "enabled")]
     pub desaturation: f32,
     /// Metres over which the haze thins going up, so peaks stay crisp.
+    #[schema(
+        label = "Height",
+        unit = "m",
+        min = 1,
+        max = 100000,
+        show_if = "enabled"
+    )]
     pub height_scale: f32,
     /// How much more blue fades than red, 0 gray to 1 fully Rayleigh.
+    #[schema(label = "Blue", min = 0, max = 1, show_if = "enabled")]
     pub blue_shift: f32,
 }
 
@@ -179,7 +240,7 @@ impl Default for AerialPerspective {
 
 /// Fog a `Volume` adds inside its shape, fading out across its blend
 /// distance. Only volumetric fog reads it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct LocalFog {
     pub enabled: bool,
@@ -204,7 +265,7 @@ impl Default for LocalFog {
 }
 
 /// How a light's beam is drawn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum BeamMode {
     /// In the froxels while volumetric fog is on above Low quality, as a
     /// shaft cone otherwise.
@@ -219,25 +280,69 @@ pub enum BeamMode {
 /// A visible beam: extra medium inside a spot's cone (or around a point)
 /// that only its own light scatters. Scaled by `set fog density`, so it
 /// thickens in fog and vanishes on a clear day.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Beam {
     /// Extinction per metre added in the beam. 0 for no beam.
+    #[schema(
+        label = "Beam",
+        unit = "/m",
+        min = 0,
+        max = 10,
+        show_if = "/volumetric"
+    )]
     pub density: f32,
     /// Henyey-Greenstein g for this light alone, or the fog's when unset.
+    #[schema(label = "Own g", min = -0.9, max = 0.9, show_if = "/volumetric && density")]
     pub anisotropy: Option<f32>,
     /// Exponent on `1 - distance / range`: 0 flat, 1 linear, 2 quadratic.
+    #[schema(
+        label = "Falloff curve",
+        min = 0,
+        max = 8,
+        show_if = "/volumetric && density"
+    )]
     pub falloff: f32,
     /// Metres from the light over which the beam fades in.
+    #[schema(
+        label = "Fade near",
+        unit = "m",
+        min = 0,
+        show_if = "/volumetric && density"
+    )]
     pub near_fade: f32,
     /// Metres before the range over which it fades out.
+    #[schema(
+        label = "Fade far",
+        unit = "m",
+        min = 0,
+        show_if = "/volumetric && density"
+    )]
     pub far_fade: f32,
+    #[schema(label = "Drawn as", show_if = "/volumetric && density")]
     pub mode: BeamMode,
     /// Shaft cone brightness multiplier.
+    #[schema(
+        label = "Shaft",
+        min = 0,
+        show_if = "/kind = Spot && /volumetric && density && mode != Volumetric"
+    )]
     pub shaft_intensity: f32,
     /// How much the shaft's noise carves it, 0-1, and how fast it scrolls.
+    #[schema(
+        label = "Shaft noise",
+        min = 0,
+        max = 1,
+        show_if = "/kind = Spot && /volumetric && density && mode != Volumetric"
+    )]
     pub shaft_noise: f32,
+    #[schema(
+        label = "Shaft scroll",
+        unit = "m/s",
+        show_if = "/kind = Spot && /volumetric && density && mode != Volumetric"
+    )]
     pub shaft_scroll: f32,
+    #[schema(label = "Dust motes")]
     pub motes: Motes,
 }
 
@@ -259,18 +364,24 @@ impl Default for Beam {
 }
 
 /// Billboard dust drifting in a beam or in the air.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Motes {
+    #[schema(label = "On")]
     pub enabled: bool,
+    #[schema(min = 0, max = 4096, show_if = "enabled")]
     pub count: u32,
     /// Metres across one mote.
+    #[schema(unit = "m", min = 0.001, max = 1, show_if = "enabled")]
     pub size: f32,
     /// 0-1 opacity at full light.
+    #[schema(min = 0, max = 1, show_if = "enabled")]
     pub alpha: f32,
     /// 0-1: how much each mote flickers.
+    #[schema(min = 0, max = 1, show_if = "enabled")]
     pub twinkle: f32,
     /// Metres per second each mote wanders.
+    #[schema(unit = "m/s", min = 0, max = 10, show_if = "enabled")]
     pub drift: f32,
 }
 

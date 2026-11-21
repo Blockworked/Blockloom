@@ -28,6 +28,7 @@
 //! - Triggers are never obstacles. A hit is recorded per obstacle contact of
 //!   an actual sweep, not for persistent nearby overlap.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -61,7 +62,7 @@ pub const DEFAULT_MIN_MOVE: f32 = 0.001;
 
 /// A CharacterController component. Sizes are world units: metres in 3D,
 /// pixels in 2D (see [`CharacterControllerSpec::for_mode`]).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct CharacterControllerSpec {
     #[serde(default)]
     pub id: ComponentId,
@@ -247,7 +248,7 @@ impl CharacterControllerSpec {
 }
 
 /// Which move a call asks for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum MoveMode {
     /// A displacement in world units, no gravity.
     #[default]
@@ -494,7 +495,7 @@ pub fn spec_of(actor: &str) -> Option<CharacterControllerSpec> {
 }
 
 /// The properties a block or script can change during a run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum ControllerProperty {
     Enabled,
     Radius,

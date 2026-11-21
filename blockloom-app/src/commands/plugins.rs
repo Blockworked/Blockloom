@@ -264,7 +264,7 @@ fn installed(active: &ActivePlugins) -> Vec<InstalledDto> {
 
 /// Every component and resource type the installed plugins declare, with the
 /// fields and defaults the inspector builds its forms from.
-fn types_json(active: &ActivePlugins) -> Vec<Value> {
+pub(crate) fn types_json(active: &ActivePlugins) -> Vec<Value> {
     let mut out = Vec::new();
     for (plugin, p) in &active.plugins {
         let c = &p.package.contributions;

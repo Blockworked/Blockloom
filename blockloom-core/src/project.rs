@@ -16,6 +16,7 @@ use crate::components::{ActorComponent, CameraAttach, CameraView, Components};
 use crate::scene::{Mode, Physics, Placement, Visual, World};
 use crate::value::Evaluated;
 use blockloom_plugin_api::record::PluginRecord;
+use blockloom_schema_derive::Schema;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
@@ -73,7 +74,7 @@ fn blank_visual(mode: Mode) -> Visual {
 /// One thing in the world, with its own canvas. What the actor *is* lives in
 /// [`Actor::components`]; its `BlockGraph` is flattened into the same JSON
 /// object, so an actor still reads as one record.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(from = "ActorRepr")]
 pub struct Actor {
     pub id: String,
@@ -275,7 +276,7 @@ impl Actor {
 /// Each scene carries its own `World` (including `mode`), so v1 supports
 /// mixed 2D/3D scenes - a scene switch across dimensions rebuilds the
 /// dim2/dim3 pipeline the way a project dimension switch does today.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Scene {
     #[serde(default = "new_id")]
     pub id: String,
@@ -677,7 +678,7 @@ impl Scene {
 // exports still carry full scenes in memory.
 
 /// One entry in the project file's scene index.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct SceneRef {
     pub id: String,
     #[serde(default)]
@@ -692,7 +693,7 @@ pub struct SceneRef {
 
 /// The project file on disk: an index over scene assets plus everything that
 /// isn't per-scene. Scene files hold the actors and the world settings.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ProjectFile {
     #[serde(default = "new_id")]
     pub id: String,
@@ -738,7 +739,7 @@ pub struct ProjectFile {
 /// A scene asset file: its settings as components plus its actors. Older
 /// scene documents kept a fixed `world`; those still load - a file naming
 /// `components` wins, otherwise `world` is used, otherwise the default.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct SceneFile {
     #[serde(default = "new_id")]
     pub id: String,

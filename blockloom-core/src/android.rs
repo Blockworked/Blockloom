@@ -16,6 +16,7 @@
 //! install plus logcat tail behind the Build dialog's device rows.
 
 use crate::{project, script};
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -69,7 +70,7 @@ pub fn abi(triple: &str) -> Option<&'static str> {
 /// What the App Settings dialog keeps: where the SDK and NDK live and
 /// whether the user accepted their licenses. Keystore passwords never land
 /// here; release signing asks on each build.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Schema)]
 pub struct AppConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sdk_path: Option<PathBuf>,
@@ -205,7 +206,7 @@ pub fn ndk_dir(config: &AppConfig) -> PathBuf {
 
 /// The Play-store-style rows of Project settings. Old project files carry
 /// none of these, so everything defaults.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct AndroidSettings {
     /// Overrides `com.blockloom.game.<sanitized name>` when non-empty.
     #[serde(default)]
@@ -314,7 +315,7 @@ pub fn validate_application_id(id: &str) -> Result<(), String> {
 // `android-status` report these; the SDK install flow fixes them.
 
 /// One row of the Settings dialog: what was found and whether it is enough.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ToolStatus {
     pub ok: bool,
     pub detail: String,
@@ -610,7 +611,7 @@ pub fn rust_target_status(triple: &str) -> ToolStatus {
 }
 
 /// Everything `just android-check` reports: no device needed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct AndroidStatus {
     pub sdk_path: PathBuf,
     pub ndk_path: PathBuf,
@@ -702,7 +703,7 @@ pub fn readiness_for_config(config: &AppConfig, triple: &str) -> (bool, String) 
 }
 
 /// One connected device or emulator, as `adb devices` names it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Device {
     pub serial: String,
     pub state: String,
@@ -759,7 +760,7 @@ pub const BOOT_WAIT_SECS: u64 = 300;
 /// One virtual device: its AVD name, the adb serial while running (empty
 /// when off), and whether the boot completed. Joined from `emulator
 /// -list-avds` and `adb devices`, so one command draws the whole section.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct EmulatorState {
     pub name: String,
     pub serial: String,
@@ -771,7 +772,7 @@ pub struct EmulatorState {
 
 /// The emulator rows: whether this machine can boot anything, why not, and
 /// every AVD with its run state.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct EmulatorStatus {
     pub available: bool,
     pub detail: String,
@@ -786,7 +787,7 @@ pub struct EmulatorStatus {
 /// (empty when it hasn't yet), and whether the boot completed within the
 /// wait. A started-but-booting emulator is not an error: the dialog keeps
 /// polling `android_device_status` after it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct EmulatorBoot {
     pub avd: String,
     pub serial: String,
@@ -1410,7 +1411,7 @@ pub const MIRROR_MAX_WIDTH: u32 = 720;
 
 /// One polled screen: a `data:image/png;base64` URL the QML Image shows,
 /// its pixel size, and the device's own pixel size for input mapping.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct MirrorFrame {
     pub image: String,
     pub width: u32,
@@ -2072,7 +2073,7 @@ fn sdkmanager_error_tail(raw: &str) -> String {
 
 /// What happened when the install flow ran. Licenses are never accepted
 /// here; `still_missing` says what is left, including that step.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct InstallReport {
     pub sdk_path: PathBuf,
     pub downloaded_cmdline_tools: bool,
@@ -2212,7 +2213,7 @@ pub fn install_sdk() -> Result<InstallReport, String> {
 }
 
 /// The license step: the texts to read, and whether they were accepted.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct LicenseReport {
     pub text: String,
     pub accepted: bool,
@@ -2487,7 +2488,7 @@ pub const KEY_PASS_ENV: &str = "BLOCKLOOM_ANDROID_KEY_PASS";
 /// What the keyring holds for the open project's release key: whether this
 /// machine has a scriptable store at all, and which of the two passwords it
 /// keeps. The Build dialog reads this to say when typing is optional.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct KeyringStatus {
     pub available: bool,
     pub store_saved: bool,
@@ -2864,7 +2865,7 @@ pub struct ApkContents {
 }
 
 /// A finished APK: where it landed and what it carries.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ApkReport {
     pub apk: PathBuf,
     pub size: u64,
@@ -3407,7 +3408,7 @@ pub fn runtime_so_for(triple: &str) -> Result<PathBuf, String> {
 
 /// What an `adb install` plus launch did: the started component and the
 /// device it went to (empty when adb picked the only one).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ApkInstall {
     pub component: String,
     pub device: String,
@@ -3479,7 +3480,7 @@ fn install_apk_with_adb(
 
 /// What one `adb logcat` dump kept: the matching lines plus whether any
 /// reads as a native crash, which is what a smoke test fails on.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Logcat {
     pub lines: Vec<String>,
     pub panics: Vec<String>,

@@ -15,11 +15,12 @@
 //! - [`AnimationSpec::rig`] names a 2D skeleton (see [`crate::rig2d`]) the
 //!   clips drive instead of swapping frames.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// How a tween eases from 0 to 1. Travels as its name, which is what the
 /// easing dropdown on the tween blocks writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum TweenEasing {
     #[default]
     Linear,
@@ -114,7 +115,7 @@ fn elastic_out(t: f32) -> f32 {
 }
 
 /// What a flipbook does at its ends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum LoopMode {
     /// Stops on the last frame and fires `when animation ends`.
     #[default]
@@ -148,7 +149,7 @@ impl LoopMode {
 
 /// A run of cells on one sprite sheet: `count` cells from `first`, counted
 /// row-major over a `columns` x `rows` grid. A strip is one row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct SheetRange {
     #[serde(default)]
     pub image: String,
@@ -203,7 +204,7 @@ pub enum ClipFrame<'a> {
 
 /// A named point on a clip's frames: `when animation reaches marker` fires
 /// each time the frame it sits on starts showing.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct FrameMarker {
     #[serde(default)]
     pub frame: usize,
@@ -228,7 +229,7 @@ pub struct ClipCursor {
 /// `rig_animation` names the animation to play on the actor's rig instead;
 /// empty means the clip's own name. Without a rig that has it, the frames
 /// play, which is the flipbook fallback.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct AnimationClip {
     #[serde(default)]
     pub name: String,
@@ -461,7 +462,7 @@ impl AnimationClip {
 }
 
 /// How a variable transition compares.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum Compare {
     Less,
     LessOrEqual,
@@ -497,7 +498,7 @@ impl Compare {
 }
 
 /// What makes a transition fire.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "kind")]
 pub enum TransitionWhen {
     /// The state's clip ran out (a `Once` clip only).
@@ -518,7 +519,7 @@ pub enum TransitionWhen {
 
 /// A way out of a state. `blend` is the crossfade in seconds; a negative one
 /// takes the spec's default.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Transition {
     #[serde(default)]
     pub to: String,
@@ -535,7 +536,7 @@ fn default_blend() -> f32 {
 /// and where it goes. `next` is the old shorthand for an `Ended` transition;
 /// `transitions` are checked in order on every fixed tick, first match wins.
 /// `root_motion` lets the clip move the actor.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct AnimationState {
     #[serde(default)]
     pub name: String,
@@ -603,7 +604,7 @@ pub struct Taken<'a> {
 /// What the `Animation` component authors: the clips, the states over them,
 /// and optionally a 2D rig the clips drive. Empty by default, so an old
 /// project loads with nothing to play.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Schema)]
 pub struct AnimationSpec {
     #[serde(default)]
     pub clips: Vec<AnimationClip>,
@@ -628,7 +629,7 @@ pub struct AnimationSpec {
 }
 
 /// A skin tint for one rig slot.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct SlotTint {
     #[serde(default)]
     pub slot: String,

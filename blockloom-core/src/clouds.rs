@@ -1,7 +1,8 @@
 //! Persisted volumetric cloud settings. Distances are metres except tiling.
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub enum CloudQuality {
     Low,
     Medium,
@@ -19,7 +20,7 @@ impl CloudQuality {
         }
     }
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Clouds {
     pub enabled: bool,
@@ -279,7 +280,7 @@ pub fn noise_strip(kind: CloudNoise, size: u32, seed: u32) -> image::RgbaImage {
 }
 
 /// Which dial `set clouds _ to` writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum CloudProperty {
     Coverage,
     Density,

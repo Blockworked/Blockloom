@@ -253,6 +253,50 @@ the actor, and the world camera named the actor it followed. Both still load:
 `Actor` deserializes through `ActorRepr`, and `Project::normalize` moves the
 old `follow` onto its actor as a camera component.
 
+### Type registry
+
+Every built-in component and setting describes itself. `blockloom-schema-derive`
+is a `#[derive(Schema)]` that reads the serde attributes (renames, tags,
+`flatten`, `default`, `skip`) and emits a `blockloom_plugin_api::schema::Schema`
+impl, so a type's schema is the shape serde writes. The field types are the
+plugin ones plus `struct`, `map`, `optional`, `enum` (internally tagged or
+external) and `opaque` (a type with no `Schema`, picked by autoref
+specialization in `schema::__private`). `#[schema(...)]` adds drawing hints:
+`label`, `unit`, `min`/`max`/`step`, `slider`, `multiline`, `color`, `asset`,
+`actor`, `group`, `advanced`, `opaque`, `skip`, and `show_if`/`hide_if`
+(`kind = Spot`, `kind != Rect`, `kind in [Point, Spot]`, joined with `&&`; a
+field starting with `/` reads from the top of the component). A field's
+default is the container's `Default` where it has one, else its serde
+default.
+
+`blockloom-core/src/registry.rs` lists them: `COMPONENTS` (name, label,
+dimension, repeatable), `default_component(name, mode)`, the world settings
+(`world_fields`), `to_json(mode)` (what `type-registry` returns, ids blanked so
+it is stable) and checked writes (`set_component_property`,
+`set_world_property`, paths like `light.beam.motes.count`). The app's
+`commands/registry.rs` adds the open project's plugin types (`plugins`) and
+the generic commands: `type-registry`, `set-property
+target=world|actor:<id>/<Component> path=... value=...` (a built-in component
+through `set_actor_component`, a plugin one through `set_plugin_component`, a
+world setting through `write_world`, coalesced per path into one undo step)
+and `add-component` (registry defaults; Script and Collider keep their own
+commands). The `set_*` setters stay, and `set_fog` is a wrapper over
+`write_world`. MCP gets a `blockloom://types` resource, and `src/plugins.ts`'s
+`typeSchema` turns any registry or plugin field into zod
+(`integration.test.ts` checks every default fits).
+
+The editor fetches the registry once per project and dimension (`Main.qml`'s
+`typeRegistry`, `componentFields`, `worldField`) and draws schema-built cards
+with blockstitch's `PropertyForm`/`PropertyEditor` through `RegistryForm.qml`,
+which supplies the editor's color swatch, asset box and actor picker. The
+Light and Emitter cards and the Fog settings are drawn this way, and the
+add-component menu asks `add_component`, so their defaults are Rust's only.
+`blockloom-qt/tests/qml/fixtures/Registry3d.js` is the registry the QML tests
+(`tst_RegistryCards.qml`) read; `BLESS=1 cargo test -p blockloom-core --test
+registry_fixture` regenerates it after a schema change. A new hint or
+condition form is taught to `PropertyForm.qml` (blockstitch) and `typeSchema`
+in `mcp/src/plugins.ts`.
+
 ### Actors that come and go
 
 An actor's id is what everything keys it by, and a run can mint ids the

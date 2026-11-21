@@ -2,6 +2,7 @@
 //! pixelation, dither, colour quantize or a fixed palette, an edge outline
 //! and a CRT preset. The CPU functions are the reference the shader copies.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// Colours a palette may hold.
@@ -9,7 +10,7 @@ pub const MAX_PALETTE: usize = 32;
 /// Largest pixel block pixelation takes.
 pub const MAX_PIXEL_SIZE: u32 = 64;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Outline {
     /// 0-1, how dark (or bright) the edge is drawn; 0 is off.
@@ -29,7 +30,7 @@ impl Default for Outline {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Crt {
     /// 0-1, how dark the gaps between scanlines are.
@@ -59,7 +60,7 @@ impl Crt {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Post2d {
     /// Pixels in one block of the picture; 0 and 1 are off.

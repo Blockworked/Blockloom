@@ -9,12 +9,13 @@
 use super::controller::{self, CollisionFlags, ControllerProperty, MoveMode, MoveResult, Surface};
 use super::ids::ComponentId;
 use crate::scene::Mode;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// Whose hands are on the motor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum MotorOwner {
     /// The runtime fills the intent from the project's actions each tick.
     #[default]
@@ -26,7 +27,7 @@ pub enum MotorOwner {
 }
 
 /// What a direction intent is measured against.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum MoveSpace {
     World,
     /// Turned by the actor's own facing.
@@ -37,7 +38,7 @@ pub enum MoveSpace {
 }
 
 /// What a motor statement does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum MotorAction {
     /// Steer: the vector is the direction wanted (length 1 is full speed).
     #[default]
@@ -83,7 +84,7 @@ impl MotorAction {
 }
 
 /// A motor setting a block can change during a run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum MotorProperty {
     Enabled,
     #[default]
@@ -132,7 +133,7 @@ impl MotorProperty {
 
 /// A CharacterMotor component. Speeds are world units a second and sizes
 /// world units: metres in 3D, pixels in 2D (see [`CharacterMotorSpec::for_mode`]).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct CharacterMotorSpec {
     pub id: ComponentId,
@@ -323,7 +324,7 @@ pub struct MovementIntent {
 }
 
 /// What the motor tells the game about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum MotorEvent {
     Jump,
     #[default]

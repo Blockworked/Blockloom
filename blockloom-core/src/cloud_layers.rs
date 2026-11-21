@@ -2,6 +2,7 @@
 //! clouds, and the whole sky's clouds when those are off. Each layer's
 //! coverage is a grayscale texture, either an image asset or tileable FBM
 //! baked from its seed, remapped by coverage and contrast when drawn.
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 pub const MAX_LAYERS: usize = 4;
@@ -10,7 +11,7 @@ pub const COVERAGE_SIZE: u32 = 512;
 /// The side flow maps are resampled to.
 pub const FLOW_SIZE: u32 = 128;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct CloudLayer {
     pub enabled: bool,
@@ -169,7 +170,7 @@ impl CloudLayer {
 }
 
 /// Which dial `set cloud layer _ _ to` writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum CloudLayerProperty {
     Coverage,
     Opacity,
@@ -333,7 +334,7 @@ pub fn bake_coverage(layer: &CloudLayer, size: u32) -> Vec<u8> {
 }
 
 /// What a paint stroke does where it lands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub enum PaintTool {
     /// Adds cloud.
     Cloud,
@@ -345,7 +346,7 @@ pub enum PaintTool {
     Advect,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Brush {
     pub tool: PaintTool,

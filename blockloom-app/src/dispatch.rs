@@ -516,6 +516,20 @@ impl Backend {
                 arg(&args, "actorId")?,
                 arg(&args, "name")?,
             )?),
+            "type_registry" => commands::registry::type_registry(state),
+            "set_property" => to_json(commands::registry::set_property(
+                state,
+                app,
+                arg(&args, "target")?,
+                arg(&args, "path")?,
+                arg(&args, "value")?,
+            )?),
+            "add_component" => to_json(commands::registry::add_component(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "type")?,
+            )?),
             "add_actor_component" => {
                 let component: ActorComponent = arg(&args, "component")?;
                 to_json(commands::add_actor_component(

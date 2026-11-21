@@ -10,6 +10,7 @@
 //! functions here are the reference the shader copies.
 
 use crate::material::hex_to_linear;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::f32::consts::TAU;
 
@@ -22,7 +23,7 @@ pub const SHADOW_SAMPLES: usize = 256;
 /// Keys in the time-of-day ambient ramp.
 pub const MAX_RAMP_KEYS: usize = 24;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Schema)]
 pub enum Light2dKind {
     /// Shines every way from the actor.
     #[default]
@@ -33,7 +34,7 @@ pub enum Light2dKind {
 
 /// Flicker for torches and neon: the light's brightness wobbles by value
 /// noise on the run clock, so one seed replays the same.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Flicker {
     /// 0-1, how much of the brightness the noise can take away.
@@ -88,7 +89,7 @@ fn hash01(seed: u32, i: u32) -> f32 {
 }
 
 /// A point or spot light riding the actor, in world units (pixels in 2D).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Light2dSpec {
     pub kind: Light2dKind,
@@ -340,7 +341,7 @@ pub fn distance_map(origin: [f32; 2], range: f32, occluders: &[Occluder]) -> Vec
 
 /// The time-of-day ambient ramp's keys and everything else the world says
 /// about the 2D lit look. Off by default, so old projects look as they did.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Lighting2d {
     /// Light the 2D world: everything on a layer up to `unlit_above` is
@@ -375,7 +376,7 @@ impl Default for Lighting2d {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct AmbientKey {
     /// Hours, 0-24.
     pub hour: f32,

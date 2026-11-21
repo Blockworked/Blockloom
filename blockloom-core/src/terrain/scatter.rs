@@ -8,10 +8,11 @@
 use super::sculpt::{hash, unit, value_noise};
 use super::{Heightfield, Shape};
 use crate::material::hex_to_linear;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// A grass layer: blades growing on one paint layer (or everywhere).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct GrassLayer {
     pub name: String,
@@ -87,7 +88,7 @@ impl GrassLayer {
 }
 
 /// A procedural stand-in, drawn when a scatter layer names no model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum ScatterShape {
     /// A round crown on a trunk.
     #[default]
@@ -100,7 +101,7 @@ pub enum ScatterShape {
 
 /// A scatter layer: trees, rocks or props dotted over the ground by rule
 /// and by brush.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct ScatterLayer {
     pub name: String,

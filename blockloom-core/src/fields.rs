@@ -3,12 +3,13 @@
 
 use crate::blocks::{BlockDef, InputValueType, InstructionKind};
 use crate::value::Value;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 /// One addressable value slot on an [`InstructionKind`]. Travels as its
 /// `Display`/`FromStr` string form, which is what the frontend sends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum FieldId {
     MoveSteps,
     GoToX,

@@ -9,6 +9,7 @@
 //! Everything here is plain arithmetic over seconds, so the runtime owns the
 //! only clock there is.
 
+use blockloom_schema_derive::Schema;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +34,7 @@ fn ease(u: f32) -> f32 {
 
 /// One dolly key: where the camera stands at `at` seconds into its shot,
 /// where it looks, how far it rolls and an optional FOV.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct PathKey {
     pub at: f32,
@@ -70,7 +71,7 @@ impl PathKey {
 /// One shot: a camera actor's pose, an optional FOV, a length in seconds and
 /// an optional dolly path through it. An empty path holds the actor's pose
 /// for the shot - the plain camera cut.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Shot {
     pub camera: String,
@@ -109,7 +110,7 @@ impl Shot {
 }
 
 /// A signal marker: fires `when cutscene signal` strands at `at` seconds.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct SignalKey {
     pub at: f32,
@@ -128,7 +129,7 @@ impl SignalKey {
 
 /// A slow-motion key: eases the world's time scale to `scale` at `at`
 /// seconds. Only while no `set time scale` block has claimed the run.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct SlowKey {
     pub at: f32,
@@ -145,7 +146,7 @@ impl SlowKey {
 /// A volume-weight key: sets the named volume's weight at `at` seconds.
 /// Restored when the cutscene ends, so a timeline borrows the grade rather
 /// than keeping it.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct VolumeKey {
     pub at: f32,
@@ -166,7 +167,7 @@ impl VolumeKey {
 
 /// One reel: shots back to back, then the end. Signals, slow-motion and
 /// volume keys fire as the clock passes them.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Cutscene {
     pub name: String,

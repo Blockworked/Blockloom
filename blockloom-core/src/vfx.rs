@@ -10,6 +10,7 @@
 //! buffer the renderer draws.
 
 use crate::material::{ParticleSpec, hex_to_linear};
+use blockloom_schema_derive::Schema;
 // Core's glam isn't Bevy's: the runtime builds these through arrays.
 pub use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
@@ -30,7 +31,7 @@ pub const MAX_RIBBON_POINTS: u32 = 64;
 // ─── Curves ──────────────────────────────────────────────────────────────
 
 /// One key of a [`Curve`]: `v` at life fraction `t`.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct CurveKey {
     pub t: f32,
     pub v: f32,
@@ -38,7 +39,7 @@ pub struct CurveKey {
 
 /// A value over a particle's life (or along a ribbon), piecewise linear
 /// between keys and flat past the ends. No keys reads as 1.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Curve {
     #[serde(default)]
     pub keys: Vec<CurveKey>,
@@ -104,7 +105,7 @@ impl Curve {
 }
 
 /// One key of a [`Gradient`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct GradientKey {
     pub t: f32,
     pub color: String,
@@ -118,7 +119,7 @@ fn one() -> f32 {
 
 /// A color over life, multiplied over the emitter's start-to-end tint. Mixed
 /// in linear light. No keys reads as white.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Schema)]
 pub struct Gradient {
     #[serde(default)]
     pub keys: Vec<GradientKey>,
@@ -190,7 +191,7 @@ impl Gradient {
 
 /// Where a particle is born, in the emitter's frame (turned with the actor,
 /// not scaled by it).
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Schema)]
 #[serde(tag = "shape")]
 pub enum SpawnShape {
     /// The emitter's own position.
@@ -264,7 +265,7 @@ impl SpawnShape {
 }
 
 /// Which way a newborn particle flies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Schema)]
 pub enum LaunchDirection {
     /// Within the emitter's `spread` cone around the actor's facing.
     #[default]
@@ -276,7 +277,7 @@ pub enum LaunchDirection {
 /// A burst on the emitter's own clock: `count` particles at `time` seconds
 /// after the emitter starts, then every `interval` for `cycles` more (0
 /// cycles repeats for as long as it plays).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Burst {
     #[serde(default)]
     pub time: f32,
@@ -326,7 +327,7 @@ impl Burst {
 // ─── Update ──────────────────────────────────────────────────────────────
 
 /// One step of the update stack, run in order on every live particle.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "module")]
 pub enum UpdateModule {
     /// A constant push, world units per second squared.
@@ -499,7 +500,7 @@ impl UpdateModule {
 // ─── Render ──────────────────────────────────────────────────────────────
 
 /// How a particle's color lands on what is behind it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Schema)]
 pub enum ParticleBlend {
     /// Adds light: sparks, fire, magic. Order doesn't matter.
     #[default]
@@ -509,7 +510,7 @@ pub enum ParticleBlend {
 }
 
 /// Which way a billboard faces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Schema)]
 pub enum ParticleFacing {
     /// Always square to the camera.
     #[default]
@@ -522,23 +523,29 @@ pub enum ParticleFacing {
 
 /// A flipbook: an image cut into `columns` x `rows` frames, played left to
 /// right, top to bottom.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Flipbook {
     #[serde(default)]
+    #[schema(asset = "image")]
     pub image: String,
     #[serde(default = "one_cell")]
+    #[schema(min = 1, show_if = "image")]
     pub columns: u32,
     #[serde(default = "one_cell")]
+    #[schema(min = 1, show_if = "image")]
     pub rows: u32,
     /// Frames per second, or 0 to play the sheet once over the particle's
     /// life.
     #[serde(default)]
+    #[schema(label = "Frames", unit = "/s", min = 0, show_if = "image")]
     pub fps: f32,
     /// Start each particle on a random frame.
     #[serde(default)]
+    #[schema(show_if = "image")]
     pub random_start: bool,
     /// Cross-fade between frames rather than cutting.
     #[serde(default = "yes")]
+    #[schema(label = "Blend frames", show_if = "image")]
     pub blend: bool,
 }
 
@@ -569,7 +576,7 @@ impl Flipbook {
 }
 
 /// How the particles draw, and what changes over their lives.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ParticleRender {
     #[serde(default)]
     pub blend: ParticleBlend,
@@ -577,6 +584,7 @@ pub struct ParticleRender {
     pub facing: ParticleFacing,
     /// How long a velocity-facing particle stretches: seconds of travel.
     #[serde(default = "default_stretch")]
+    #[schema(show_if = "facing = Velocity")]
     pub stretch: f32,
     /// Lit by the scene's lights (3D) instead of glowing by itself.
     #[serde(default)]
@@ -592,15 +600,19 @@ pub struct ParticleRender {
     pub flipbook: Flipbook,
     /// Multiplies the start-to-end size over life.
     #[serde(default)]
+    #[schema(advanced)]
     pub size: Curve,
     /// Multiplies the start-to-end tint over life.
     #[serde(default)]
+    #[schema(label = "Color over life", advanced)]
     pub color: Gradient,
     /// Opacity over life. Defaults to fading out.
     #[serde(default = "fade_out")]
+    #[schema(advanced)]
     pub alpha: Curve,
     /// Degrees added to the particle's turn over life.
     #[serde(default = "zero_curve")]
+    #[schema(advanced)]
     pub rotation: Curve,
     /// Degrees a second each particle spins, with a random sign.
     #[serde(default)]
@@ -614,6 +626,7 @@ pub struct ParticleRender {
     /// How much light from behind a lit particle lets through, like thin
     /// smoke. 0 is opaque to it.
     #[serde(default)]
+    #[schema(min = 0, max = 1, show_if = "lit")]
     pub translucency: f32,
 }
 
@@ -650,7 +663,7 @@ impl Default for ParticleRender {
 }
 
 /// What a ribbon follows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Schema)]
 pub enum RibbonSource {
     /// Every particle drags its own ribbon.
     #[default]
@@ -661,40 +674,50 @@ pub enum RibbonSource {
 
 /// Ribbons: a strip through the last `points` places each particle (or the
 /// actor) has been.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct RibbonSpec {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
+    #[schema(label = "Follow", show_if = "enabled")]
     pub source: RibbonSource,
     /// Points of history, head included.
     #[serde(default = "default_points")]
+    #[schema(min = 2, show_if = "enabled")]
     pub points: u32,
     /// World units travelled before a new point is laid.
     #[serde(default = "default_step")]
+    #[schema(show_if = "enabled")]
     pub step: f32,
     /// Extra segments between two points, smoothed along a Catmull-Rom
     /// spline.
     #[serde(default = "default_tessellation")]
+    #[schema(label = "Smoothing", show_if = "enabled")]
     pub tessellation: u32,
     /// Full width at the head, in world units.
     #[serde(default = "default_width")]
+    #[schema(show_if = "enabled")]
     pub width: f32,
     /// Width along the ribbon, head (0) to tail (1).
     #[serde(default = "taper")]
+    #[schema(show_if = "enabled", advanced)]
     pub width_curve: Curve,
     /// Color along the ribbon, head to tail, over the particle's own tint.
     #[serde(default)]
+    #[schema(show_if = "enabled", advanced)]
     pub color: Gradient,
     /// Twist every segment to face the camera; otherwise the strip lies
     /// across the world's up.
     #[serde(default = "yes")]
+    #[schema(show_if = "enabled")]
     pub face_camera: bool,
     /// Brightness multiplier: past 1 makes glow trails in the HDR frame.
     #[serde(default = "one")]
+    #[schema(show_if = "enabled")]
     pub intensity: f32,
     /// Draw the particles' billboards as well as their ribbons.
     #[serde(default = "yes")]
+    #[schema(label = "Heads too", show_if = "enabled && source = Particles")]
     pub heads: bool,
 }
 
@@ -733,7 +756,7 @@ impl Default for RibbonSpec {
 }
 
 /// Where an emitter simulates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Schema)]
 pub enum SimMode {
     /// The GPU where the world can (3D with compute shaders), else the CPU.
     #[default]
@@ -743,7 +766,7 @@ pub enum SimMode {
 }
 
 /// Project-wide particle settings.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct VfxSettings {
     /// Live particles the whole world may hold. Emitters past it stop
     /// spawning until some die.
@@ -825,7 +848,7 @@ impl ParticleSense {
 }
 
 /// Which particle event a `when my particles` hat waits for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum ParticleEvent {
     #[default]
     Spawn,

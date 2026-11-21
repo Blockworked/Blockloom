@@ -8,12 +8,13 @@
 //! tick N are handed out from tick N+1 on, whatever the render rate was.
 
 use super::ColliderId;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 /// One side of a pair: the collider, the actor that carries it and the actor
 /// whose body owns it (none for scenery).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Schema)]
 pub struct Endpoint {
     pub collider: ColliderId,
     pub actor: String,
@@ -21,7 +22,9 @@ pub struct Endpoint {
 }
 
 /// Whether the pair pushes (a solid collision) or only overlaps (a trigger).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Schema,
+)]
 pub enum ContactKind {
     Collision,
     Trigger,
@@ -45,7 +48,7 @@ impl ContactKind {
 }
 
 /// Which kinds of pair a `when I touch` hat listens to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum ContactScope {
     /// Solid touches and trigger overlaps both: what the hat always did.
     #[default]
@@ -113,7 +116,7 @@ impl ContactPhase {
 }
 
 /// Why a pair ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum ExitReason {
     /// The shapes moved apart.
     Separated,
@@ -143,7 +146,7 @@ impl ExitReason {
 }
 
 /// One contact point, in world units.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default, Schema)]
 pub struct ContactPoint {
     pub point: [f32; 3],
     /// Negative while the shapes overlap.
@@ -152,7 +155,7 @@ pub struct ContactPoint {
 
 /// What a collision event knows about the touch. A trigger has none of it: it
 /// has identity and phase but no contact force to fabricate.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Schema)]
 pub struct ContactPayload {
     /// Points from the first collider of the pair towards the second.
     pub normal: [f32; 3],
@@ -164,7 +167,7 @@ pub struct ContactPayload {
 }
 
 /// What gameplay hears.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ContactEvent {
     /// The fixed tick the transition happened in.
     pub tick: u64,

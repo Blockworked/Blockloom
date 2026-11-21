@@ -6,11 +6,12 @@
 //! only supplies input, the target's pose and a swept ball.
 
 use crate::components::CameraView;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// A PlayerCamera component. Angles are degrees, lengths world units (metres
 /// in 3D, pixels in 2D).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct PlayerCameraSpec {
     pub enabled: bool,

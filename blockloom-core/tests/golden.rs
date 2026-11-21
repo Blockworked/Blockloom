@@ -321,3 +321,28 @@ fn regenerate_golden_inputs() {
     .unwrap();
     std::fs::create_dir_all(legacy.join("expected")).unwrap();
 }
+
+/// The derived schemas describe what serde really writes: every component
+/// and world in every fixture passes its own schema.
+#[test]
+fn golden_documents_pass_their_derived_schemas() {
+    use blockloom_plugin_api::schema::Schema;
+    blockloom_core::init();
+    let components = blockloom_core::components::ActorComponent::field_type();
+    let world = blockloom_core::scene::World::field_type();
+    for entry in std::fs::read_dir(fixtures()).unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let project = project::read_project_dir(&entry.path().join("input")).unwrap();
+        for scene in &project.scenes {
+            let errors = world.check_value(&serde_json::to_value(&scene.world).unwrap());
+            assert!(errors.is_empty(), "{name}: world {errors:?}");
+            for actor in &scene.actors {
+                for component in actor.components.iter() {
+                    let value = serde_json::to_value(component).unwrap();
+                    let errors = components.check_value(&value);
+                    assert!(errors.is_empty(), "{name}: {} {errors:?}", component.name());
+                }
+            }
+        }
+    }
+}

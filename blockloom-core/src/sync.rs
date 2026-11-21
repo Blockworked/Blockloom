@@ -16,6 +16,7 @@
 //! missing or unreadable file reads as "no lock" or "revision 0", and a bump
 //! that cannot be written never fails the save it rode along with.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -34,7 +35,7 @@ pub const HEARTBEAT_STALE_SECS: u64 = 30;
 pub const HEARTBEAT_TOUCH_EVERY_SECS: u64 = 10;
 
 /// Who owns a project folder right now: one backend's claim on it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct LockInfo {
     /// OS process holding the folder.
     pub pid: u32,
@@ -48,7 +49,7 @@ pub struct LockInfo {
     pub app: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Schema)]
 struct RevisionFile {
     #[serde(default)]
     revision: u64,

@@ -7,6 +7,7 @@
 //! that uses an include override or a priority gets the exact test from a physics
 //! hook instead (see [`needs_exact`]).
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 use super::spec::{LAYER_SLOTS, LayerOverrides};
@@ -20,7 +21,7 @@ pub fn layer_bit(layer: u8) -> u32 {
 /// Layer names and the pairs that do not collide, per dimension. Everything
 /// collides with everything until a pair is switched off, and a project that never
 /// touches layers writes nothing.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Schema)]
 pub struct LayerSettings {
     /// Names by slot (index 0 is layer 1); missing or empty names read as "Layer N".
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

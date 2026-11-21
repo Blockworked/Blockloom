@@ -1,8 +1,9 @@
 //! Property animations: easing, keys, tracks and sampling.
 use super::*;
+use blockloom_schema_derive::Schema;
 
 /// How a key eases into the next one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Schema)]
 pub enum UiEase {
     #[default]
     Linear,
@@ -24,14 +25,14 @@ impl UiEase {
 }
 
 /// A keyed value: a number, or a `#rrggbb[aa]` color for the color tracks.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(untagged)]
 pub enum UiKeyValue {
     Number(f64),
     Color(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct UiKey {
     pub time: f32,
     pub value: UiKeyValue,
@@ -41,7 +42,7 @@ pub struct UiKey {
 }
 
 /// One property of one widget over time.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct UiTrack {
     pub widget: String,
     pub property: UiProp,
@@ -144,7 +145,7 @@ impl UiTrack {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct UiAnimation {
     pub duration: f32,
     #[serde(default)]

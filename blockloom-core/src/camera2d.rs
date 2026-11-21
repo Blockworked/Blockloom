@@ -3,16 +3,17 @@
 //! PlayerCamera's (`player_camera.rs`); this lays its finishing rules over the
 //! pose it produced. All of it is plain arithmetic the runtime applies.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// The world rectangle the camera's view must stay inside.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Bounds {
     pub min: [f32; 2],
     pub max: [f32; 2],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Shake {
     /// Pixels the view can be thrown at full trauma.
@@ -36,7 +37,7 @@ impl Default for Shake {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Schema)]
 #[serde(default)]
 pub struct Camera2dSettings {
     pub lock_x: bool,

@@ -11,10 +11,11 @@
 //! fields as plain numbers and strings.
 
 use crate::value::Evaluated;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// What kind of element a `show` block makes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum UiKind {
     /// A vertical stack its children flow down, optionally modal.
     #[default]
@@ -132,7 +133,7 @@ impl UiKind {
 
 /// A set of defaults for elements that have not had the matching property
 /// written. Per-element styling always wins over the theme.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum UiTheme {
     #[default]
     Dark,
@@ -172,7 +173,7 @@ impl UiTheme {
 /// Its x/y offset is measured from there, so a window resize recomputes for
 /// free. Ignored for an element with a parent, which flows after its
 /// siblings instead.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum UiAnchor {
     TopLeft,
     Top,
@@ -236,7 +237,7 @@ impl UiAnchor {
 /// every kind: a property that means nothing for one (a `min` on a label) is
 /// simply ignored rather than being an error, since a HUD that rebuilds
 /// itself shouldn't have to know which is which.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum UiProp {
     #[default]
     Text,
@@ -362,7 +363,7 @@ impl UiProp {
 /// to`, by the name below in any case - anything else reads as
 /// [`UiAllow::Any`], since a typo that quietly deadened a field would be
 /// worse than one that quietly takes everything.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum UiAllow {
     #[default]
     Any,
@@ -648,7 +649,7 @@ pub fn snap(range: [f32; 2], step: f32, value: f64) -> f64 {
 ///
 /// `width`/`height` of zero mean "as big as the content needs". `parent`
 /// empty means the element hangs off the window rather than another element.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct UiElement {
     pub id: String,

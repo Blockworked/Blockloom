@@ -18,12 +18,13 @@
 //! - [`Tilemap`] is a grid of tiles over one tileset image, with
 //!   [`Tilemap::build_mesh`] turning it into vertices the runtime uploads.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 // ─── Surface materials ───────────────────────────────────────────────────
 
 /// What a surface is made of, on top of the look's own color or image.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct SurfaceMaterial {
     /// How metallic the surface reads, 0 (plastic) to 1 (mirror).
     #[serde(default)]
@@ -82,7 +83,7 @@ fn default_texel_density() -> f32 {
     1.0
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum TextureSampler {
     Repeat,
     Mirror,
@@ -182,7 +183,7 @@ impl SurfaceMaterial {
 /// and a mask stack laid over the surface by world rules. Drawn by the same
 /// shader as box projection (`blockloom::texturing`), so every dial here also
 /// works on a UV-mapped surface.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct SurfaceDetail {
     /// Texture bombing: each map is sampled from three randomly offset and
@@ -273,7 +274,7 @@ impl SurfaceDetail {
 /// tint and roughen it, then snow settles and wetness darkens and glosses.
 /// Snow and wetness scale by the world's snow cover and wetness, which the
 /// weather director and `set snow cover to` / `set surface wetness to` move.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Schema)]
 #[serde(default)]
 pub struct MaskStack {
     /// Steep faces, by degrees from flat.
@@ -350,7 +351,7 @@ impl MaskStack {
 
 /// A tint and roughness laid on wherever a value rises past `start`,
 /// ramping in over `blend`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct RuleMask {
     pub enabled: bool,
@@ -404,7 +405,7 @@ impl RuleMask {
 
 /// Snow that settles on faces flatter than `max_slope` and above
 /// `min_height`, as deep as the world's snow cover times `amount`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct SnowMask {
     pub enabled: bool,
@@ -466,7 +467,7 @@ impl SnowMask {
 
 /// Rain on the surface: darker albedo, a glossier finish, and water
 /// pooling in hollows first.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct WetnessMask {
     pub enabled: bool,
@@ -507,7 +508,7 @@ fn smooth(t: f32) -> f32 {
 
 /// The world's surface weather: what snow and wetness masks scale by. The
 /// weather director and blocks move it for the run.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default, Schema)]
 #[serde(default)]
 pub struct SurfaceWeather {
     /// Snow cover, 0 (none) to 1 (everything flat enough is white).
@@ -535,7 +536,7 @@ impl SurfaceWeather {
 /// The live effect a custom graph renders as. The graph is the portable
 /// source; this is the authored preview path, so the two agree by
 /// construction (see [`GraphEffect::starter_graph`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum EffectMode {
     /// Flat tint. The graph equivalent of no graph.
     #[default]
@@ -596,7 +597,7 @@ impl EffectMode {
 
 /// A custom surface effect: which motion, how fast, how strong, and the
 /// second color it plays against the look's own tint.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct GraphEffect {
     #[serde(default)]
     pub mode: EffectMode,
@@ -845,7 +846,7 @@ pub fn hex_to_linear(hex: &str) -> [f32; 4] {
 /// and every op is component-wise, so no type checker is needed - a graph
 /// that validates always emits. `Base` is the look's tint times its image,
 /// and `Secondary`/`Speed`/`Strength` read the effect's live uniforms.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "node")]
 pub enum GraphNode {
     Const { color: [f32; 4] },
@@ -920,7 +921,7 @@ impl GraphNode {
 }
 
 /// A shader graph: nodes plus which one colors the surface.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ShaderGraph {
     #[serde(default)]
     pub nodes: Vec<GraphNode>,
@@ -1444,45 +1445,58 @@ fn topo(
 
 /// A particle emitter: sparks, smoke, splash. Particles spawn at the actor,
 /// fly on their own, and fade out - moving the actor leaves them behind.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ParticleSpec {
     /// Particles per second. 0 emits nothing (a burst-only emitter).
     #[serde(default = "default_rate")]
+    #[schema(label = "Rate", unit = "/s", min = 0)]
     pub rate: f32,
     /// How long one particle lives, in seconds.
     #[serde(default = "default_lifetime")]
+    #[schema(label = "Life", unit = "s", min = 0)]
     pub lifetime: f32,
     /// Launch speed in world units per second.
     #[serde(default = "default_launch_speed")]
+    #[schema(min = 0)]
     pub speed: f32,
     /// Cone around the actor's facing particles launch into, in degrees.
     /// 360 sprays everywhere.
     #[serde(default = "default_spread")]
+    #[schema(unit = "°", min = 0, max = 360)]
     pub spread: f32,
     /// How much of the world's gravity pulls particles down. 0 floats.
     #[serde(default = "default_gravity")]
+    #[schema(label = "Gravity ×")]
     pub gravity_scale: f32,
     /// Particle size at birth and at death, in world units.
     #[serde(default = "default_size_start")]
+    #[schema(label = "Size start", min = 0)]
     pub size_start: f32,
     #[serde(default = "default_size_end")]
+    #[schema(label = "Size end", min = 0)]
     pub size_end: f32,
     /// Particle tint at birth and at death.
     #[serde(default = "default_color_start")]
+    #[schema(label = "Color start")]
     pub color_start: String,
     #[serde(default = "default_color_end")]
+    #[schema(label = "Color end")]
     pub color_end: String,
     /// Live particles per emitter before the oldest is reused.
     #[serde(default = "default_max")]
+    #[schema(min = 1, max = 65536)]
     pub max: u32,
     /// How much of the wind carries particles along, 0-1. Calm air carries
     /// nothing, so it only shows once the project has wind.
     #[serde(default = "default_wind")]
+    #[schema(label = "Wind ×", min = 0, max = 4)]
     pub wind: f32,
     /// The VFX graph: where particles are born and which way they fly.
     #[serde(default)]
+    #[schema(label = "Spawn shape")]
     pub shape: crate::vfx::SpawnShape,
     #[serde(default)]
+    #[schema(label = "Direction")]
     pub direction: crate::vfx::LaunchDirection,
     /// Bursts on the emitter's own clock, on top of `rate`.
     #[serde(default)]
@@ -1495,10 +1509,12 @@ pub struct ParticleSpec {
     #[serde(default)]
     pub ribbon: crate::vfx::RibbonSpec,
     #[serde(default)]
+    #[schema(label = "Runs on")]
     pub sim: crate::vfx::SimMode,
     /// Seconds one loop of the effect lasts: the burst clock's period in the
     /// scene view's preview.
     #[serde(default = "default_duration")]
+    #[schema(label = "Duration", unit = "s", min = 0.01)]
     pub duration: f32,
 }
 
@@ -1601,7 +1617,7 @@ impl ParticleSpec {
 
 /// A motion trail: fading snapshots of where the actor just was, for
 /// dashes, blades and comets.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct TrailSpec {
     /// Seconds between snapshots. Smaller is smoother and hungrier.
     #[serde(default = "default_interval")]
@@ -1648,7 +1664,7 @@ impl TrailSpec {
 /// In 2D it lies flat; in 3D it stands as a wall, one tile thick. A solid
 /// map collides tile by tile (see [`Tilemap::solid_rects`]), and a cell
 /// painted with an animated tile cycles through that animation's frames.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Tilemap {
     /// The tileset image, relative to the project folder.
     #[serde(default)]
@@ -1690,7 +1706,7 @@ pub struct Tilemap {
 
 /// One animated tile. Every cell painted `tile` shows `frames` in turn, at
 /// `fps` frames a second, all in step with each other.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct TileAnimation {
     pub tile: i32,
     #[serde(default)]

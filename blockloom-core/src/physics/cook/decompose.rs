@@ -8,11 +8,12 @@
 
 use super::hull::quickhull;
 use super::{CookControl, CookError, MAX_HULL_VERTICES, RawMesh, fail};
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
 
 /// How hard to decompose one mesh.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Decompose {
     /// The most hulls produced.
     #[serde(default = "default_hulls")]

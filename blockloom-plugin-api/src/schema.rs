@@ -51,6 +51,48 @@ pub enum FieldType {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_len: Option<usize>,
     },
+    /// Named fields, each with its own schema: a nested record.
+    Struct {
+        fields: Vec<FieldSchema>,
+    },
+    /// Text keys to values of one type.
+    Map {
+        value: Box<FieldType>,
+    },
+    /// A value of `inner`, or null.
+    Optional {
+        inner: Box<FieldType>,
+    },
+    /// One of several shapes. With a `tag` the value is an object whose `tag`
+    /// key names the variant, beside its fields; without one it is serde's
+    /// external form: the bare name, or `{name: payload}`.
+    Enum {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        tag: String,
+        variants: Vec<VariantSchema>,
+    },
+    /// Any JSON. A built-in type nothing describes yet; edited as raw JSON.
+    Opaque,
+}
+
+/// One shape an [`FieldType::Enum`] can take.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VariantSchema {
+    pub name: String,
+    /// The variant's own fields, for a struct-like variant.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<FieldSchema>,
+    /// The payload of a newtype variant (`Name(T)`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inner: Option<Box<FieldType>>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+}
+
+impl VariantSchema {
+    fn is_unit(&self) -> bool {
+        self.fields.is_empty() && self.inner.is_none()
+    }
 }
 
 fn any_kind() -> String {
@@ -91,6 +133,12 @@ pub struct FieldUi {
     /// The field is drawn only while this holds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_when: Option<Condition>,
+    /// A heading the field is drawn under, beside others naming it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub group: String,
+    /// Folded away with the other advanced fields until asked for.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub advanced: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,16 +150,26 @@ pub enum Widget {
     Multiline,
 }
 
-/// A test on another field of the same record. With neither `equals` nor
-/// `not_equals` it holds while the field is truthy (true, a non-zero number
-/// or a non-empty text or list).
+/// A test on another field of the same record. With no comparison it holds
+/// while the field is truthy (true, a non-zero number or a non-empty text or
+/// list). A built-in type's `field` may be a dotted path (`beam.density`), or
+/// start with `/` to read from the top of the component.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Condition {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub field: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub equals: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub not_equals: Option<Value>,
+    /// Holds while the field is one of these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub one_of: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub not_one_of: Vec<Value>,
+    /// Every one of these must hold too.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub all: Vec<Condition>,
 }
 
 /// Fields drawn together under one heading.
@@ -187,7 +245,43 @@ impl FieldType {
             FieldType::Choice { options } => json!(options.first().cloned().unwrap_or_default()),
             FieldType::Asset { .. } | FieldType::Actor => json!(""),
             FieldType::List { .. } => json!([]),
+            FieldType::Struct { fields } => Value::Object(
+                fields
+                    .iter()
+                    .map(|f| (f.name.clone(), f.default_value()))
+                    .collect(),
+            ),
+            FieldType::Map { .. } => json!({}),
+            FieldType::Optional { .. } | FieldType::Opaque => Value::Null,
+            FieldType::Enum { tag, variants } => match variants.first() {
+                None => Value::Null,
+                Some(v) => v.zero(tag),
+            },
         }
+    }
+
+    /// What is wrong with `value` as this type; empty when nothing is.
+    pub fn check_value(&self, value: &Value) -> Vec<SchemaError> {
+        let mut errors = Vec::new();
+        self.check("", value, &mut errors);
+        errors
+    }
+
+    /// The variant `value` holds, for an [`FieldType::Enum`].
+    pub fn variant_of<'a>(&'a self, value: &Value) -> Option<&'a VariantSchema> {
+        let FieldType::Enum { tag, variants } = self else {
+            return None;
+        };
+        let name = if tag.is_empty() {
+            match value {
+                Value::String(s) => Some(s.as_str()),
+                Value::Object(map) if map.len() == 1 => map.keys().next().map(String::as_str),
+                _ => None,
+            }
+        } else {
+            value.get(tag).and_then(Value::as_str)
+        }?;
+        variants.iter().find(|v| v.name == name)
     }
 
     fn check(&self, at: &str, value: &Value, errors: &mut Vec<SchemaError>) {
@@ -256,6 +350,37 @@ impl FieldType {
                 }
                 None => errors.push(err(at, "expected a list")),
             },
+            FieldType::Struct { fields } => match value.as_object() {
+                Some(object) => {
+                    for field in fields {
+                        if let Some(v) = object.get(&field.name) {
+                            field.ty.check(&join(at, &field.name), v, errors);
+                        }
+                    }
+                }
+                None => errors.push(err(at, "expected an object")),
+            },
+            FieldType::Map { value: item } => match value.as_object() {
+                Some(object) => {
+                    for (k, v) in object {
+                        item.check(&join(at, k), v, errors);
+                    }
+                }
+                None => errors.push(err(at, "expected an object")),
+            },
+            FieldType::Optional { inner } => {
+                if !value.is_null() {
+                    inner.check(at, value, errors);
+                }
+            }
+            FieldType::Enum { tag, variants } => match self.variant_of(value) {
+                Some(variant) => variant.check(tag, at, value, errors),
+                None => {
+                    let names: Vec<&str> = variants.iter().map(|v| v.name.as_str()).collect();
+                    errors.push(err(at, format!("expected one of {}", names.join(", "))));
+                }
+            },
+            FieldType::Opaque => {}
         }
     }
 
@@ -280,6 +405,32 @@ impl FieldType {
                     item.collect(&format!("{at}[{i}]"), v, out);
                 }
             }
+            (FieldType::Struct { fields }, Value::Object(object)) => {
+                for field in fields {
+                    if let Some(v) = object.get(&field.name) {
+                        field.ty.collect(&join(at, &field.name), v, out);
+                    }
+                }
+            }
+            (FieldType::Map { value: item }, Value::Object(object)) => {
+                for (k, v) in object {
+                    item.collect(&join(at, k), v, out);
+                }
+            }
+            (FieldType::Optional { inner }, v) if !v.is_null() => inner.collect(at, v, out),
+            (FieldType::Enum { tag, .. }, v) => {
+                if let Some(variant) = self.variant_of(v) {
+                    let body = variant.body(tag, v);
+                    if let Some(inner) = &variant.inner {
+                        inner.collect(at, body, out);
+                    }
+                    for field in &variant.fields {
+                        if let Some(fv) = body.get(&field.name) {
+                            field.ty.collect(&join(at, &field.name), fv, out);
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -298,7 +449,196 @@ impl FieldType {
                 Err(format!("{at}: a choice needs options"))
             }
             FieldType::List { item, .. } => item.check_definition(at),
+            FieldType::Map { value } => value.check_definition(at),
+            FieldType::Optional { inner } => inner.check_definition(at),
+            FieldType::Struct { fields } => check_nested(fields, at),
+            FieldType::Enum { variants, .. } => {
+                if variants.is_empty() {
+                    return Err(format!("{at}: an enum needs variants"));
+                }
+                let mut seen = BTreeSet::new();
+                for variant in variants {
+                    if !seen.insert(variant.name.as_str()) {
+                        return Err(format!("{at}: two variants named {}", variant.name));
+                    }
+                    if let Some(inner) = &variant.inner {
+                        inner.check_definition(&join(at, &variant.name))?;
+                    }
+                    check_nested(&variant.fields, &join(at, &variant.name))?;
+                }
+                Ok(())
+            }
             _ => Ok(()),
+        }
+    }
+
+    /// Follows a dotted `path` (`height.distance`, `targets.2`) to the type
+    /// of the value there. An enum step looks inside `value`'s current
+    /// variant, so a path into a variant's fields needs the value.
+    pub fn at_path<'a>(&'a self, path: &[&str], value: &Value) -> Option<&'a FieldType> {
+        let Some((first, rest)) = path.split_first() else {
+            return Some(self);
+        };
+        let next = value.get(*first).or_else(|| {
+            first
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| value.as_array()?.get(i))
+        });
+        let null = Value::Null;
+        let next = next.unwrap_or(&null);
+        match self {
+            FieldType::Struct { fields } => fields
+                .iter()
+                .find(|f| f.name == *first)?
+                .ty
+                .at_path(rest, next),
+            FieldType::Map { value: item } => item.at_path(rest, next),
+            FieldType::List { item, .. } => {
+                first.parse::<usize>().ok()?;
+                item.at_path(rest, next)
+            }
+            FieldType::Optional { inner } => inner.at_path(path, value),
+            FieldType::Enum { tag, .. } => {
+                let variant = self.variant_of(value)?;
+                let body = variant.body(tag, value);
+                if let Some(inner) = &variant.inner {
+                    return inner.at_path(path, body);
+                }
+                let field = variant.fields.iter().find(|f| f.name == *first)?;
+                field.ty.at_path(rest, body.get(*first).unwrap_or(&null))
+            }
+            FieldType::Vec3 => {
+                matches!(*first, "0" | "1" | "2").then_some(())?;
+                if rest.is_empty() { Some(&NUMBER) } else { None }
+            }
+            FieldType::Opaque => Some(self),
+            _ => None,
+        }
+    }
+
+    /// Writes the schema's defaults into every nested field that has none,
+    /// reading them out of `default`, a whole value of this type.
+    pub fn fill_defaults(&mut self, default: &Value) {
+        match self {
+            FieldType::Struct { fields } => fill_field_defaults(fields, default),
+            FieldType::Optional { inner } if !default.is_null() => inner.fill_defaults(default),
+            FieldType::Enum { tag, variants } => {
+                let tag = tag.clone();
+                if let Some(variant) = variants.iter_mut().find(|v| {
+                    if tag.is_empty() {
+                        default.as_str() == Some(v.name.as_str()) || default.get(&v.name).is_some()
+                    } else {
+                        default.get(&tag).and_then(Value::as_str) == Some(v.name.as_str())
+                    }
+                }) {
+                    let body = if tag.is_empty() {
+                        default.get(&variant.name).cloned().unwrap_or(Value::Null)
+                    } else {
+                        default.clone()
+                    };
+                    if let Some(inner) = &mut variant.inner {
+                        inner.fill_defaults(&body);
+                    }
+                    fill_field_defaults(&mut variant.fields, &body);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+static NUMBER: FieldType = FieldType::Number {
+    min: None,
+    max: None,
+};
+
+/// Sets each field's default from `default[name]`, recursing into records.
+pub fn fill_field_defaults(fields: &mut [FieldSchema], default: &Value) {
+    for field in fields {
+        if let Some(value) = default.get(&field.name) {
+            field.default = Some(value.clone());
+            field.ty.fill_defaults(value);
+        } else if field.default.is_none() {
+            // Serde skipped it as empty (`skip_serializing_if`).
+            field.default = match field.ty {
+                FieldType::Optional { .. } => Some(Value::Null),
+                FieldType::Map { .. } => Some(json!({})),
+                FieldType::List { .. } => Some(json!([])),
+                FieldType::Bool => Some(json!(false)),
+                FieldType::Text { .. } => Some(json!("")),
+                _ => None,
+            };
+        }
+    }
+}
+
+fn join(at: &str, name: &str) -> String {
+    if at.is_empty() {
+        name.to_string()
+    } else {
+        format!("{at}.{name}")
+    }
+}
+
+/// [`check_fields`] for a nested record: names are serde keys, so any
+/// non-empty unique name will do.
+fn check_nested(fields: &[FieldSchema], at: &str) -> Result<(), String> {
+    let mut seen = BTreeSet::new();
+    for field in fields {
+        if field.name.is_empty() || !seen.insert(field.name.as_str()) {
+            return Err(format!("{at}: bad or repeated field name {:?}", field.name));
+        }
+        field.ty.check_definition(&join(at, &field.name))?;
+    }
+    Ok(())
+}
+
+impl VariantSchema {
+    fn zero(&self, tag: &str) -> Value {
+        let body = || -> Value {
+            if let Some(inner) = &self.inner {
+                return inner.zero();
+            }
+            Value::Object(
+                self.fields
+                    .iter()
+                    .map(|f| (f.name.clone(), f.default_value()))
+                    .collect(),
+            )
+        };
+        if !tag.is_empty() {
+            let mut object = match body() {
+                Value::Object(map) => map,
+                _ => Map::new(),
+            };
+            object.insert(tag.to_string(), json!(self.name));
+            Value::Object(object)
+        } else if self.is_unit() {
+            json!(self.name)
+        } else {
+            json!({ self.name.clone(): body() })
+        }
+    }
+
+    /// The part of `value` holding this variant's payload.
+    fn body<'a>(&self, tag: &str, value: &'a Value) -> &'a Value {
+        if tag.is_empty() {
+            value.get(&self.name).unwrap_or(&Value::Null)
+        } else {
+            value
+        }
+    }
+
+    fn check(&self, tag: &str, at: &str, value: &Value, errors: &mut Vec<SchemaError>) {
+        let body = self.body(tag, value);
+        if let Some(inner) = &self.inner {
+            inner.check(at, body, errors);
+        }
+        for field in &self.fields {
+            if let Some(v) = body.get(&field.name) {
+                field.ty.check(&join(at, &field.name), v, errors);
+            }
         }
     }
 }
@@ -397,6 +737,14 @@ fn check_ui(
             return Err(format!("{at}: step must be above zero"));
         }
         if let Some(condition) = &ui.visible_when {
+            if !condition.all.is_empty()
+                || !condition.one_of.is_empty()
+                || !condition.not_one_of.is_empty()
+            {
+                return Err(format!(
+                    "{at}: a plugin's visible_when takes equals or not_equals only"
+                ));
+            }
             if condition.field == field.name {
                 return Err(format!("{at}: visible_when can't name the field itself"));
             }
@@ -1789,5 +2137,249 @@ mod tests {
             json!({"groups": [{"label": "G", "fields": ["a"]}, {"label": "H", "fields": ["a"]}]}),
         );
         assert!(e.contains("twice"), "{e}");
+    }
+}
+
+// ─── Describing Rust types ─────────────────────────────────────────────────
+
+/// A type that can say what its serialized form looks like, as the same
+/// [`FieldType`] plugin schemas use. `#[derive(Schema)]` (crate
+/// `blockloom-schema-derive`) writes it for structs and enums.
+pub trait Schema {
+    fn field_type() -> FieldType;
+    /// The Rust name, for messages and the registry.
+    fn type_name() -> &'static str {
+        ""
+    }
+}
+
+macro_rules! int_schema {
+    ($($t:ty => $min:expr),* $(,)?) => {
+        $(impl Schema for $t {
+            fn field_type() -> FieldType {
+                FieldType::Int { min: $min, max: None }
+            }
+        })*
+    };
+}
+
+int_schema!(i8 => None, i16 => None, i32 => None, i64 => None, isize => None,
+    u8 => Some(0), u16 => Some(0), u32 => Some(0), u64 => Some(0), usize => Some(0));
+
+impl Schema for bool {
+    fn field_type() -> FieldType {
+        FieldType::Bool
+    }
+}
+
+impl Schema for f32 {
+    fn field_type() -> FieldType {
+        FieldType::Number {
+            min: None,
+            max: None,
+        }
+    }
+}
+
+impl Schema for f64 {
+    fn field_type() -> FieldType {
+        FieldType::Number {
+            min: None,
+            max: None,
+        }
+    }
+}
+
+impl Schema for String {
+    fn field_type() -> FieldType {
+        FieldType::Text { max_len: None }
+    }
+}
+
+impl<T: Schema> Schema for Option<T> {
+    fn field_type() -> FieldType {
+        FieldType::Optional {
+            inner: Box::new(__private::guarded::<T>()),
+        }
+    }
+}
+
+impl<T: Schema> Schema for Vec<T> {
+    fn field_type() -> FieldType {
+        FieldType::List {
+            item: Box::new(__private::guarded::<T>()),
+            max_len: None,
+        }
+    }
+}
+
+impl<T: Schema> Schema for Box<T> {
+    fn field_type() -> FieldType {
+        __private::guarded::<T>()
+    }
+}
+
+impl<T: Schema, const N: usize> Schema for [T; N] {
+    fn field_type() -> FieldType {
+        let item = __private::guarded::<T>();
+        if N == 3 && matches!(item, FieldType::Number { .. }) {
+            return FieldType::Vec3;
+        }
+        FieldType::List {
+            item: Box::new(item),
+            max_len: Some(N),
+        }
+    }
+}
+
+impl<T: Schema> Schema for BTreeMap<String, T> {
+    fn field_type() -> FieldType {
+        FieldType::Map {
+            value: Box::new(__private::guarded::<T>()),
+        }
+    }
+}
+
+impl<T: Schema, S> Schema for std::collections::HashMap<String, T, S> {
+    fn field_type() -> FieldType {
+        FieldType::Map {
+            value: Box::new(__private::guarded::<T>()),
+        }
+    }
+}
+
+impl Schema for Value {
+    fn field_type() -> FieldType {
+        FieldType::Opaque
+    }
+}
+
+/// What `#[derive(Schema)]` expands to. Not for direct use.
+#[doc(hidden)]
+pub mod __private {
+    use super::{FieldType, Schema};
+
+    /// A field's serde default as JSON.
+    pub fn default_of<T: serde::Serialize>(value: T) -> Option<serde_json::Value> {
+        serde_json::to_value(value).ok()
+    }
+    use std::marker::PhantomData;
+
+    /// Picks `T`'s `Schema` impl when it has one and `Opaque` when not
+    /// (autoref specialization: the `Schema` method needs one fewer `&`).
+    pub struct Probe<T: ?Sized>(PhantomData<T>);
+
+    impl<T: ?Sized> Probe<T> {
+        pub fn new() -> Self {
+            Probe(PhantomData)
+        }
+    }
+
+    impl<T: ?Sized> Default for Probe<T> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    pub trait ViaSchema {
+        fn __field_type(&self) -> FieldType;
+    }
+
+    impl<T: Schema> ViaSchema for Probe<T> {
+        fn __field_type(&self) -> FieldType {
+            guarded::<T>()
+        }
+    }
+
+    std::thread_local! {
+        static EXPANDING: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// `T::field_type()`, except that a type met again inside itself (a
+    /// tree of nodes) is `Opaque` there rather than expanding forever.
+    pub fn guarded<T: Schema>() -> FieldType {
+        let name = std::any::type_name::<T>();
+        if EXPANDING.with(|e| e.borrow().contains(&name)) {
+            return FieldType::Opaque;
+        }
+        EXPANDING.with(|e| e.borrow_mut().push(name));
+        let ty = T::field_type();
+        EXPANDING.with(|e| {
+            e.borrow_mut().pop();
+        });
+        ty
+    }
+
+    pub trait ViaOpaque {
+        fn __field_type(&self) -> FieldType;
+    }
+
+    impl<T: ?Sized> ViaOpaque for &Probe<T> {
+        fn __field_type(&self) -> FieldType {
+            FieldType::Opaque
+        }
+    }
+
+    /// Field hints that change the type itself.
+    pub struct Refine {
+        pub color: bool,
+        pub asset: Option<&'static str>,
+        pub actor: bool,
+        pub min: Option<f64>,
+        pub max: Option<f64>,
+    }
+
+    pub fn refine(ty: FieldType, hints: Refine) -> FieldType {
+        let text = |ty: &FieldType| match ty {
+            FieldType::Text { .. } => true,
+            FieldType::Optional { inner } => matches!(**inner, FieldType::Text { .. }),
+            _ => false,
+        };
+        let swap = |ty: FieldType, to: FieldType| match ty {
+            FieldType::Optional { .. } => FieldType::Optional {
+                inner: Box::new(to),
+            },
+            _ => to,
+        };
+        let ty = if let Some(kind) = hints.asset {
+            swap(
+                ty,
+                FieldType::Asset {
+                    kind: kind.to_string(),
+                },
+            )
+        } else if hints.actor && text(&ty) {
+            swap(ty, FieldType::Actor)
+        } else if hints.color && text(&ty) {
+            swap(ty, FieldType::Color)
+        } else {
+            ty
+        };
+        bound(ty, hints.min, hints.max)
+    }
+
+    fn bound(ty: FieldType, lo: Option<f64>, hi: Option<f64>) -> FieldType {
+        if lo.is_none() && hi.is_none() {
+            return ty;
+        }
+        match ty {
+            FieldType::Number { min, max } => FieldType::Number {
+                min: lo.or(min),
+                max: hi.or(max),
+            },
+            FieldType::Int { min, max } => FieldType::Int {
+                min: lo.map(|n| n as i64).or(min),
+                max: hi.map(|n| n as i64).or(max),
+            },
+            FieldType::Optional { inner } => FieldType::Optional {
+                inner: Box::new(bound(*inner, lo, hi)),
+            },
+            other => other,
+        }
+    }
+
+    /// A `show_if = "field=value"` value: JSON when it parses, else text.
+    pub fn parse_value(text: &str) -> serde_json::Value {
+        serde_json::from_str(text).unwrap_or_else(|_| serde_json::Value::String(text.to_string()))
     }
 }

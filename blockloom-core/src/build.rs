@@ -20,6 +20,7 @@ use crate::distribution;
 use crate::pack::{self, GamePack};
 use crate::project::{self, Project};
 use crate::script;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -163,7 +164,7 @@ pub fn script_target(target: &Target) -> Option<&'static str> {
 
 /// What one platform can do for this project right now, as the Build dialog
 /// lists it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct TargetStatus {
     pub triple: String,
     pub label: String,
@@ -1038,7 +1039,7 @@ const ANDROID_FINGERPRINT_FILE: &str = ".blockloom-android-fingerprint.json";
 
 /// What a cache hit returns without rebuilding: the counts a fresh build
 /// would have reported, plus the fingerprint they were built from.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 struct AndroidBuildCache {
     fingerprint: String,
     assets: usize,

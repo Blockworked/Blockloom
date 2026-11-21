@@ -2,10 +2,11 @@
 //! `.r16`/`.raw` (little-endian u16) and `.r32` (little-endian f32) samples,
 //! the way terrain tools export them. All decode to heights in 0-1.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// What a heightmap holds.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct HeightInfo {
     /// `image`, `r16` or `r32`.
     pub source: String,

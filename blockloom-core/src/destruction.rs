@@ -1,5 +1,6 @@
 //! Deterministic convex fracture and bounded grids for small fluid effects.
 
+use blockloom_schema_derive::Schema;
 pub use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +8,7 @@ pub const SHARD_CAP: usize = 256;
 pub const GRID: usize = 64;
 pub const SMOKE_CAP: usize = 16;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct FractureSpec {
     pub cells: u32,
@@ -184,7 +185,7 @@ pub fn box_hull(size: Vec3) -> Vec<Face> {
 }
 
 /// One world-space surface map. Channels are scorch and wetness.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Schema)]
 pub struct SurfaceMap {
     pub origin: [f32; 2],
     pub extent: f32,

@@ -8,6 +8,7 @@ import {
   changesPluginCommands,
   pluginToolName,
   pluginToolSchema,
+  typeSchema,
   type PluginCommand,
 } from "./plugins.js";
 
@@ -66,4 +67,36 @@ test("only project and plugin changes make the tool list stale", () => {
   for (const tool of ["get-state", "add-actor"]) {
     assert.ok(!changesPluginCommands(tool), tool);
   }
+});
+
+test("registry field types become schemas: struct, map, optional, enum", () => {
+  const light = typeSchema({
+    name: "light",
+    type: "struct",
+    fields: [
+      { name: "intensity", type: "number", min: 0, default: 800 },
+      { name: "tags", type: "map", value: { name: "v", type: "text" }, default: {} },
+      { name: "cookie", type: "optional", inner: { name: "c", type: "asset" }, default: null },
+      {
+        name: "kind",
+        type: "enum",
+        variants: [{ name: "Point" }, { name: "Spot", fields: [{ name: "cone", type: "number" }] }],
+        default: "Point",
+      },
+      {
+        name: "shape",
+        type: "enum",
+        tag: "kind",
+        variants: [{ name: "Box", fields: [{ name: "size", type: "vec3" }] }, { name: "Ball" }],
+        default: { kind: "Ball" },
+      },
+      { name: "extra", type: "opaque", default: null },
+    ],
+  });
+  assert.ok(light.safeParse({}).success, "defaulted fields may be left out");
+  assert.ok(light.safeParse({ intensity: 5, cookie: "assets/c.png", kind: { Spot: { cone: 30 } } }).success);
+  assert.ok(light.safeParse({ shape: { kind: "Box", size: [1, 2, 3] } }).success);
+  assert.ok(!light.safeParse({ intensity: -1 }).success, "bounds still hold");
+  assert.ok(!light.safeParse({ kind: "Rect" }).success, "an unknown variant is refused");
+  assert.ok(!light.safeParse({ shape: { kind: "Cone" } }).success, "an unknown tag is refused");
 });

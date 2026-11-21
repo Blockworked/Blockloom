@@ -8,9 +8,10 @@ use crate::scene::{Axis, BodyKind};
 use crate::sound::SoundBus;
 use crate::ui::{UiElement, UiProp, UiTheme};
 use crate::value::Evaluated;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "effect")]
 pub enum Effect {
     /// Forward along the actor's own facing.

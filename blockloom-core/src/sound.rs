@@ -7,12 +7,13 @@
 //! a `set bus volume` block moves them mid-run without touching the document,
 //! the same split world gravity has.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// One mixing bus. `Master` scales everything; `Music` and `Sfx` scale their
 /// own voices on top of it, so the effective gain of a voice is always
 /// `master * bus * voice`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum SoundBus {
     Master,
     Music,
@@ -49,7 +50,7 @@ impl SoundBus {
 /// The saved mix: one linear gain per bus. `1.0` is unity - the file as
 /// mastered - and the runtime clamps live writes to twice that, so a block
 /// can push a whisper without blowing the speakers out.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct SoundMixer {
     #[serde(default = "unity")]
     pub master_volume: f32,

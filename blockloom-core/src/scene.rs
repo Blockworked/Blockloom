@@ -2,6 +2,7 @@
 //! and how it's viewed. Shared verbatim between the editor (which edits it)
 //! and the runtime (which renders it).
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 use crate::input::InputConfig;
@@ -9,7 +10,7 @@ use crate::sound::SoundMixer;
 
 /// Which dimension a project runs in. Blocks are written once and mean the
 /// obvious thing in both: a Z coordinate is simply ignored in `TwoD`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum Mode {
     #[default]
     TwoD,
@@ -39,7 +40,7 @@ impl Mode {
 
 /// One axis of a position, rotation or velocity. Travels as its name, which
 /// is what an in-place dropdown on the block writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum Axis {
     #[default]
     X,
@@ -60,7 +61,7 @@ impl Axis {
 /// What an actor looks like. The first three are 2D; the rest are 3D. An
 /// actor's visual also decides the collider its body gets, so a project
 /// never has to describe the same shape twice.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "shape")]
 pub enum Visual {
     Rect {
@@ -158,7 +159,7 @@ impl Visual {
 
 /// How the physics engine treats an actor. `None` means the actor is moved
 /// only by its own blocks - no collider, no gravity, nothing to push it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum BodyKind {
     #[default]
     None,
@@ -172,7 +173,7 @@ pub enum BodyKind {
 
 /// An actor's physics settings. The collider shape isn't here: it's derived
 /// from [`Visual`], so the two can't disagree.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Physics {
     #[serde(default)]
     pub body: BodyKind,
@@ -290,7 +291,7 @@ impl Physics {
 
 /// An actor's place in the world. Rotation is Euler degrees per axis, which
 /// is what the blocks talk in; the runtime converts once on the way to Bevy.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Placement {
     #[serde(default)]
     pub position: [f32; 3],
@@ -338,7 +339,7 @@ impl Default for Placement {
 /// matters; in `ThreeD` the camera sits at `position` looking at `look_at`.
 /// An actor carrying a [`crate::components::ActorComponent::Camera`] takes it
 /// over from there.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Camera {
     #[serde(default = "default_camera_position")]
     pub position: [f32; 3],
@@ -371,7 +372,7 @@ impl Default for Camera {
 /// The project-wide presentation of an actor's `say` bubble. Keeping this in
 /// the saved scene, rather than in the VM or renderer, lets a future asset UI
 /// expose themes and imported fonts without changing how the block executes.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct SpeechBubbleStyle {
     #[serde(default = "default_bubble_background")]
     pub background: String,
@@ -440,7 +441,7 @@ impl Default for SpeechBubbleStyle {
 /// How a 3D project is lit. Stored on every project but only read by the
 /// 3D runtime; 2D sprites ignore it. Defaults reproduce the old hardcoded
 /// scenery (one bright directional light, modest ambient, AO off).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Lighting {
     /// Reusable lighting asset; inline values remain the fallback if it is missing.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -490,7 +491,7 @@ pub struct Lighting {
 }
 
 /// What cleans up ray-traced lighting's noise.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum Denoiser {
     /// The best this build has: ReSTIR's reuse (hybrid tracing) under
     /// Blockloom's spatiotemporal filter. No build carries DLSS Ray
@@ -518,7 +519,7 @@ impl Denoiser {
 }
 
 /// How ray-traced lighting is worked out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum TracingMode {
     /// Solari: ReSTIR direct light and shadows, a world cache for bounced
     /// light, traced reflections. The fast one.
@@ -532,7 +533,7 @@ pub enum TracingMode {
 /// Ray-traced lighting for a 3D world (Bevy Solari): traced direct light
 /// and shadows, bounced light and reflections, in place of the raster rig
 /// on a GPU that can trace rays. Elsewhere the raster rig carries on.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct RayTracingSettings {
     /// Off by default: it needs a ray-tracing GPU and costs a lot of it.
@@ -592,7 +593,7 @@ fn default_sun_cookie_size() -> f32 {
 }
 
 /// How shadow maps are filtered on the world camera.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum ShadowFilter {
     /// Hardware 2x2 PCF: fastest, hardest edges.
     Hardware,
@@ -606,7 +607,7 @@ pub enum ShadowFilter {
 /// Shadow tuning for the 3D world: the sun's cascades and biases, the
 /// filter every shadow map is read through, soft (PCSS) sun shadows and
 /// screen-space contact shadows.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ShadowSettings {
     #[serde(default)]
     pub filter: ShadowFilter,
@@ -776,7 +777,7 @@ impl Default for Lighting {
 /// Which tonemapper the camera ends with. Bevy's default is TonyMcMapface,
 /// so keeping that default means an old project looks exactly like it used
 /// to; the rest are looks to choose on purpose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum TonemapName {
     None,
     Reinhard,
@@ -836,7 +837,7 @@ impl TonemapName {
 /// The chain runs in a fixed order, HDR first: motion blur, depth of field,
 /// chromatic aberration and vignette, then bloom, white balance, grading
 /// and the tone shape, then the tonemapper, sharpening, the LUT and grain.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct PostProcess {
     /// Camera exposure in EV100. 9.7 is Bevy's own default; lower is brighter.
     #[serde(default = "default_exposure")]
@@ -966,7 +967,7 @@ impl PostProcess {
 }
 
 /// Which part of the frame auto-exposure reads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum Metering {
     /// The whole frame, evenly.
     Average,
@@ -984,7 +985,7 @@ impl Metering {
 /// Auto-exposure: the meter's log-average steers the EV towards middle grey
 /// at `speed` stops a second, inside `min_ev`..`max_ev`. A `set exposure to`
 /// block still wins over it.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct AutoExposure {
     pub enabled: bool,
@@ -1047,7 +1048,7 @@ impl AutoExposure {
 /// Shapes the exposed signal ahead of the tonemapper: the toe deepens (or,
 /// below 0, lifts) what is under middle grey, the shoulder rolls off what is
 /// over it. Both 0 leave the tonemapper's own curve alone.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default, Schema)]
 #[serde(default)]
 pub struct ToneShape {
     /// -1 to 1.
@@ -1085,7 +1086,7 @@ impl ToneShape {
 
 /// White balance and grading, applied in linear light before the
 /// tonemapper, then an optional LUT after it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Grading {
     /// -1 cool to 1 warm.
@@ -1155,7 +1156,7 @@ impl Grading {
 }
 
 /// How out-of-focus highlights spread.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum Bokeh {
     /// Six-bladed bokeh: bright spots blur into hexagons.
     #[default]
@@ -1166,7 +1167,7 @@ pub enum Bokeh {
 
 /// Depth of field, 3D only. Focus sits on the named actor when it has one,
 /// or at `focus_distance` metres.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct DepthOfField {
     pub enabled: bool,
@@ -1210,7 +1211,7 @@ impl DepthOfField {
 }
 
 /// Camera motion blur along the motion vectors, 3D only.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct MotionBlur {
     pub enabled: bool,
@@ -1242,7 +1243,7 @@ impl MotionBlur {
 }
 
 /// Screen-space ambient occlusion, 3D only, turned on by `Lighting::ao_enabled`.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct AmbientOcclusion {
     /// How far to look for occluders, in metres.
@@ -1279,7 +1280,7 @@ impl AmbientOcclusion {
 
 /// Screen-space reflections, 3D only. Turning them on draws opaque surfaces
 /// deferred, since the reflections read the G-buffer.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Reflections {
     pub enabled: bool,
@@ -1317,7 +1318,7 @@ impl Reflections {
 }
 
 /// Film grain over the display image.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Grain {
     /// 0-1, 0 for off.
@@ -1349,7 +1350,7 @@ impl Grain {
 
 /// The signal a window is sent in. HDR only takes effect where the display
 /// offers it; anywhere else the game falls back to SDR.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum OutputSpace {
     /// Rec.709 primaries, sRGB transfer, 0 to 1.
     #[default]
@@ -1370,7 +1371,7 @@ impl OutputSpace {
 
 /// How the finished frame meets the display: the output signal, how bright
 /// the display can go and where SDR white (and the HUD) sits under HDR.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct DisplayOutput {
     #[serde(default)]
     pub space: OutputSpace,
@@ -1418,7 +1419,7 @@ impl DisplayOutput {
 }
 
 /// Everything about the world that isn't an actor.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct World {
     #[serde(default)]
     pub quality: crate::quality::Settings,
@@ -1520,6 +1521,24 @@ pub const DEFAULT_FIXED_RATE: f32 = 60.0;
 
 fn default_fixed_rate() -> f32 {
     DEFAULT_FIXED_RATE
+}
+
+impl World {
+    /// Clamps and tidies every setting the way its own editor command does,
+    /// after a generic write (`registry::set_world_property`).
+    pub fn normalize_settings(&mut self) {
+        self.quality.normalize();
+        self.input.normalize();
+        self.soundscape.normalize();
+        self.sky.normalize();
+        self.fog.normalize();
+        self.clouds.normalize();
+        crate::cloud_layers::normalize(&mut self.cloud_layers);
+        self.wind.normalize();
+        self.lighting2d.normalize();
+        self.post2d.normalize();
+        self.camera2d.normalize();
+    }
 }
 
 impl Default for World {

@@ -8,6 +8,7 @@
 //! older name still points at older tiles. A stroke writes only the tiles it
 //! changed. [`prune`] drops whatever no manifest in use still names.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::{Read, Write};
@@ -19,7 +20,7 @@ pub const DIR: &str = "terrain";
 pub const TILE: u32 = 64;
 
 /// What one sample of a grid holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum GridKind {
     /// A height, 0-1 as a little-endian u16.
     Height16,
@@ -161,7 +162,7 @@ impl Grid {
 }
 
 /// A grid's table of tiles. Named by its own hash in the store.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Manifest {
     pub kind: GridKind,
     pub side: u32,

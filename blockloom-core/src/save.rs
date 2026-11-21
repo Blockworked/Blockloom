@@ -7,11 +7,12 @@
 use crate::project::Project;
 use crate::value::Evaluated;
 use crate::vm::{VariableSnapshot, Variables};
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Schema)]
 pub struct SaveData {
     #[serde(default)]
     pub globals: HashMap<String, Evaluated>,

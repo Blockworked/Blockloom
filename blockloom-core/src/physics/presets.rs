@@ -11,10 +11,11 @@ use crate::input::InputAction;
 use crate::player_camera::PlayerCameraSpec;
 use crate::project::Scene;
 use crate::scene::{Mode, Visual};
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// A ready-made kind of player.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum PlayerPreset {
     FirstPerson3d,
     ThirdPerson3d,
@@ -462,7 +463,7 @@ impl Scene {
 
 /// A player setup saved for reuse: the controller, motor, camera and the
 /// input actions they read, in one file that can move between projects.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct PlayerProfile {
     pub version: u32,
     pub name: String,

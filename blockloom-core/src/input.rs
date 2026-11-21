@@ -6,6 +6,7 @@
 //! off the sensor snapshot. A `bind` block edits the map for the rest of the
 //! run; the editor's own commands edit the document.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -13,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 pub const AXIS_DEADZONE: f32 = 0.35;
 
 /// Which mouse button a binding means.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum MouseButton {
     #[default]
     Left,
@@ -102,7 +103,7 @@ pub fn normalize_pad_axis(name: &str) -> String {
 /// One way to say an action: a key, a mouse button, a gamepad button, or a
 /// gamepad axis. A directed axis (`direction` of -1 or 1) only answers one
 /// way of it, so Left and Right can share a stick; 0 answers the whole axis.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "binding")]
 pub enum InputBinding {
     Key {
@@ -257,7 +258,7 @@ pub fn parse_binding(text: &str) -> Option<InputBinding> {
 }
 
 /// What an action reports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Schema)]
 pub enum ActionType {
     /// Held, pressed and released, with an analog value.
     #[default]
@@ -270,7 +271,7 @@ pub enum ActionType {
 
 /// The four sides of a two-axis action. Each side takes its strongest
 /// binding; the axis is right minus left and up minus down.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Schema)]
 pub struct Composite {
     #[serde(default)]
     pub left: Vec<InputBinding>,
@@ -283,7 +284,7 @@ pub struct Composite {
 }
 
 /// Shapes an action's value after the device says it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "processor")]
 pub enum Processor {
     /// Below `min` reads zero and `max` reads full, with the range between
@@ -341,7 +342,7 @@ fn is_zero(n: &u8) -> bool {
 }
 
 /// One named action and every binding that drives it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct InputAction {
     pub name: String,
     #[serde(default)]
@@ -432,7 +433,7 @@ impl InputAction {
 
 /// Every action a project defines. Empty by default, so old documents load
 /// with no actions rather than failing.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Schema)]
 pub struct InputConfig {
     #[serde(default)]
     pub actions: Vec<InputAction>,
@@ -864,7 +865,7 @@ pub fn reset_maps() {
 }
 
 /// One action as the reporters see it this frame.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default, Schema)]
 pub struct ActionSense {
     #[serde(default)]
     pub held: bool,

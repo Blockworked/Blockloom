@@ -26,6 +26,7 @@
 //!   keeps. Each role's decoder lives in its own submodule and the `load_*`
 //!   functions are what a pass reads a file through.
 
+use blockloom_schema_derive::Schema;
 pub mod bc6h;
 pub mod hdr;
 pub mod height;
@@ -44,7 +45,7 @@ pub const PIPELINE_VERSION: u32 = 1;
 // ─── Models ────────────────────────────────────────────────────────────────
 
 /// A rigged-mesh format the pipeline understands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum ModelFormat {
     Gltf,
     Glb,
@@ -80,7 +81,7 @@ impl ModelFormat {
 /// What a model file holds, as far as a game cares: counts plus whether
 /// anything is skinned or animated. Warnings are non-fatal notes ("no
 /// materials, renders untextured").
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ModelInfo {
     pub format: ModelFormat,
     pub meshes: usize,
@@ -369,7 +370,7 @@ fn inspect_fbx(name: &str, bytes: &[u8]) -> ModelInfo {
 // ─── Textures ────────────────────────────────────────────────────────────
 
 /// What an image file decodes to.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct TextureInfo {
     pub width: u32,
     pub height: u32,
@@ -403,7 +404,7 @@ pub fn inspect_texture(name: &str, bytes: &[u8]) -> Result<TextureInfo, String> 
 }
 
 /// Where a texture should end up after the pipeline runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub enum TextureTarget {
     /// Keep the file as-is: small UI, pixel art, already compressed.
     AsIs,
@@ -416,7 +417,7 @@ pub enum TextureTarget {
 }
 
 /// One texture's import plan, with the reason attached for the tray.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct TexturePlan {
     pub target: TextureTarget,
     pub target_width: u32,
@@ -480,7 +481,7 @@ pub fn decide_texture(info: &TextureInfo, max_size: u32) -> TexturePlan {
 // ─── Audio ───────────────────────────────────────────────────────────────
 
 /// What a sound file holds, as far as the mixer cares.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct AudioInfo {
     pub format: String,
     pub channels: u8,
@@ -583,7 +584,7 @@ fn inspect_wav(ext: &str, bytes: &[u8]) -> Result<AudioInfo, String> {
 }
 
 /// One sound's import plan.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct AudioPlan {
     /// Transcode to Ogg Vorbis at build time.
     pub transcode: bool,
@@ -629,7 +630,7 @@ pub fn decide_audio(info: &AudioInfo) -> AudioPlan {
 // ─── Atlases ─────────────────────────────────────────────────────────────
 
 /// One sprite going into an atlas.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct AtlasInput {
     pub name: String,
     pub width: u32,
@@ -637,7 +638,7 @@ pub struct AtlasInput {
 }
 
 /// Where one sprite landed in the sheet, with normalized UVs.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct AtlasEntry {
     pub name: String,
     pub x: u32,
@@ -648,7 +649,7 @@ pub struct AtlasEntry {
 }
 
 /// A packed sheet: one texture bind for many small sprites.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct AtlasLayout {
     pub width: u32,
     pub height: u32,
@@ -870,7 +871,7 @@ pub fn read_baked_layout(game_dir: &Path) -> Option<AtlasLayout> {
 /// What a file is imported as. The same PNG can be a sprite, a heightmap or a
 /// light cookie; only the author knows, so the extension's guess can be
 /// overridden per asset (see [`set_role`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 #[serde(rename_all = "snake_case")]
 pub enum ImportRole {
     /// An ordinary colour texture: the downscale/transcode plan.
@@ -1109,7 +1110,7 @@ pub fn load_ies(project_dir: &Path, relative: &str) -> Result<ies::IesProfile, S
 
 /// Import-time knobs, snapshotted per asset so a settings change dirties
 /// exactly the assets it affects.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ImportSettings {
     #[serde(default = "default_texture_max")]
     pub texture_max: u32,
@@ -1170,7 +1171,7 @@ fn crc32(bytes: &[u8]) -> u32 {
 }
 
 /// One asset's last-import fingerprint.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ManifestEntry {
     /// CRC32 of the source bytes at import.
     pub hash: u32,
@@ -1190,7 +1191,7 @@ pub struct ManifestEntry {
 }
 
 /// The whole folder's fingerprints, keyed by project-relative path.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct PipelineManifest {
     #[serde(default = "pipeline_version")]
     pub version: u32,
@@ -1381,7 +1382,7 @@ pub fn set_exposure_bias(
 
 /// What the tray shows per asset: what it is, what import would do, and
 /// whether the file changed since import.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct PipelineReport {
     pub path: String,
     pub kind: crate::assets::AssetKind,

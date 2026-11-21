@@ -3,10 +3,11 @@
 //! volumes). Both decode to the same [`Volume`], which a pass uploads as a 3D
 //! texture.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// Where a volume came from and how big it is.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct VolumeInfo {
     /// `cube` or `strip`.
     pub source: String,

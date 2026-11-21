@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { typeSchema, type PluginField } from "./plugins.js";
 import { resolveShell, ShellSession, stageShell, unstageShell } from "./shell.js";
 
 test("a shell session creates actors and reads state back", async (t) => {
@@ -51,6 +52,25 @@ test("a shell session creates actors and reads state back", async (t) => {
     assert.equal(vocab.ok, true, vocab.error ?? "");
     const parsed = vocab.result as { blocks: unknown[]; reporters: unknown[] };
     assert.ok(parsed.blocks.length > 10, "the block vocabulary is present");
+
+    // Every registered type becomes a zod schema, and each default fits it.
+    const types = await session.run("type-registry");
+    assert.equal(types.ok, true, types.error ?? "");
+    const registry = types.result as {
+      components: { name: string; fields: PluginField[]; default: unknown }[];
+      world: PluginField[];
+    };
+    for (const kind of registry.components) {
+      const schema = typeSchema({ name: kind.name, type: "struct", fields: kind.fields });
+      if (kind.default !== null) {
+        const parsed = schema.safeParse(kind.default);
+        assert.ok(parsed.success, `${kind.name}'s default fits its schema: ${parsed.error}`);
+      }
+    }
+    for (const field of registry.world) {
+      const parsed = typeSchema(field).safeParse(field.default);
+      assert.ok(parsed.success, `world.${field.name}'s default fits its schema: ${parsed.error}`);
+    }
 
     const bad = await session.run("add-actor name=A shape=Wibble");
     assert.equal(bad.ok, false, "a nonsense shape is an error, not a crash");

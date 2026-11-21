@@ -6,12 +6,13 @@
 //! the underwater muffle pulls buses down while the camera is below a surface.
 //! This module holds the data and the maths; the runtime owns the voices.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 use crate::sound::{SoundBus, clamp_gain};
 
 /// The atmosphere reading a weather loop follows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum WeatherSource {
     /// Wind speed at the camera, world units per second.
     #[default]
@@ -35,7 +36,7 @@ impl WeatherSource {
 
 /// A looping sound whose volume follows the weather: silent at `from`, at
 /// `max_gain` from `to` up, linear between.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct WeatherLoop {
     /// Project-relative sound path.
     pub sound: String,
@@ -69,7 +70,7 @@ impl WeatherLoop {
 }
 
 /// What makes a duck rule fire.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub enum DuckTrigger {
     /// The game is paused: a pause menu quiets the soundtrack.
     Paused,
@@ -78,7 +79,7 @@ pub enum DuckTrigger {
 }
 
 /// Dips one bus while its trigger holds.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct DuckRule {
     pub trigger: DuckTrigger,
     pub target: SoundBus,
@@ -121,7 +122,7 @@ impl DuckRule {
 }
 
 /// Buses that sink while the camera is underwater.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct UnderwaterMuffle {
     /// Empty means off.
     #[serde(default)]
@@ -169,7 +170,7 @@ pub fn bus_is_affected(buses: &[SoundBus], bus: SoundBus) -> bool {
 }
 
 /// A parametric reverb: a room the dry sound is sent into.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ReverbSpec {
     /// How much reverb is mixed in, 0-1. Zero is dry.
     #[serde(default)]
@@ -280,7 +281,7 @@ pub fn cutoff_for(amount: f32) -> f32 {
 
 /// How walls and corners change a positional sound on its way to the
 /// listener. Only static scenery blocks: bodies and triggers never do.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Occlusion {
     #[serde(default)]
     pub enabled: bool,
@@ -367,7 +368,7 @@ impl Occlusion {
 /// A region that changes how the listener hears: its own reverb and a
 /// muffle, blended in by how far the listener is inside. Attached to an
 /// actor as the `SoundZone` component; the actor's place is the zone's.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct SoundZoneSpec {
     #[serde(default = "yes")]
     pub enabled: bool,
@@ -486,7 +487,7 @@ impl Acoustics {
 }
 
 /// The saved soundscape rules.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Schema)]
 pub struct Soundscape {
     #[serde(default)]
     pub weather: Vec<WeatherLoop>,

@@ -8,6 +8,7 @@
 //! cooked file is reproducible from its key: the source bytes, the settings, the
 //! cooker version and the target format.
 
+use blockloom_schema_derive::Schema;
 pub mod decompose;
 pub mod hull;
 pub mod load;
@@ -33,7 +34,9 @@ pub const MAX_TRIANGLES: usize = 2_000_000;
 pub const MAX_HULL_VERTICES: usize = 255;
 
 /// What a collider wants from a mesh file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Schema,
+)]
 pub enum MeshKind {
     /// One convex hull of every vertex.
     Hull,
@@ -54,7 +57,7 @@ impl MeshKind {
 }
 
 /// Project-wide cooking choices.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct CookSettings {
     /// Vertices closer than this (in the model's own units) become one.
     #[serde(default = "default_weld")]
@@ -121,7 +124,7 @@ pub struct RawMesh {
 }
 
 /// What cooking did, for the inspector and the cook report.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Schema)]
 pub struct CookStats {
     pub input_vertices: usize,
     pub input_triangles: usize,

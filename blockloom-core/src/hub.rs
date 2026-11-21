@@ -5,6 +5,7 @@
 //! `BLOCKLOOM_INSTALLATION` or from the `blockloom-installation.json` beside
 //! its executable. Every route that opens a project asks [`conflict`] first.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -143,7 +144,7 @@ pub fn conflict(dir: &Path) -> Option<String> {
 pub const REQUEST_MAX_AGE_SECS: u64 = 30;
 
 /// What an editor says about itself, refreshed every poll.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Presence {
     pub schema: u32,
     pub pid: u32,
@@ -156,7 +157,7 @@ pub struct Presence {
 }
 
 /// What the Hub asks an idle editor to do.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Request {
     pub schema: u32,
     /// Echoed in the reply, so an answer belongs to exactly one request.
@@ -172,7 +173,7 @@ pub struct Request {
 }
 
 /// How a request went.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Reply {
     pub schema: u32,
     pub id: String,

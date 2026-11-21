@@ -8,11 +8,12 @@
 //! tick's clock, so one seed replays the same weather however frames fall.
 
 use crate::volume::{VolumePose, VolumeSpec};
+use blockloom_schema_derive::Schema;
 use glam::{Quat, Vec2, Vec3, Vec3Swizzles};
 use serde::{Deserialize, Serialize};
 
 /// The project's wind.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Wind {
     /// Degrees the wind blows towards, clockwise from north: -Z in 3D (the
@@ -63,7 +64,7 @@ impl Default for Wind {
 
 /// How the clouds ride the wind. Read by the cloud passes as offsets the
 /// runtime integrates each tick.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct CloudDrift {
     /// Metres up the clouds take their wind from.
@@ -256,7 +257,7 @@ impl WindOverrides {
 }
 
 /// Which dial `set wind _ to` writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum WindProperty {
     Direction,
     Speed,
@@ -333,7 +334,7 @@ pub fn direction_of(wind: [f32; 3], flat: bool) -> f32 {
 }
 
 /// What a zone does to the wind inside it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum WindZoneMode {
     /// Blows its own way instead: speed 0 is interior stillness.
     #[default]
@@ -345,7 +346,7 @@ pub enum WindZoneMode {
 }
 
 /// Wind a `Volume` makes inside its shape, fading across its blend distance.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct LocalWind {
     pub enabled: bool,

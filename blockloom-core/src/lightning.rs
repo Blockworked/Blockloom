@@ -6,12 +6,13 @@
 //! arithmetic on fixed ticks: one seed gives one storm, however the frames
 //! fall.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// Metres per second sound travels, for the thunder's delay.
 pub const SPEED_OF_SOUND: f32 = 343.0;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Lightning {
     /// Strike at random while the world runs.

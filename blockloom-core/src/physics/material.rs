@@ -5,12 +5,13 @@
 //! Unity's Physics Material 2D (one friction, one bounciness, with fixed combine
 //! rules) and is specified separately: the 3D options are not 2D equivalents.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 use crate::scene::Mode;
 
 /// How two surfaces' values are combined into the one the contact uses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum CombineMode {
     #[default]
     Average,
@@ -51,7 +52,7 @@ impl CombineMode {
 }
 
 /// A 3D surface. Friction and bounciness are unitless coefficients.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct PhysicsMaterial {
     #[serde(default = "default_friction")]
     pub static_friction: f32,
@@ -98,7 +99,7 @@ impl PhysicsMaterial {
 
 /// A 2D surface. The contact uses the geometric mean of the two frictions and the
 /// larger bounciness (Unity 2D's fixed rules).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct PhysicsMaterial2D {
     #[serde(default = "default_friction_2d")]
     pub friction: f32,
@@ -130,7 +131,7 @@ impl PhysicsMaterial2D {
 }
 
 /// The values a material asset holds, in one dimension.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "dimension")]
 pub enum MaterialBody {
     Three { material: PhysicsMaterial },
@@ -166,7 +167,7 @@ impl MaterialBody {
 }
 
 /// A reusable material in the project.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct MaterialDef {
     pub id: String,
     pub name: String,
@@ -210,7 +211,7 @@ pub fn built_in(name: &str, mode: Mode) -> Option<MaterialBody> {
 }
 
 /// Where a collider gets its surface from.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Schema)]
 #[serde(tag = "kind")]
 pub enum MaterialRef {
     /// The built-in Default material.
@@ -224,7 +225,7 @@ pub enum MaterialRef {
 
 /// Per-collider overrides laid over the referenced material. `None` keeps the
 /// material's value.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default, Schema)]
 pub struct MaterialOverrides {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub static_friction: Option<f32>,
@@ -268,7 +269,7 @@ impl MaterialOverrides {
 }
 
 /// The project's stored materials plus the lookups that resolve a [`MaterialRef`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Schema)]
 pub struct MaterialLibrary {
     #[serde(default)]
     pub materials: Vec<MaterialDef>,

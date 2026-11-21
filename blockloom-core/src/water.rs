@@ -13,6 +13,7 @@
 //! only bend the shading normal. Splashes and wakes are a simulated height
 //! field ([`RippleField`]) laid over the waves, which floating bodies ride.
 
+use blockloom_schema_derive::Schema;
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -39,7 +40,7 @@ pub const CALM_FROM: f32 = 16.0;
 
 /// What kind of water an actor is. The kind only decides its reach and the
 /// defaults an editor offers; every body has the same waves, foam and color.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum WaterKind {
     /// Unbounded: the surface follows the camera out to the horizon.
     Ocean,
@@ -52,7 +53,7 @@ pub enum WaterKind {
 }
 
 /// The Gerstner waves.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Waves {
     /// Crest height of the longest wave, world units.
@@ -108,7 +109,7 @@ impl Default for Waves {
 }
 
 /// The ripples the shading sees but nothing floats on.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Detail {
     /// How strongly the ripples bend the light, 0-2.
@@ -127,7 +128,7 @@ impl Default for Detail {
 }
 
 /// What the water looks like on the way through.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct WaterLook {
     /// The tint of a shallow, lit edge.
@@ -162,7 +163,7 @@ impl Default for WaterLook {
 }
 
 /// White water.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Foam {
     /// 0-2: how much foam there is. 0 turns it off.
@@ -194,7 +195,7 @@ impl Default for Foam {
 }
 
 /// Where reflections come from, best first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum ReflectionMode {
     /// Screen-space reflections, a live probe where they miss, then the sky.
     #[default]
@@ -224,7 +225,7 @@ impl ReflectionMode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Reflections {
     pub mode: ReflectionMode,
@@ -251,7 +252,7 @@ impl Default for Reflections {
 }
 
 /// What the camera sees once it is below the surface.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Underwater {
     /// The color the water fogs towards.
@@ -281,7 +282,7 @@ impl Default for Underwater {
 }
 
 /// The simulated ripples splashes and wakes make.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Ripples {
     pub enabled: bool,
@@ -309,7 +310,7 @@ impl Default for Ripples {
 }
 
 /// What happens when something crosses the surface fast enough.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Splash {
     /// World units a second through the surface below which nothing splashes.
@@ -335,7 +336,7 @@ impl Default for Splash {
 
 /// An ocean, a lake or a river on an actor. The actor's `Place` is the
 /// surface's centre at rest; its yaw turns the rectangle and the current.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct WaterSpec {
     pub kind: WaterKind,
@@ -463,7 +464,7 @@ impl WaterSpec {
 // ─── Blocks ────────────────────────────────────────────────────────────────
 
 /// Which dial `set water _ to` writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum WaterProperty {
     /// The surface's height at rest, in world units.
     Level,
@@ -1392,7 +1393,7 @@ impl WaterSense {
 
 /// Makes a body float: water under its sample points pushes up by the
 /// weight of what they displace, and drags against the current.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct BuoyancySpec {
     /// Against water's: 0.5 floats half under, 1 hangs, above 1 sinks.

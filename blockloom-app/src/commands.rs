@@ -48,6 +48,7 @@ use std::sync::atomic::Ordering;
 
 pub(crate) mod physics;
 pub(crate) mod plugins;
+pub(crate) mod registry;
 
 type Guard<'a> = MutexGuard<'a, AppState>;
 
@@ -1553,20 +1554,17 @@ pub(crate) fn set_sky(state: &SharedState, app: &AppHandle, sky: Sky) -> Result<
 /// Sets the air: height fog, volumetric fog and aerial perspective. What
 /// the project settings dialog's Fog section edits.
 pub(crate) fn set_fog(state: &SharedState, app: &AppHandle, fog: Fog) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
     let mut fog = fog;
     fog.normalize();
     for (name, color) in fog.colors_mut() {
         *color = normalize_block_color(color).ok_or(format!("Choose a valid {name} color"))?;
     }
-    if let Some(project) = s.project_mut() {
-        project.world.fog = fog;
-    }
-    auto_save(&s);
-    sync_runtime(&mut s);
-    emit(app, &s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        Ok(blockloom_core::scene::World {
+            fog,
+            ..world.clone()
+        })
+    })
 }
 
 pub(crate) fn set_clouds(

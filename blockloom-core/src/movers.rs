@@ -2,12 +2,13 @@
 //! whatever stands on them, and hazards that knock a motor back and give it a
 //! window of invulnerability.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// A belt: whatever the actor's motor stands on it is carried along the
 /// actor's +X turned by its rotation, units a second.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct ConveyorSpec {
     pub speed: f32,
@@ -42,7 +43,7 @@ impl ConveyorSpec {
 
 /// A hurt volume: a motor touching the actor is thrown away from it and
 /// cannot be hurt again for `invulnerability` seconds.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct HazardSpec {
     pub enabled: bool,

@@ -10,6 +10,7 @@
 //! Units are document units: metres in 3D, pixels in 2D (the runtime converts),
 //! and degrees for angles.
 
+use blockloom_schema_derive::Schema;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
@@ -23,7 +24,7 @@ use crate::project::Actor;
 use crate::scene::Mode;
 
 /// What a constraint holds fixed and what it leaves free.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum ConstraintKind {
     /// No relative motion at all.
     #[default]
@@ -91,7 +92,7 @@ impl ConstraintKind {
 
 /// A motion limit on the joint's free axis: degrees for a turn, document units
 /// for a slide or a distance.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Limit {
     #[serde(default)]
     pub enabled: bool,
@@ -111,7 +112,7 @@ impl Default for Limit {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Schema)]
 pub enum MotorMode {
     #[default]
     Off,
@@ -121,7 +122,7 @@ pub enum MotorMode {
     Position,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Motor {
     #[serde(default)]
     pub mode: MotorMode,
@@ -159,7 +160,7 @@ impl Default for Motor {
 }
 
 /// A spring's softness (the `Spring` kind) or a soft limit's.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub struct SpringSpec {
     #[serde(default = "default_stiffness")]
     pub stiffness: f32,
@@ -185,7 +186,7 @@ impl Default for SpringSpec {
 }
 
 /// How one axis of a configurable constraint behaves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Schema)]
 pub enum AxisMode {
     #[default]
     Locked,
@@ -194,7 +195,7 @@ pub enum AxisMode {
 }
 
 /// One authored constraint on an actor.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ConstraintSpec {
     #[serde(default)]
     pub id: ConstraintId,
@@ -824,7 +825,7 @@ pub struct JointCommand {
     pub value: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum JointVerb {
     Enable,
     Disable,

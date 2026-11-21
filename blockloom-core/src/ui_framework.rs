@@ -1,8 +1,9 @@
 //! Saved interface documents and renderer-independent layout and binding rules.
 use super::*;
+use blockloom_schema_derive::Schema;
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Schema)]
 pub enum UiAlign {
     #[default]
     Stretch,
@@ -12,7 +13,7 @@ pub enum UiAlign {
 }
 
 /// Zero is content-sized; percentages are relative to the containing box.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Schema)]
 pub enum UiLength {
     #[default]
     Auto,
@@ -20,7 +21,7 @@ pub enum UiLength {
     Percent(f32),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct UiLayout {
     pub width: UiLength,
@@ -88,7 +89,7 @@ impl UiLayout {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct UiPaint {
     pub background: Option<String>,
@@ -105,7 +106,7 @@ pub struct UiPaint {
 
 /// How an image fills its widget. `Sliced` borders are `[left, right, top, bottom]`
 /// in image pixels.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 pub enum UiImageFit {
     Stretch,
     Sliced { border: [f32; 4] },
@@ -142,7 +143,7 @@ impl UiPaint {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct UiStyles {
     pub normal: UiPaint,
@@ -152,7 +153,7 @@ pub struct UiStyles {
     pub focused: UiPaint,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub enum UiSource {
     Variable {
         #[serde(default)]
@@ -165,7 +166,7 @@ pub enum UiSource {
         field: String,
     },
 }
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct UiConverter {
     pub prefix: String,
@@ -220,7 +221,7 @@ impl UiConverter {
         })
     }
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct UiBinding {
     pub property: UiProp,
     pub source: UiSource,
@@ -232,7 +233,7 @@ pub struct UiBinding {
 
 /// A viewport size range; every bound is optional and inclusive, in canvas
 /// pixels (after the safe area and scale are taken off).
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct UiBreakpoint {
     pub min_width: Option<f32>,
@@ -269,7 +270,7 @@ impl UiBreakpoint {
 
 /// How a widget differs while the viewport is inside `when`. The first
 /// matching variant wins; what it leaves unset follows the base widget.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct UiVariant {
     pub when: UiBreakpoint,
     #[serde(default)]
@@ -288,7 +289,7 @@ impl UiWidget {
 }
 
 /// What a widget reports to the game.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub enum UiEventKind {
     Click,
     Change,
@@ -296,7 +297,7 @@ pub enum UiEventKind {
 
 /// What a widget event does. In `SetVariable`, a value of `$value` stands for
 /// the widget's new value on a Change event.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub enum UiDo {
     Broadcast {
         message: String,
@@ -316,7 +317,7 @@ pub enum UiDo {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct UiAction {
     pub on: UiEventKind,
     pub run: UiDo,
@@ -326,7 +327,7 @@ pub struct UiAction {
 /// layout measures. Offset adds to wherever the anchor and layout put the
 /// element and rotation turns it about its centre, so neither fights the
 /// anchor's own shift. Opacity multiplies down the tree.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct UiFx {
     pub opacity: f32,
@@ -361,7 +362,7 @@ impl UiFx {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct UiWidget {
     pub element: UiElement,
@@ -388,14 +389,14 @@ pub struct UiWidget {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub instance_of: String,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, Schema)]
 pub enum UiScale {
     #[default]
     ConstantPixel,
     ScaleWithSize,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct UiDocument {
     /// Schema version; 0 is a document saved before versions existed.
@@ -419,7 +420,7 @@ pub struct UiDocument {
 
 /// A named handle on a prefab: one property of one widget inside it, or a
 /// container widget other widgets can be placed into.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct UiExport {
     pub name: String,
     /// The widget's id inside the prefab.

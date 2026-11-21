@@ -20,6 +20,7 @@
 //! - A collider with `queryable` off, a disabled one and the asker's own
 //!   colliders (and its body's) are never reported.
 
+use blockloom_schema_derive::Schema;
 use serde::Serialize;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -30,7 +31,9 @@ use super::ColliderId;
 pub const MAX_RESULTS: usize = 64;
 
 /// Whether a query reports trigger colliders.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, serde::Deserialize, Schema,
+)]
 pub enum TriggerPolicy {
     /// What the project says: triggers are reported, as in Unity.
     #[default]
@@ -56,7 +59,9 @@ impl TriggerPolicy {
 }
 
 /// How many hits a ray block keeps.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, serde::Deserialize, Schema,
+)]
 pub enum RayHits {
     /// Only the nearest.
     #[default]

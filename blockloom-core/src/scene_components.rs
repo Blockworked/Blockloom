@@ -22,6 +22,7 @@ use crate::sound::SoundMixer;
 use crate::ui::UiDocument;
 use crate::vfx::VfxSettings;
 use crate::wind::Wind;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// The scene components every project knows about by name.
@@ -55,7 +56,7 @@ pub const BUILT_IN_SCENE_NAMES: &[&str] = &[
 /// One setting on a scene. Serialized internally-tagged, so a component reads
 /// as `{"component": "Lighting", "lighting": {...}}` - the same shape actor
 /// components use.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "component")]
 #[allow(clippy::large_enum_variant)]
 pub enum SceneComponent {
@@ -192,7 +193,7 @@ impl SceneComponent {
 /// A scene's settings as the inspector shows them: one entry per component,
 /// in a stable order. Kept as a list rather than a map so the file has a
 /// stable order to read and the inspector has one to draw.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Schema)]
 #[serde(transparent)]
 pub struct SceneComponents(pub Vec<SceneComponent>);
 

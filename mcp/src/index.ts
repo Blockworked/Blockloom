@@ -194,6 +194,10 @@ async function main(): Promise<void> {
       const response = await session.run("block-vocabulary");
       return readResource(response, "blockloom://blocks");
     });
+    server.resource("types", "blockloom://types", async () => {
+      const response = await session.run("type-registry");
+      return readResource(response, "blockloom://types");
+    });
   };
 
   registerTools();

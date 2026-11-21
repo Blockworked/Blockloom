@@ -7,6 +7,7 @@
 //! replays the same day however frames fall - the same rule the wind and the
 //! storm director keep.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 fn finite(value: f32, fallback: f32) -> f32 {
@@ -15,7 +16,7 @@ fn finite(value: f32, fallback: f32) -> f32 {
 
 /// One key on a 24h track: a value at `time` hours, with Bezier tangents in
 /// value-per-hour. Tangents default to 0 (a smooth hold through the key).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct TimeKey {
     pub time: f32,
@@ -57,7 +58,7 @@ impl TimeKey {
 /// One 24h curve: Bezier keys over the day, sampled by the clock. Empty means
 /// "the director leaves this alone", so old projects with no tracks keep
 /// exactly the look they shipped.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Schema)]
 #[serde(default)]
 pub struct TimeTrack {
     pub keys: Vec<TimeKey>,
@@ -132,7 +133,7 @@ impl TimeTrack {
 }
 
 /// Which precipitation `set precipitation to` writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum PrecipitationKind {
     Rain,
     Snow,
@@ -178,7 +179,7 @@ impl PrecipitationOverrides {
 
 /// The director's authored state: a clock plus one track per dial the 24h
 /// curve editor owns.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Director {
     /// The director runs at all. Off leaves sun, exposure and weather to the
@@ -329,7 +330,7 @@ impl Director {
 /// ride beside the fog/cloud/wind dials, so a preset carries the whole look:
 /// sky, lights and post, not just the air. Volumes and blocks lay over the
 /// result the same way they lay over the project.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Schema)]
 #[serde(default)]
 pub struct WeatherPreset {
     pub name: String,
@@ -483,7 +484,7 @@ impl WeatherPreset {
 }
 
 /// The values a blend moves: one number per dial a preset owns.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct WeatherValues {
     pub fog_density: f32,
@@ -611,7 +612,7 @@ impl WeatherValues {
 }
 
 /// How a blend eases from the current weather into the next.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum WeatherEase {
     #[default]
     Smooth,
@@ -648,7 +649,7 @@ impl WeatherEase {
 /// The live blend: what the weather is right now, and where it is going.
 /// Starting a new blend from the sampled current values means rapid changes
 /// never pop. The seed makes the blend deterministic: one seed, one path.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct WeatherState {
     /// What the air is right now, as values.

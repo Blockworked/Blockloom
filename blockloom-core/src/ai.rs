@@ -1,8 +1,9 @@
 //! Small behavior trees for actors that navigate without a block strand.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "node")]
 pub enum BehaviorNode {
     Selector { children: Vec<BehaviorNode> },
@@ -29,7 +30,7 @@ impl Default for BehaviorNode {
 
 /// All distances are world units. Sight and separation are evaluated against
 /// the live actor positions each fixed step.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct BrainSpec {
     /// Actor id or name to sense and follow.
     #[serde(default)]

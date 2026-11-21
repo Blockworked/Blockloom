@@ -1556,6 +1556,50 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     },
     // ── Components ────────────────────────────────────────────────────────
     CommandSpec {
+        name: "type-registry",
+        cmd: "type_registry",
+        aliases: &["type_registry", "types"],
+        summary: "List every component kind and world setting with its field schema and defaults, plus the open project's plugin types. set-property and add-component write what it describes.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "set-property",
+        cmd: "set_property",
+        aliases: &["set_property"],
+        summary: "Set one field anywhere type-registry describes, checked against its schema: target \"world\" (path like fog.height.density) or \"actor:<id>/<Component>\" (path like light.intensity; plugin:<plugin>/<Type> for a plugin component).",
+        args: &[
+            ArgSpec {
+                name: "target",
+                ty: "property target",
+                required: true,
+            },
+            ArgSpec {
+                name: "path",
+                ty: "property path",
+                required: true,
+            },
+            ArgSpec {
+                name: "value",
+                ty: "any value",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "add-component",
+        cmd: "add_component",
+        aliases: &["add_component"],
+        summary: "Add a component of any kind type-registry lists, with its registry defaults (plugin:<plugin>/<Type> for a plugin component).",
+        args: &[
+            A,
+            ArgSpec {
+                name: "type",
+                ty: "component type",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
         name: "add-actor-component",
         cmd: "add_actor_component",
         aliases: &["add_actor_component"],

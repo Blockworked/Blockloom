@@ -6,6 +6,7 @@
 //! mover's plane: XZ in 3D, XY in 2D. Only `Static` bodies become obstacles,
 //! so the player, the chaser and every clone are never baked in.
 
+use blockloom_schema_derive::Schema;
 use glam::Vec2;
 use polyanya::{Mesh, Triangulation};
 use serde::{Deserialize, Serialize};
@@ -17,7 +18,7 @@ use crate::scene::{BodyKind, Mode, Visual};
 pub const DEFAULT_AGENT_RADIUS: f32 = 0.4;
 
 /// A cost region on the navigation plane. A mask of zero applies to every layer.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct NavArea {
     pub center: [f32; 2],
     pub size: [f32; 2],
@@ -28,7 +29,7 @@ pub struct NavArea {
 }
 
 /// A directed shortcut between two places on the navigation plane.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct NavLink {
     pub from: [f32; 2],
     pub to: [f32; 2],
@@ -40,7 +41,7 @@ pub struct NavLink {
     pub layers: u32,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Schema)]
 pub struct NavSettings {
     #[serde(default)]
     pub areas: Vec<NavArea>,

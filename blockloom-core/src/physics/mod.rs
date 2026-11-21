@@ -11,6 +11,7 @@
 //! playing and saving an existing project is unchanged. Run state (velocity,
 //! contacts, sleeping) never appears here.
 
+use blockloom_schema_derive::Schema;
 pub mod contacts;
 pub mod controller;
 pub mod cook;
@@ -67,7 +68,7 @@ use serde::{Deserialize, Serialize};
 pub const SCHEMA_VERSION: u32 = 1;
 
 /// Which collision behavior a project asks for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Schema)]
 pub enum CompatibilityProfile {
     /// The behavior projects had before this system: the runtime keeps the old
     /// trigger and static-touch quirks.
@@ -79,7 +80,7 @@ pub enum CompatibilityProfile {
 }
 
 /// Project-wide physics settings.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Schema)]
 pub struct PhysicsSettings {
     /// 0 for a project that has none of this yet.
     #[serde(default)]

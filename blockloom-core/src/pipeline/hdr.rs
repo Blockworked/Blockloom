@@ -2,10 +2,11 @@
 //! headers, enough to size the BC6H plan and spot an equirectangular sky;
 //! [`decode_hdr`] and [`HdrCube`] are what a sky is actually built from.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// What an HDR file holds.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct HdrInfo {
     /// `hdr` or `exr`.
     pub format: String,

@@ -10,12 +10,13 @@
 
 use crate::project;
 use crate::scene::Mode;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// One project on the Dashboard.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct ProjectEntry {
     pub path: PathBuf,
     pub name: String,
@@ -30,13 +31,13 @@ pub struct ProjectEntry {
 
 /// What `projects.json` holds: paths and when each was last opened. Names and
 /// dimensions are not cached here - they come from the project itself.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, Schema)]
 struct Registry {
     #[serde(default)]
     projects: Vec<Remembered>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Schema)]
 struct Remembered {
     path: PathBuf,
     #[serde(default)]

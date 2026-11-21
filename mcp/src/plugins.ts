@@ -18,6 +18,22 @@ export interface PluginField {
   item?: PluginField;
   default?: unknown;
   description?: string;
+  /// A struct's fields.
+  fields?: PluginField[];
+  /// A map's value type.
+  value?: PluginField;
+  /// An optional's inner type.
+  inner?: PluginField;
+  /// An enum's tag key (empty for serde's external form) and its variants.
+  tag?: string;
+  variants?: PluginVariant[];
+}
+
+/// One shape of an `enum` field.
+export interface PluginVariant {
+  name: string;
+  fields?: PluginField[];
+  inner?: PluginField;
 }
 
 /// One entry of `plugin-commands`.
@@ -34,7 +50,31 @@ export function pluginToolName(command: string): string {
   return command.replace("/", "__").replace(/[^A-Za-z0-9_.-]/g, "_");
 }
 
-function typeSchema(field: PluginField): z.ZodType {
+/// A struct's fields as an object; a field with a default may be left out.
+/// Unknown keys pass through, since the backend keeps them.
+function objectSchema(fields: PluginField[]): z.ZodType {
+  const shape: Record<string, z.ZodType> = {};
+  for (const field of fields) {
+    const schema = typeSchema(field);
+    shape[field.name] = field.default !== undefined ? schema.optional() : schema;
+  }
+  return z.object(shape).passthrough();
+}
+
+function variantSchema(variant: PluginVariant, tag: string): z.ZodType {
+  const fields = variant.fields ?? [];
+  if (tag) {
+    const body = objectSchema(fields) as z.ZodObject<Record<string, z.ZodType>>;
+    return body.extend({ [tag]: z.literal(variant.name) });
+  }
+  if (!fields.length && !variant.inner) return z.literal(variant.name);
+  const payload = variant.inner ? typeSchema(variant.inner) : objectSchema(fields);
+  return z.object({ [variant.name]: payload });
+}
+
+/// The zod schema for one field type: plugin schemas and the built-in type
+/// registry (`type-registry`) speak the same field types.
+export function typeSchema(field: PluginField): z.ZodType {
   switch (field.type) {
     case "bool":
       return z.boolean();
@@ -66,6 +106,20 @@ function typeSchema(field: PluginField): z.ZodType {
       const schema = z.array(field.item ? typeSchema(field.item) : z.unknown());
       return field.max_len === undefined ? schema : schema.max(field.max_len);
     }
+    case "struct":
+      return objectSchema(field.fields ?? []);
+    case "map":
+      return z.record(z.string(), field.value ? typeSchema(field.value) : z.unknown());
+    case "optional":
+      return (field.inner ? typeSchema(field.inner) : z.unknown()).nullable();
+    case "enum": {
+      const options = (field.variants ?? []).map((v) => variantSchema(v, field.tag ?? ""));
+      if (options.length === 0) return z.unknown();
+      if (options.length === 1) return options[0];
+      return z.union(options as [z.ZodType, z.ZodType, ...z.ZodType[]]);
+    }
+    case "opaque":
+      return z.unknown();
     default:
       throw new Error(`unknown plugin field type "${field.type}"; teach mcp/src/plugins.ts about it`);
   }

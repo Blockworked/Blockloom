@@ -61,6 +61,21 @@ ApplicationWindow {
     property var assetDrag: null
     property var assetTargets: []
 
+    // The backend's type registry (`type_registry`): every component kind
+    // and world setting with its fields and defaults, for the open project's
+    // dimension. Fetched again when the project or its dimension changes.
+    property var typeRegistry: null
+    readonly property string registryKey: appState.project ? appState.project_path + "|" + appState.project.world.mode : ""
+    onRegistryKeyChanged: if (registryKey) invoke("type_registry", {}, r => typeRegistry = r, () => typeRegistry = null)
+    // The fields of one component kind, or of one world setting.
+    function componentFields(name) {
+        const kind = typeRegistry ? typeRegistry.components.find(k => k.name === name) : null;
+        return kind ? kind.fields : [];
+    }
+    function worldField(name) {
+        return typeRegistry ? typeRegistry.world.find(f => f.name === name) || null : null;
+    }
+
     readonly property string previewLayout: bridge.previewLayout
     readonly property string previewFrame: bridge.previewFrame
     readonly property string appVersion: bridge.appVersion

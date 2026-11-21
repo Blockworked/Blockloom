@@ -2,11 +2,12 @@
 //! direction. Parsed whole at import, and baked by [`IesProfile::bake`] into
 //! the table a light's profile texture samples.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// A parsed profile. Candela values are horizontal-major: all vertical angles
 /// for the first horizontal angle, then the next.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct IesProfile {
     /// Degrees from straight down (0) to straight up (180).
     pub vertical: Vec<f32>,
@@ -21,7 +22,7 @@ pub struct IesProfile {
 }
 
 /// The short of a profile for the tray.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct IesInfo {
     pub vertical_angles: usize,
     pub horizontal_angles: usize,

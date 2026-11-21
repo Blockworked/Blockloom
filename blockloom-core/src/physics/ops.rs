@@ -5,11 +5,12 @@
 //! for exactly that tick and never lingers. Torque follows the same rules with the
 //! body's inertia in place of its mass.
 
+use blockloom_schema_derive::Schema;
 use glam::{Mat3, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 /// Unity's `ForceMode`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum ForceMode {
     /// A continuous force in newtons, applied for the step: `f * dt / mass`.
     #[default]

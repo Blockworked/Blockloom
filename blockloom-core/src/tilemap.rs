@@ -16,13 +16,14 @@
 //! Everything here is 2D: a tilemap is a flat layer in a 2D world.
 
 use crate::material::{TileAnimation, TileRect, Tilemap};
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 // ─── Autotiles ─────────────────────────────────────────────────────────────
 
 /// How an autotile set reads a cell's neighbours.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Schema)]
 pub enum AutotileMode {
     /// Four edges, 16 cases: bits N=1, E=2, S=4, W=8.
     #[default]
@@ -33,7 +34,7 @@ pub enum AutotileMode {
 }
 
 /// One case of an autotile set: the neighbour mask and the cell it shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub struct AutotileRule {
     pub mask: u8,
     pub tile: i32,
@@ -41,7 +42,7 @@ pub struct AutotileRule {
 
 /// A named terrain whose painted cells pick their sheet cell by neighbours.
 /// A cell belongs to the set when it shows any of the set's tiles.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct AutotileSet {
     pub name: String,
     #[serde(default)]
@@ -157,7 +158,7 @@ impl AutotileSet {
 // ─── Regions ───────────────────────────────────────────────────────────────
 
 /// What a region tile means to the level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum RegionKind {
     /// Where a body respawns before it has touched any checkpoint.
     #[default]
@@ -212,7 +213,7 @@ impl RegionKind {
 }
 
 /// Every cell painted `tile` is part of a `kind` region.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
 pub struct TileRegion {
     pub tile: i32,
     pub kind: RegionKind,
@@ -221,7 +222,7 @@ pub struct TileRegion {
 // ─── Brushes ───────────────────────────────────────────────────────────────
 
 /// What a stroke does to the cells it covers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Schema)]
 #[serde(rename_all = "snake_case")]
 pub enum BrushTool {
     /// A square of `size` cells stamped along the drag.
@@ -242,7 +243,7 @@ pub enum BrushTool {
 
 /// One stroke's settings. A stroke runs from one cell to another; a click
 /// is a stroke that starts and ends on the same cell.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct TileBrush {
     pub tool: BrushTool,
@@ -312,7 +313,7 @@ pub fn line_cells(a: (i32, i32), b: (i32, i32)) -> Vec<(i32, i32)> {
 }
 
 /// What a map is made of, for the editor's stats line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Schema)]
 pub struct TileStats {
     pub tiles: usize,
     /// Draw calls: the whole map is one mesh.
@@ -821,7 +822,7 @@ pub fn import_tiled_tileset(json: &str) -> Result<TilesetImport, String> {
 
 /// A layer that scrolls at its own rate against the camera. It sorts behind
 /// or in front of actors by its Render layer, like any other actor.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct ParallaxSpec {
     /// How far the layer moves per unit the camera moves, 0-2 per axis: 0
@@ -887,7 +888,7 @@ impl ParallaxSpec {
 }
 
 /// Which scroll factor `set parallax` writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Schema)]
 pub enum ParallaxAxis {
     #[default]
     Both,
@@ -932,7 +933,7 @@ impl ParallaxAxis {
 /// A room: a rectangle of the level centred on the actor. The camera stays
 /// inside the room its target stands in, and entering one fires `when
 /// actor enters room`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct RoomSpec {
     /// World units across and up, before the actor's scale.

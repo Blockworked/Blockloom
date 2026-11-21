@@ -1,7 +1,8 @@
 //! Whole-frame quality budgets shared by the editor and player.
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum Quality {
     Low,
     Medium,
@@ -164,7 +165,7 @@ impl GeometryController {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum Upscaler {
     #[default]
     Spatial,
@@ -172,7 +173,7 @@ pub enum Upscaler {
     Dlss,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum DlssMode {
     /// The SDK picks the ratio itself; the dynamic-resolution signal then
     /// has nothing to step, and the mode stays where the SDK puts it.
@@ -185,7 +186,7 @@ pub enum DlssMode {
     UltraPerformance,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Settings {
     pub preset: Quality,
@@ -524,7 +525,7 @@ mod tests {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum Setting {
     #[default]
     Quality,

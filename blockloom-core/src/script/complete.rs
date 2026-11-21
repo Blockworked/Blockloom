@@ -1,3 +1,4 @@
+use blockloom_schema_derive::Schema;
 // In-app completion and hover for the script editor: the same names
 // rust-analyzer would offer, without leaving Blockloom.
 //
@@ -11,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// One row of the completion popup.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct Completion {
     /// What the list shows, e.g. `go_to` or `symbols::actors::BALL`.
     pub label: String,

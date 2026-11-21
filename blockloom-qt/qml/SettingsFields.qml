@@ -106,7 +106,6 @@ Item {
     readonly property var tracingStatus: app.appState.ray_tracing || null
     function writeSky(next) { invoke("set_sky", { sky: Object.assign(JSON.parse(JSON.stringify(world.sky)), next) }); }
     function writeSkyPart(part, next) { const o = {}; o[part] = Object.assign(JSON.parse(JSON.stringify(world.sky[part])), next); writeSky(o); }
-    function writeFogPart(part, next) { const fog = JSON.parse(JSON.stringify(world.fog)); fog[part] = Object.assign(fog[part], next); invoke("set_fog", { fog: fog }); }
     function writeLightning(next) { invoke("set_lightning", { lightning: Object.assign(JSON.parse(JSON.stringify(world.lightning)), next) }); }
     function writeVolumetricClouds(next) { invoke("set_clouds", { clouds: Object.assign(JSON.parse(JSON.stringify(world.clouds)), next) }); }
     function cloudLayerDefaults() {
@@ -811,75 +810,14 @@ Item {
             Section {
                 id: fogSection
                 heading: "Fog"; available: !!root.world && root.is3d && !!root.world.fog
-                readonly property var hf: root.world && root.world.fog ? root.world.fog.height : ({})
-                readonly property var vf: root.world && root.world.fog ? root.world.fog.volumetric : ({})
-                readonly property var af: root.world && root.world.fog ? root.world.fog.aerial : ({})
-                InspectorRow { label: "Height fog"; labelWidth: 110; Layout.fillWidth: true
-                    SwitchField { value: !!fogSection.hf.enabled; onToggled: on => root.writeFogPart("height", { enabled: on }) } Item { Layout.fillWidth: true } }
-                InspectorRow { visible: !!fogSection.hf.enabled; label: "See through m"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: fogSection.hf.distance; fallback: 400; onCommitted: n => root.writeFogPart("height", { distance: root.clamp(n, 0.1, 10000000) }) } }
-                InspectorRow { visible: !!fogSection.hf.enabled; label: "Base, falloff"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: fogSection.hf.base_height; fallback: 0; onCommitted: n => root.writeFogPart("height", { base_height: n }) }
-                    NumberField { value: fogSection.hf.falloff; fallback: 0.05; onCommitted: n => root.writeFogPart("height", { falloff: root.clamp(n, 0, 10) }) } }
-                InspectorRow { visible: !!fogSection.hf.enabled; label: "Starts at m"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: fogSection.hf.start; fallback: 0; onCommitted: n => root.writeFogPart("height", { start: Math.max(n, 0) }) } }
-                InspectorRow { visible: !!fogSection.hf.enabled; label: "Day, dusk, night"; labelWidth: 110; Layout.fillWidth: true
-                    ColorField { value: fogSection.hf.day_color || "#C2CAD2"; onPicked: c => root.writeFogPart("height", { day_color: c }) }
-                    ColorField { value: fogSection.hf.dusk_color || "#E8A778"; onPicked: c => root.writeFogPart("height", { dusk_color: c }) }
-                    ColorField { value: fogSection.hf.night_color || "#2A3344"; onPicked: c => root.writeFogPart("height", { night_color: c }) } }
-                InspectorRow { visible: !!fogSection.hf.enabled; label: "Sun glow, g"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: fogSection.hf.sun_boost; fallback: 0.5; onCommitted: n => root.writeFogPart("height", { sun_boost: root.clamp(n, 0, 100) }) }
-                    NumberField { value: fogSection.hf.sun_boost_g; fallback: 0.75; onCommitted: n => root.writeFogPart("height", { sun_boost_g: root.clamp(n, 0, 0.99) }) } }
-
-                InspectorRow { label: "Volumetric"; labelWidth: 110; Layout.fillWidth: true
-                    SwitchField { value: !!fogSection.vf.enabled; onToggled: on => root.writeFogPart("volumetric", { enabled: on }) } Item { Layout.fillWidth: true } }
-                InspectorRow { visible: !!fogSection.vf.enabled; label: "Density, g"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: fogSection.vf.density; fallback: 0.02; onCommitted: n => root.writeFogPart("volumetric", { density: root.clamp(n, 0, 10) }) }
-                    NumberField { value: fogSection.vf.anisotropy; fallback: 0.6; onCommitted: n => root.writeFogPart("volumetric", { anisotropy: root.clamp(n, -0.9, 0.9) }) } }
-                InspectorRow { visible: !!fogSection.vf.enabled; label: "Base, falloff"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: fogSection.vf.base_height; fallback: 0; onCommitted: n => root.writeFogPart("volumetric", { base_height: n }) }
-                    NumberField { value: fogSection.vf.falloff; fallback: 0.1; onCommitted: n => root.writeFogPart("volumetric", { falloff: root.clamp(n, 0, 10) }) } }
-                InspectorRow { visible: !!fogSection.vf.enabled; label: "Albedo, glow"; labelWidth: 110; Layout.fillWidth: true
-                    ColorField { value: fogSection.vf.albedo || "#FFFFFF"; onPicked: c => root.writeFogPart("volumetric", { albedo: c }) }
-                    ColorField { value: fogSection.vf.emissive || "#000000"; onPicked: c => root.writeFogPart("volumetric", { emissive: c }) }
-                    NumberField { value: fogSection.vf.emissive_strength; fallback: 0; onCommitted: n => root.writeFogPart("volumetric", { emissive_strength: Math.max(n, 0) }) } }
-                InspectorRow { visible: !!fogSection.vf.enabled; label: "Noise, scale m"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: fogSection.vf.noise; fallback: 0.5; onCommitted: n => root.writeFogPart("volumetric", { noise: root.clamp(n, 0, 1) }) }
-                    NumberField { value: fogSection.vf.noise_scale; fallback: 12; onCommitted: n => root.writeFogPart("volumetric", { noise_scale: root.clamp(n, 0.1, 10000) }) } }
-                InspectorRow { visible: !!fogSection.vf.enabled; label: "Drift m/s"; labelWidth: 110; Layout.fillWidth: true
-                    Repeater { model: 3; delegate: NumberField { required property int index; value: fogSection.vf.noise_wind ? fogSection.vf.noise_wind[index] : 0; onCommitted: n => root.writeFogPart("volumetric", { noise_wind: root.withIndex(fogSection.vf.noise_wind, index, root.clamp(n, -1000, 1000)) }) } } }
-                InspectorRow { visible: !!fogSection.vf.enabled; label: "Range m"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: fogSection.vf.range; fallback: 96; onCommitted: n => root.writeFogPart("volumetric", { range: root.clamp(n, 4, 2000) }) } }
-                InspectorRow { visible: !!fogSection.vf.enabled; label: "Quality"; labelWidth: 110; Layout.fillWidth: true
-                    ChoiceField { options: [{ value: "Low", label: "Low (80x45x48)" }, { value: "Medium", label: "Medium (128x72x64)" }, { value: "High", label: "High (160x90x96)" }]
-                        value: fogSection.vf.quality || "Medium"; onChosen: v => root.writeFogPart("volumetric", { quality: v }) } }
-                InspectorRow { visible: !!fogSection.vf.enabled; label: "Sun & moon, ambient"; labelWidth: 110; Layout.fillWidth: true
-                    SwitchField { value: !!fogSection.vf.sun; onToggled: on => root.writeFogPart("volumetric", { sun: on }) }
-                    NumberField { value: fogSection.vf.ambient; fallback: 1; onCommitted: n => root.writeFogPart("volumetric", { ambient: root.clamp(n, 0, 100) }) } }
-                readonly property var dust: Object.assign({ enabled: false, count: 600, size: 0.012, alpha: 0.6, twinkle: 0.5, drift: 0.05 }, fogSection.vf.dust || {})
-                function writeDust(next) { root.writeFogPart("volumetric", { dust: Object.assign(Object.assign({}, fogSection.dust), next) }); }
-                InspectorRow { label: "Height dust"; labelWidth: 110; Layout.fillWidth: true
-                    SwitchField { value: !!fogSection.dust.enabled; onToggled: on => fogSection.writeDust({ enabled: on }) } Item { Layout.fillWidth: true } }
-                InspectorRow { visible: !!fogSection.dust.enabled; label: "Up to m, count"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: fogSection.vf.dust_height; fallback: 3; onCommitted: n => root.writeFogPart("volumetric", { dust_height: root.clamp(n, 0, 10000) }) }
-                    NumberField { value: fogSection.dust.count; fallback: 600; onCommitted: n => fogSection.writeDust({ count: root.clamp(Math.round(n), 0, 4096) }) } }
-                InspectorRow { visible: !!fogSection.dust.enabled; label: "Size m, alpha"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: fogSection.dust.size; fallback: 0.012; onCommitted: n => fogSection.writeDust({ size: root.clamp(n, 0.001, 1) }) }
-                    NumberField { value: fogSection.dust.alpha; fallback: 0.6; onCommitted: n => fogSection.writeDust({ alpha: root.clamp(n, 0, 1) }) } }
-                InspectorRow { visible: !!fogSection.dust.enabled; label: "Twinkle, drift"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: fogSection.dust.twinkle; fallback: 0.5; onCommitted: n => fogSection.writeDust({ twinkle: root.clamp(n, 0, 1) }) }
-                    NumberField { value: fogSection.dust.drift; fallback: 0.05; onCommitted: n => fogSection.writeDust({ drift: root.clamp(n, 0, 10) }) } }
-
-                InspectorRow { label: "Aerial haze"; labelWidth: 110; Layout.fillWidth: true
-                    SwitchField { value: !!fogSection.af.enabled; onToggled: on => root.writeFogPart("aerial", { enabled: on }) } Item { Layout.fillWidth: true } }
-                InspectorRow { visible: !!fogSection.af.enabled; label: "Half gone m"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: fogSection.af.distance; fallback: 8000; onCommitted: n => root.writeFogPart("aerial", { distance: root.clamp(n, 1, 10000000) }) } }
-                InspectorRow { visible: !!fogSection.af.enabled; label: "Tint, gray"; labelWidth: 110; Layout.fillWidth: true
-                    ColorField { value: fogSection.af.tint || "#FFFFFF"; onPicked: c => root.writeFogPart("aerial", { tint: c }) }
-                    NumberField { value: fogSection.af.desaturation; fallback: 0.4; onCommitted: n => root.writeFogPart("aerial", { desaturation: root.clamp(n, 0, 1) }) } }
-                InspectorRow { visible: !!fogSection.af.enabled; label: "Height m, blue"; labelWidth: 110; Layout.fillWidth: true
-                    NumberField { value: fogSection.af.height_scale; fallback: 1200; onCommitted: n => root.writeFogPart("aerial", { height_scale: root.clamp(n, 1, 100000) }) }
-                    NumberField { value: fogSection.af.blue_shift; fallback: 0.7; onCommitted: n => root.writeFogPart("aerial", { blue_shift: root.clamp(n, 0, 1) }) } }
+                RegistryForm {
+                    objectName: "fog-form"
+                    app: root.app
+                    labelWidth: 110
+                    fields: { const f = root.app.worldField ? root.app.worldField("fog") : null; return f ? f.fields : []; }
+                    value: root.world && root.world.fog ? root.world.fog : ({})
+                    onChanged: next => root.invoke("set_fog", { fog: next })
+                }
                 Note { text: "Height fog thickens towards its base and thins going up; see-through is how far you can see at the base (95% gone). Its color follows the sun from day to dusk to night, and glows towards the sun. It covers the sky too, so the horizon melts into it. Volumetric fog fills a grid over the camera's first range metres: the sun and moon light it through their shadows (light shafts), lights opt in on their own card, it can glow by itself, and noise drifts through it with the wind. Volumes can add local fog inside their box. Aerial haze fades far things into the sky's color and grays them, less so higher up. Height dust hangs in the air near the volumetric base around the camera, lit by the sun and ambient, whether or not volumetric fog is on. `set fog density to` changes the height fog while the game runs, and scales volumetric fog and every light's beam by the same ratio, so 0 clears them all." }
             }
             Section {

@@ -10,6 +10,7 @@
 //! Nothing here trusts a path it is given: [`normalize`] is the only way in,
 //! and it refuses anything that would climb out of the folder.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -20,7 +21,7 @@ pub const MAX_PREVIEW_BYTES: u64 = 8 * 1024 * 1024;
 
 /// What an entry is, so the tray can pick an icon and an input can refuse the
 /// wrong sort of file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Schema)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetKind {
     Folder,
@@ -47,7 +48,7 @@ pub enum AssetKind {
 }
 
 /// One row in the tray.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct AssetEntry {
     /// The file's own name, with its extension.
     pub name: String,

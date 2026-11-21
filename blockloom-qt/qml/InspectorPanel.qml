@@ -78,6 +78,13 @@ Rectangle {
     }
     function writePlugin(c, payload) { if (actor) app.invoke("set_plugin_component", { actorId: actor.id, component: componentName(c), payload: payload }); }
     readonly property var actorOptions: appState.project ? [{ value: "", label: "nothing" }].concat(appState.project.actors.map(a => ({ value: a.id, label: a.name }))) : []
+    // A component kind's own record fields (the `light` of a Light), from the
+    // backend's type registry.
+    function registryStruct(name) {
+        const outer = app.componentFields ? app.componentFields(name) : [];
+        const record = outer.find(f => f.type === "struct");
+        return record ? record.fields : [];
+    }
     function write(name, component) { if (actor) app.invoke("set_actor_component", { actorId: actor.id, name: name, component: component }); }
     function remove(name) { if (actor) app.invoke("remove_actor_component", { actorId: actor.id, name: name }); }
     // Physics components have their own commands: a collider is named by its id,
@@ -109,20 +116,12 @@ Rectangle {
     }
     function cameraOf(c) { return Object.assign({ view: "Follow", offset: [0, 0.6, 0], distance: 6, pitch: 15, fov: 75 }, c.camera || {}); }
     function materialOf(c) { return Object.assign({ metallic: 0, roughness: 0.6, emissive: "#000000", emissive_energy: 0, albedo_texture: "", normal_texture: "", roughness_texture: "", tiling: [1, 1], offset: [0, 0], rotation: 0, sampler: "Clamp", anisotropy: 0, box_projection: false, texel_density: 1, double_sided: false, shader: null }, c.material || {}); }
-    function emitterOf(c) { return Object.assign({ rate: 24, lifetime: 0.8, speed: 120, spread: 60, gravity_scale: 0.5, size_start: 6, size_end: 1, color_start: "#FFFFFF", color_end: "#FFAB19", max: 128, wind: 1 }, c.emitter || {}); }
-    function lightOf(c) { return Object.assign({ kind: "Point", color: "#FFFFFF", intensity: 800, range: 20, radius: 0, inner_angle: 30, outer_angle: 45, shadows: false,
-        unit: "Lumens", width: 1, height: 1, cookie: "", cookie_tiling: 1, ies: "", contact_shadows: false, soft_shadows: false, shadow_depth_bias: null, shadow_normal_bias: null, ray_traced: true, volumetric: true }, c.light || {}); }
     function conveyorOf(c) { return Object.assign({ speed: 96, enabled: true }, c.conveyor || {}); }
     function hazardOf(c) { return Object.assign({ enabled: true, knockback: 288, lift: 0.5, invulnerability: 1, message: "hurt" }, c.hazard || {}); }
     function light2dOf(c) {
         const l = Object.assign({ kind: "Point", color: "#FFE2A8", intensity: 1, range: 240, falloff: 2, inner_angle: 25, outer_angle: 40, shadows: false, softness: 12, flicker: {} }, c.light2d || {});
         l.flicker = Object.assign({ amount: 0, speed: 8, seed: 1 }, l.flicker);
         return l;
-    }
-    function beamOf(l) {
-        const b = Object.assign({ density: 0, anisotropy: null, falloff: 1, near_fade: 0.5, far_fade: 2, mode: "Auto", shaft_intensity: 1, shaft_noise: 0.4, shaft_scroll: 0.3, motes: {} }, l.beam || {});
-        b.motes = Object.assign({ enabled: false, count: 160, size: 0.012, alpha: 0.6, twinkle: 0.5, drift: 0.05 }, b.motes);
-        return b;
     }
     function probeOf(c) { return Object.assign({ kind: "Reflection", size: [10, 5, 10], falloff: 0.2, resolution: 256, grid: [4, 3, 4], intensity: 1, box_projection: true, auto_bake: true }, c.probe || {}); }
     function terrainOf(c) { return Object.assign({ size: [256, 256], height: 40, resolution: 257, heights: "", splat: "", holes: "", layers: [newLayer(0)], pixel_error: 4, collision: true, texturing: {}, grass: [], scatter: [] }, c.terrain || {}); }
@@ -305,8 +304,6 @@ Rectangle {
     function writeCamera(c, next) { write("Camera", { component: "Camera", camera: merged(cameraOf(c), next) }); }
     function writeMaterial(c, next) { write("Material", { component: "Material", material: merged(materialOf(c), next) }); }
     function writeShader(c, next) { writeMaterial(c, { shader: merged(materialOf(c).shader || { mode: "Solid", speed: 1, strength: 0.5, color: "#FFFFFF" }, next) }); }
-    function writeEmitter(c, next) { write("Emitter", { component: "Emitter", emitter: merged(emitterOf(c), next) }); }
-    function writeLight(c, next) { write("Light", { component: "Light", light: merged(lightOf(c), next) }); }
     function writeLight2d(c, next) { write("Light2d", { component: "Light2d", light2d: merged(light2dOf(c), next) }); }
     function writeConveyor(c, next) { write("Conveyor", { component: "Conveyor", conveyor: merged(conveyorOf(c), next) }); }
     function reverbOf(z) { return Object.assign({ mix: 0, size: 0.5, decay: 1.5, damping: 0.5, excursion: 0.2 }, z.reverb || {}); }
@@ -322,8 +319,6 @@ Rectangle {
         "Underwater": { mix: 0.5, size: 0.6, decay: 2.0, damping: 0.9, excursion: 0.6 }
     })
     function writeHazard(c, next) { write("Hazard", { component: "Hazard", hazard: merged(hazardOf(c), next) }); }
-    function writeBeam(c, next) { writeLight(c, { beam: merged(beamOf(lightOf(c)), next) }); }
-    function writeMotes(c, next) { writeBeam(c, { motes: merged(beamOf(lightOf(c)).motes, next) }); }
     function writeTrail(c, next) { write("Trail", { component: "Trail", trail: merged(trailOf(c), next) }); }
     function writeJoint(c, next) { write("Joint", { component: "Joint", joint: merged(jointOf(c), next) }); }
     function writeAnimation(c, next) { write("Animation", { component: "Animation", animation: merged(animationOf(c), next) }); }
@@ -434,41 +429,6 @@ Rectangle {
             .filter(n => n === "Custom" || n === "Collider" || n === "Constraint" || n === "Script" || held.indexOf(n) < 0).map(n => ({ value: n, label: n === "Custom" ? "Custom…" : (n === "Light2d" ? "2D light" : n === "Conveyor" ? "Conveyor belt" : n === "Hazard" ? "Hurt volume" : n === "SoundZone" ? "Sound zone" : n) }))
             .concat(pluginTypes.filter(t => t.kind === "component" && held.indexOf(t.name) < 0).map(t => ({ value: "plugin:" + t.name, label: t.displayName + " (" + t.pluginName + ")" })));
     }
-    function blank(name) {
-        switch (name) {
-        case "Look": return { component: "Look", visual: is3d ? { shape: "Cuboid", color: "#4C97FF", size: [1, 1, 1] } : { shape: "Rect", color: "#4C97FF", size: [60, 60] } };
-        case "Render": return { component: "Render", visible: true, layer: 0 };
-        case "Body": return { component: "Body", physics: { body: "Dynamic", gravity_scale: 1, lock_rotation: false, restitution: 0, friction: 0.5, density: 1, mass: null, trigger: false, collision_layer: 1, collision_mask: 255 } };
-        case "Joint": return { component: "Joint", joint: jointOf({}) };
-        case "Brain": return { component: "Brain", brain: brainOf({}) };
-        case "PlayerCamera": return { component: "PlayerCamera", player_camera: is3d ? {} : { look: false, collision: false, smoothing: 0.15, dead_zone: [48, 32], look_ahead: 64 } };
-        case "Camera": return { component: "Camera", camera: { view: "ThirdPerson", offset: [0, 0.6, 0], distance: 6, pitch: 15, fov: 75 } };
-        case "Parent": return { component: "Parent", parent: "", offset: null };
-        case "Material": return { component: "Material", material: materialOf({}) };
-        case "Emitter": return { component: "Emitter", emitter: emitterOf({}) };
-        case "Trail": return { component: "Trail", trail: trailOf({}) };
-        case "Light": return { component: "Light", light: lightOf({}) };
-        case "Light2d": return { component: "Light2d", light2d: light2dOf({}) };
-        case "Conveyor": return { component: "Conveyor", conveyor: conveyorOf({}) };
-        case "Hazard": return { component: "Hazard", hazard: hazardOf({}) };
-        case "SoundZone": return { component: "SoundZone", zone: soundZoneOf({}) };
-        case "Animation": return { component: "Animation", animation: { clips: [], states: [] } };
-        case "Sprite": return { component: "Sprite", sprite: spriteOf({}) };
-        case "Volume": return { component: "Volume", volume: volumeOf({}) };
-        case "Probe": return { component: "Probe", probe: probeOf({}) };
-        case "Terrain": return { component: "Terrain", terrain: terrainOf({}) };
-        case "Fracture": return { component:"Fracture", fracture: { cells:16,seed:1,interior:{},impulse_threshold:8,lifetime:20,sleep_seconds:2,pool_cap:256,bounce_sound:"" } };
-        case "Water": return { component: "Water", water: is3d ? {} : { size: [800, 300], depth: 300,
-            waves: { amplitude: 6, wavelength: 220, direction: 90, spread: 20 }, detail: { scale: 60 }, look: { absorption: 220 },
-            foam: { shore: 12, scale: 40 }, underwater: { distance: 600, caustics_scale: 60 }, splash: { min_speed: 60 }, ripples: { speed: 120, extent: 1600 } } };
-        case "Buoyancy": return { component: "Buoyancy", buoyancy: buoyancyOf({}) };
-        case "Parallax": return { component: "Parallax", parallax: parallaxOf({}) };
-        case "Room": return { component: "Room", room: roomOf({}) };
-        case "Persist": return { component: "Persist" };
-        case "Custom": return { component: "Custom", name: "Component", fields: [{ name: "value", value: { kind: "Number", value: 0 } }] };
-        default: return null;
-        }
-    }
     function add(name) {
         if (!actor) return;
         // A script needs a file on disk, so the backend makes both at once.
@@ -490,8 +450,8 @@ Rectangle {
             return;
         }
         if (name.indexOf("plugin:") === 0) { app.invoke("add_plugin_component", { actorId: actor.id, component: name.slice(7) }); return; }
-        const c = blank(name);
-        if (c) app.invoke("add_actor_component", { actorId: actor.id, component: c });
+        // Everything else starts as the registry's defaults, which are Rust's.
+        app.invoke("add_component", { actorId: actor.id, type: name });
     }
 
     ColumnLayout {
@@ -1316,24 +1276,14 @@ Rectangle {
         ColumnLayout {
             id: em
             readonly property var c: parent.c
-            readonly property var e: root.emitterOf(c)
             spacing: 6
-            InspectorRow { label: "Rate /s"; Layout.fillWidth: true; NumberField { value: em.e.rate; fallback: 24; onCommitted: n => root.writeEmitter(em.c, { rate: n }) } }
-            InspectorRow { label: "Life s"; Layout.fillWidth: true; NumberField { value: em.e.lifetime; fallback: 0.8; onCommitted: n => root.writeEmitter(em.c, { lifetime: n }) } }
-            InspectorRow { label: "Speed"; Layout.fillWidth: true; NumberField { value: em.e.speed; fallback: 120; onCommitted: n => root.writeEmitter(em.c, { speed: n }) } }
-            InspectorRow { label: "Spread"; Layout.fillWidth: true; NumberField { value: em.e.spread; fallback: 60; onCommitted: n => root.writeEmitter(em.c, { spread: n }) } }
-            InspectorRow { label: "Gravity ×"; Layout.fillWidth: true; NumberField { value: em.e.gravity_scale; fallback: 0.5; onCommitted: n => root.writeEmitter(em.c, { gravity_scale: n }) } }
-            InspectorRow { label: "Wind ×"; Layout.fillWidth: true; NumberField { value: em.e.wind; fallback: 1; onCommitted: n => root.writeEmitter(em.c, { wind: Math.min(4, Math.max(0, n)) }) } }
-            InspectorRow { label: "Size"; Layout.fillWidth: true
-                NumberField { value: em.e.size_start; fallback: 6; onCommitted: n => root.writeEmitter(em.c, { size_start: n }) }
-                NumberField { value: em.e.size_end; fallback: 1; onCommitted: n => root.writeEmitter(em.c, { size_end: n }) } }
-            InspectorRow { label: "Color"; Layout.fillWidth: true
-                ColorField { value: em.e.color_start; onPicked: col => root.writeEmitter(em.c, { color_start: col }) }
-                ColorField { value: em.e.color_end; onPicked: col => root.writeEmitter(em.c, { color_end: col }) }
-                Item { Layout.fillWidth: true } }
-            InspectorRow { label: "Max"; Layout.fillWidth: true; NumberField { value: em.e.max; fallback: 128; onCommitted: n => root.writeEmitter(em.c, { max: Math.round(n) }) } }
-            EmitterGraphRows { Layout.fillWidth: true; app: root.app; is3d: root.is3d; emitter: em.e
-                onEdited: next => root.writeEmitter(em.c, next) }
+            RegistryForm {
+                objectName: "emitter-form"
+                app: root.app
+                fields: root.registryStruct("Emitter")
+                value: em.c.emitter || ({})
+                onChanged: next => root.write("Emitter", { component: "Emitter", emitter: next })
+            }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "Plays in the scene view while this actor is selected, looping every Duration. In a run it sprays while attached; detaching stops the spray and what is already flying fades out on its own." }
         }
@@ -1469,81 +1419,24 @@ Rectangle {
         ColumnLayout {
             id: li
             readonly property var c: parent.c
-            readonly property var l: root.lightOf(c)
-            spacing: 6
+            readonly property var l: c.light || ({})
             readonly property bool area: l.kind === "Rect" || l.kind === "Disk"
-            InspectorRow { label: "Kind"; Layout.fillWidth: true
-                ChoiceField { options: [{ value: "Point", label: "Point" }, { value: "Spot", label: "Spot" }, { value: "Rect", label: "Rect" }, { value: "Disk", label: "Disk" }]; value: li.l.kind; onChosen: k => root.writeLight(li.c, { kind: k }) } }
-            InspectorRow { label: "Color"; Layout.fillWidth: true; ColorField { value: li.l.color; onPicked: col => root.writeLight(li.c, { color: col }) } Item { Layout.fillWidth: true } }
-            InspectorRow { label: "Intensity"; Layout.fillWidth: true
-                NumberField { value: li.l.intensity; fallback: 800; onCommitted: n => root.writeLight(li.c, { intensity: Math.max(0, n) }) }
-                ChoiceField { options: [{ value: "Lumens", label: "lm" }, { value: "Candela", label: "cd" }]; value: li.l.unit; onChosen: u => root.writeLight(li.c, { unit: u }) } }
-            InspectorRow { label: "Range m"; Layout.fillWidth: true
-                NumberField { value: li.l.range; fallback: 20; onCommitted: n => root.writeLight(li.c, { range: Math.max(0.01, n) }) } }
-            InspectorRow { visible: !li.area; label: "Radius m"; Layout.fillWidth: true
-                NumberField { value: li.l.radius; fallback: 0; onCommitted: n => root.writeLight(li.c, { radius: Math.max(0, n) }) } }
-            InspectorRow { visible: li.area; label: li.l.kind === "Disk" ? "Diameter m" : "Size m"; Layout.fillWidth: true
-                NumberField { value: li.l.width; fallback: 1; onCommitted: n => root.writeLight(li.c, { width: Math.max(0.01, n) }) }
-                NumberField { visible: li.l.kind === "Rect"; value: li.l.height; fallback: 1; onCommitted: n => root.writeLight(li.c, { height: Math.max(0.01, n) }) } }
-            InspectorRow { visible: li.l.kind === "Spot"; label: "Cone °"; Layout.fillWidth: true
-                NumberField { value: li.l.inner_angle; fallback: 30; onCommitted: n => root.writeLight(li.c, { inner_angle: n }) }
-                NumberField { value: li.l.outer_angle; fallback: 45; onCommitted: n => root.writeLight(li.c, { outer_angle: n }) } }
-            InspectorRow { visible: li.l.kind === "Spot"; label: "Cookie"; Layout.fillWidth: true
-                AssetField { app: root.app; accept: ["image"]; value: li.l.cookie; placeholderText: "Drag an image here"; onCommitted: p => root.writeLight(li.c, { cookie: p }) } }
-            InspectorRow { visible: li.l.kind === "Spot" && li.l.cookie !== ""; label: "Tiling"; Layout.fillWidth: true
-                NumberField { value: li.l.cookie_tiling; fallback: 1; onCommitted: n => root.writeLight(li.c, { cookie_tiling: Math.max(0.01, n) }) } }
-            InspectorRow { visible: !li.area; label: "IES profile"; Layout.fillWidth: true
-                AssetField { app: root.app; accept: ["light"]; value: li.l.ies; placeholderText: "Drag an .ies file here"; onCommitted: p => root.writeLight(li.c, { ies: p }) } }
-            InspectorRow { visible: !li.area; label: "Shadows"; Layout.fillWidth: true
-                SwitchField { value: li.l.shadows; onToggled: on => root.writeLight(li.c, { shadows: on }) } Item { Layout.fillWidth: true } }
-            InspectorRow { visible: !li.area && li.l.shadows; label: "Soft (PCSS)"; Layout.fillWidth: true
-                SwitchField { value: li.l.soft_shadows; onToggled: on => root.writeLight(li.c, { soft_shadows: on }) } Item { Layout.fillWidth: true } }
-            InspectorRow { visible: !li.area && li.l.shadows; label: "Bias"; Layout.fillWidth: true
-                NumberField { value: li.l.shadow_depth_bias !== null ? li.l.shadow_depth_bias : (li.l.kind === "Spot" ? 0.02 : 0.08); fallback: 0.02; onCommitted: n => root.writeLight(li.c, { shadow_depth_bias: Math.max(0, n) }) }
-                NumberField { value: li.l.shadow_normal_bias !== null ? li.l.shadow_normal_bias : (li.l.kind === "Spot" ? 1.8 : 0.6); fallback: 0.6; onCommitted: n => root.writeLight(li.c, { shadow_normal_bias: Math.max(0, n) }) } }
-            InspectorRow { visible: !li.area; label: "Contact"; Layout.fillWidth: true
-                SwitchField { value: li.l.contact_shadows; onToggled: on => root.writeLight(li.c, { contact_shadows: on }) } Item { Layout.fillWidth: true } }
-            InspectorRow { label: "Traced"; Layout.fillWidth: true
-                SwitchField { value: li.l.ray_traced; onToggled: on => root.writeLight(li.c, { ray_traced: on }) } Item { Layout.fillWidth: true } }
-            InspectorRow { label: "Lights fog"; Layout.fillWidth: true
-                SwitchField { value: li.l.volumetric; onToggled: on => root.writeLight(li.c, { volumetric: on }) } Item { Layout.fillWidth: true } }
-            readonly property var b: root.beamOf(l)
-            readonly property bool beams: !area && l.volumetric
-            readonly property bool beamOn: beams && b.density > 0
-            InspectorRow { visible: li.beams; label: "Beam /m"; Layout.fillWidth: true
-                NumberField { value: li.b.density; fallback: 0; onCommitted: n => root.writeBeam(li.c, { density: Math.min(Math.max(n, 0), 10) }) } }
-            InspectorRow { visible: li.beamOn; label: "Drawn as"; Layout.fillWidth: true
-                ChoiceField { options: [{ value: "Auto", label: "Auto" }, { value: "Volumetric", label: "Volumetric fog" }, { value: "Shaft", label: "Shaft cone" }]; value: li.b.mode; onChosen: m => root.writeBeam(li.c, { mode: m }) } }
-            InspectorRow { visible: li.beamOn; label: "Own g"; Layout.fillWidth: true
-                SwitchField { value: li.b.anisotropy !== null; onToggled: on => root.writeBeam(li.c, { anisotropy: on ? 0.6 : null }) }
-                NumberField { visible: li.b.anisotropy !== null; value: li.b.anisotropy !== null ? li.b.anisotropy : 0.6; fallback: 0.6; onCommitted: n => root.writeBeam(li.c, { anisotropy: Math.min(Math.max(n, -0.9), 0.9) }) } }
-            InspectorRow { visible: li.beamOn; label: "Falloff curve"; Layout.fillWidth: true
-                NumberField { value: li.b.falloff; fallback: 1; onCommitted: n => root.writeBeam(li.c, { falloff: Math.min(Math.max(n, 0), 8) }) } }
-            InspectorRow { visible: li.beamOn; label: "Fade near, far m"; Layout.fillWidth: true
-                NumberField { value: li.b.near_fade; fallback: 0.5; onCommitted: n => root.writeBeam(li.c, { near_fade: Math.max(n, 0) }) }
-                NumberField { value: li.b.far_fade; fallback: 2; onCommitted: n => root.writeBeam(li.c, { far_fade: Math.max(n, 0) }) } }
-            InspectorRow { visible: li.beamOn && li.l.kind === "Spot" && li.b.mode !== "Volumetric"; label: "Shaft ×, noise"; Layout.fillWidth: true
-                NumberField { value: li.b.shaft_intensity; fallback: 1; onCommitted: n => root.writeBeam(li.c, { shaft_intensity: Math.max(n, 0) }) }
-                NumberField { value: li.b.shaft_noise; fallback: 0.4; onCommitted: n => root.writeBeam(li.c, { shaft_noise: Math.min(Math.max(n, 0), 1) }) } }
-            InspectorRow { visible: li.beamOn && li.l.kind === "Spot" && li.b.mode !== "Volumetric"; label: "Scroll m/s"; Layout.fillWidth: true
-                NumberField { value: li.b.shaft_scroll; fallback: 0.3; onCommitted: n => root.writeBeam(li.c, { shaft_scroll: n }) } }
-            InspectorRow { visible: !li.area; label: "Dust motes"; Layout.fillWidth: true
-                SwitchField { value: li.b.motes.enabled; onToggled: on => root.writeMotes(li.c, { enabled: on }) } Item { Layout.fillWidth: true } }
-            InspectorRow { visible: !li.area && li.b.motes.enabled; label: "Count, size m"; Layout.fillWidth: true
-                NumberField { value: li.b.motes.count; fallback: 160; onCommitted: n => root.writeMotes(li.c, { count: Math.min(Math.max(Math.round(n), 0), 4096) }) }
-                NumberField { value: li.b.motes.size; fallback: 0.012; onCommitted: n => root.writeMotes(li.c, { size: Math.min(Math.max(n, 0.001), 1) }) } }
-            InspectorRow { visible: !li.area && li.b.motes.enabled; label: "Alpha, twinkle"; Layout.fillWidth: true
-                NumberField { value: li.b.motes.alpha; fallback: 0.6; onCommitted: n => root.writeMotes(li.c, { alpha: Math.min(Math.max(n, 0), 1) }) }
-                NumberField { value: li.b.motes.twinkle; fallback: 0.5; onCommitted: n => root.writeMotes(li.c, { twinkle: Math.min(Math.max(n, 0), 1) }) } }
-            InspectorRow { visible: !li.area && li.b.motes.enabled; label: "Drift m/s"; Layout.fillWidth: true
-                NumberField { value: li.b.motes.drift; fallback: 0.05; onCommitted: n => root.writeMotes(li.c, { drift: Math.min(Math.max(n, 0), 10) }) } }
+            readonly property real intensity: l.intensity === undefined ? 800 : l.intensity
+            spacing: 6
+            RegistryForm {
+                objectName: "light-form"
+                app: root.app
+                fields: root.registryStruct("Light")
+                value: li.l
+                onChanged: next => root.write("Light", { component: "Light", light: next })
+            }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: !root.is3d ? "Lights need a 3D world; in 2D this rests."
                     : li.area ? "An area light glows from a " + (li.l.kind === "Disk" ? "disc" : "rectangle") + " facing the actor's forward axis, with soft LTC highlights. It casts no shadow maps."
                     : li.l.unit === "Candela"
-                    ? "Candela down the brightest direction (an IES profile's peak). About " + Math.round(li.l.intensity * 4 * Math.PI) + " lumens. Enable contact shadows in the Lighting asset too."
-                    : "About " + Math.round(li.l.intensity / (4 * Math.PI)) + " candela. A spot's cone doesn't gather the light, so narrowing it isn't brighter. Enable contact shadows in the Lighting asset too." }
-            Text { visible: li.beams && root.is3d; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
+                    ? "Candela down the brightest direction (an IES profile's peak). About " + Math.round(li.intensity * 4 * Math.PI) + " lumens. Enable contact shadows in the Lighting asset too."
+                    : "About " + Math.round(li.intensity / (4 * Math.PI)) + " candela. A spot's cone doesn't gather the light, so narrowing it isn't brighter. Enable contact shadows in the Lighting asset too." }
+            Text { visible: !li.area && li.l.volumetric !== false && root.is3d; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
                 text: "A beam is extra haze only this light scatters, thickening and thinning with `set fog density to`. Auto draws it in volumetric fog while that is on above Low quality, and as a cheap shaft cone otherwise; a point light's beam is a glow round it and needs volumetric fog. Motes drift in the light's reach." }
         }
     }

@@ -7,9 +7,10 @@
 
 use super::store::{Grid, GridKind};
 use super::{Heightfield, Shape};
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum BrushOp {
     #[default]
     Raise,
@@ -33,7 +34,7 @@ impl BrushOp {
 }
 
 /// What a brush works on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 #[serde(tag = "kind")]
 pub enum BrushTarget {
     #[default]
@@ -54,7 +55,7 @@ pub enum BrushTarget {
 }
 
 /// A brush's settings. Distances are metres.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Brush {
     pub op: BrushOp,
@@ -122,7 +123,7 @@ impl Brush {
 }
 
 /// One stroke: a brush dragged through local X, Z points.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Schema)]
 pub struct Stroke {
     pub brush: Brush,
     pub stamps: Vec<[f32; 2]>,
@@ -522,7 +523,7 @@ pub fn thermal(field: &mut Heightfield, shape: &Shape, iterations: u32, talus: f
 }
 
 /// An erosion filter, as the editor previews and applies it.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Erosion {
     Thermal { iterations: u32, talus: f32 },
@@ -539,7 +540,7 @@ impl Erosion {
 }
 
 /// Hydraulic erosion's dials.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct Hydraulic {
     /// Raindrops simulated. Zero picks a count for the resolution.

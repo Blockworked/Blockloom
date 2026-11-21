@@ -6,10 +6,11 @@
 //! The runtime applies the authored spec at spawn and `set sprite [dial] to`
 //! changes it on the fixed tick, the same tick in the VM and compiled logic.
 
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// How a stretched part of a 9-slice panel fills its space.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default, Schema)]
 pub enum SliceFill {
     #[default]
     Stretch,
@@ -19,7 +20,7 @@ pub enum SliceFill {
 /// Cuts the image into nine parts: the corners never stretch, the sides
 /// stretch or tile along one axis, the centre along both. `border` is left,
 /// right, top, bottom, in source pixels.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct NineSlice {
     #[serde(default)]
     pub border: [f32; 4],
@@ -40,7 +41,7 @@ fn one() -> f32 {
 /// (the look's own image when empty), the first slice at the bottom. Each
 /// slice is drawn `offset` further along in screen space, so the stack
 /// turns with the actor while it stays standing up.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct SpriteStack {
     #[serde(default)]
     pub image: String,
@@ -64,7 +65,7 @@ fn default_offset() -> [f32; 2] {
 /// channel picks the column and `palette_index` the row, and the sprite's
 /// alpha is kept. The outline draws `outline_width` pixels round anything
 /// opaque, in `outline_color`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct SpriteSpec {
     #[serde(default)]
     pub flip_x: bool,

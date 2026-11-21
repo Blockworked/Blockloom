@@ -12,10 +12,11 @@ use crate::scene::{Axis, BodyKind};
 use crate::sound::SoundBus;
 use crate::ui::{UiAnchor, UiKind, UiProp, UiTheme};
 use crate::value::Value;
+use blockloom_schema_derive::Schema;
 use serde::{Deserialize, Serialize};
 
 /// The 2D sprite dials `set sprite [dial] to` can change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum SpriteDial {
     FlipX,
     FlipY,
@@ -52,7 +53,7 @@ impl SpriteDial {
 }
 
 /// The 2D look `set [look] to` can change for the run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum Look2dDial {
     /// The ambient multiplier over the project's colour.
     AmbientLight,
@@ -145,7 +146,7 @@ impl Look2dDial {
 }
 
 /// Runtime emitter settings available to blocks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schema)]
 pub enum EmitterDial {
     Rate,
     Lifetime,
@@ -201,7 +202,7 @@ pub type Fragment = blockstitch_core::graph::Fragment<InstructionKind>;
 /// Serialized internally-tagged, so an instruction is the flat
 /// `{"type": "Move", "steps": ...}` object the frontend already speaks (see
 /// [`crate::wire`] for the `id` half).
-#[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize, Schema)]
 #[serde(tag = "type")]
 pub enum InstructionKind {
     // ─── Events (headers) ───────────────────────────────────────────────────
