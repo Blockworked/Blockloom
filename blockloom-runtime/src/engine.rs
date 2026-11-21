@@ -437,6 +437,9 @@ pub struct Engine {
     pub next_report: f64,
     /// Set when the world needs rebuilding from `project` before the next tick.
     pub rebuild: bool,
+    /// Authored actors an edit replaced, added or removed, respawned on their
+    /// own while nothing runs (`world::respawn_actors`).
+    pub respawn: Vec<String>,
     /// The open project's folder, which is where its assets and its built
     /// script libraries are. `None` until the editor says.
     pub project_dir: Option<PathBuf>,
@@ -621,6 +624,7 @@ impl Engine {
             speech: HashMap::new(),
             next_report: 0.0,
             rebuild: true,
+            respawn: Vec::new(),
             starting: false,
             prewarm: false,
             project_dir: None,

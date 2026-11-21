@@ -555,6 +555,12 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 .after(bevy::transform::TransformSystems::Propagate)
                 .run_if(is_3d),
         );
+        app.add_systems(
+            Update,
+            world::respawn_actors
+                .after(world::rebuild_world)
+                .before(volumes::gather_volumes),
+        );
         app.add_systems(Update, ui_design::resize.after(world::pump_editor));
         app.add_systems(Update, ui_design::hide_world.after(world::pump_editor));
         app.add_systems(Last, preview::capture_preview_frame);

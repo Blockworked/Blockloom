@@ -302,6 +302,58 @@ mod tests {
     }
 
     #[test]
+    fn a_patch_respawns_only_the_actor_it_names() {
+        for mode in [Mode::TwoD, Mode::ThreeD] {
+            let mut project = mover(mode, 0.0);
+            let other = Actor::new(
+                "Other",
+                Visual::Rect {
+                    color: "#000000".to_string(),
+                    size: [5.0, 5.0],
+                },
+            );
+            project.actors.push(other.clone());
+            let mut app = headless_with(project, mode, None);
+            app.add_systems(Update, world::respawn_actors);
+            app.update();
+            let (player, kept) = {
+                let engine = app.world().non_send::<Engine>();
+                (
+                    engine.project.actors[0].id.clone(),
+                    engine.entities[&other.id],
+                )
+            };
+            {
+                let mut engine = app.world_mut().non_send_mut::<Engine>();
+                engine.running = false;
+                let before = engine.project.clone();
+                let mut after = before.clone();
+                after.actors[0].components.placement_mut().position = [40.0, 0.0, 0.0];
+                let change = blockloom_core::change::diff(&before, &after);
+                change.apply(&mut engine.project, true);
+                let ids = world::respawnable(&engine, &change).expect("a plain edit");
+                assert_eq!(ids, [player.clone()]);
+                engine.respawn = ids;
+            }
+            app.update();
+            let engine = app.world().non_send::<Engine>();
+            assert_eq!(
+                engine.entities[&other.id], kept,
+                "the other actor kept its entity"
+            );
+            let moved = engine.entities[&player];
+            let at = app.world().get::<Transform>(moved).unwrap().translation;
+            assert_eq!(at.x, 40.0, "{mode:?}");
+            let actors = app
+                .world_mut()
+                .query::<&crate::engine::ActorId>()
+                .iter(app.world())
+                .count();
+            assert_eq!(actors, 2);
+        }
+    }
+
+    #[test]
     fn a_headless_2d_world_runs_the_blocks_and_moves_the_actor() {
         let at = position_after(Mode::TwoD, 30);
         assert!(at.x > 20.0, "moved to {at}");

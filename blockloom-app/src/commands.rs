@@ -2745,6 +2745,8 @@ pub(crate) fn run_project(
         dir,
     }) && runtime.send(&blockloom_protocol::EditorMessage::Plugins { loadout })
         && runtime.send(&blockloom_protocol::EditorMessage::Start);
+    // A run can switch scenes in the world's copy.
+    runtime_stale(&mut s);
     if !alive {
         s.runtime = None;
         return Err("Lost the connection to the game runtime".to_string());
@@ -2838,6 +2840,7 @@ pub(crate) fn open_world(
     app: &AppHandle,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
+    commit(&mut s);
     let Some(project) = s.project().cloned() else {
         return Err("No project is open".to_string());
     };
@@ -2868,6 +2871,9 @@ pub(crate) fn open_world(
         s.runtime = None;
         emit(app, &mut s);
         return Err("Lost the connection to the game runtime".to_string());
+    }
+    if let Some(open) = &mut s.open {
+        open.tracker.runtime_synced();
     }
     if s.preview_enabled {
         let headless = s.preview_headless;
@@ -4942,25 +4948,42 @@ pub(crate) fn open_script_ide(state: &SharedState) -> Result<serde_json::Value, 
 fn sync_runtime(s: &mut AppState) {
     s.interface_design = None;
     s.interface_layout = None;
-    let Some(project) = s.project().cloned() else {
-        return;
-    };
-    if s.running {
+    if s.project().is_none() || s.running {
         return;
     }
-    let dir = s
-        .project_dir()
-        .map(|dir| dir.to_string_lossy().into_owned());
+    commit(s);
+    // Only what changed since the world's last copy, where that is a plain
+    // edit; everything otherwise, which also rebuilds an unchanged world.
+    let owed = s.open.as_mut().and_then(|open| open.tracker.take_runtime());
+    let message = match owed {
+        Some(change) if !change.is_empty() && change.header.is_none() && change.whole.is_none() => {
+            blockloom_protocol::EditorMessage::Patch {
+                change: Box::new(change),
+            }
+        }
+        _ => blockloom_protocol::EditorMessage::Load {
+            project: Box::new(s.project().cloned().expect("checked above")),
+            dir: s
+                .project_dir()
+                .map(|dir| dir.to_string_lossy().into_owned()),
+        },
+    };
     let loadout = plugins::loadout(s);
     if let Some(runtime) = s.runtime.as_mut()
-        && !(runtime.send(&blockloom_protocol::EditorMessage::Load {
-            project: Box::new(project),
-            dir,
-        }) && runtime.send(&blockloom_protocol::EditorMessage::Plugins { loadout }))
+        && !(runtime.send(&message)
+            && runtime.send(&blockloom_protocol::EditorMessage::Plugins { loadout }))
     {
         s.runtime = None;
     }
     send_selection(s);
+}
+
+/// The world's copy of the document can't be patched any more: the next sync
+/// sends it whole.
+fn runtime_stale(s: &mut AppState) {
+    if let Some(open) = &mut s.open {
+        open.tracker.runtime_stale();
+    }
 }
 
 /// Tells the world which actor the scene view should outline.
@@ -4976,6 +4999,7 @@ fn send_selection(s: &mut AppState) {
 /// What a fresh world needs beyond the project: how the scene view edits and
 /// what is selected. `false` means the link is already gone.
 fn greet(s: &mut AppState) -> bool {
+    runtime_stale(s);
     let view = blockloom_protocol::EditorMessage::SceneView(s.scene_view.clone());
     let select = blockloom_protocol::EditorMessage::Select {
         actor: s.actor_id(),

@@ -11,7 +11,7 @@ use crate::project::{Actor, Project, Scene};
 use std::collections::{HashMap, HashSet};
 
 /// One part before and after an edit.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Swap<T> {
     pub before: T,
     pub after: T,
@@ -24,7 +24,7 @@ impl<T> Swap<T> {
 }
 
 /// One actor, keyed by id. `None` on a side means it wasn't there.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ActorChange {
     pub id: String,
     pub before: Option<Box<Actor>>,
@@ -32,7 +32,7 @@ pub struct ActorChange {
 }
 
 /// Everything that changed in one scene.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct SceneChange {
     pub id: String,
     /// The scene without its actors. `None` on a side: the scene was added
@@ -62,7 +62,7 @@ impl SceneChange {
 }
 
 /// What one edit (or one coalesced run of them) changed.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Change {
     /// The project without its scenes.
     pub header: Option<Swap<Box<Project>>>,

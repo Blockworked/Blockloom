@@ -293,8 +293,14 @@ pub fn pump_editor(
         fixed.set_timestep_hz(rate.clamp(1.0, 1000.0) as f64);
     }
     let now = time.elapsed_secs_f64();
+    // A patch that can't respawn actors on their own loads the patched copy.
+    let mut again: Option<EditorMessage> = None;
     loop {
-        let message = match engine.incoming.try_recv() {
+        let message = match again
+            .take()
+            .map(Ok)
+            .unwrap_or_else(|| engine.incoming.try_recv())
+        {
             Ok(message) => message,
             Err(std::sync::mpsc::TryRecvError::Empty) => break,
             // The editor closed the pipe: nothing left to render for.
@@ -310,6 +316,35 @@ pub fn pump_editor(
             EditorMessage::CloseLan => crate::lan::close(&mut engine),
             EditorMessage::LanStatus => crate::lan::report(&engine, None),
             EditorMessage::KickGuest { id } => crate::lan::kick(&mut engine, id),
+            EditorMessage::Patch { change } => {
+                if crate::lan::status(&engine).open {
+                    crate::lan::report(
+                        &engine,
+                        Some("Close LAN before loading edited content into the runtime".into()),
+                    );
+                    continue;
+                }
+                change.apply(&mut engine.project, true);
+                let idle = !engine.running && !engine.starting && !engine.rebuild;
+                match respawnable(&engine, &change).filter(|_| idle) {
+                    Some(ids) => {
+                        for id in ids {
+                            if !engine.respawn.contains(&id) {
+                                engine.respawn.push(id);
+                            }
+                        }
+                    }
+                    None => {
+                        let project = Box::new(engine.project.clone());
+                        let dir = engine
+                            .project_dir
+                            .as_ref()
+                            .map(|dir| dir.to_string_lossy().into_owned());
+                        again = Some(EditorMessage::Load { project, dir });
+                    }
+                }
+                crate::plugins::preview(&mut engine);
+            }
             EditorMessage::Load { project, dir } => {
                 if crate::lan::status(&engine).open {
                     crate::lan::report(
@@ -4355,6 +4390,135 @@ fn carry_custom(copy: &mut Actor, custom: &CustomComponents) {
     }
 }
 
+/// Components whose actor can't be respawned alone: they reach other actors,
+/// the camera, the level or baked data that only a rebuild redoes.
+const REBUILD_ONLY: &[&str] = &[
+    "Parent",
+    "Camera",
+    "PlayerCamera",
+    "CharacterController",
+    "CharacterMotor",
+    "Constraint",
+    "Joint",
+    "Terrain",
+    "Water",
+    "Room",
+    "Parallax",
+    "Probe",
+];
+
+fn alone(actor: &Actor) -> bool {
+    !actor
+        .components
+        .iter()
+        .any(|c| REBUILD_ONLY.contains(&c.name()))
+        && !matches!(
+            actor.visual(),
+            Some(blockloom_core::scene::Visual::Tilemap { .. })
+        )
+        && actor.components.colliders().all(|c| {
+            let geometry = serde_json::to_string(&c.geometry).unwrap_or_default();
+            !["Hull", "Mesh", "Terrain"]
+                .iter()
+                .any(|k| geometry.contains(k))
+        })
+}
+
+/// The actors a patch replaced, when each can be respawned on its own: only
+/// actors of the open scene changed, and none of them reaches anything a
+/// rebuild has to redo.
+pub(crate) fn respawnable(
+    engine: &Engine,
+    change: &blockloom_core::change::Change,
+) -> Option<Vec<String>> {
+    if change.whole.is_some() || change.header.is_some() || change.scene_order.is_some() {
+        return None;
+    }
+    let active = engine.project.active_scene();
+    let mut ids = Vec::new();
+    for scene in &change.scenes {
+        if scene.id != active.id {
+            continue;
+        }
+        if scene.settings.is_some() || scene.all_actors.is_some() {
+            return None;
+        }
+        for actor in &scene.actors {
+            let sides = [&actor.before, &actor.after];
+            if sides
+                .iter()
+                .any(|side| side.as_deref().is_some_and(|a| !alone(a)))
+            {
+                return None;
+            }
+            // Somebody hangs off it.
+            if active
+                .actors
+                .iter()
+                .any(|a| a.parent() == Some(actor.id.as_str()))
+            {
+                return None;
+            }
+            ids.push(actor.id.clone());
+        }
+    }
+    Some(ids)
+}
+
+/// Respawns the actors a patch replaced, leaving the rest of the world as it
+/// stands. Only while nothing runs; a rebuild that is due anyway wins.
+#[allow(clippy::too_many_arguments)]
+pub fn respawn_actors(
+    mut commands: Commands,
+    mut engine: NonSendMut<Engine>,
+    dimension: Res<Dimension>,
+    assets: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut textures: ResMut<Assets<Image>>,
+    mut graph_materials_2d: ResMut<Assets<crate::materials::GraphMaterial2d>>,
+    mut graph_materials_3d: ResMut<Assets<crate::materials::GraphMaterial3d>>,
+    mut tile_materials: ResMut<Assets<bevy::sprite_render::ColorMaterial>>,
+    mut render_cache: ResMut<crate::performance::RenderCache>,
+    mut navmesh: Option<ResMut<NavMesh>>,
+) {
+    if engine.respawn.is_empty() {
+        return;
+    }
+    let ids = std::mem::take(&mut engine.respawn);
+    if engine.rebuild || engine.running || engine.starting {
+        return;
+    }
+    for id in &ids {
+        forget_actor(&mut commands, &mut engine, id);
+        let Some(actor) = engine.project.actor(id).cloned() else {
+            continue;
+        };
+        spawn_actor_entity(
+            &mut commands,
+            &mut engine,
+            dimension.0,
+            &assets,
+            &mut meshes,
+            &mut materials,
+            &mut textures,
+            &mut graph_materials_2d,
+            &mut graph_materials_3d,
+            &mut tile_materials,
+            &mut render_cache,
+            &actor,
+        );
+    }
+    // Static solids are the navmesh's ground and holes.
+    if let Some(nav) = navmesh.as_deref_mut() {
+        nav.mesh = nav::build_mesh(&engine.project, nav::DEFAULT_AGENT_RADIUS)
+            .map_err(|error| tracing::warn!("navmesh bake failed: {error}"))
+            .ok()
+            .map(Arc::new);
+        crate::plugins::publish_nav(nav);
+    }
+}
+
 /// Puts an actor the run made into the world and into every map that answers
 /// a question about it.
 #[allow(clippy::too_many_arguments)]
@@ -4372,11 +4536,45 @@ fn spawn_runtime_actor(
     render_cache: &mut crate::performance::RenderCache,
     actor: Actor,
 ) {
+    spawn_actor_entity(
+        commands,
+        engine,
+        mode,
+        assets,
+        meshes,
+        materials,
+        textures,
+        graph_materials_2d,
+        graph_materials_3d,
+        tile_materials,
+        render_cache,
+        &actor,
+    );
+    engine.spawned.insert(actor.id.clone(), actor);
+}
+
+/// Spawns one actor's entity, physics and scripts and files it in every map
+/// that answers a question about it.
+#[allow(clippy::too_many_arguments)]
+fn spawn_actor_entity(
+    commands: &mut Commands,
+    engine: &mut Engine,
+    mode: Mode,
+    assets: &AssetServer,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    textures: &mut Assets<Image>,
+    graph_materials_2d: &mut Assets<crate::materials::GraphMaterial2d>,
+    graph_materials_3d: &mut Assets<crate::materials::GraphMaterial3d>,
+    tile_materials: &mut Assets<bevy::sprite_render::ColorMaterial>,
+    render_cache: &mut crate::performance::RenderCache,
+    actor: &Actor,
+) {
     let dir = engine.project_dir.clone();
     let entity = match mode {
         Mode::TwoD => dim2::spawn_actor(
             commands,
-            &actor,
+            actor,
             dir.as_deref(),
             assets,
             textures,
@@ -4387,7 +4585,7 @@ fn spawn_runtime_actor(
         ),
         Mode::ThreeD => dim3::spawn_actor(
             commands,
-            &actor,
+            actor,
             dir.as_deref(),
             assets,
             meshes,
@@ -4396,9 +4594,9 @@ fn spawn_runtime_actor(
             render_cache,
         ),
     }
-    .unwrap_or_else(|| spawn_unseen(commands, &actor, mode));
-    attach_camera(commands, &actor, entity);
-    crate::fx::insert_fx_state(commands, &actor, entity);
+    .unwrap_or_else(|| spawn_unseen(commands, actor, mode));
+    attach_camera(commands, actor, entity);
+    crate::fx::insert_fx_state(commands, actor, entity);
     // One camera in the world: a clone of the actor holding it takes it.
     if actor.camera().is_some() {
         claim_camera(commands, engine, &actor.id);
@@ -4428,14 +4626,13 @@ fn spawn_runtime_actor(
     crate::physics_install::install_actor(
         commands,
         &engine.project,
-        &actor,
+        actor,
         &targets,
         &engine.entities,
     );
     // A scripted actor's library is opened here rather than when the world
     // was built, because this one didn't exist then.
-    open_script_for(engine, &actor);
-    engine.spawned.insert(actor.id.clone(), actor);
+    open_script_for(engine, actor);
 }
 
 /// Takes the camera off everyone but `actor`.
@@ -4518,6 +4715,12 @@ pub(crate) fn delete_actor(commands: &mut Commands, engine: &mut Engine, actor: 
             }
         }
     }
+    forget_actor(commands, engine, actor);
+}
+
+/// Takes an actor's entity out of the world and out of every map that names
+/// it, without telling its scripts.
+fn forget_actor(commands: &mut Commands, engine: &mut Engine, actor: &str) {
     let Some(entity) = engine.entities.remove(actor) else {
         return;
     };

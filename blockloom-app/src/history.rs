@@ -118,9 +118,33 @@ pub(crate) struct Tracker {
     pub(crate) history: History,
     pub(crate) unsaved: Unsaved,
     pub(crate) unpublished: Unpublished,
+    /// What the world hasn't been sent: `None` means it needs the whole
+    /// document.
+    runtime: Option<Change>,
 }
 
 impl Tracker {
+    /// Takes what the world is owed. `None`: send it everything.
+    pub(crate) fn take_runtime(&mut self) -> Option<Change> {
+        self.runtime.replace(Change::default())
+    }
+
+    /// The world's copy can't be trusted any more (a run, a new world).
+    pub(crate) fn runtime_stale(&mut self) {
+        self.runtime = None;
+    }
+
+    /// The world was just sent the committed copy.
+    pub(crate) fn runtime_synced(&mut self) {
+        self.runtime = Some(Change::default());
+    }
+
+    fn owe_runtime(&mut self, change: &Change) {
+        if let Some(owed) = self.runtime.take() {
+            self.runtime = Some(owed.then(change.clone()));
+        }
+    }
+
     /// Takes `project` as committed without recording anything: what a
     /// fresh open or a load from disk does.
     pub(crate) fn reset(&mut self, project: &Project) {
@@ -132,6 +156,7 @@ impl Tracker {
             everything: true,
             ..Unpublished::default()
         };
+        self.runtime = None;
     }
 
     /// Marks the next commit undoable. Whatever changed before this is
@@ -162,6 +187,7 @@ impl Tracker {
         change.apply(shadow, true);
         self.unsaved.add(&change);
         self.unpublished.add(&change);
+        self.owe_runtime(&change);
         if let Some(session) = mark {
             self.history.record(change.clone(), session);
         } else if self.history.session.is_some() {
@@ -196,6 +222,7 @@ impl Tracker {
             applied.apply(shadow, true);
             self.unsaved.add(&applied);
             self.unpublished.add(&applied);
+            self.owe_runtime(&applied);
         }
         true
     }

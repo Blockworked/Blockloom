@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 38;
+pub const PROTOCOL_VERSION: u32 = 39;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -200,6 +200,12 @@ pub enum EditorMessage {
         /// script libraries the editor built into `.blockloom/build`.
         #[serde(default)]
         dir: Option<String>,
+    },
+    /// What changed since the last `Load` or `Patch`, applied to the
+    /// world's copy. An idle world respawns just the actors it names when
+    /// it can, and rebuilds otherwise.
+    Patch {
+        change: Box<blockloom_core::change::Change>,
     },
     /// Temporary authored UI preview. None returns to the scene view.
     InterfaceDesign {

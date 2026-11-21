@@ -1096,6 +1096,16 @@ in its parent's frame reports its new `offset` too, since that, not `Place`,
 is what the world builds it from, and such children follow a dragged parent
 live.
 
+An edit reaches an idle world as `EditorMessage::Patch` (`PROTOCOL_VERSION`
+39): the `Change`s committed since the world's last copy (`Tracker::
+take_runtime`; a run, a new world or a header change sends `Load` instead).
+The world applies it to its copy, and when only open-scene actors changed
+and none of them reaches past itself (`world::respawnable`: no parent or
+children, camera, controller, constraint, terrain, water, room, parallax,
+probe, tilemap or mesh collider) `world::respawn_actors` replaces just those
+entities and rebakes the navmesh; anything else loads the patched copy, a
+full rebuild.
+
 The tool, snapping and steps are `blockloom_protocol::SceneView`, an editor
 preference kept in QML `Settings` and re-sent to every world that comes up,
 as is the selection (`EditorMessage::Select`). `Place` has a uniform
