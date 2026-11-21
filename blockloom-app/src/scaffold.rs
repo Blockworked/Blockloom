@@ -392,11 +392,11 @@ pub fn plugin_new(
         )?;
         write(path, &mut files, ".gitignore", "target/\n.cargo/\n")?;
         // Where this machine's engine is, for the author's own cargo runs.
-        if let Some(engine) = crate::project_runtime::engine_source() {
+        if let Ok(engine) = crate::project_runtime::engine() {
             let config = crate::project_runtime::author_config(&engine)?;
             write(path, &mut files, "engine/.cargo/config.toml", &config)?;
             // The engine's toolchain, which its dependencies are built for.
-            if let Ok(toolchain) = fs::read_to_string(engine.join("rust-toolchain.toml")) {
+            if let Ok(toolchain) = fs::read_to_string(engine.src.join("rust-toolchain.toml")) {
                 write(path, &mut files, "engine/rust-toolchain.toml", &toolchain)?;
             }
         }

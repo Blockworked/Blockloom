@@ -300,11 +300,21 @@ on `WorldRebuilt`, as the built-in wind module does.
 After `plugin-install`, the Plugin Manager's Engine plugins section (or
 `build-project-runtime`) builds the project's runtime into
 `.blockloom/runtime/bin/`; Play refuses until it is built and again whenever a
-package changes. The first build compiles the engine and takes minutes; later
-ones relink in seconds. A package installed from anywhere but a `path:` folder
+package changes. From an install this takes seconds: the engine is already
+compiled. From a source checkout the first build compiles the engine and takes
+minutes. A package installed from anywhere but a `path:` folder
 must be trusted first, at its exact content: it runs with the editor's own
 access. Builds of the game, web and Android don't take engine plugins yet, and
 the engine API is not stable, so a crate is built for one engine build.
+
+An installed Blockloom builds engine plugins from the engine kit it carries
+(`engine/` beside the editor): no source checkout, no network and no Cargo.
+Each crate is compiled with rustc against the engine's own compiled crates, so
+a plugin crate can depend only on crates the engine itself uses (Bevy, serde,
+glam and the rest of the engine's `Cargo.lock`, at the engine's versions and
+features) and can't have a build script. `plugin-new` writes
+`engine/.cargo/config.toml` pointing your crate at this machine's engine, so
+`cargo test` in `engine/` works; it is local and never packaged.
 
 ## Isolation, limits and reload
 

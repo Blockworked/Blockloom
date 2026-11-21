@@ -224,6 +224,10 @@ def main():
         rust = Path(subprocess.check_output(["rustc", "--print", "sysroot"], text=True).strip())
         channel = tomllib.loads(Path("rust-toolchain.toml").read_text())["toolchain"]["channel"]
         bundle_rust(rust, directory / "tools/rust", channel)
+        # Engine plugins link against this kit: sources, vendored crates, the compiled engine.
+        shell = Path("target/release") / ("blockloom-shell" + (".exe" if os.name == "nt" else ""))
+        subprocess.check_call([str(shell), "--no-state", "--eval",
+                               f'engine-kit out="{directory / "engine"}" source="{Path.cwd()}"'])
         manifest = {"kind": "release", "version": version, "target": target,
                     "tools": {"rust": {"channel": channel}, "android-rust-targets": list(hub.ANDROID_TARGETS)},
                     "android_versions": hub_download.android_versions(Path(__file__).resolve().parent.parent)}

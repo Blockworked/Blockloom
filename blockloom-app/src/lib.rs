@@ -6,6 +6,7 @@ pub mod attach;
 mod build_jobs;
 mod commands;
 mod dispatch;
+mod engine_kit;
 mod history;
 pub mod keymap;
 mod project_runtime;

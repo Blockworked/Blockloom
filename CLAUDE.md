@@ -938,9 +938,21 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   package not installed from a `path:` folder must be in the `TrustLedger`
   at its hash before it builds (`project_runtime::needs_trust`, granted by
   the Plugin Manager's Engine plugins section, which also builds; the
-  snapshot's `plugins.engine`). Builds refuse engine plugins for now, and the
-  build uses the engine's source tree (`BLOCKLOOM_ENGINE_SOURCE`) rather than
-  shipped rlibs. `plugin-new template=engine` writes a sealed starter from
+  snapshot's `plugins.engine`). Builds refuse engine plugins for now. The
+  engine is a source tree (`BLOCKLOOM_ENGINE_SOURCE`, else the one the editor
+  was built from) or, in an install, the engine kit beside the editor
+  (`engine/`, `BLOCKLOOM_ENGINE_KIT`), written by `engine-kit out=...`
+  (`package-release.py` runs it; `engine_kit.rs`): tracked sources and
+  `cargo vendor`ed crates for an author's own `cargo test`, plus the
+  engine's compiled crates from one Cargo build of a runtime with no
+  plugins and the rustc flags Cargo used for them (`kit.json`). Cargo's
+  target can't move (its fingerprints hold absolute paths), so an install
+  never runs Cargo: each plugin crate is one rustc run against the kit's
+  rlibs (its `Cargo.toml` read for name, edition and dependencies, which
+  must be crates the kit has, no build script) and the runtime one more,
+  in `<data dir>/blockloom/engine-build/`, with the install's `tools/rust`
+  rustc at exactly the kit's version. The kit is only read, so it may sit
+  anywhere. `plugin-new template=engine` writes a sealed starter from
   `blockloom-engine/templates/lib.rs` (compiled by that crate's
   `tests/template.rs`); `docs/plugin-api.md` has the author's side.
   `plugins/examples/tally-engine` counts a run's ticks and says the total.

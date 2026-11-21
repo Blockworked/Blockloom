@@ -854,6 +854,17 @@ impl Backend {
             )?),
             "plugin_gc" => to_json(commands::plugins::plugin_gc(state)?),
             "build_project_runtime" => commands::build_project_runtime(state, app),
+            "engine_kit" => {
+                let source = match arg::<Option<String>>(&args, "source")? {
+                    Some(source) => std::path::PathBuf::from(source),
+                    None => crate::project_runtime::engine_source()
+                        .ok_or("No engine source tree: pass source=<checkout>")?,
+                };
+                crate::project_runtime::make_kit(
+                    &source,
+                    std::path::Path::new(&arg::<String>(&args, "out")?),
+                )
+            }
             "plugin_inspect" => to_json(commands::plugins::plugin_inspect(arg(&args, "path")?)?),
             "plugin_new" => to_json(commands::plugins::plugin_new(
                 arg(&args, "path")?,

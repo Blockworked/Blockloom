@@ -4327,6 +4327,24 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "engine-kit",
+        cmd: "engine_kit",
+        aliases: &[],
+        summary: "Packaging tool: write the engine kit an install carries (sources, vendored crates, the compiled engine and its link flags) into out, so engine plugins build without a source tree or Cargo.",
+        args: &[
+            ArgSpec {
+                name: "out",
+                ty: "folder path",
+                required: true,
+            },
+            ArgSpec {
+                name: "source",
+                ty: "folder path",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
         name: "build-project-runtime",
         cmd: "build_project_runtime",
         aliases: &[],
