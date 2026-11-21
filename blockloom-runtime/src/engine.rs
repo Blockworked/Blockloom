@@ -353,6 +353,17 @@ pub struct PendingEffects(pub Vec<blockloom_core::vm::Effect>);
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Dimension(pub Mode);
 
+/// The open scene's settings and the project folder, as a plain resource
+/// rather than through the main-thread `Engine`, so a system that only reads
+/// them can run in parallel. Republished whenever the world's copy of the
+/// document changes (`Engine::publish_document`).
+#[derive(Resource, Default, Clone)]
+pub struct SceneDocument {
+    pub world: std::sync::Arc<blockloom_core::scene::World>,
+    pub settings: std::sync::Arc<blockloom_core::settings::GameSettings>,
+    pub dir: Option<PathBuf>,
+}
+
 pub struct Engine {
     pub lan: crate::lan::Session,
     pub incoming: Receiver<EditorMessage>,
@@ -585,6 +596,15 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// The open scene's settings as a `SceneDocument`.
+    pub fn document(&self) -> SceneDocument {
+        SceneDocument {
+            world: std::sync::Arc::new(self.project.world.clone()),
+            settings: std::sync::Arc::new(self.project.settings.clone()),
+            dir: self.project_dir.clone(),
+        }
+    }
+
     pub fn new(incoming: Receiver<EditorMessage>, mode: Mode) -> Self {
         let variables = Variables::default();
         let lists = Lists::default();

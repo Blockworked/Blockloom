@@ -2231,6 +2231,11 @@ project step on the fixed clock with no window or device, the same project steps
 to the same place on every run, and a project compiled to native logic steps to
 the same place as the VM.
 
+`engine::SceneDocument` is the open scene's `World`, the game settings and
+the project folder as a plain resource, republished by `rebuild_world`, so a
+system that only reads settings needn't take the main-thread `Engine`. The
+sky systems read it; moving the rest is the Engine split.
+
 `volumes::VolumeEye` says where volumes are weighed: the world camera (the
 default), a named actor or a point, so a world with no camera blends the same
 atmosphere for `sample_atmosphere`.

@@ -976,6 +976,7 @@ pub fn rebuild_world(
         return;
     }
     engine.rebuild = false;
+    commands.insert_resource(engine.document());
     let _timer = RebuildTimer::start(engine.project.actors.len());
     // A scene switch across dimensions swaps the pipeline live: the Dimension
     // resource follows the newly active scene, so the spawn below picks up

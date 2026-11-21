@@ -15,7 +15,7 @@
 //! An HDRI's file loads on a background task; a build ships it baked to a
 //! BC6H cube with its mips (see `blockloom_core::build`).
 
-use crate::engine::Engine;
+use crate::engine::SceneDocument;
 use crate::environment::Environment;
 use crate::space::{SpaceParams, SpaceRender};
 use crate::streaming::{CellTasks, GLOBAL_CELL, StreamingCells};
@@ -261,12 +261,12 @@ struct HdriKey {
 }
 
 impl HdriKey {
-    fn of(engine: &Engine) -> Option<HdriKey> {
-        let sky = &engine.project.world.sky;
+    fn of(document: &SceneDocument) -> Option<HdriKey> {
+        let sky = &document.world.sky;
         if sky.active_kind() != SkyKind::Hdri {
             return None;
         }
-        let dir = engine.project_dir.clone()?;
+        let dir = document.dir.clone()?;
         let path =
             blockloom_core::assets::normalize(&sky.hdri.path).filter(|path| !path.is_empty())?;
         let bias = pipeline::load_manifest(&dir).bias_of(&path);
@@ -328,14 +328,14 @@ impl ExtractResource<RenderApp> for SkyRender {
 /// Starts loading an HDRI when the sky names a new one, and picks the cube
 /// up when its task lands.
 fn load_hdri(
-    engine: NonSend<Engine>,
+    document: Res<SceneDocument>,
     scaling: Option<Res<crate::quality::Scaling>>,
     mut state: ResMut<SkyState>,
     mut cells: ResMut<StreamingCells>,
     mut images: ResMut<Assets<Image>>,
     device: Option<Res<RenderDevice>>,
 ) {
-    let mut key = HdriKey::of(&engine);
+    let mut key = HdriKey::of(&document);
     if let (Some(key), Some(scaling)) = (&mut key, scaling) {
         key.max_side = (scaling.budget().reflection * 4).min(hdr::HdrCube::MAX_FACE);
     }
@@ -368,7 +368,7 @@ fn load_hdri(
 #[allow(clippy::too_many_arguments)]
 fn resolve_sky(
     mut commands: Commands,
-    engine: NonSend<Engine>,
+    document: Res<SceneDocument>,
     environment: Res<Environment>,
     mut state: ResMut<SkyState>,
     mut images: ResMut<Assets<Image>>,
@@ -404,7 +404,7 @@ fn resolve_sky(
         .as_ref()
         .and_then(|hdri| images.get(hdri))
         .map_or(1, |image| image.texture_descriptor.mip_level_count);
-    let mut params = SkyParams::resolve(&engine.project.world.sky, &environment, hdri_mips);
+    let mut params = SkyParams::resolve(&document.world.sky, &environment, hdri_mips);
     // An HDRI still loading is no sky yet.
     if params.is_some_and(|p| p.info.x == KIND_HDRI) && state.hdri.is_none() {
         params = None;
@@ -474,7 +474,7 @@ fn resolve_sky(
 #[allow(clippy::type_complexity)]
 fn apply_sky(
     mut commands: Commands,
-    engine: NonSend<Engine>,
+    document: Res<SceneDocument>,
     state: Res<SkyState>,
     render: Option<Res<SkyRender>>,
     environment: Res<Environment>,
@@ -488,7 +488,7 @@ fn apply_sky(
     let (Some(render), Some(cubes)) = (render, state.cubes.as_ref()) else {
         return;
     };
-    let sky = &engine.project.world.sky;
+    let sky = &document.world.sky;
     let active = render.params.is_some();
     let wanted_view = (active && sky.background).then_some(SkyView { disks: true });
     let filtered = |which: SkyProbe| {
