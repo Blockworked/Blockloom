@@ -53,6 +53,13 @@ rebuild), including the state snapshot:
 | 1200 | 6.3 MiB | 230 ms | 158 ms |
 | 4800 | 25 MiB | 892 ms | 596 ms |
 
+After Phase 3 (change-based undo, dirty-file saves and the patch stream,
+2026-11-21), the same 1200-actor fixture: rename an actor 63 ms (was 230),
+undo 18 ms (was 158), and the window gets a 4 KB patch instead of a 6.3 MiB
+snapshot. The rest of a rename is the dirty scene's atomic save and the
+runtime sync, which Phase 4's deltas and J4 (save on idle) take on. The
+tables above are the pre-Phase 3 baseline.
+
 Readings:
 
 - Everything scales with the whole project, not with the edit: a one-field
