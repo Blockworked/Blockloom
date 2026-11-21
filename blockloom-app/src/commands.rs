@@ -6150,6 +6150,7 @@ pub(crate) fn create_block(
     details: BlockDetails,
 ) -> Result<String, String> {
     blockloom_core::blocks::BlockDef::validate_pieces(&pieces)?;
+    check_branches(&pieces, shape)?;
     let color = normalize_block_color(&color).ok_or("Choose a valid block color")?;
     let mut s = lock(state)?;
     push_undo(&mut s);
@@ -6180,17 +6181,72 @@ pub(crate) fn edit_block(
     color: String,
     details: BlockDetails,
 ) -> Result<(), String> {
+    check_branches(&pieces, shape)?;
     let mut s = lock(state)?;
     push_undo(&mut s);
     let result = match graph_mut(&mut s) {
-        Some(graph) => graph
-            .update_block(&block_id, pieces, shape, &color)
-            .and_then(|()| apply_block_details(graph, &block_id, details)),
+        Some(graph) => {
+            let branched = pieces.iter().any(is_branch);
+            match_call_kind(graph, &block_id, branched);
+            graph
+                .update_block(&block_id, pieces, shape, &color)
+                .and_then(|()| apply_block_details(graph, &block_id, details))
+        }
         None => Ok(()),
     };
     auto_save(&mut s);
     emit(app, &mut s);
     result
+}
+
+fn is_branch(piece: &BlockPiece) -> bool {
+    matches!(piece, BlockPiece::Branch { .. })
+}
+
+/// Branches only on command blocks, and few enough for every walk to reach.
+fn check_branches(pieces: &[BlockPiece], shape: BlockShape) -> Result<(), String> {
+    let count = pieces.iter().filter(|piece| is_branch(piece)).count();
+    if count > blockloom_core::blocks::MAX_BRANCHES {
+        return Err(format!(
+            "A block can have at most {} branches",
+            blockloom_core::blocks::MAX_BRANCHES
+        ));
+    }
+    if count > 0 && matches!(shape, BlockShape::ReturnsValue | BlockShape::ReturnsBool) {
+        return Err("A block that returns a value can't have branches".to_string());
+    }
+    Ok(())
+}
+
+/// Turns every call of `block_id` into the kind its new pieces need: a call
+/// with a body per branch, or a plain one. Bodies are matched up afterwards
+/// by `update_block`.
+fn match_call_kind(graph: &mut ActorGraph, block_id: &str, branched: bool) {
+    for strand in &mut graph.strands {
+        for instruction in &mut strand.instructions {
+            instruction.walk_mut(&mut |ins| {
+                let kind = match &mut ins.kind {
+                    InstructionKind::CallBlock { block_id: id, args }
+                        if branched && id == block_id =>
+                    {
+                        InstructionKind::BranchCallBlock {
+                            block_id: std::mem::take(id),
+                            args: std::mem::take(args),
+                            branches: Vec::new(),
+                        }
+                    }
+                    InstructionKind::BranchCallBlock {
+                        block_id: id, args, ..
+                    } if !branched && id == block_id => InstructionKind::CallBlock {
+                        block_id: std::mem::take(id),
+                        args: std::mem::take(args),
+                    },
+                    _ => return,
+                };
+                ins.kind = kind;
+            });
+        }
+    }
 }
 
 pub(crate) fn delete_block(
@@ -6823,4 +6879,80 @@ pub fn build_project_runtime(
         "binary": binary.to_string_lossy(),
         "plugins": crates.iter().map(|c| c.plugin.clone()).collect::<Vec<_>>(),
     }))
+}
+
+#[cfg(test)]
+mod branch_call_tests {
+    use super::*;
+    use blockloom_core::blocks::{BlockDef, Strand};
+
+    fn branch(id: &str) -> BlockPiece {
+        BlockPiece::Branch {
+            id: id.to_string(),
+            name: id.to_string(),
+        }
+    }
+
+    fn label() -> BlockPiece {
+        BlockPiece::Label {
+            id: "l".to_string(),
+            text: "go".to_string(),
+        }
+    }
+
+    #[test]
+    fn calls_follow_a_block_gaining_and_losing_branches() {
+        let mut graph = ActorGraph::default();
+        graph.block_defs.push(BlockDef {
+            id: "b".to_string(),
+            pieces: vec![label()],
+            shape: BlockShape::Normal,
+            color: blockloom_core::blocks::default_block_color(),
+            identifier: String::new(),
+            description: String::new(),
+            icon: String::new(),
+        });
+        let call = Instruction::new(InstructionKind::CallBlock {
+            block_id: "b".to_string(),
+            args: Vec::new(),
+        });
+        graph.strands.push(Strand::with_instructions(
+            0,
+            0,
+            vec![
+                Instruction::new(InstructionKind::WhenStarted),
+                Instruction::new(InstructionKind::Forever { body: vec![call] }),
+            ],
+        ));
+        let nested = |graph: &ActorGraph| match &graph.strands[0].instructions[1].kind {
+            InstructionKind::Forever { body } => body[0].kind.clone(),
+            other => panic!("{other:?}"),
+        };
+
+        let pieces = vec![label(), branch("x"), branch("y")];
+        match_call_kind(&mut graph, "b", true);
+        graph
+            .update_block("b", pieces, BlockShape::Normal, "#4C97FF")
+            .unwrap();
+        match nested(&graph) {
+            InstructionKind::BranchCallBlock { branches, .. } => assert_eq!(branches.len(), 2),
+            other => panic!("{other:?}"),
+        }
+
+        match_call_kind(&mut graph, "b", false);
+        graph
+            .update_block("b", vec![label()], BlockShape::Normal, "#4C97FF")
+            .unwrap();
+        assert!(matches!(nested(&graph), InstructionKind::CallBlock { .. }));
+    }
+
+    #[test]
+    fn a_reporter_cannot_have_branches() {
+        assert!(check_branches(&[label(), branch("x")], BlockShape::ReturnsValue).is_err());
+        assert!(check_branches(&[label(), branch("x")], BlockShape::Normal).is_ok());
+        let many: Vec<_> = (0..=blockloom_core::blocks::MAX_BRANCHES)
+            .map(|i| branch(&format!("b{i}")))
+            .collect();
+        assert!(check_branches(&many, BlockShape::Normal).is_err());
+    }
 }

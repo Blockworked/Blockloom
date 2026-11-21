@@ -519,7 +519,13 @@ impl<'a> Canvas<'a> {
             .map(|def| (def.id.as_str(), def.input_names().collect()))
             .collect();
         let owner = owners(program);
-        let recursive = has_recursion(program, &owner);
+        // A branch body can call back into the block that runs it, which the
+        // call graph doesn't show, so any `run branch` gets the budget too.
+        let recursive = has_recursion(program, &owner)
+            || program
+                .steps
+                .iter()
+                .any(|step| matches!(step, Step::RunBranch { index: Some(_), .. }));
         Ok(Self {
             index,
             program,
@@ -604,9 +610,22 @@ impl Plan {
         leaders.extend(program.blocks.values().copied());
         let mut enclosing = HashMap::new();
         let mut counters = HashMap::new();
-        let mut open: Vec<usize> = Vec::new();
+        // `None` is a branch body's edge: a `break` in one doesn't reach the
+        // loop around the call, as the VM's frames don't let it.
+        let mut open: Vec<Option<usize>> = Vec::new();
+        let starts: HashSet<usize> = steps
+            .iter()
+            .flat_map(|step| match step {
+                Step::Call { branches, .. } => branches.clone(),
+                _ => Vec::new(),
+            })
+            .collect();
+        leaders.extend(starts.iter().copied());
 
         for (pc, step) in steps.iter().enumerate() {
+            if starts.contains(&pc) {
+                open.push(None);
+            }
             match step {
                 Step::Jump { to } | Step::JumpUnless { to, .. } => {
                     leaders.extend([*to, pc + 1]);
@@ -618,7 +637,7 @@ impl Plan {
                     if matches!(kind, LoopKind::Repeat(_)) {
                         counters.insert(pc, counters.len());
                     }
-                    open.push(*tail);
+                    open.push(Some(*tail));
                 }
                 Step::LoopEnd { begin } => {
                     // The back edge is where a loop yields, and `continue`
@@ -640,7 +659,12 @@ impl Plan {
                 | Step::Return(_)
                 | Step::StopAll
                 | Step::Call { .. }
-                | Step::Invoke { .. } => {
+                | Step::Invoke { .. }
+                | Step::RunBranch { .. } => {
+                    leaders.insert(pc + 1);
+                }
+                Step::BranchEnd => {
+                    open.pop();
                     leaders.insert(pc + 1);
                 }
                 // Re-checked from the top every frame until it holds, so it
@@ -661,7 +685,7 @@ impl Plan {
                 }
                 Step::Action(_) => {}
             }
-            if let Some(&tail) = open.last() {
+            if let Some(&Some(tail)) = open.last() {
                 enclosing.insert(pc, tail);
             }
         }
@@ -929,7 +953,11 @@ impl<'a> Pass<'a> {
                     self.sleep()
                 )
             }
-            Step::Call { block_id, args } => {
+            Step::Call {
+                block_id,
+                args,
+                branches,
+            } => {
                 let target = self.canvas.program.blocks.get(block_id.as_str()).copied();
                 match target {
                     // Nothing by that id: skipped where it stands, and its
@@ -939,10 +967,12 @@ impl<'a> Pass<'a> {
                         let bound = self.canvas.bound(block_id);
                         let mut args = self.arguments(args, bound)?;
                         args = format!("vec![{args}]");
-                        format!(
-                            "{PAD}let args = {args};\n{PAD}s.enter_call({next}, args);\n\
-                             {PAD}s.pc = {start};\n"
-                        )
+                        let enter = if branches.is_empty() {
+                            format!("s.enter_call({next}, args)")
+                        } else {
+                            format!("s.enter_branch_call({next}, args, {pc})")
+                        };
+                        format!("{PAD}let args = {args};\n{PAD}{enter};\n{PAD}s.pc = {start};\n")
                     }
                 }
             }
@@ -984,6 +1014,31 @@ impl<'a> Pass<'a> {
                 let result = self.evaluated(value)?;
                 format!("{PAD}let result = {result};\n{}", self.leave("result"))
             }
+            Step::RunBranch { index, .. } => {
+                let arms: String = index
+                    .map(|index| {
+                        self.canvas
+                            .program
+                            .steps
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(call, step)| match step {
+                                Step::Call { branches, .. } => branches
+                                    .get(index)
+                                    .map(|start| format!("Some({call}) => Some({start}), ")),
+                                _ => None,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                format!(
+                    "{PAD}let start: Option<usize> = match s.branch_call() {{ {arms}_ => None }};\n\
+                     {PAD}match start {{\n\
+                     {PAD}    Some(start) => {{\n{PAD}        s.enter_branch({next});\n{PAD}        s.pc = start;\n{PAD}    }}\n\
+                     {PAD}    None => s.pc = {next},\n{PAD}}}\n"
+                )
+            }
+            Step::BranchEnd => format!("{PAD}s.pc = s.leave_branch().unwrap_or({next});\n"),
             Step::StopAll => {
                 let outer = self.outer();
                 let stop = format!("{PAD}{outer}.stopping = true;\n");

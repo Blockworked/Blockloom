@@ -2465,6 +2465,15 @@ own state, so a reporter may call another or itself and the strand's program
 counter never moves. Each actor is therefore emitted at most twice, however
 many custom blocks it has.
 
+A block's Branch inputs work the same way in both halves. A
+`BranchCallBlock` compiles to a `Call` carrying where each branch body
+starts, a jump past them, and the bodies inline in the caller's region, each
+ending in `BranchEnd`. `RunBranch` (its index settled per block at compile
+time) runs the body of the call in scope as a frame of its own, which reads
+the scope below that call: the caller's inputs, the caller's branches, and a
+`return` in it leaves the block the body was written in. `escape loop` stops
+at a branch body's edge, as at a call's.
+
 The rule it has to keep is that a compiled program and the VM ask the world for
 exactly the same things in the same order, on the same tick - including the
 mistakes, since a bad slot reports itself once and stands a zero in its place,
@@ -2627,9 +2636,12 @@ snapshot for the old object, and `Blocks.qml` bumps `BlockRegistry.revision`
 only when `optionSource` (the names its dropdowns list) changes.
 
 `MakeBlockDialog.qml` is blockstitch's shared `BlockDefinitionEditor` in a
-dialog, with branches turned off (a call here has none); the backend's
-`create_block`/`edit_block` take its draft as is, icon, identifier and
-description included.
+dialog, with branches on command blocks only (`allowReporterBranches:
+false`); the backend's `create_block`/`edit_block` take its draft as is,
+icon, identifier and description included, refuse branches on a reporter or
+more than `MAX_BRANCHES`, and turn every call into a `BranchCallBlock` or a
+plain `CallBlock` to match the new pieces before blockstitch reconciles the
+bodies.
 
 The editor page (`EditorPage.qml`) is a shell of three blockstitch
 `DockRegion`s: actors on the left, the inspector on the right, and Assets,

@@ -55,7 +55,7 @@ TestCase {
 
     function test_edit_keeps_labels_ids_and_what_it_does_not_show() {
         const d = dialog();
-        d.openForEdit({ id: "b", shape: "ReturnsBool", color: "#9966FF", icon: "star", identifier: "kept", description: "", pieces: [
+        d.openForEdit({ id: "b", shape: "Ending", color: "#9966FF", icon: "star", identifier: "kept", description: "", pieces: [
             { kind: "Label", id: "l1", text: "is" },
             { kind: "Input", id: "i1", name: "x", value_type: "Any", default_value: { kind: "Text", value: "hi" } },
             { kind: "Label", id: "l2", text: "near" },
@@ -69,20 +69,24 @@ TestCase {
         compare(a.pieces.map(p => p.kind + ":" + p.id).join(" "), "Label:l1 Input:i1 Label:l2 Branch:br");
         compare(a.pieces[2].text, "near");
         compare(a.pieces[1].default_value.value, "hi");
-        compare(a.shape, "ReturnsBool");
+        compare(a.shape, "Ending");
         compare(a.color, "#9966FF");
         compare(a.icon, "star");
         compare(a.identifier, "kept");
     }
 
-    function test_no_branch_input_offered() {
+    function test_branch_input_offered_on_command_blocks_only() {
         const d = dialog();
         d.openForCreate();
         tryCompare(d, "opened", true);
-        verify(!d.contentItem.allowBranches);
-        const buttons = findAll(d.contentItem, o => o.modelData && o.modelData.kind === "Branch" && o.hasOwnProperty("checkable"));
-        verify(buttons.length > 0);
-        verify(buttons.every(b => !b.visible));
+        const e = d.contentItem;
+        verify(e.allowBranches && !e.allowReporterBranches);
+        const buttons = () => findAll(e, o => o.modelData && o.modelData.kind === "Branch" && o.hasOwnProperty("checkable"));
+        verify(buttons().length > 0);
+        e.blockShape = "Normal";
+        verify(buttons().every(b => b.visible));
+        e.blockShape = "ReturnsValue";
+        verify(buttons().every(b => !b.visible));
     }
 
     function test_refusal_shows_and_stays_open() {

@@ -575,7 +575,20 @@ pub enum Step {
     Call {
         block_id: String,
         args: Vec<Value>,
+        /// Where each of the call's branch bodies starts, in the definition's
+        /// branch order; empty for a block without branches.
+        branches: Vec<usize>,
     },
+    /// Runs the body the innermost call was handed for the branch `name`,
+    /// in the caller's scope, then carries on after this step.
+    RunBranch {
+        name: String,
+        /// The branch's position among the enclosing block's branches,
+        /// settled at compile time; `None` outside a block that has it.
+        index: Option<usize>,
+    },
+    /// End of a branch body: back to the `RunBranch` that started it.
+    BranchEnd,
     /// Runs a reporter-shaped custom block that can suspend, storing its
     /// value in the strand's `temp` slot. The args are already free of any
     /// suspendable call, so binding them never suspends - the body does.
@@ -692,6 +705,17 @@ pub fn compile(graph: &ActorGraph) -> Program {
         match (&header.kind, trigger) {
             (InstructionKind::BlockHeader { block_id }, _) => {
                 program.blocks.insert(block_id.clone(), pc);
+                // A `run branch` anywhere in the body, branch bodies of its
+                // own calls included, means this block's branch.
+                let names: Vec<&str> = graph
+                    .block_def(block_id)
+                    .map(|def| def.branch_names().collect())
+                    .unwrap_or_default();
+                for step in &mut program.steps[pc..] {
+                    if let Step::RunBranch { name, index } = step {
+                        *index = names.iter().position(|n| n == name);
+                    }
+                }
             }
             (_, Some(trigger)) => program.entries.push(Entry {
                 trigger,
@@ -792,7 +816,7 @@ fn calls_in_step(step: &Step) -> Vec<String> {
             calls_in_value(color, &mut out);
             calls_in_value(seconds, &mut out);
         }
-        Step::Call { block_id, args } => {
+        Step::Call { block_id, args, .. } => {
             out.push(block_id.clone());
             for arg in args {
                 calls_in_value(arg, &mut out);
@@ -1584,9 +1608,17 @@ fn lift_step(
             seconds: lift_one(seconds, &mut ctx),
             easing,
         },
-        Step::Call { block_id, args } => {
+        Step::Call {
+            block_id,
+            args,
+            branches,
+        } => {
             if !blocks.contains_key(&block_id) {
-                Step::Call { block_id, args }
+                Step::Call {
+                    block_id,
+                    args,
+                    branches,
+                }
             } else {
                 let bound = bounds.get(&block_id).copied().unwrap_or(0).min(args.len());
                 let mut lifted = Vec::with_capacity(args.len());
@@ -1600,6 +1632,7 @@ fn lift_step(
                 Step::Call {
                     block_id,
                     args: lifted,
+                    branches,
                 }
             }
         }
@@ -1656,6 +1689,15 @@ fn lift_suspendable_calls(program: &mut Program, bounds: &HashMap<String, usize>
                 },
                 Step::LoopEnd { begin } => Step::LoopEnd {
                     begin: remap(begin),
+                },
+                Step::Call {
+                    block_id,
+                    args,
+                    branches,
+                } => Step::Call {
+                    block_id,
+                    args,
+                    branches: branches.into_iter().map(remap).collect(),
                 },
                 other => other,
             });
@@ -2520,9 +2562,19 @@ fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
         })),
         K::Wait { duration } => steps.push(Step::Wait(duration.clone())),
         K::WaitUntil { condition } => steps.push(Step::WaitUntil(condition.clone())),
+        K::BranchCallBlock {
+            block_id,
+            args,
+            branches,
+        } => emit_branch_call(steps, block_id, args, branches),
+        K::RunBranch { name } => steps.push(Step::RunBranch {
+            name: name.clone(),
+            index: None,
+        }),
         K::CallBlock { block_id, args } => steps.push(Step::Call {
             block_id: block_id.clone(),
             args: args.clone(),
+            branches: Vec::new(),
         }),
         K::Return { value } => steps.push(Step::Return(value.clone())),
         K::PluginBlock {
@@ -2608,6 +2660,36 @@ fn show(
         parent: parent.clone(),
         flag,
     })))
+}
+
+/// A call with branches: the call, a jump past the bodies, then each body
+/// ending in `BranchEnd`. The bodies sit in the caller's region, which is
+/// whose parameters they read.
+fn emit_branch_call(
+    steps: &mut Vec<Step>,
+    block_id: &str,
+    args: &[Value],
+    branches: &[Vec<Instruction>],
+) {
+    let call = steps.len();
+    steps.push(Step::Call {
+        block_id: block_id.to_string(),
+        args: args.to_vec(),
+        branches: Vec::new(),
+    });
+    let jump = steps.len();
+    steps.push(Step::Jump { to: 0 });
+    let mut starts = Vec::with_capacity(branches.len());
+    for body in branches {
+        starts.push(steps.len());
+        emit_body(steps, body);
+        steps.push(Step::BranchEnd);
+    }
+    let after = steps.len();
+    steps[jump] = Step::Jump { to: after };
+    if let Step::Call { branches, .. } = &mut steps[call] {
+        *branches = starts;
+    }
 }
 
 fn emit_loop(steps: &mut Vec<Step>, kind: LoopKind, body: &[Instruction]) {

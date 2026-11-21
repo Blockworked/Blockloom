@@ -1324,6 +1324,19 @@ pub enum InstructionKind {
         block_id: String,
         args: Vec<Value>,
     },
+    /// A call of a custom block that has branches: `branches` holds one body
+    /// per branch piece, in the definition's order, run where the block's
+    /// body says `run branch`.
+    BranchCallBlock {
+        block_id: String,
+        args: Vec<Value>,
+        branches: Vec<Vec<Instruction>>,
+    },
+    /// Inside a custom block's body: runs the body its caller put in the
+    /// branch called `name`. Nothing happens for a branch nobody filled.
+    RunBranch {
+        name: String,
+    },
     /// Only meaningful in a reporter block's body: evaluates and returns.
     Return {
         value: Value,
@@ -1369,8 +1382,13 @@ macro_rules! for_each_ref {
     };
 }
 
+/// The most branches one custom block may have. Every walk asks each kind
+/// for this many bodies, so it stays small.
+pub const MAX_BRANCHES: usize = 16;
+
 impl BlockKind for InstructionKind {
     const HEADER_LABEL: &'static str = "event/block definition";
+    const BODY_SLOTS: u8 = MAX_BRANCHES as u8;
 
     fn visit_values_mut(&mut self, f: &mut dyn FnMut(&mut Value, InputValueType)) {
         use InstructionKind as K;
@@ -1814,7 +1832,7 @@ impl BlockKind for InstructionKind {
             K::WaitUntil { condition } => f(condition, InputValueType::Bool),
             // A call site's declared Boolean inputs live on the `BlockDef`,
             // not here - `BlockGraph::migrate_bool_slots` handles those.
-            K::CallBlock { args, .. } => {
+            K::CallBlock { args, .. } | K::BranchCallBlock { args, .. } => {
                 for arg in args {
                     f(arg, InputValueType::Any);
                 }
@@ -1891,7 +1909,8 @@ impl BlockKind for InstructionKind {
             | K::ClearSavedVariable { .. }
             | K::DeleteAllOfList { .. }
             | K::DeleteAllOfDict { .. }
-            | K::ReverseList { .. } => {}
+            | K::ReverseList { .. }
+            | K::RunBranch { .. } => {}
         }
     }
 
@@ -1934,6 +1953,7 @@ impl BlockKind for InstructionKind {
             (K::Repeat { body, .. }, 0) => Some(body),
             (K::Forever { body }, 0) => Some(body),
             (K::While { body, .. }, 0) => Some(body),
+            (K::BranchCallBlock { branches, .. }, slot) => branches.get(slot as usize),
             _ => None,
         }
     }
@@ -1947,6 +1967,7 @@ impl BlockKind for InstructionKind {
             (K::Repeat { body, .. }, 0) => Some(body),
             (K::Forever { body }, 0) => Some(body),
             (K::While { body, .. }, 0) => Some(body),
+            (K::BranchCallBlock { branches, .. }, slot) => branches.get_mut(slot as usize),
             _ => None,
         }
     }
@@ -1960,19 +1981,37 @@ impl BlockKind for InstructionKind {
     }
 
     fn calls_block(&self, block_id: &str) -> bool {
-        matches!(self, InstructionKind::CallBlock { block_id: id, .. } if id == block_id)
+        self.called_block() == Some(block_id)
     }
 
     fn called_block(&self) -> Option<&str> {
-        match self {
-            InstructionKind::CallBlock { block_id, .. } => Some(block_id),
-            _ => None,
-        }
+        InstructionKind::called_block(self)
     }
 
     fn call_args_mut(&mut self, block_id: &str) -> Option<&mut Vec<Value>> {
         match self {
-            InstructionKind::CallBlock { block_id: id, args } if id == block_id => Some(args),
+            InstructionKind::CallBlock { block_id: id, args }
+            | InstructionKind::BranchCallBlock {
+                block_id: id, args, ..
+            } if id == block_id => Some(args),
+            _ => None,
+        }
+    }
+
+    fn call_branches_mut(&mut self, block_id: &str) -> Option<&mut Vec<Vec<Instruction>>> {
+        match self {
+            InstructionKind::BranchCallBlock {
+                block_id: id,
+                branches,
+                ..
+            } if id == block_id => Some(branches),
+            _ => None,
+        }
+    }
+
+    fn branch_ref_mut(&mut self) -> Option<&mut String> {
+        match self {
+            InstructionKind::RunBranch { name } => Some(name),
             _ => None,
         }
     }
@@ -2019,7 +2058,8 @@ impl InstructionKind {
     /// The custom block this instruction invokes in command position.
     pub fn called_block(&self) -> Option<&str> {
         match self {
-            InstructionKind::CallBlock { block_id, .. } => Some(block_id),
+            InstructionKind::CallBlock { block_id, .. }
+            | InstructionKind::BranchCallBlock { block_id, .. } => Some(block_id),
             _ => None,
         }
     }

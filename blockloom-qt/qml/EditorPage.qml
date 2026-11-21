@@ -289,6 +289,12 @@ Item {
                                 onDictEntriesEdited: (name, entries) => root.invoke("set_dict_entries", { name: name, entries: entries })
                                 onDictEditorStateChanged: (name, visible, x, y) => root.invoke("set_dict_editor_state", { name: name, visible: visible, x: x, y: y })
                                 onBlockMenuAction: (action, strandId, path, instruction) => root.onBlockMenu(action, strandId, path, instruction)
+                                // A branch chip on a block's header drops a `run branch` right under it.
+                                onRunBranchRequested: (strandId, path, name) => {
+                                    const next = JSON.parse(JSON.stringify(path));
+                                    next[next.length - 1].index++;
+                                    root.invoke("add_instruction", { strandId: strandId, path: next, instruction: { id: Blocks.uuid(), type: "RunBranch", name: name } });
+                                }
                                 onCanvasMenuAction: (action, x, y) => root.onCanvasMenu(action, x, y)
                             }
                         }

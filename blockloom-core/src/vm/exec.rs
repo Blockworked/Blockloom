@@ -477,6 +477,16 @@ enum Frame {
         temp: Option<usize>,
         /// The caller's temps, restored when this call leaves.
         saved_temps: Vec<Evaluated>,
+        /// The `Call` step that entered it, whose branch bodies a `run
+        /// branch` runs; [`usize::MAX`] for a reporter's.
+        call_pc: usize,
+    },
+    /// A branch body running for the call frame at `owner`. The body reads
+    /// the scope below that frame, the one it was written in.
+    Branch {
+        return_pc: usize,
+        owner: usize,
+        saved_temps: Vec<Evaluated>,
     },
 }
 
@@ -1282,7 +1292,7 @@ impl Vm {
                         return None;
                     }
                 }
-                Step::Call { block_id, args } => {
+                Step::Call { block_id, args, .. } => {
                     let Some((start, names)) = program.block(block_id) else {
                         script.pc = pc + 1;
                         continue;
@@ -1296,6 +1306,7 @@ impl Vm {
                         params: bound,
                         temp: None,
                         saved_temps: saved,
+                        call_pc: pc,
                     });
                     script.pc = start;
                 }
@@ -1319,8 +1330,56 @@ impl Vm {
                         params: bound,
                         temp: Some(temp),
                         saved_temps: saved,
+                        call_pc: usize::MAX,
                     });
                     script.pc = start;
+                }
+                Step::RunBranch { index, .. } => {
+                    let found = index.and_then(|index| {
+                        let owner = scope(&script.frames)?;
+                        let Frame::Call { call_pc, .. } = &script.frames[owner] else {
+                            return None;
+                        };
+                        match program.steps.get(*call_pc) {
+                            Some(Step::Call { branches, .. }) => {
+                                branches.get(index).map(|&start| (owner, start))
+                            }
+                            _ => None,
+                        }
+                    });
+                    match found {
+                        Some((owner, start)) => {
+                            let saved = std::mem::take(&mut script.temps);
+                            script.frames.push(Frame::Branch {
+                                return_pc: pc + 1,
+                                owner,
+                                saved_temps: saved,
+                            });
+                            script.pc = start;
+                        }
+                        None => script.pc = pc + 1,
+                    }
+                }
+                Step::BranchEnd => {
+                    let open = script
+                        .frames
+                        .iter()
+                        .rposition(|frame| matches!(frame, Frame::Branch { .. }));
+                    match open {
+                        Some(index) => {
+                            let Some(Frame::Branch {
+                                return_pc,
+                                saved_temps,
+                                ..
+                            }) = script.frames.drain(index..).next()
+                            else {
+                                unreachable!()
+                            };
+                            script.temps = saved_temps;
+                            script.pc = return_pc;
+                        }
+                        None => script.pc = pc + 1,
+                    }
                 }
                 Step::Return(value) => {
                     let params = current_params(&script.frames);
@@ -2813,6 +2872,7 @@ impl Vm {
                 params: bound,
                 temp: None,
                 saved_temps: Vec::new(),
+                call_pc: usize::MAX,
             }],
             status: Status::Run,
             // A reporter body runs to completion in place, so it keeps the
@@ -2845,12 +2905,30 @@ impl Vm {
     }
 }
 
-/// The parameters bound by the innermost custom-block call, if any.
+/// The parameters in scope: the innermost custom-block call's, if any.
 fn current_params(frames: &[Frame]) -> Option<&Params> {
-    frames.iter().rev().find_map(|frame| match frame {
+    match &frames[scope(frames)?] {
         Frame::Call { params, .. } => Some(params),
-        Frame::Loop { .. } => None,
-    })
+        _ => None,
+    }
+}
+
+/// The call frame whose inputs and branches the running step sees: the
+/// innermost call, or, inside a branch body, the scope the body was written
+/// in - the one below the call that ran it.
+fn scope(frames: &[Frame]) -> Option<usize> {
+    let mut top = frames.len();
+    loop {
+        let (index, frame) = frames[..top]
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, frame)| !matches!(frame, Frame::Loop { .. }))?;
+        match frame {
+            Frame::Branch { owner, .. } => top = *owner,
+            _ => return Some(index),
+        }
+    }
 }
 
 fn store_temp(temps: &mut Vec<Evaluated>, temp: usize, value: Evaluated) {
@@ -2867,21 +2945,18 @@ fn store_temp(temps: &mut Vec<Evaluated>, temp: usize, value: Evaluated) {
 fn nearest_loop(script: &Script) -> Option<(usize, usize, usize)> {
     match script.frames.last()? {
         Frame::Loop { begin, end, .. } => Some((script.frames.len() - 1, *begin, *end)),
-        Frame::Call { .. } => None,
+        Frame::Call { .. } | Frame::Branch { .. } => None,
     }
 }
 
-/// `(frame index, return pc, temp slot)` of the innermost call frame.
+/// `(frame index, return pc, temp slot)` of the call frame in scope. A
+/// `return` inside a branch body leaves the block the body was written in.
 fn nearest_call(script: &Script) -> Option<(usize, usize, Option<usize>)> {
-    script
-        .frames
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(index, frame)| match frame {
-            Frame::Call {
-                return_pc, temp, ..
-            } => Some((index, *return_pc, *temp)),
-            Frame::Loop { .. } => None,
-        })
+    let index = scope(&script.frames)?;
+    match &script.frames[index] {
+        Frame::Call {
+            return_pc, temp, ..
+        } => Some((index, *return_pc, *temp)),
+        _ => None,
+    }
 }

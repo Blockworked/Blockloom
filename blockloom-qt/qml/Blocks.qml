@@ -175,7 +175,7 @@ QtObject {
         ChangeVariable:"trending-up", SaveVariable:"save", ClearSavedVariable:"trash-2", SwitchSaveSlot:"save", DeleteSaveSlot:"trash-2", SetLanguage:"languages", AddToList:"plus", DeleteOfList:"trash-2",
         DeleteAllOfList:"trash-2", ShiftList:"arrow-left", InsertIntoList:"plus", ReplaceItemOfList:"repeat", ReverseList:"rotate-cw",
         LoadJsonIntoList:"braces", SetDictValue:"book-plus", DeleteDictKey:"trash-2", DeleteAllOfDict:"trash-2", LoadJsonIntoDict:"braces",
-        CallBlock:"blocks", Return:"corner-down-right", PluginBlock:"plug-zap", WhenPlugin:"plug-zap"
+        CallBlock:"blocks", BranchCallBlock:"blocks", RunBranch:"git-branch", Return:"corner-down-right", PluginBlock:"plug-zap", WhenPlugin:"plug-zap"
     })
 
     function buildRows() {
@@ -634,6 +634,8 @@ QtObject {
         case "SetVariable": return { name: firstName(0), value: num(0) };
         case "ChangeVariable": return { name: firstName(0), value: num(1) };
         case "CallBlock": return { block_id: "", args: [] };
+        case "BranchCallBlock": return { block_id: "", args: [], branches: [] };
+        case "RunBranch": return { name: "" };
         case "PluginBlock": return { plugin: "", block: "", args: [] };
         case "WhenPlugin": return { plugin: "", block: "", event: "", args: [] };
         case "Return": return { value: num(0) };
@@ -1049,7 +1051,7 @@ QtObject {
         SaveVariable:"save a variable", ClearSavedVariable:"clear a saved variable", SwitchSaveSlot:"switch save slot", DeleteSaveSlot:"delete a save slot", SetLanguage:"set the language", AddToList:"add to a list", DeleteOfList:"delete a list item",
         DeleteAllOfList:"clear a list", ShiftList:"shift a list", InsertIntoList:"insert into a list", ReplaceItemOfList:"replace a list item",
         ReverseList:"reverse a list", LoadJsonIntoList:"load JSON into a list", SetDictValue:"set a dict value", DeleteDictKey:"delete a dict key",
-        DeleteAllOfDict:"clear a dict", LoadJsonIntoDict:"load JSON into a dict", CallBlock:"my block", Return:"return", PluginBlock:"plugin block", WhenPlugin:"when a plugin event occurs", PluginRead:"plugin reporter"
+        DeleteAllOfDict:"clear a dict", LoadJsonIntoDict:"load JSON into a dict", CallBlock:"my block", BranchCallBlock:"my block", RunBranch:"run branch", Return:"return", PluginBlock:"plugin block", WhenPlugin:"when a plugin event occurs", PluginRead:"plugin reporter"
     })
 
     Component.onCompleted: {

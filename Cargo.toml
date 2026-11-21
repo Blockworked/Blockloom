@@ -43,8 +43,8 @@ license = "AGPL-3.0-or-later"
 [workspace.dependencies]
 # Both halves come from one blockstitch commit; `just blockstitch-published`
 # moves them together and `just blockstitch-local` overrides both.
-blockstitch-core = { git = "https://github.com/Blockworked/blockstitch", rev = "ca892a267c0b478f5cdcebe64c1293630449f1a5" }
-blockstitch-qml = { git = "https://github.com/Blockworked/blockstitch", rev = "ca892a267c0b478f5cdcebe64c1293630449f1a5" }
+blockstitch-core = { git = "https://github.com/Blockworked/blockstitch", rev = "051259d5fde26cfc36b9d9edb163c0d4287cc2ff" }
+blockstitch-qml = { git = "https://github.com/Blockworked/blockstitch", rev = "051259d5fde26cfc36b9d9edb163c0d4287cc2ff" }
 bevy = "0.20.1"
 # The bindings moved into the rapier monorepo, which tracks Bevy's main.
 # Patched onto the release below until a crates.io binding lands.

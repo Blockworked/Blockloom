@@ -35,7 +35,7 @@ PalettePanel {
     blockDefinitions: actor ? actor.block_defs : []
 
     onBlockActivated: (type, instruction) => entryActivated({ kind: "instruction", type: type, instruction: instruction })
-    onCustomBlockActivated: definition => entryActivated({ kind: "instruction", type: "CallBlock", instruction: customInstruction(definition) })
+    onCustomBlockActivated: definition => { const instruction = customInstruction(definition); entryActivated({ kind: "instruction", type: instruction.type, instruction: instruction }); }
     onValueActivated: value => entryActivated({ kind: "value", value: value })
     onDetailsRequested: (name, identifier, explainer) => detailsShown(Blocks.labelFor(name), identifier, explainer)
 

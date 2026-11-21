@@ -904,7 +904,9 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         | (K::ClearActionBindings { action }, F::ActionName) => Some(action),
         (K::BindAction { binding, .. }, F::ActionBinding) => Some(binding),
         (K::Return { value }, F::ReturnValue) => Some(value),
-        (K::CallBlock { args, .. }, F::CallArg(i)) => args.get_mut(i),
+        (K::CallBlock { args, .. } | K::BranchCallBlock { args, .. }, F::CallArg(i)) => {
+            args.get_mut(i)
+        }
         (K::PluginBlock { args, .. }, F::PluginArg(i)) => args.get_mut(i),
         _ => None,
     }
@@ -918,7 +920,7 @@ pub fn blank_field_value(
     blocks: &[BlockDef],
 ) -> Option<Value> {
     // A call site's declared types live on its `BlockDef`, not here.
-    if let (InstructionKind::CallBlock { block_id, .. }, FieldId::CallArg(index)) = (kind, field) {
+    if let (Some(block_id), FieldId::CallArg(index)) = (kind.called_block(), field) {
         let declared = blocks
             .iter()
             .find(|def| &def.id == block_id)?

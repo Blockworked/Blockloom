@@ -1161,6 +1161,12 @@ pub struct CallFrame {
     temps: Vec<Val>,
     /// Where an `Invoke` stores its value in the caller, if anywhere.
     temp: Option<usize>,
+    /// The `Call` step that entered it, whose branch bodies a `run branch`
+    /// runs. [`State::RETURN`] when there are none.
+    call_pc: usize,
+    /// Set for a branch body: the frame of the call that ran it. The body
+    /// reads the scope below that frame, the one it was written in.
+    owner: Option<usize>,
 }
 
 /// One run of one strand: where it is, and what it was in the middle of.
@@ -1214,16 +1220,64 @@ impl State {
     }
 
     pub fn enter_call(&mut self, return_pc: usize, params: Vec<Val>) {
-        self.enter_call_with(return_pc, params, None);
+        self.enter_call_with(return_pc, params, None, Self::RETURN, None);
+    }
+
+    /// A statement call from step `call_pc`, which holds its branch bodies.
+    pub fn enter_branch_call(&mut self, return_pc: usize, params: Vec<Val>, call_pc: usize) {
+        self.enter_call_with(return_pc, params, None, call_pc, None);
+    }
+
+    /// The `Call` step whose branches the running step's scope can run.
+    pub fn branch_call(&self) -> Option<usize> {
+        let frame = &self.calls[self.scope()?];
+        (frame.call_pc != Self::RETURN).then_some(frame.call_pc)
+    }
+
+    /// Starts a branch body for the call in scope; it comes back to
+    /// `return_pc`.
+    pub fn enter_branch(&mut self, return_pc: usize) {
+        let owner = self.scope();
+        self.enter_call_with(return_pc, Vec::new(), None, Self::RETURN, owner);
+    }
+
+    /// Ends the innermost branch body, answering where to carry on.
+    pub fn leave_branch(&mut self) -> Option<usize> {
+        let index = self.calls.iter().rposition(|frame| frame.owner.is_some())?;
+        self.calls.truncate(index + 1);
+        let frame = self.calls.pop()?;
+        self.counters = frame.counters;
+        self.temps = frame.temps;
+        Some(frame.return_pc)
+    }
+
+    /// The call frame whose inputs the running step reads: the innermost,
+    /// or, inside a branch body, the scope the body was written in.
+    fn scope(&self) -> Option<usize> {
+        let mut top = self.calls.len();
+        loop {
+            let index = top.checked_sub(1)?;
+            match self.calls[index].owner {
+                Some(owner) => top = owner,
+                None => return Some(index),
+            }
+        }
     }
 
     /// The same, for an `Invoke`: `temp` is where the value lands in the
     /// caller when the body returns or falls off its end.
     pub fn enter_invoke(&mut self, return_pc: usize, params: Vec<Val>, temp: usize) {
-        self.enter_call_with(return_pc, params, Some(temp));
+        self.enter_call_with(return_pc, params, Some(temp), Self::RETURN, None);
     }
 
-    fn enter_call_with(&mut self, return_pc: usize, params: Vec<Val>, temp: Option<usize>) {
+    fn enter_call_with(
+        &mut self,
+        return_pc: usize,
+        params: Vec<Val>,
+        temp: Option<usize>,
+        call_pc: usize,
+        owner: Option<usize>,
+    ) {
         let width = self.counters.len();
         let saved_counters = std::mem::replace(&mut self.counters, vec![0; width]);
         let saved_temps = std::mem::take(&mut self.temps);
@@ -1233,6 +1287,8 @@ impl State {
             counters: saved_counters,
             temps: saved_temps,
             temp,
+            call_pc,
+            owner,
         });
     }
 
@@ -1250,6 +1306,9 @@ impl State {
     }
 
     fn leave_with(&mut self, result: Option<Val>) -> Option<usize> {
+        // A `return` in a branch body leaves the block it was written in.
+        let scope = self.scope()?;
+        self.calls.truncate(scope + 1);
         match self.calls.pop() {
             Some(frame) if frame.return_pc != Self::RETURN => {
                 self.counters = frame.counters;
@@ -1273,9 +1332,8 @@ impl State {
     /// One of the innermost call's bound inputs. Anything a caller didn't
     /// pass reads as zero, as an unbound name does in the VM.
     pub fn param(&self, index: usize) -> Val {
-        self.calls
-            .last()
-            .and_then(|frame| frame.params.get(index))
+        self.scope()
+            .and_then(|scope| self.calls[scope].params.get(index))
             .cloned()
             .unwrap_or(Val::Num(0.0))
     }

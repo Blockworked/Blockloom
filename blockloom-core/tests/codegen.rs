@@ -1734,11 +1734,17 @@ const TICKS: usize = 200;
 struct Block {
     id: &'static str,
     inputs: &'static [&'static str],
+    branches: &'static [&'static str],
     body: Vec<K>,
 }
 
 fn block(id: &'static str, inputs: &'static [&'static str], body: Vec<K>) -> Block {
-    Block { id, inputs, body }
+    Block {
+        id,
+        inputs,
+        branches: &[],
+        body,
+    }
 }
 
 /// A reporter-shaped call, which resolves to whatever the body returns.
@@ -1817,6 +1823,10 @@ fn project_with_headers(
             component: false,
             multiline: false,
             ui: None,
+        }));
+        pieces.extend(block.branches.iter().map(|name| BlockPiece::Branch {
+            id: format!("{}-{name}", block.id),
+            name: name.to_string(),
         }));
         actor.graph.block_defs.push(BlockDef {
             id: block.id.to_string(),
@@ -5569,4 +5579,158 @@ fn look2d_dials_compiled_logic() {
         ],
         &[],
     );
+}
+
+// ─── Branch inputs ──────────────────────────────────────────────────────────
+
+fn branched(
+    id: &'static str,
+    inputs: &'static [&'static str],
+    branches: &'static [&'static str],
+    body: Vec<K>,
+) -> Block {
+    Block {
+        id,
+        inputs,
+        branches,
+        body,
+    }
+}
+
+fn calling_with(id: &str, args: Vec<Value>, branches: Vec<Vec<K>>) -> K {
+    K::BranchCallBlock {
+        block_id: id.to_string(),
+        args,
+        branches: branches
+            .into_iter()
+            .map(|body| body.into_iter().map(Instruction::new).collect())
+            .collect(),
+    }
+}
+
+fn run_branch(name: &str) -> K {
+    K::RunBranch {
+        name: name.to_string(),
+    }
+}
+
+/// The lines a VM run says, in order.
+fn said(project: &Project) -> Vec<String> {
+    by_vm(project)
+        .into_iter()
+        .filter(|line| line.contains("Say"))
+        .collect()
+}
+
+/// A branch body runs where the block says, as often as it says, and reads
+/// the inputs of the scope it was written in rather than the block's own.
+#[test]
+fn a_branch_runs_in_its_callers_scope() {
+    let blocks = || {
+        vec![
+            branched(
+                "twice",
+                &["n"],
+                &["body"],
+                vec![
+                    K::Say { text: param("n") },
+                    run_branch("body"),
+                    run_branch("body"),
+                    // Nobody's branch: nothing happens.
+                    run_branch("missing"),
+                ],
+            ),
+            block(
+                "outer",
+                &["n"],
+                vec![calling_with(
+                    "twice",
+                    vec![number(1.0)],
+                    vec![vec![K::Say { text: param("n") }]],
+                )],
+            ),
+        ]
+    };
+    let bodies = || {
+        vec![vec![
+            calling("outer", vec![number(7.0)]),
+            calling_with("twice", vec![number(2.0)], vec![vec![say("inside")]]),
+            say("done"),
+        ]]
+    };
+    let lines = said(&project_with_blocks(bodies(), blocks(), &[]));
+    let joined = lines.join("\n");
+    // The block's own input, then the caller's `n` twice, never the block's.
+    for (want, count) in [("1", 1), ("7", 2), ("inside", 2), ("done", 1)] {
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|l| l.ends_with(&format!("Say {want}")))
+                .count(),
+            count,
+            "{joined}"
+        );
+    }
+    assert_same_blocks("branch scope", bodies(), blocks(), &[]);
+}
+
+/// A `run branch` inside a branch body means the enclosing block's branch, a
+/// branch body can wait, and `return` in one leaves the block it was written
+/// in while `escape loop` doesn't reach past the body.
+#[test]
+fn branches_nest_wait_and_leave_like_the_vm() {
+    let bodies = || {
+        vec![vec![
+            calling_with("wrap", vec![], vec![vec![say("wrapped"), K::EscapeLoop]]),
+            calling("early", vec![]),
+            say("done"),
+        ]]
+    };
+    let blocks = || {
+        vec![
+            branched(
+                "thrice",
+                &[],
+                &["body"],
+                vec![K::Repeat {
+                    count: number(3.0),
+                    body: vec![Instruction::new(run_branch("body"))],
+                }],
+            ),
+            branched(
+                "wrap",
+                &[],
+                &["inner"],
+                vec![calling_with(
+                    "thrice",
+                    vec![],
+                    vec![vec![
+                        run_branch("inner"),
+                        K::Wait {
+                            duration: number(0.05),
+                        },
+                    ]],
+                )],
+            ),
+            block(
+                "early",
+                &[],
+                vec![
+                    calling_with(
+                        "thrice",
+                        vec![],
+                        vec![vec![say("once"), K::Return { value: number(0.0) }]],
+                    ),
+                    say("never"),
+                ],
+            ),
+        ]
+    };
+    let lines = said(&project_with_blocks(bodies(), blocks(), &[]));
+    let says: Vec<&str> = lines
+        .iter()
+        .map(|line| line.rsplit("Say ").next().unwrap_or(""))
+        .collect();
+    assert_eq!(says, ["wrapped", "wrapped", "wrapped", "once", "done"]);
+    assert_same_blocks("branch nesting", bodies(), blocks(), &[]);
 }
