@@ -2492,7 +2492,27 @@ dialog, with branches turned off (a call here has none); the backend's
 `create_block`/`edit_block` take its draft as is, icon, identifier and
 description included.
 
-The asset tray along the bottom (`AssetTray.qml`) is a file manager
+The editor page (`EditorPage.qml`) is a shell of three blockstitch
+`DockRegion`s: actors on the left, the inspector on the right, and Assets,
+Run log and Problems as tabs along the bottom (a panel in one takes
+`docked: true`, and the region folds and resizes it). Code and Game sit
+side by side when `split` is on. Everything the window can do is an id in
+`EditorActions.qml`: a dispatch command (`undo`) or the window's own
+(`editor.*`, carried out by `EditorPage.editorAction`). The top bar's menu
+bar, `CommandPalette.qml` (Ctrl+Shift+P, which also lists every shell
+command that takes no arguments) and the window's shortcuts are all built
+from it, and the keys come from `blockloom-app/src/keymap.rs` through
+`editor-commands`, so a new binding goes in `KEYMAP` and a new menu entry in
+`EditorActions.menus`. The top bar keeps only the project's identity, the
+menus and the run controls; plugin menu items join the Plugins menu.
+`ProblemsPanel.qml` reads `problems` (`commands/problems.rs`: plugin
+preflight and audit, script build and load errors, stale imports, asset
+warnings). `ProjectSettingsDialog.qml` is a page tree: the project's own
+pages, one page per world setting in the type registry (`RegistryForm`,
+written through `set-property target=world`), and one page per plugin with
+resource types (`PluginSettingsPage.qml`), with a filter over every label.
+
+The asset tray (`AssetTray.qml`, the bottom dock's Assets tab) is a file manager
 over the project folder: it lists, makes, imports, renames, moves and deletes
 files, and an asset dragged out of it lands on any
 `AssetField.qml` (the Look component's Image, the Script component's path).

@@ -517,6 +517,8 @@ impl Backend {
                 arg(&args, "name")?,
             )?),
             "type_registry" => commands::registry::type_registry(state),
+            "editor_commands" => Ok(crate::keymap::editor_commands()),
+            "problems" => to_json(commands::problems::problems(state)?),
             "set_property" => to_json(commands::registry::set_property(
                 state,
                 app,

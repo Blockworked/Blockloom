@@ -15,6 +15,8 @@ Rectangle {
     border.color: Theme.borderSoft
 
     Settings { id: remembered; category: "runlog"; property bool open: true; property real height: 96 }
+    // In a dock region, which folds and sizes it instead.
+    property bool docked: false
     // A script-linked line offers its file back: the editor opens it on it.
     signal openScriptRequested(string path, int line)
     // Appends the lines not yet shown and drops what the backend dropped.
@@ -41,7 +43,7 @@ Rectangle {
         anchors.fill: parent; spacing: 0
         // Drag the top edge to resize.
         Rectangle {
-            visible: remembered.open
+            visible: !root.docked && remembered.open
             Layout.fillWidth: true; Layout.preferredHeight: 4; color: resizer.containsMouse || resizer.pressed ? Theme.accent : "transparent"
             MouseArea {
                 id: resizer
@@ -53,7 +55,7 @@ Rectangle {
         }
         RowLayout {
             Layout.fillWidth: true; Layout.preferredHeight: 30; Layout.leftMargin: 6; Layout.rightMargin: 6; spacing: 12
-            IconButton { iconName: remembered.open ? "chevron-down" : "chevron-up"; tip: remembered.open ? "Hide the log" : "Show the log"; implicitWidth: 24; implicitHeight: 24; onClicked: remembered.open = !remembered.open }
+            IconButton { visible: !root.docked; iconName: remembered.open ? "chevron-down" : "chevron-up"; tip: remembered.open ? "Hide the log" : "Show the log"; implicitWidth: 24; implicitHeight: 24; onClicked: remembered.open = !remembered.open }
             Text {
                 color: Theme.textDim; font.pixelSize: 12
                 text: root.appState.running ? "Running" + (root.appState.paused ? " (paused)" : "") + " · " + (root.app.status ? root.app.status.time : 0).toFixed(1) + "s" : "Not running"
@@ -67,7 +69,7 @@ Rectangle {
         }
         ListView {
             id: lines
-            visible: remembered.open
+            visible: root.docked || remembered.open
             Layout.fillWidth: true; Layout.fillHeight: true; clip: true
             model: lineModel
             ScrollBar.vertical: ScrollBar {}

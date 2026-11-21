@@ -232,10 +232,7 @@ ApplicationWindow {
         }, () => {})
     }
 
-    // Undo and redo, unless a text field wants the keys for itself.
-    Shortcut { sequences: [StandardKey.Undo]; enabled: !!root.appState.project; onActivated: root.invoke("undo") }
-    Shortcut { sequences: [StandardKey.Redo, "Ctrl+Y"]; enabled: !!root.appState.project; onActivated: root.invoke("redo") }
-    Shortcut { sequences: [StandardKey.Save]; enabled: !!root.appState.project; onActivated: root.invoke("save_project") }
+    // Undo, redo, save and the rest are the editor page's keymap (EditorActions).
 
     // Keys plugins bind, their own and the ones on their menu items.
     readonly property var pluginKeys: {

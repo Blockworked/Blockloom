@@ -48,6 +48,7 @@ use std::sync::atomic::Ordering;
 
 pub(crate) mod physics;
 pub(crate) mod plugins;
+pub(crate) mod problems;
 pub(crate) mod registry;
 
 type Guard<'a> = MutexGuard<'a, AppState>;

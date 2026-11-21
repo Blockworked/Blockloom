@@ -13,6 +13,8 @@ Rectangle {
     id: root
     required property var app
     property bool open: true
+    // In a dock region, which folds and resizes it instead.
+    property bool docked: false
     signal openRequested(bool open)
     signal resizeRequested(real width)
     readonly property var appState: app.appState
@@ -242,7 +244,7 @@ Rectangle {
     }
     // The inner edge drags to resize.
     MouseArea {
-        visible: root.open
+        visible: root.open && !root.docked
         anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: parent.right; width: 5
         cursorShape: Qt.SizeHorCursor
         property real startWidth: 0; property real startX: 0
@@ -250,7 +252,7 @@ Rectangle {
         onPositionChanged: mouse => { if (pressed) root.resizeRequested(startWidth + mapToItem(null, mouse.x, 0).x - startX); }
     }
     IconButton {
-        visible: !root.open
+        visible: !root.open && !root.docked
         anchors.horizontalCenter: parent.horizontalCenter; y: 10
         iconName: "chevron-right"; tip: "Show the actors"
         onClicked: root.openRequested(true)

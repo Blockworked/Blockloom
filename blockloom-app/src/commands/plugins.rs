@@ -623,7 +623,7 @@ pub(crate) fn plugin_commands(state: &SharedState) -> Result<Value, String> {
 
 // ─── Run and build preflight ────────────────────────────────────────────────
 
-fn describe(issue: &RecordIssue) -> String {
+pub(crate) fn describe(issue: &RecordIssue) -> String {
     let why = match &issue.status {
         RecordStatus::Ok => "ok".to_string(),
         RecordStatus::NeedsMigration { from, to } => {
@@ -654,6 +654,19 @@ fn shape_name(shape: PluginBlockShape) -> &'static str {
 /// Refuses to run or ship a project whose plugin data has nothing behind
 /// it: missing runtime behavior is a report, never a silent no-op.
 pub(crate) fn preflight(active: &ActivePlugins, project: &Project) -> Result<(), String> {
+    let lines = preflight_lines(active, project);
+    if lines.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "The project's plugins aren't ready, so it won't run:\n- {}",
+            lines.join("\n- ")
+        ))
+    }
+}
+
+/// Each thing that stops Play, one line apiece (the Problems panel lists them).
+pub(crate) fn preflight_lines(active: &ActivePlugins, project: &Project) -> Vec<String> {
     let mut lines: Vec<String> = active
         .audit(project.plugin_records())
         .iter()
@@ -716,14 +729,7 @@ pub(crate) fn preflight(active: &ActivePlugins, project: &Project) -> Result<(),
             .iter()
             .map(|p| format!("{} {}", p.id, p.message)),
     );
-    if lines.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "The project's plugins aren't ready, so it won't run:\n- {}",
-            lines.join("\n- ")
-        ))
-    }
+    lines
 }
 
 /// Checks the open project before Play.

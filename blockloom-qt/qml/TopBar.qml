@@ -4,11 +4,14 @@ import QtQuick.Dialogs
 import QtQuick.Layouts
 import com.blockworked.Blockstitch 1.0
 
-// The open project's name, the way back to the Dashboard, the door to the
-// project settings, and the run controls.
+// The open project's name and the way back to the Dashboard, the menu bar,
+// and the run controls. The dialogs the menus open live here too.
 Rectangle {
     id: root
     required property var app
+    required property var actions
+    // The menu bar's menus by title.
+    property var menus: ({})
     readonly property var appState: app.appState
     implicitHeight: 52
     color: Theme.panel
@@ -16,44 +19,94 @@ Rectangle {
 
     // A command that fails has nowhere else to say so - the run log is where
     // the user is already looking for what went wrong.
+    function openDialog(name) {
+        const dialogs = { build: buildDialog, plugins: pluginManager, pluginPanels: pluginPanels, pluginEditors: pluginEditors,
+                          projectSettings: settingsDialog, appSettings: appSettings, import: importFile };
+        if (name === "export") exportProject();
+        else if (dialogs[name]) dialogs[name].open();
+    }
+    function exportProject() {
+        root.app.invoke("export_file_name", {}, name => {
+            const base = root.appState.default_export_location || root.appState.default_project_location;
+            exportFile.currentFile = root.app.toFileUrl(base + "/" + name);
+            exportFile.open();
+        });
+    }
     function report(command, args) { app.invoke(command, args, null, e => app.invoke("push_log", { kind: "error", text: String(e) })); }
 
     RowLayout {
         anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; spacing: 4
-        IconButton { iconName: "layout-grid"; tip: "All projects"; onClicked: root.report("close_project") }
+        IconButton { iconName: "layout-grid"; tip: "All projects"; onClicked: root.actions.run("close_project") }
         StitchTextField {
-            Layout.preferredWidth: 240
+            Layout.preferredWidth: 220
             text: root.appState.project ? root.appState.project.name : ""
             placeholderText: "Project name"
             ToolTip.visible: hovered && !!root.appState.project_path; ToolTip.text: root.appState.project_path || ""; ToolTip.delay: 700
             onEditingFinished: if (root.appState.project && text !== root.appState.project.name) root.report("set_project_name", { name: text })
         }
-        IconButton { iconName: "save"; tip: "Save now"; onClicked: root.app.invoke("save_project") }
-        IconButton { iconName: "upload"; tip: "Import a project"; onClicked: importFile.open() }
-        IconButton { iconName: "download"; tip: "Export this project"; onClicked: root.app.invoke("export_file_name", {}, name => { const base = root.appState.default_export_location || root.appState.default_project_location; exportFile.currentFile = root.app.toFileUrl(base + "/" + name); exportFile.open(); }) }
-        IconButton { iconName: "package"; tip: "Build a standalone game"; onClicked: buildDialog.open() }
-        IconButton { iconName: "plug-zap"; tip: "Plugins"; onClicked: pluginManager.open() }
-        IconButton {
-            iconName: "panel-left"; tip: "Plugin panels"
-            visible: !!(root.appState.plugins && root.appState.plugins.panels && root.appState.plugins.panels.length > 0)
-            onClicked: pluginPanels.open()
+        // The menu bar, built from the editor's actions.
+        Repeater {
+            model: root.actions.menus
+            delegate: Item {
+                id: menuHolder
+                required property var modelData
+                implicitWidth: menuButton.implicitWidth; implicitHeight: menuButton.implicitHeight
+                readonly property var entries: {
+                    const out = [];
+                    let line = false;
+                    for (const id of modelData.items) {
+                        if (id === "-") { line = out.length > 0; continue; }
+                        out.push({ id: id, line: line });
+                        line = false;
+                    }
+                    return out;
+                }
+                StitchButton {
+                    id: menuButton
+                    objectName: "menu-" + menuHolder.modelData.title
+                    flat: true; implicitHeight: 30; font.pixelSize: 13
+                    text: menuHolder.modelData.title
+                    onClicked: menu.popup(menuButton, 0, menuButton.height)
+                }
+                StitchMenu {
+                    id: menu
+                    objectName: "menu-popup-" + menuHolder.modelData.title
+                    width: 300
+                    Component.onCompleted: root.menus[menuHolder.modelData.title] = menu
+                    Repeater {
+                        model: menuHolder.entries
+                        delegate: StitchMenuItem {
+                            id: item
+                            required property var modelData
+                            objectName: "menu-item-" + modelData.id
+                            readonly property bool on: root.actions.checked(modelData.id)
+                            visible: root.actions.visible(modelData.id)
+                            enabled: root.actions.enabled(modelData.id)
+                            iconName: on ? "check" : root.actions.icon(modelData.id)
+                            text: root.actions.label(modelData.id)
+                            shortcutText: root.actions.keyText(modelData.id)
+                            implicitHeight: modelData.line ? 41 : 34
+                            topPadding: modelData.line ? 7 : 0
+                            onTriggered: root.actions.run(modelData.id)
+                            Rectangle { visible: item.modelData.line; x: 6; y: 3; width: item.width - 12; height: 1; color: Theme.borderSoft }
+                        }
+                    }
+                    // Items plugins add, under their plugin's own heading.
+                    Repeater {
+                        model: menuHolder.modelData.title === "Plugins" ? root.pluginMenus : []
+                        delegate: StitchMenuItem {
+                            required property var modelData
+                            required property int index
+                            iconName: "plug-zap"
+                            text: (modelData.group ? modelData.group + ": " : "") + modelData.title
+                            shortcutText: modelData.shortcut || ""
+                            onTriggered: root.app.invoke("plugin_call", { command: modelData.command, args: modelData.args })
+                        }
+                    }
+                }
+            }
         }
-        IconButton {
-            id: pluginMenuButton
-            iconName: "list"; tip: "Plugin menu"
-            visible: root.pluginMenus.length > 0
-            onClicked: pluginMenu.popup(pluginMenuButton, 0, pluginMenuButton.height)
-        }
-        IconButton {
-            iconName: "app-window"; tip: "Plugin editors"
-            visible: !!(root.appState.plugins && root.appState.plugins.editorModules && root.appState.plugins.editorModules.length > 0)
-            onClicked: pluginEditors.open()
-        }
-        IconButton { iconName: "settings"; tip: "Project settings"; onClicked: settingsDialog.open() }
-        IconButton { iconName: "sliders-horizontal"; tip: "App settings"; onClicked: appSettings.open() }
         Item { Layout.fillWidth: true }
-        IconButton { iconName: "undo-2"; tip: "Undo"; enabled: root.appState.can_undo; onClicked: root.app.invoke("undo") }
-        IconButton { iconName: "redo-2"; tip: "Redo"; enabled: root.appState.can_redo; onClicked: root.app.invoke("redo") }
         Rectangle {
             visible: root.appState.running
             implicitWidth: fpsText.implicitWidth + 16; implicitHeight: 26; radius: 5; color: Theme.field; border.color: Theme.borderSoft
@@ -63,19 +116,20 @@ Rectangle {
             HoverHandler { id: fpsHover }
         }
         StitchButton { visible: root.appState.running && !!root.appState.lan_session && root.appState.lan_session.enabled; text: "LAN spectators"; onClicked: lanDialog.open() }
-        IconButton { visible: root.appState.runtime_open; iconName: "monitor-x"; tip: "Close the game window"; onClicked: root.app.invoke("close_runtime") }
+        IconButton { visible: root.appState.runtime_open; iconName: "monitor-x"; tip: "Close the game window"; onClicked: root.actions.run("close_runtime") }
         IconButton {
             visible: root.appState.running
-            iconName: root.appState.paused ? "play" : "pause"; tip: root.appState.paused ? "Resume" : "Pause"
-            onClicked: root.app.invoke("pause_project", { paused: !root.appState.paused })
+            iconName: root.actions.icon("editor.pause"); tip: root.actions.label("editor.pause")
+            onClicked: root.actions.run("editor.pause")
         }
-        IconButton { visible: root.appState.running && root.appState.paused; iconName: "step-forward"; tip: "Advance one tick"; onClicked: root.report("step_project") }
+        IconButton { visible: root.appState.running && root.appState.paused; iconName: "step-forward"; tip: "Advance one tick"; onClicked: root.actions.run("step_project") }
         StitchButton {
+            objectName: "play-button"
             Layout.leftMargin: 6
             primary: !root.appState.running; danger: root.appState.running
             iconName: root.appState.running ? "square" : "play"
             text: root.appState.running ? "Stop" : "Play"
-            onClicked: root.report(root.appState.running ? "stop_project" : "run_project")
+            onClicked: root.actions.run(root.appState.running ? "stop_project" : "run_project")
         }
     }
 
@@ -341,18 +395,6 @@ Rectangle {
     }
     // Menu items plugins add, grouped under their plugin and each item's own heading.
     readonly property var pluginMenus: appState.plugins && appState.plugins.surfaces ? appState.plugins.surfaces.menus : []
-    StitchMenu {
-        id: pluginMenu
-        Repeater {
-            model: root.pluginMenus
-            delegate: StitchMenuItem {
-                required property var modelData
-                iconName: "plug-zap"
-                text: (modelData.group ? modelData.group + ": " : "") + modelData.title + (modelData.shortcut ? "    " + modelData.shortcut : "")
-                onTriggered: root.app.invoke("plugin_call", { command: modelData.command, args: modelData.args })
-            }
-        }
-    }
     StitchDialog {
         id: lanDialog
         title: "LAN spectators"
@@ -388,7 +430,7 @@ Rectangle {
         }
     }
     BuildDialog { id: buildDialog; app: root.app }
-    PluginManagerDialog { id: pluginManager; app: root.app }
+    PluginManagerDialog { id: pluginManager; app: root.app; onSettingsRequested: plugin => settingsDialog.showPage("plugin:" + plugin) }
     PluginPanelDialog { id: pluginPanels; app: root.app }
     PluginEditorsDialog { id: pluginEditors; app: root.app }
     ProjectSettingsDialog { id: settingsDialog; app: root.app }

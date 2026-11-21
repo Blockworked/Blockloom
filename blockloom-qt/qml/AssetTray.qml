@@ -17,11 +17,15 @@ Rectangle {
     id: root
     required property var app
     readonly property var appState: app.appState
-    implicitHeight: header.height + (remembered.open ? remembered.height : 0)
+    implicitHeight: header.height + (shown ? remembered.height : 0)
     color: Theme.panel
     border.color: Theme.borderSoft
 
     Settings { id: remembered; category: "assets"; property bool open: true; property real height: 150 }
+    // In a dock region, which folds and sizes it instead.
+    property bool docked: false
+    readonly property bool shown: docked || remembered.open
+    onVisibleChanged: if (visible && docked) refresh()
     property string path: ""
     property string selected: ""
     property var entries: []
@@ -183,7 +187,7 @@ Rectangle {
         anchors.fill: parent; spacing: 0
         // Drag the top edge to resize.
         Rectangle {
-            visible: remembered.open
+            visible: !root.docked && remembered.open
             Layout.fillWidth: true; Layout.preferredHeight: 4; color: resizer.containsMouse || resizer.pressed ? Theme.accent : "transparent"
             MouseArea {
                 id: resizer
@@ -197,13 +201,14 @@ Rectangle {
             id: header
             Layout.fillWidth: true; Layout.preferredHeight: 36; Layout.leftMargin: 6; Layout.rightMargin: 6; spacing: 4
             StitchButton {
+                visible: !root.docked
                 flat: true; implicitHeight: 28; font.pixelSize: 12
                 iconName: remembered.open ? "chevron-down" : "chevron-up"; text: "Assets"
                 onClicked: { remembered.open = !remembered.open; if (remembered.open) root.refresh(); }
             }
             Row {
                 id: crumbRow
-                visible: remembered.open; spacing: 2
+                visible: root.shown; spacing: 2
                 Layout.fillWidth: true
                 StitchButton {
                     readonly property string folderPath: ""
@@ -221,15 +226,15 @@ Rectangle {
                     }
                 }
             }
-            Item { Layout.fillWidth: true; visible: !remembered.open }
-            IconButton { visible: remembered.open; iconName: "folder-plus"; tip: "New folder"; implicitWidth: 28; implicitHeight: 28; onClicked: root.startDraft("folder") }
-            IconButton { visible: remembered.open; iconName: "file-plus"; tip: "New asset"; implicitWidth: 28; implicitHeight: 28; onClicked: createMenu.popup() }
-            IconButton { visible: remembered.open; iconName: "download"; tip: "Import files into this folder"; implicitWidth: 28; implicitHeight: 28; onClicked: importDialog.open() }
-            IconButton { visible: remembered.open; iconName: "refresh-cw"; tip: "Re-read this folder"; enabled: !root.busy; implicitWidth: 28; implicitHeight: 28; onClicked: root.refresh() }
+            Item { Layout.fillWidth: true; visible: !root.shown }
+            IconButton { visible: root.shown; iconName: "folder-plus"; tip: "New folder"; implicitWidth: 28; implicitHeight: 28; onClicked: root.startDraft("folder") }
+            IconButton { visible: root.shown; iconName: "file-plus"; tip: "New asset"; implicitWidth: 28; implicitHeight: 28; onClicked: createMenu.popup() }
+            IconButton { visible: root.shown; iconName: "download"; tip: "Import files into this folder"; implicitWidth: 28; implicitHeight: 28; onClicked: importDialog.open() }
+            IconButton { visible: root.shown; iconName: "refresh-cw"; tip: "Re-read this folder"; enabled: !root.busy; implicitWidth: 28; implicitHeight: 28; onClicked: root.refresh() }
         }
         Rectangle {
-            visible: remembered.open
-            Layout.fillWidth: true; Layout.preferredHeight: remembered.height
+            visible: root.shown
+            Layout.fillWidth: true; Layout.fillHeight: root.docked; Layout.preferredHeight: root.docked ? -1 : remembered.height
             color: fileDrop.containsDrag ? Theme.selection : Theme.canvas
             // Files and folders dropped from the OS file manager import here.
             DropArea {

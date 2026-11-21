@@ -1554,6 +1554,20 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             },
         ],
     },
+    CommandSpec {
+        name: "problems",
+        cmd: "problems",
+        aliases: &[],
+        summary: "List what stops Play or Build and what will surprise later: plugin preflight and audit, script build errors, stale imports and asset warnings.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "editor-commands",
+        cmd: "editor_commands",
+        aliases: &["editor_commands", "keymap"],
+        summary: "List every command with the editor's default keymap, which the menu bar and command palette are built from.",
+        args: &[],
+    },
     // ── Components ────────────────────────────────────────────────────────
     CommandSpec {
         name: "type-registry",

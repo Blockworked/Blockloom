@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtTest
 import "../../qml" as Editor
+import "fixtures/Registry3d.js" as Registry
 import "SettingsFixture.js" as Fixture
 
 TestCase {
@@ -23,6 +24,7 @@ TestCase {
     }
     property var pluginImports: []
     QtObject {
+        property var typeRegistry: null
         id: backend
         property var appState: test.projectState()
         property var openActor: null
@@ -82,18 +84,42 @@ TestCase {
     function test_leftNavigationInOneWindow() {
         const dialog = createTemporaryObject(dialogFactory, test);
         verify(dialog !== null); dialog.open();
-        tryCompare(dialog, "visible", true);
-        mouseClick(findChild(dialog, "settings-app-info"));
+        tryCompare(dialog, "opened", true);
+        tryVerify(() => findChild(dialog.contentItem, "settings-app-info") !== null);
+        mouseClick(findChild(dialog.contentItem, "settings-app-info"));
         compare(dialog.page, "publishing");
         wait(50);
         grabImage(test.Window.window.contentItem).save("/tmp/blockloom-settings-navigation.png");
         verify(findChild(dialog, "settings-App Info").visible);
         verify(!findChild(dialog, "settings-Project").visible);
-        mouseClick(findChild(dialog, "settings-android"));
+        mouseClick(findChild(dialog.contentItem, "settings-android"));
         compare(dialog.page, "android");
         verify(findChild(dialog, "settings-Android").visible);
-        mouseClick(findChild(dialog, "settings-general"));
+        mouseClick(findChild(dialog.contentItem, "settings-general"));
         compare(dialog.page, "project");
+        dialog.close();
+    }
+    function test_worldPagesComeFromTheRegistry() {
+        backend.typeRegistry = Registry.registry;
+        const dialog = createTemporaryObject(dialogFactory, test);
+        dialog.open();
+        tryCompare(dialog, "opened", true);
+        tryVerify(() => findChild(dialog.contentItem, "settings-page-world:fog") !== null);
+        findChild(dialog.contentItem, "settings-page-world:fog").clicked();
+        compare(dialog.page, "world:fog");
+        const form = findChild(dialog.contentItem, "world-page-form");
+        tryVerify(() => findChild(form, "property-row-height") !== null);
+        const height = findChild(form, "property-row-height");
+        tryVerify(() => findChild(height, "property-row-enabled") !== null);
+        findChild(findChild(height, "property-row-enabled"), "property-switch").toggle();
+        const call = calls[calls.length - 1];
+        compare(call.command, "set_property");
+        compare(call.args.target, "world");
+        compare(call.args.path, "fog");
+        verify(call.args.value.volumetric !== undefined, "the whole setting goes back");
+        findChild(dialog.contentItem, "settings-filter").text = "density";
+        verify(dialog.shownPages.some(p => p.id === "world:fog"), "a page is found by a field it holds");
+        verify(!dialog.shownPages.some(p => p.id === "project"));
         dialog.close();
     }
     function test_sceneUsesOpenComponentCards() {

@@ -74,15 +74,25 @@ TestCase {
         verify(dialog.summary({ changes: [] }, true).indexOf("nothing changed") >= 0);
         verify(dialog.summary({ changes: [], keptRecords: ["Health (actor Ball)"] }, false).indexOf("Kept 1") >= 0);
     }
+    Component { id: settingsFactory; Editor.PluginSettingsPage { app: backend; width: 500 } }
+    function test_settingsArePointedToProjectSettings() {
+        verify(findChild(dialog.contentItem, "plugin-settings-link").visible);
+        const spy = [];
+        dialog.settingsRequested.connect(p => spy.push(p));
+        findChild(dialog.contentItem, "plugin-settings-link").children[1].clicked();
+        compare(spy, ["com.example.health"]);
+    }
     function test_resourcesAreEditedFromTheirSchema() {
-        compare(dialog.resourceTypes.length, 1);
-        compare(dialog.resourcePayload(dialog.resourceTypes[0]).damage_scale, 2);
-        verify(findChild(dialog.contentItem, "resource-com.example.health/Difficulty") !== null);
-        dialog.writeResource(dialog.resourceTypes[0], { damage_scale: 3 });
+        backend.appState = Object.assign({}, backend.appState, { plugins: { types: test.types } });
+        const page = createTemporaryObject(settingsFactory, test, { plugin: "com.example.health" });
+        compare(page.resourceTypes.length, 1);
+        compare(page.resourcePayload(page.resourceTypes[0]).damage_scale, 2);
+        verify(findChild(page, "resource-com.example.health/Difficulty") !== null);
+        page.writeResource(page.resourceTypes[0], { damage_scale: 3 });
         const set = calls.filter(c => c.command === "set_plugin_resource")[0];
         compare(set.args.resource, "com.example.health/Difficulty");
         compare(set.args.payload.damage_scale, 3);
-        dialog.resetResource(dialog.resourceTypes[0]);
+        page.resetResource(page.resourceTypes[0]);
         compare(count("remove_plugin_resource"), 1);
     }
 }

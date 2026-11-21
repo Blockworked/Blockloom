@@ -6,6 +6,7 @@ pub mod attach;
 mod build_jobs;
 mod commands;
 mod dispatch;
+pub mod keymap;
 mod runtime;
 mod scaffold;
 pub mod screen;

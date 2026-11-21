@@ -4,9 +4,10 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import com.blockworked.Blockstitch 1.0
 
-// The editor a project opens into: a top bar, the actor list, a Code tab
-// (block palette and canvas) and a Game tab, the inspector, the asset tray
-// and the run log.
+// The editor a project opens into: the top bar and its menus, then three
+// dock regions (actors on the left, the inspector on the right, assets, run
+// log and problems along the bottom) around the Code and Game views, which
+// can sit side by side.
 Item {
     id: root
     required property var app
@@ -27,7 +28,47 @@ Item {
         property bool blocksOpen: true
         property real blocksWidth: 380
         property int tab: 0
+        property bool split: false
+        property real splitRatio: 0.5
+        property bool bottomOpen: true
+        property real bottomHeight: 180
+        property int bottomTab: 0
     }
+
+    EditorActions { id: actions; app: root.app; page: root }
+    readonly property var bottomTabs: ["editor.assets", "editor.runLog", "editor.problems"]
+    function toggleBottom(index) {
+        if (panels.bottomOpen && panels.bottomTab === index) panels.bottomOpen = false;
+        else { panels.bottomTab = index; panels.bottomOpen = true; }
+    }
+    // The window's own actions, which EditorActions hands back here.
+    function editorAction(id) {
+        const views = ["editor.showCode", "editor.showGame", "editor.showInterface", "editor.showDevices"];
+        const dialogs = { "editor.build": "build", "editor.plugins": "plugins", "editor.pluginPanels": "pluginPanels",
+                          "editor.pluginEditors": "pluginEditors", "editor.projectSettings": "projectSettings",
+                          "editor.appSettings": "appSettings", "editor.import": "import", "editor.export": "export" };
+        if (id === "editor.palette" || id === "editor.shortcuts") palette.open();
+        else if (views.indexOf(id) >= 0) panels.tab = views.indexOf(id);
+        else if (id === "editor.split") { panels.split = !panels.split; if (panels.split && panels.tab > 1) panels.tab = 0; }
+        else if (root.bottomTabs.indexOf(id) >= 0) root.toggleBottom(root.bottomTabs.indexOf(id));
+        else if (dialogs[id]) topBar.openDialog(dialogs[id]);
+    }
+    function actionChecked(id) {
+        if (id === "editor.split") return panels.split;
+        const i = root.bottomTabs.indexOf(id);
+        return i >= 0 && panels.bottomOpen && panels.bottomTab === i;
+    }
+    // The keymap's shortcuts, one per bound action.
+    Instantiator {
+        model: Object.keys(actions.keymap)
+        delegate: Shortcut {
+            required property string modelData
+            sequences: actions.keys(modelData)
+            enabled: actions.enabled(modelData)
+            onActivated: actions.run(modelData)
+        }
+    }
+    CommandPalette { id: palette; actions: actions }
 
     Connections {
         target: root.app
@@ -37,7 +78,9 @@ Item {
     }
     readonly property bool running: appState.running === true
     // Play shows the game it started.
-    onRunningChanged: if (running) panels.tab = 1
+    onRunningChanged: if (running) { if (panels.tab > 1 || !panels.split) panels.tab = 1; if (panels.bottomOpen && panels.bottomTab === 0) panels.bottomTab = 1; }
+    readonly property bool codeShown: panels.tab === 0 || (panels.split && panels.tab === 1)
+    readonly property bool gameShown: panels.tab === 1 || (panels.split && panels.tab === 0)
     function report(command, args) { invoke(command, args, null, e => invoke("push_log", { kind: "error", text: String(e) })); }
 
     function invoke(command, args, done, failed) { app.invoke(command, args, done, failed); }
@@ -89,7 +132,7 @@ Item {
     }
     ColumnLayout {
         anchors.fill: parent; spacing: 0
-        TopBar { Layout.fillWidth: true; app: root.app }
+        TopBar { id: topBar; Layout.fillWidth: true; app: root.app; actions: actions }
         Rectangle {
             visible: !root.appState.runtime_available
             Layout.fillWidth: true; implicitHeight: 36; color: Theme.warningBackground
@@ -103,14 +146,18 @@ Item {
         }
         RowLayout {
             Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
-            ActorList {
+            DockRegion {
+                objectName: "dock-left"
                 visible: panels.tab !== 2
+                edge: "left"
                 Layout.fillHeight: true
-                Layout.preferredWidth: panels.leftOpen ? panels.leftWidth : 34
-                app: root.app
-                open: panels.leftOpen
+                Layout.preferredWidth: implicitWidth
+                tabs: [{ title: "Actors", iconName: "user" }]
+                hideSingleTab: true
+                open: panels.leftOpen; size: panels.leftWidth; minSize: 180; maxSize: 420
                 onOpenRequested: open => panels.leftOpen = open
-                onResizeRequested: w => panels.leftWidth = Math.max(180, Math.min(420, w))
+                onResizeRequested: w => panels.leftWidth = w
+                ActorList { app: root.app; docked: true; onOpenRequested: open => panels.leftOpen = open }
             }
             ColumnLayout {
                 Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
@@ -121,7 +168,7 @@ Item {
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6; spacing: 2
                         IconButton {
-                            visible: panels.tab === 0 && !!root.actor
+                            visible: root.codeShown && !!root.actor
                             iconName: "panel-left"; tip: panels.blocksOpen ? "Hide the blocks" : "Show the blocks"
                             implicitWidth: 28; implicitHeight: 28
                             iconColor: panels.blocksOpen ? Theme.accent : "transparent"
@@ -133,7 +180,7 @@ Item {
                                 id: tab
                                 required property var modelData
                                 required property int index
-                                readonly property bool current: panels.tab === index
+                                readonly property bool current: panels.tab === index || (panels.split && index <= 1 && panels.tab <= 1)
                                 Layout.fillHeight: true
                                 implicitWidth: tabRow.implicitWidth + 24
                                 color: tabMouse.containsMouse && !current ? Theme.panelRaised : "transparent"
@@ -146,6 +193,14 @@ Item {
                                 Rectangle { visible: tab.current; anchors.bottom: parent.bottom; width: parent.width; height: 2; color: Theme.accent }
                                 MouseArea { id: tabMouse; anchors.fill: parent; hoverEnabled: true; onClicked: panels.tab = tab.index }
                             }
+                        }
+                        IconButton {
+                            objectName: "split-button"
+                            visible: panels.tab <= 1
+                            iconName: "columns-2"; tip: panels.split ? "Show one view" : "Show the game beside the code"
+                            implicitWidth: 28; implicitHeight: 28
+                            iconColor: panels.split ? Theme.accent : "transparent"
+                            onClicked: actions.run("editor.split")
                         }
                         Item { Layout.fillWidth: true }
                         IconButton {
@@ -163,8 +218,17 @@ Item {
                 }
                 StackLayout {
                     Layout.fillWidth: true; Layout.fillHeight: true
-                    currentIndex: panels.tab
+                    currentIndex: panels.tab <= 1 ? 0 : panels.tab - 1
+                    // Code and Game, one at a time or side by side.
                     Item {
+                    id: codeGame
+                    readonly property bool both: root.codeShown && root.gameShown
+                    readonly property real codeWidth: both ? Math.round(width * Math.max(0.2, Math.min(0.8, panels.splitRatio))) : width
+                    Item {
+                        id: codePane
+                        objectName: "code-pane"
+                        visible: root.codeShown
+                        width: codeGame.codeWidth; height: parent.height
                         RowLayout {
                             anchors.fill: parent; spacing: 0
                             visible: !!root.actor
@@ -239,27 +303,65 @@ Item {
                             }
                         }
                     }
+                    Rectangle {
+                        objectName: "split-divider"
+                        visible: codeGame.both
+                        x: codeGame.codeWidth; width: 4; height: parent.height
+                        color: dividerMouse.containsMouse || dividerMouse.pressed ? Theme.accent : Theme.borderSoft
+                        MouseArea {
+                            id: dividerMouse
+                            anchors.fill: parent; anchors.leftMargin: -3; anchors.rightMargin: -3
+                            hoverEnabled: true; cursorShape: Qt.SizeHorCursor
+                            onPositionChanged: mouse => { if (pressed) panels.splitRatio = mapToItem(codeGame, mouse.x, 0).x / codeGame.width; }
+                        }
+                    }
                     Loader {
-                        active: panels.tab === 1
+                        objectName: "game-pane"
+                        active: root.gameShown
+                        visible: active
+                        x: codeGame.both ? codeGame.codeWidth + 4 : 0
+                        width: codeGame.both ? parent.width - x : parent.width; height: parent.height
                         sourceComponent: Component { PreviewPanel { app: root.app } }
+                    }
                     }
                     UiDesigner { app: root.app }
                     DevicesPanel { app: root.app }
                 }
             }
-            InspectorPanel {
-                id: inspector
+            DockRegion {
+                objectName: "dock-right"
                 visible: panels.tab !== 2
+                edge: "right"
                 Layout.fillHeight: true
-                Layout.preferredWidth: panels.rightOpen ? panels.rightWidth : 34
-                app: root.app
-                open: panels.rightOpen
+                Layout.preferredWidth: implicitWidth
+                tabs: [{ title: "Inspector", iconName: "sliders-horizontal" }]
+                hideSingleTab: true
+                open: panels.rightOpen; size: panels.rightWidth; minSize: 220; maxSize: 480
                 onOpenRequested: open => panels.rightOpen = open
-                onResizeRequested: w => panels.rightWidth = Math.max(220, Math.min(480, w))
+                onResizeRequested: w => panels.rightWidth = w
+                InspectorPanel { id: inspector; app: root.app; docked: true; onOpenRequested: open => panels.rightOpen = open }
             }
         }
-        AssetTray { visible: panels.tab !== 2; Layout.fillWidth: true; app: root.app }
-        RunLog { Layout.fillWidth: true; app: root.app; onOpenScriptRequested: (path, line) => inspector.openScript(path, line) }
+        DockRegion {
+            id: bottomDock
+            objectName: "dock-bottom"
+            edge: "bottom"
+            Layout.fillWidth: true
+            Layout.preferredHeight: implicitHeight
+            tabs: [
+                { title: "Assets", iconName: "folder" },
+                { title: "Run log", iconName: "scroll" },
+                { title: "Problems", iconName: "triangle-alert", badge: problems.problems.length ? String(problems.problems.length) : "" }
+            ]
+            currentIndex: panels.bottomTab
+            open: panels.bottomOpen; size: panels.bottomHeight; minSize: 90; maxSize: 560
+            onTabRequested: i => panels.bottomTab = i
+            onOpenRequested: open => panels.bottomOpen = open
+            onResizeRequested: h => panels.bottomHeight = h
+            AssetTray { app: root.app; docked: true }
+            RunLog { app: root.app; docked: true; onOpenScriptRequested: (path, line) => inspector.openScript(path, line) }
+            ProblemsPanel { id: problems; app: root.app; onOpenScriptRequested: (path, line) => inspector.openScript(path, line) }
+        }
     }
 
     StitchDialog {
