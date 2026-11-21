@@ -8,6 +8,7 @@ mod commands;
 mod dispatch;
 mod history;
 pub mod keymap;
+mod project_runtime;
 mod runtime;
 mod scaffold;
 pub mod screen;

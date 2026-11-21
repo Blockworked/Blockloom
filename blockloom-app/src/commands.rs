@@ -2733,6 +2733,7 @@ pub(crate) fn run_project(
             project.world.mode,
             backend.clone(),
             s.embedded.clone(),
+            project_runtime_for(&s)?,
         )?);
         greet(&mut s);
     }
@@ -2855,6 +2856,7 @@ pub(crate) fn open_world(
         project.world.mode,
         backend.clone(),
         s.embedded.clone(),
+        project_runtime_for(&s)?,
     )?);
     let dir = s
         .project_dir()
@@ -6704,4 +6706,47 @@ pub(crate) fn preview_terrain_erosion(
         return Err("The game world has stopped".to_string());
     }
     Ok(())
+}
+
+/// The project-built runtime the open project needs, if its plugins carry
+/// engine crates. Refuses while it hasn't been built.
+fn project_runtime_for(s: &AppState) -> Result<Option<std::path::PathBuf>, String> {
+    let Some(open) = s.open.as_ref() else {
+        return Ok(None);
+    };
+    if crate::project_runtime::engine_crates(&open.plugins)?.is_empty() {
+        return Ok(None);
+    }
+    let binary = crate::project_runtime::binary(&open.dir);
+    if !binary.exists() {
+        return Err(
+            "This project's engine plugins need its own runtime: run build-project-runtime first"
+                .to_string(),
+        );
+    }
+    Ok(Some(binary))
+}
+
+/// Builds the open project's runtime with its engine plugins linked in.
+pub fn build_project_runtime(state: &SharedState) -> Result<serde_json::Value, String> {
+    let (dir, crates) = {
+        let s = lock(state)?;
+        let open = s.open.as_ref().ok_or("No project is open")?;
+        (
+            open.dir.clone(),
+            crate::project_runtime::engine_crates(&open.plugins)?,
+        )
+    };
+    if crates.is_empty() {
+        return Err("No active plugin carries an engine crate".to_string());
+    }
+    // Outside the lock: a link takes a while.
+    let binary = crate::project_runtime::build(&dir, &crates)?;
+    let mut s = lock(state)?;
+    // The next world starts on the new binary.
+    s.runtime = None;
+    Ok(serde_json::json!({
+        "binary": binary.to_string_lossy(),
+        "plugins": crates.iter().map(|c| c.plugin.clone()).collect::<Vec<_>>(),
+    }))
 }

@@ -919,6 +919,24 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   through the host's loader with memory stores. `docs/plugin-api.md` is the
   author guide. CI runs `cargo test -p blockloom-plugin-sdk --features testing`
   and the host with `test-fixtures` (the isolation test).
+- **Engine plugins** (tier `adapter`, Tier E in the review): a package whose
+  `runtime.adapter` names a crate (`crate_dir`) implementing
+  `BlockloomModule` against `blockloom-engine` (the facade: Bevy, core and
+  `blockloom_runtime::api`), named with `export_module!`. The crate is
+  standalone and asks for `blockloom-engine = "<version>"` plus `bevy` at the
+  engine's exact version without default features (Bevy's derives look for
+  `bevy` in the crate's own manifest). `build-project-runtime`
+  (`blockloom-app/src/project_runtime.rs`) writes `.blockloom/runtime/`, a
+  crate whose `main` adds each module (`api::add_engine_module`) and calls
+  `run_process`, carrying the engine's toolchain, lock, profiles and patches
+  (which point `blockloom-engine` at the engine tree), and builds it with
+  Cargo into the engine's own target directory, so only the plugin and the
+  link are new; the binary lands in `.blockloom/runtime/bin/`. While the
+  project has one, the editor starts that binary as a child instead of the
+  embedded world, and refuses Play until it is built. Builds refuse engine
+  plugins for now, and the build uses the engine's source tree
+  (`BLOCKLOOM_ENGINE_SOURCE`) rather than shipped rlibs.
+  `plugins/examples/tally-engine` counts a run's ticks and says the total.
 - **Not yet**: a faster browser host (the page's own WebAssembly instead of wasmi
   in wasm; it needs a fuel substitute, since a browser instance has no budget to
   stop a runaway call), a headless browser proof and native editor modules.

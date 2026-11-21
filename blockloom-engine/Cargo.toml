@@ -1,0 +1,9 @@
+[package]
+name = "blockloom-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The API an engine-tier plugin is written against: Bevy, Blockloom's core and the module contract."
+
+[dependencies]
+blockloom-runtime = { path = "../blockloom-runtime" }

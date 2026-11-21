@@ -1,0 +1,16 @@
+# Standalone, like any plugin crate: a project runtime builds it from the
+# installed package, outside this workspace.
+[package]
+name = "blockloom-example-tally-engine"
+version = "1.0.0"
+edition = "2024"
+license = "MIT"
+description = "The tally example as an engine-tier plugin: a BlockloomModule linked into the project's runtime."
+publish = false
+
+[dependencies]
+# The project runtime patches this to the engine build it links against.
+blockloom-engine = "0.0.1"
+# Bevy's derives look for `bevy` among this crate's own dependencies. The
+# engine's exact version, no default features: the engine's features unify.
+bevy = { version = "=0.20.1", default-features = false }

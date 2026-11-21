@@ -1,0 +1,17 @@
+{
+  "format": 1,
+  "id": "com.example.tally-engine",
+  "name": "Tally (engine)",
+  "version": "1.0.0",
+  "description": "Counts the ticks a run advanced, as an engine-tier plugin linked into the project's runtime.",
+  "license": "MIT",
+  "engine": ">=0.0.1",
+  "tier": "adapter",
+  "abi": 1,
+  "sdk": "^0.0",
+  "capabilities": ["native-execution"],
+  "runtime": {
+    "adapter": {"engine_build": "0.0.1", "crate_dir": "engine"}
+  },
+  "contributions": []
+}

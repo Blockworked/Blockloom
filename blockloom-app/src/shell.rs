@@ -4327,6 +4327,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "build-project-runtime",
+        cmd: "build_project_runtime",
+        aliases: &[],
+        summary: "Build the open project's own runtime with its plugins' engine crates linked in; Play then starts it as a child process.",
+        args: &[],
+    },
+    CommandSpec {
         name: "plugin-gc",
         cmd: "plugin_gc",
         aliases: &[],

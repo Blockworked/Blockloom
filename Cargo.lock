@@ -2562,6 +2562,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "blockloom-engine"
+version = "0.0.1"
+dependencies = [
+ "blockloom-runtime",
+]
+
+[[package]]
 name = "blockloom-example-palette"
 version = "0.0.1"
 dependencies = [
@@ -2582,6 +2589,14 @@ dependencies = [
  "blockloom-plugin-sdk",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "blockloom-example-tally-engine"
+version = "1.0.0"
+dependencies = [
+ "bevy",
+ "blockloom-engine",
 ]
 
 [[package]]

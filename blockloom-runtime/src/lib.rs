@@ -26,6 +26,7 @@ mod ai;
 #[cfg(target_os = "android")]
 mod android;
 mod anim2d;
+pub mod api;
 mod atmosphere;
 mod batching;
 mod beams;
@@ -66,7 +67,7 @@ mod logic;
 mod luminance;
 mod materials;
 mod model;
-mod module;
+pub mod module;
 mod motor;
 mod player_camera;
 mod post2d;
@@ -399,6 +400,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     vfx::register(app, mode);
     water::register(app, mode);
     edit::configure(app);
+    api::build_engine_modules(app);
     // Both of these only exist to talk to an editor, and a built game has
     // none: no corner status, no handshake.
     app.add_systems(
