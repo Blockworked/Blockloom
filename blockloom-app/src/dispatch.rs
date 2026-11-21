@@ -76,6 +76,9 @@ impl Backend {
         // folder's saves before running whatever was actually asked.
         commands::note_activity(state);
         commands::poll_live_reload(self);
+        if commands::targets_reporter_branch(cmd, &args) {
+            return commands::reporter_branch_edit(state, app, cmd, &args);
+        }
         match cmd {
             "get_state" => to_json(commands::get_state(state)?),
             "refresh_library" => to_json(commands::refresh_library(state, app)?),

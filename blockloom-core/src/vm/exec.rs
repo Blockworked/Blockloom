@@ -477,8 +477,8 @@ enum Frame {
         temp: Option<usize>,
         /// The caller's temps, restored when this call leaves.
         saved_temps: Vec<Evaluated>,
-        /// The `Call` step that entered it, whose branch bodies a `run
-        /// branch` runs; [`usize::MAX`] for a reporter's.
+        /// The `Call` or `Invoke` step that entered it, whose branch bodies
+        /// a `run branch` runs; [`usize::MAX`] for a reporter run in place.
         call_pc: usize,
     },
     /// A branch body running for the call frame at `owner`. The body reads
@@ -1314,6 +1314,7 @@ impl Vm {
                     block_id,
                     args,
                     temp,
+                    ..
                 } => {
                     let temp = *temp;
                     let Some((start, names)) = program.block(block_id) else {
@@ -1330,7 +1331,7 @@ impl Vm {
                         params: bound,
                         temp: Some(temp),
                         saved_temps: saved,
-                        call_pc: usize::MAX,
+                        call_pc: pc,
                     });
                     script.pc = start;
                 }
@@ -1341,7 +1342,7 @@ impl Vm {
                             return None;
                         };
                         match program.steps.get(*call_pc) {
-                            Some(Step::Call { branches, .. }) => {
+                            Some(Step::Call { branches, .. } | Step::Invoke { branches, .. }) => {
                                 branches.get(index).map(|&start| (owner, start))
                             }
                             _ => None,

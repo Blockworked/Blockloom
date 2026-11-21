@@ -75,18 +75,18 @@ TestCase {
         compare(a.identifier, "kept");
     }
 
-    function test_branch_input_offered_on_command_blocks_only() {
+    function test_branch_input_offered_on_every_shape() {
         const d = dialog();
         d.openForCreate();
         tryCompare(d, "opened", true);
         const e = d.contentItem;
-        verify(e.allowBranches && !e.allowReporterBranches);
+        verify(e.allowBranches && e.allowReporterBranches);
         const buttons = () => findAll(e, o => o.modelData && o.modelData.kind === "Branch" && o.hasOwnProperty("checkable"));
         verify(buttons().length > 0);
         e.blockShape = "Normal";
         verify(buttons().every(b => b.visible));
         e.blockShape = "ReturnsValue";
-        verify(buttons().every(b => !b.visible));
+        verify(buttons().every(b => b.visible));
     }
 
     function test_refusal_shows_and_stays_open() {

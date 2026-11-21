@@ -5734,3 +5734,81 @@ fn branches_nest_wait_and_leave_like_the_vm() {
     assert_eq!(says, ["wrapped", "wrapped", "wrapped", "once", "done"]);
     assert_same_blocks("branch nesting", bodies(), blocks(), &[]);
 }
+
+/// A reporter call carrying branch bodies, kept as the canvas's JSON.
+fn reporting_with(id: &str, args: Vec<Value>, branches: Vec<Vec<K>>) -> Value {
+    Value::Call {
+        block_id: id.to_string(),
+        args,
+        branches: branches
+            .into_iter()
+            .map(|body| {
+                body.into_iter()
+                    .map(|kind| blockloom_core::wire::to_wire(&Instruction::new(kind)).unwrap())
+                    .collect()
+            })
+            .collect(),
+        saved: Box::new(Value::number(0.0)),
+    }
+}
+
+/// A reporter's branch body runs where the reporter says, reads the scope
+/// it was written in, can wait, and can hold another reporter's branches.
+#[test]
+fn a_reporter_branch_runs_in_its_callers_scope() {
+    let blocks = || {
+        vec![
+            branched(
+                "twice",
+                &["n"],
+                &["body"],
+                vec![
+                    run_branch("body"),
+                    run_branch("body"),
+                    K::Return { value: param("n") },
+                ],
+            ),
+            block(
+                "outer",
+                &["n"],
+                vec![say_value(reporting_with(
+                    "twice",
+                    vec![number(1.0)],
+                    vec![vec![
+                        say_value(param("n")),
+                        K::Wait {
+                            duration: number(0.05),
+                        },
+                    ]],
+                ))],
+            ),
+        ]
+    };
+    let bodies = || {
+        vec![vec![
+            calling("outer", vec![number(7.0)]),
+            say_value(reporting_with(
+                "twice",
+                vec![number(2.0)],
+                vec![vec![say_value(reporting_with(
+                    "twice",
+                    vec![number(3.0)],
+                    vec![vec![say("deep")]],
+                ))]],
+            )),
+            say("done"),
+        ]]
+    };
+    let lines = said(&project_with_blocks(bodies(), blocks(), &[]));
+    let says: Vec<&str> = lines
+        .iter()
+        .map(|line| line.rsplit("Say ").next().unwrap_or(""))
+        .collect();
+    assert_eq!(
+        says,
+        [
+            "7", "7", "1", "deep", "deep", "3", "deep", "deep", "3", "2", "done"
+        ]
+    );
+    assert_same_blocks("reporter branch scope", bodies(), blocks(), &[]);
+}

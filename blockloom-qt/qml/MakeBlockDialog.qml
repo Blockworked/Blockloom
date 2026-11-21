@@ -3,7 +3,7 @@ import QtQuick.Controls
 import com.blockworked.Blockstitch 1.0
 
 // "Make a Block": blockstitch's shared definition editor, limited to what
-// the VM runs. Branches go on command blocks only; a reporter has none.
+// the VM runs, branches on any shape.
 StitchDialog {
     id: root
     required property var app
@@ -27,7 +27,6 @@ StitchDialog {
 
     contentItem: BlockDefinitionEditor {
         id: editor
-        allowReporterBranches: false
         submitText: root.editTarget ? "Save" : "Create"
         detailsNote: "A public identifier and a description, kept with the block in the project."
         onCreateRequested: draft => root.send("create_block", draft)

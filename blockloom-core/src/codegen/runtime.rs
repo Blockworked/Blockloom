@@ -1161,8 +1161,8 @@ pub struct CallFrame {
     temps: Vec<Val>,
     /// Where an `Invoke` stores its value in the caller, if anywhere.
     temp: Option<usize>,
-    /// The `Call` step that entered it, whose branch bodies a `run branch`
-    /// runs. [`State::RETURN`] when there are none.
+    /// The `Call` or `Invoke` step that entered it, whose branch bodies a
+    /// `run branch` runs. [`State::RETURN`] when there are none.
     call_pc: usize,
     /// Set for a branch body: the frame of the call that ran it. The body
     /// reads the scope below that frame, the one it was written in.
@@ -1268,6 +1268,18 @@ impl State {
     /// caller when the body returns or falls off its end.
     pub fn enter_invoke(&mut self, return_pc: usize, params: Vec<Val>, temp: usize) {
         self.enter_call_with(return_pc, params, Some(temp), Self::RETURN, None);
+    }
+
+    /// [`State::enter_invoke`] for a reporter call at `call_pc` that holds
+    /// branch bodies.
+    pub fn enter_branch_invoke(
+        &mut self,
+        return_pc: usize,
+        params: Vec<Val>,
+        temp: usize,
+        call_pc: usize,
+    ) {
+        self.enter_call_with(return_pc, params, Some(temp), call_pc, None);
     }
 
     fn enter_call_with(

@@ -37,6 +37,7 @@ use blockloom_core::sync;
 use blockloom_core::sync::LockInfo;
 use blockloom_core::value::{Evaluated, Value};
 use blockloom_core::wind::Wind;
+use blockloom_core::wire;
 use blockstitch_core::editor::{
     Created, EditCommand, EditContext, EditError, EditOutcome, ValueDestination,
     apply_buffer_effects, prune_value_buffers,
@@ -5065,6 +5066,58 @@ fn greet(s: &mut AppState) -> bool {
 
 // ─── Canvas: instructions ──────────────────────────────────────────────────
 
+/// Whether a canvas command works inside a custom reporter's branch.
+pub(crate) fn targets_reporter_branch(command: &str, args: &serde_json::Value) -> bool {
+    blockstitch_core::editor::BRANCH_COMMANDS.contains(&command)
+        && blockstitch_core::editor::targets_reporter_branch(
+            args,
+            blockstitch_core::editor::CANVAS_ARG_KEYS,
+        )
+}
+
+/// Runs a canvas command whose arguments name a reporter branch, on a copy
+/// of the open canvas kept only if the whole edit went through.
+pub(crate) fn reporter_branch_edit(
+    state: &SharedState,
+    app: &AppHandle,
+    command: &str,
+    args: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let mut s = lock(state)?;
+    let mut graph = graph_mut(&mut s).ok_or("No actor is open")?.clone();
+    let result = graph.edit_reporter_branch(command, args, &branch_codec())?;
+    push_undo(&mut s);
+    if let Some(open) = graph_mut(&mut s) {
+        *open = graph;
+    }
+    auto_save(&mut s);
+    emit(app, &mut s);
+    Ok(result)
+}
+
+/// A reporter's branch bodies are kept in the canvas's flat shape.
+fn branch_codec() -> blockstitch_core::editor::BranchCodec<'static, InstructionKind> {
+    fn read(body: &[serde_json::Value]) -> Result<Vec<Instruction>, String> {
+        body.iter()
+            .map(|json| wire::from_wire(json.clone()))
+            .collect()
+    }
+    fn instruction(json: &serde_json::Value) -> Result<Instruction, String> {
+        wire::from_wire(json.clone())
+    }
+    fn fragment(
+        fragment: &blockstitch_core::graph::Fragment<InstructionKind>,
+    ) -> Result<serde_json::Value, String> {
+        wire::to_wire(fragment)
+    }
+    blockstitch_core::editor::BranchCodec {
+        read: &read,
+        write: &wire::to_wire::<Instruction>,
+        instruction: &instruction,
+        fragment: &fragment,
+    }
+}
+
 pub(crate) fn add_instruction(
     state: &SharedState,
     app: &AppHandle,
@@ -6150,7 +6203,7 @@ pub(crate) fn create_block(
     details: BlockDetails,
 ) -> Result<String, String> {
     blockloom_core::blocks::BlockDef::validate_pieces(&pieces)?;
-    check_branches(&pieces, shape)?;
+    check_branches(&pieces)?;
     let color = normalize_block_color(&color).ok_or("Choose a valid block color")?;
     let mut s = lock(state)?;
     push_undo(&mut s);
@@ -6181,7 +6234,7 @@ pub(crate) fn edit_block(
     color: String,
     details: BlockDetails,
 ) -> Result<(), String> {
-    check_branches(&pieces, shape)?;
+    check_branches(&pieces)?;
     let mut s = lock(state)?;
     push_undo(&mut s);
     let result = match graph_mut(&mut s) {
@@ -6204,16 +6257,13 @@ fn is_branch(piece: &BlockPiece) -> bool {
 }
 
 /// Branches only on command blocks, and few enough for every walk to reach.
-fn check_branches(pieces: &[BlockPiece], shape: BlockShape) -> Result<(), String> {
+fn check_branches(pieces: &[BlockPiece]) -> Result<(), String> {
     let count = pieces.iter().filter(|piece| is_branch(piece)).count();
     if count > blockloom_core::blocks::MAX_BRANCHES {
         return Err(format!(
             "A block can have at most {} branches",
             blockloom_core::blocks::MAX_BRANCHES
         ));
-    }
-    if count > 0 && matches!(shape, BlockShape::ReturnsValue | BlockShape::ReturnsBool) {
-        return Err("A block that returns a value can't have branches".to_string());
     }
     Ok(())
 }
@@ -6947,12 +6997,53 @@ mod branch_call_tests {
     }
 
     #[test]
-    fn a_reporter_cannot_have_branches() {
-        assert!(check_branches(&[label(), branch("x")], BlockShape::ReturnsValue).is_err());
-        assert!(check_branches(&[label(), branch("x")], BlockShape::Normal).is_ok());
+    fn a_block_has_at_most_max_branches() {
+        assert!(check_branches(&[label(), branch("x")]).is_ok());
         let many: Vec<_> = (0..=blockloom_core::blocks::MAX_BRANCHES)
             .map(|i| branch(&format!("b{i}")))
             .collect();
-        assert!(check_branches(&many, BlockShape::Normal).is_err());
+        assert!(check_branches(&many).is_err());
+    }
+
+    #[test]
+    fn a_reporter_branch_keeps_its_body_in_the_canvas_shape() {
+        use blockstitch_core::editor::{PathStep, REPORTER_BRANCH_PREFIX, ValueLocation};
+        let mut graph = ActorGraph::default();
+        let reporter = Value::Call {
+            block_id: "r".to_string(),
+            args: Vec::new(),
+            branches: Vec::new(),
+            saved: Box::new(Value::number(0.0)),
+        };
+        let strand = graph.add_strand(
+            0,
+            0,
+            vec![Instruction::new(InstructionKind::Say { text: reporter })],
+        );
+        let location = ValueLocation::Field {
+            strand_id: strand,
+            index: vec![PathStep::at(0)],
+            field_id: "SayText".to_string(),
+            path: Vec::new(),
+        };
+        let branch = format!(
+            "{REPORTER_BRANCH_PREFIX}{}",
+            serde_json::json!({ "location": location, "slot": 0 })
+        );
+        let args = serde_json::json!({
+            "strandId": branch,
+            "path": [{ "index": 0 }],
+            "instruction": { "id": "m", "type": "Move", "steps": { "kind": "Number", "value": 5 } },
+        });
+        assert!(targets_reporter_branch("add_instruction", &args));
+        assert!(!targets_reporter_branch("add_strand", &args));
+        graph
+            .edit_reporter_branch("add_instruction", &args, &branch_codec())
+            .unwrap();
+        let Some(Value::Call { branches, .. }) = graph.value_at(&location) else {
+            panic!("no reporter")
+        };
+        assert_eq!(branches[0][0]["type"], "Move");
+        assert_eq!(graph.strands.len(), 1);
     }
 }

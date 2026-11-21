@@ -2472,7 +2472,11 @@ ending in `BranchEnd`. `RunBranch` (its index settled per block at compile
 time) runs the body of the call in scope as a frame of its own, which reads
 the scope below that call: the caller's inputs, the caller's branches, and a
 `return` in it leaves the block the body was written in. `escape loop` stops
-at a branch body's edge, as at a call's.
+at a branch body's edge, as at a call's. A reporter call keeps its bodies as
+canvas JSON in `Value::Call::branches`; `vm::compile` places them in front of
+the instruction holding the value (the value then keeps `{"~start": pc}` per
+body) and lifting turns the call into an `Invoke` with those starts, so the
+bodies run on the strand's own frames exactly like a statement call's.
 
 The rule it has to keep is that a compiled program and the VM ask the world for
 exactly the same things in the same order, on the same tick - including the
@@ -2636,12 +2640,13 @@ snapshot for the old object, and `Blocks.qml` bumps `BlockRegistry.revision`
 only when `optionSource` (the names its dropdowns list) changes.
 
 `MakeBlockDialog.qml` is blockstitch's shared `BlockDefinitionEditor` in a
-dialog, with branches on command blocks only (`allowReporterBranches:
-false`); the backend's `create_block`/`edit_block` take its draft as is,
-icon, identifier and description included, refuse branches on a reporter or
-more than `MAX_BRANCHES`, and turn every call into a `BranchCallBlock` or a
+dialog, branches on any shape; the backend's `create_block`/`edit_block`
+take its draft as is, icon, identifier and description included, refuse more
+than `MAX_BRANCHES` branches, and turn every call into a `BranchCallBlock` or a
 plain `CallBlock` to match the new pieces before blockstitch reconciles the
-bodies.
+bodies. Canvas edits inside a reporter's branch name a `@reporter-branch:`
+strand and go through blockstitch's `edit_reporter_branch`
+(`commands::reporter_branch_edit`).
 
 The editor page (`EditorPage.qml`) is a shell of three blockstitch
 `DockRegion`s: actors on the left, the inspector on the right, and Assets,

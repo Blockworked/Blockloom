@@ -616,7 +616,7 @@ impl Plan {
         let starts: HashSet<usize> = steps
             .iter()
             .flat_map(|step| match step {
-                Step::Call { branches, .. } => branches.clone(),
+                Step::Call { branches, .. } | Step::Invoke { branches, .. } => branches.clone(),
                 _ => Vec::new(),
             })
             .collect();
@@ -980,6 +980,7 @@ impl<'a> Pass<'a> {
                 block_id,
                 args,
                 temp,
+                branches,
             } => {
                 let temp = *temp;
                 let target = self.canvas.program.blocks.get(block_id.as_str()).copied();
@@ -999,10 +1000,13 @@ impl<'a> Pass<'a> {
                                 "{PAD}s.store_temp({temp}, Val::Num(0.0));\n{PAD}s.pc = {next};\n"
                             )
                         } else {
+                            let enter = if branches.is_empty() {
+                                format!("s.enter_invoke({next}, args, {temp})")
+                            } else {
+                                format!("s.enter_branch_invoke({next}, args, {temp}, {pc})")
+                            };
                             format!(
-                                "{PAD}let args = {built};\n\
-                                 {PAD}s.enter_invoke({next}, args, {temp});\n\
-                                 {PAD}s.pc = {start};\n"
+                                "{PAD}let args = {built};\n{PAD}{enter};\n{PAD}s.pc = {start};\n"
                             )
                         }
                     }
@@ -1023,9 +1027,11 @@ impl<'a> Pass<'a> {
                             .iter()
                             .enumerate()
                             .filter_map(|(call, step)| match step {
-                                Step::Call { branches, .. } => branches
-                                    .get(index)
-                                    .map(|start| format!("Some({call}) => Some({start}), ")),
+                                Step::Call { branches, .. } | Step::Invoke { branches, .. } => {
+                                    branches
+                                        .get(index)
+                                        .map(|start| format!("Some({call}) => Some({start}), "))
+                                }
                                 _ => None,
                             })
                             .collect()

@@ -13,6 +13,7 @@ use crate::scene::{Axis, BodyKind};
 use crate::sound::SoundBus;
 use crate::ui::{UiAnchor, UiKind, UiProp, UiTheme};
 use crate::value::Value;
+use blockstitch_core::graph::BlockKind;
 use std::collections::{HashMap, HashSet};
 
 /// What starts a script.
@@ -596,6 +597,8 @@ pub enum Step {
         block_id: String,
         args: Vec<Value>,
         temp: usize,
+        /// Where each of the reporter's branch bodies starts, as for `Call`.
+        branches: Vec<usize>,
     },
     Return(Value),
     /// `stop all`.
@@ -630,6 +633,13 @@ pub struct Program {
 /// Compiles every strand on `graph`. A strand with no header block is inert -
 /// it's persisted, but nothing can ever start it, so it isn't compiled.
 pub fn compile(graph: &ActorGraph) -> Program {
+    PLACING.set(uses_reporter_branches(graph));
+    let program = compile_graph(graph);
+    PLACING.set(false);
+    program
+}
+
+fn compile_graph(graph: &ActorGraph) -> Program {
     let mut program = Program::default();
     for strand in &graph.strands {
         let Some(header) = strand.instructions.first() else {
@@ -761,8 +771,16 @@ fn step_is_suspending(step: &Step) -> bool {
 
 fn calls_in_value(value: &Value, out: &mut Vec<String>) {
     match value {
-        Value::Call { block_id, args, .. } => {
+        Value::Call {
+            block_id,
+            args,
+            branches,
+            ..
+        } => {
             out.push(block_id.clone());
+            if !branches.is_empty() {
+                out.push(BRANCHED.to_string());
+            }
             for arg in args {
                 calls_in_value(arg, out);
             }
@@ -979,6 +997,10 @@ fn action_values(action: &Action) -> Vec<&Value> {
     }
 }
 
+/// Stands among a step's calls for a reporter call with branches, which is
+/// lifted like a suspendable one: its bodies run on the strand's frames.
+const BRANCHED: &str = "~branched";
+
 fn suspendable_blocks(program: &Program) -> HashSet<String> {
     let mut ranges: HashMap<&str, (usize, usize)> = HashMap::new();
     for (id, &start) in &program.blocks {
@@ -991,7 +1013,7 @@ fn suspendable_blocks(program: &Program) -> HashSet<String> {
         }
         ranges.insert(id.as_str(), (start, end));
     }
-    let mut suspendable: HashSet<String> = HashSet::new();
+    let mut suspendable: HashSet<String> = HashSet::from([BRANCHED.to_string()]);
     for (id, (start, end)) in &ranges {
         if program.steps[*start..=*end].iter().any(step_is_suspending) {
             suspendable.insert(id.to_string());
@@ -1058,13 +1080,15 @@ fn lift_value(
                     lifted.push(arg);
                 }
             }
-            if suspendable.contains(&block_id) {
+            let starts = branch_starts(&branches).unwrap_or_default();
+            if suspendable.contains(&block_id) || !starts.is_empty() {
                 let temp = *next_temp;
                 *next_temp += 1;
                 invokes.push(Step::Invoke {
                     block_id: block_id.clone(),
                     args: lifted,
                     temp,
+                    branches: starts,
                 });
                 temp_var(temp)
             } else {
@@ -1699,6 +1723,17 @@ fn lift_suspendable_calls(program: &mut Program, bounds: &HashMap<String, usize>
                     args,
                     branches: branches.into_iter().map(remap).collect(),
                 },
+                Step::Invoke {
+                    block_id,
+                    args,
+                    temp,
+                    branches,
+                } => Step::Invoke {
+                    block_id,
+                    args,
+                    temp,
+                    branches: branches.into_iter().map(remap).collect(),
+                },
                 other => other,
             });
         }
@@ -1713,6 +1748,102 @@ fn lift_suspendable_calls(program: &mut Program, bounds: &HashMap<String, usize>
 }
 
 fn emit(steps: &mut Vec<Step>, kind: &InstructionKind) {
+    if !PLACING.get() {
+        return emit_kind(steps, kind);
+    }
+    let mut branched = false;
+    kind.clone()
+        .visit_values_mut(&mut |value, _| branched |= has_reporter_branches(value));
+    if branched {
+        let mut kind = kind.clone();
+        kind.visit_values_mut(&mut |value, _| place_reporter_branches(steps, value));
+        emit_kind(steps, &kind);
+    } else {
+        emit_kind(steps, kind);
+    }
+}
+
+// ─── Reporter branches ────────────────────────────────────────────────────
+// A custom reporter's branch bodies are kept as instruction JSON in the
+// value. They are compiled in front of the instruction holding the value,
+// behind a jump like a statement call's, and the value keeps where each one
+// starts. Lifting then makes the call an `Invoke`, so the bodies run on the
+// strand's own frames and read the scope they were written in.
+
+const BRANCH_START: &str = "~start";
+
+thread_local! {
+    /// Set while compiling a canvas that has reporter branches, so every
+    /// other canvas skips looking for them.
+    static PLACING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn uses_reporter_branches(graph: &ActorGraph) -> bool {
+    let mut copy = graph.clone();
+    let mut found = false;
+    copy.walk_instructions_mut(&mut |instruction| {
+        instruction
+            .kind
+            .visit_values_mut(&mut |value, _| found |= has_reporter_branches(value));
+    });
+    found
+}
+
+fn has_reporter_branches(value: &Value) -> bool {
+    match value {
+        Value::Call { args, branches, .. } => {
+            !branches.is_empty() || args.iter().any(has_reporter_branches)
+        }
+        Value::Op { args, .. } => args.iter().any(has_reporter_branches),
+        _ => false,
+    }
+}
+
+fn place_reporter_branches(steps: &mut Vec<Step>, value: &mut Value) {
+    match value {
+        Value::Call { args, branches, .. } => {
+            for arg in args {
+                place_reporter_branches(steps, arg);
+            }
+            if branches.is_empty() || branch_starts(branches).is_some() {
+                return;
+            }
+            let jump = steps.len();
+            steps.push(Step::Jump { to: 0 });
+            for body in branches.iter_mut() {
+                let start = steps.len();
+                let instructions: Vec<Instruction> = body
+                    .iter()
+                    .filter_map(|json| crate::wire::from_wire(json.clone()).ok())
+                    .collect();
+                emit_body(steps, &instructions);
+                steps.push(Step::BranchEnd);
+                *body = vec![serde_json::json!({ BRANCH_START: start })];
+            }
+            let after = steps.len();
+            steps[jump] = Step::Jump { to: after };
+        }
+        Value::Op { args, .. } => {
+            for arg in args {
+                place_reporter_branches(steps, arg);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Where a placed call's branch bodies start; `None` before placing.
+fn branch_starts(branches: &[Vec<serde_json::Value>]) -> Option<Vec<usize>> {
+    branches
+        .iter()
+        .map(|body| match body.as_slice() {
+            [marker] => marker.get(BRANCH_START)?.as_u64().map(|pc| pc as usize),
+            _ => None,
+        })
+        .collect()
+}
+
+fn emit_kind(steps: &mut Vec<Step>, kind: &InstructionKind) {
     use InstructionKind as K;
     match kind {
         // Headers only ever appear at index 0 of a strand, which the caller
