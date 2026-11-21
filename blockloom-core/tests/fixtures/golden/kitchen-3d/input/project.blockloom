@@ -1,0 +1,31 @@
+{
+  "id": "d54430c284c64a9b940dcd4318bf08f8",
+  "name": "kitchen-3d",
+  "icon": "",
+  "android": {
+    "application_id": "",
+    "version_code": 1,
+    "version_name": "1.0.0",
+    "keystore": "",
+    "key_alias": ""
+  },
+  "active_scene": "f3fe9d131d0b4d2fb6aac398dfeb3312",
+  "default_scene": "69f72bb5b0b440d6acda5a5d3ebcc330",
+  "scenes": [
+    {
+      "id": "69f72bb5b0b440d6acda5a5d3ebcc330",
+      "name": "Scene 1",
+      "path": "assets/scenes/Scene 1.blockscene",
+      "mode": "ThreeD"
+    },
+    {
+      "id": "f3fe9d131d0b4d2fb6aac398dfeb3312",
+      "name": "Level 2",
+      "path": "assets/scenes/Level 2.blockscene",
+      "mode": "ThreeD"
+    }
+  ],
+  "globals": [],
+  "global_lists": [],
+  "global_dicts": []
+}

@@ -878,6 +878,47 @@ pub fn finish_step(mut engine: NonSendMut<Engine>, time: Res<Time>) {
 // ─── Building the world ────────────────────────────────────────────────────
 /// Despawns everything and spawns it again from the project. Called on load,
 /// on every Start (so actors go back where they were authored), and on stop.
+/// How long the last [`rebuild_world`] took, in microseconds, for the
+/// profiler's `world/rebuild` row. Spawning happens in the commands it queues,
+/// so this is the system's own work, not the flush after it.
+static LAST_REBUILD_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Times one rebuild, however it returns.
+struct RebuildTimer {
+    started: std::time::Instant,
+    actors: usize,
+}
+
+impl RebuildTimer {
+    fn start(actors: usize) -> Self {
+        Self {
+            started: std::time::Instant::now(),
+            actors,
+        }
+    }
+}
+
+impl Drop for RebuildTimer {
+    fn drop(&mut self) {
+        let elapsed = self.started.elapsed();
+        LAST_REBUILD_US.store(
+            elapsed.as_micros() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        tracing::debug!(
+            "rebuilt the world in {:.2} ms ({} actors)",
+            elapsed.as_secs_f64() * 1000.0,
+            self.actors
+        );
+    }
+}
+
+/// The last rebuild's duration in milliseconds, or none before the first.
+pub fn last_rebuild_ms() -> Option<f64> {
+    let us = LAST_REBUILD_US.load(std::sync::atomic::Ordering::Relaxed);
+    (us > 0).then(|| us as f64 / 1000.0)
+}
+
 pub fn rebuild_world(
     mut commands: Commands,
     mut engine: NonSendMut<Engine>,
@@ -900,6 +941,7 @@ pub fn rebuild_world(
         return;
     }
     engine.rebuild = false;
+    let _timer = RebuildTimer::start(engine.project.actors.len());
     // A scene switch across dimensions swaps the pipeline live: the Dimension
     // resource follows the newly active scene, so the spawn below picks up
     // the other side without a fresh process. Audio scale follows in
@@ -4839,6 +4881,13 @@ pub fn report_status(
                 unit: "samples/pixel".into(),
             });
         }
+    }
+    if let Some(ms) = last_rebuild_ms() {
+        render_metrics.push(RenderMetric {
+            name: "world/rebuild".into(),
+            value: ms,
+            unit: "ms".into(),
+        });
     }
     if let Some(ms) = crate::hdr::tonemap_ms(&render_metrics) {
         render_metrics.push(RenderMetric {

@@ -18,6 +18,57 @@ cargo test --release -p blockloom-runtime -- --ignored --nocapture sensor_publis
 # what one frame's sensor snapshot costs at 100 / 1000 / 4000 actors
 ```
 
+## Edit cost baseline (2026-11-21)
+
+Every editor edit still copies the whole document several times: an undo
+snapshot (`push_undo` clones the project), a save that rewrites every scene
+file and the index (`save_project`), a runtime sync that hands the world the
+whole project (`sync_runtime`, `EditorMessage::Load`; a child runtime gets it
+as one JSON line) and a world rebuild (`rebuild_world`), plus the full state
+snapshot the window gets. These are the numbers to beat; Phase 3 of the
+architecture review (inverse-op undo, dirty-file saves, per-document patches)
+and Phase 4 (runtime deltas) should each move them.
+
+Measured in the same 4-core CPU container, release build, on the kitchen-3d
+golden fixture grown to three scenes of N actors, every actor carrying the
+editor-baseline canvas. Medians.
+
+```bash
+cargo test --release -p blockloom-core --test edit_cost -- --ignored --nocapture
+cargo test --release -p blockloom-app --test edit_latency -- --ignored --nocapture
+```
+
+| actors | document on disk | sync payload (JSON) | undo clone | sync serialize | save, atomic | save, plain writes | reload from disk |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 300 | 3.0 MiB | 1.6 MiB | 2.3 ms | 3.3 ms | 13 ms | 7.7 ms | 16 ms |
+| 1200 | 12 MiB | 6.4 MiB | 8.4 ms | 8.4 ms | 53 ms | 32 ms | 71 ms |
+| 4800 | 48 MiB | 26 MiB | 63 ms | 57 ms | 257 ms | 187 ms | 299 ms |
+
+One whole edit through `Backend::dispatch` (no runtime attached, so no
+rebuild), including the state snapshot:
+
+| actors | state snapshot | rename an actor | undo |
+| --- | --- | --- | --- |
+| 300 | 1.6 MiB | 56 ms | 32 ms |
+| 1200 | 6.3 MiB | 230 ms | 158 ms |
+| 4800 | 25 MiB | 892 ms | 596 ms |
+
+Readings:
+
+- Everything scales with the whole project, not with the edit: a one-field
+  rename on 1200 actors costs about 230 ms, past the point where typing
+  feels laggy. Building and serializing the state snapshot is the biggest
+  share after the save; the undo clone is cheap by comparison.
+- Atomic saves (temp file, fsync, rename; `blockloom_core::files`) cost
+  about 1.4-1.7x plain overwrites here, almost all of it the fsyncs. That is
+  the price of a crash never leaving half a scene file. Writing only the
+  scenes an edit touched (Phase 3) removes most of it; J4 (save on idle)
+  would remove the rest from the edit path.
+- `rebuild_world` needs a GPU world to measure, which this container lacks.
+  It now times itself: the profiler's `world/rebuild` row (ms, the system's
+  own work before its spawn commands flush) and a `debug` log line with the
+  actor count. Record a number from a real machine here.
+
 ## Fixed in the first PR (CPU, measured)
 
 | Where | Problem | Before | After |

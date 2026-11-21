@@ -1,0 +1,4220 @@
+{
+  "id": "69f72bb5b0b440d6acda5a5d3ebcc330",
+  "name": "Scene 1",
+  "format": 1,
+  "components": [
+    {
+      "component": "Quality",
+      "settings": {
+        "preset": "High",
+        "resolution_scale": 1.0,
+        "dynamic_resolution": false,
+        "min_scale": 0.5,
+        "target_ms": 16.667,
+        "auto_drop": false,
+        "over_budget_frames": 120,
+        "upscaler": "Spatial",
+        "dlss_mode": "Auto",
+        "sharpness": 0.0
+      }
+    },
+    {
+      "component": "Dimension",
+      "mode": "ThreeD"
+    },
+    {
+      "component": "Background",
+      "color": "#1B2431"
+    },
+    {
+      "component": "Physics",
+      "gravity": [
+        0.0,
+        -9.81,
+        0.0
+      ],
+      "fixed_rate": 60.0
+    },
+    {
+      "component": "Camera",
+      "camera": {
+        "position": [
+          0.0,
+          6.0,
+          14.0
+        ],
+        "look_at": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "zoom": 1.0
+      }
+    },
+    {
+      "component": "SpeechBubble",
+      "style": {
+        "background": "#FFFFFF",
+        "border": "#B8C0CC",
+        "text": "#172033",
+        "font_size": 18.0,
+        "max_width": 260.0,
+        "padding": [
+          12.0,
+          8.0
+        ],
+        "offset": [
+          0.0,
+          -12.0
+        ],
+        "font_asset": null
+      }
+    },
+    {
+      "component": "Lighting",
+      "lighting": {
+        "light_direction": [
+          8.0,
+          16.0,
+          8.0
+        ],
+        "light_color": "#FFFFFF",
+        "illuminance": 10000.0,
+        "ambient_color": "#FFFFFF",
+        "ambient_brightness": 80.0,
+        "ao_enabled": false,
+        "shadow_map_size": 2048,
+        "shadow_bias": 0.02,
+        "shadows": {
+          "filter": "Gaussian",
+          "distance": 150.0,
+          "cascades": 4,
+          "first_cascade": 5.0,
+          "cascade_blend": 0.2,
+          "fade": 0.1,
+          "normal_bias": 1.8,
+          "sun_size": 0.0,
+          "contact": false,
+          "contact_length": 0.3,
+          "contact_thickness": 0.1
+        },
+        "sun_cookie": "",
+        "sun_cookie_size": 20.0,
+        "ray_tracing": {
+          "enabled": false,
+          "bounces": 3,
+          "samples": 8,
+          "denoiser": "Auto",
+          "gi_distance": 50.0,
+          "mode": "Hybrid",
+          "paths": 1
+        }
+      }
+    },
+    {
+      "component": "Sound",
+      "mixer": {
+        "master_volume": 1.0,
+        "music_volume": 1.0,
+        "sfx_volume": 1.0
+      }
+    },
+    {
+      "component": "Soundscape",
+      "soundscape": {
+        "weather": [],
+        "ducking": [],
+        "underwater": {
+          "buses": [],
+          "amount": 0.7,
+          "fade": 0.1
+        },
+        "reverb": {
+          "mix": 0.0,
+          "size": 0.5,
+          "decay": 1.5,
+          "damping": 0.5,
+          "excursion": 0.2
+        },
+        "reverb_impulse": "",
+        "reverb_buses": [],
+        "occlusion": {
+          "enabled": false,
+          "wall_gain": 0.6,
+          "wall_muffle": 0.45,
+          "max_walls": 3,
+          "obstruction": 0.35
+        }
+      }
+    },
+    {
+      "component": "Input",
+      "config": {
+        "actions": [
+          {
+            "name": "Jump",
+            "bindings": [
+              {
+                "binding": "Key",
+                "key": "space"
+              },
+              {
+                "binding": "GamepadButton",
+                "button": "south"
+              }
+            ]
+          },
+          {
+            "name": "Fire",
+            "bindings": [
+              {
+                "binding": "Mouse",
+                "button": "Left"
+              },
+              {
+                "binding": "GamepadButton",
+                "button": "righttrigger"
+              }
+            ]
+          },
+          {
+            "name": "Left",
+            "bindings": [
+              {
+                "binding": "Key",
+                "key": "a"
+              },
+              {
+                "binding": "Key",
+                "key": "left arrow"
+              },
+              {
+                "binding": "GamepadButton",
+                "button": "dpadleft"
+              },
+              {
+                "binding": "GamepadAxis",
+                "axis": "leftstickx",
+                "direction": -1
+              }
+            ]
+          },
+          {
+            "name": "Right",
+            "bindings": [
+              {
+                "binding": "Key",
+                "key": "d"
+              },
+              {
+                "binding": "Key",
+                "key": "right arrow"
+              },
+              {
+                "binding": "GamepadButton",
+                "button": "dpadright"
+              },
+              {
+                "binding": "GamepadAxis",
+                "axis": "leftstickx",
+                "direction": 1
+              }
+            ]
+          },
+          {
+            "name": "Up",
+            "bindings": [
+              {
+                "binding": "Key",
+                "key": "w"
+              },
+              {
+                "binding": "Key",
+                "key": "up arrow"
+              },
+              {
+                "binding": "GamepadButton",
+                "button": "dpadup"
+              },
+              {
+                "binding": "GamepadAxis",
+                "axis": "leftsticky",
+                "direction": 1
+              }
+            ]
+          },
+          {
+            "name": "Down",
+            "bindings": [
+              {
+                "binding": "Key",
+                "key": "s"
+              },
+              {
+                "binding": "Key",
+                "key": "down arrow"
+              },
+              {
+                "binding": "GamepadButton",
+                "button": "dpaddown"
+              },
+              {
+                "binding": "GamepadAxis",
+                "axis": "leftsticky",
+                "direction": -1
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "component": "Post",
+      "post": {
+        "exposure_ev": 9.7,
+        "auto_exposure": {
+          "enabled": false,
+          "metering": "Spot",
+          "min_ev": 2.0,
+          "max_ev": 16.0,
+          "speed_up": 3.0,
+          "speed_down": 1.0,
+          "compensation": 0.0
+        },
+        "tonemapping": "TonyMcMapface",
+        "bloom_enabled": false,
+        "bloom_threshold": 1.0,
+        "bloom_intensity": 0.15,
+        "bloom_knee": 0.5,
+        "bloom_scatter": 0.7,
+        "bloom_dirt": "",
+        "bloom_dirt_intensity": 0.0,
+        "vignette_strength": 0.0,
+        "tone": {
+          "toe": 0.0,
+          "shoulder": 0.0
+        },
+        "grading": {
+          "temperature": 0.0,
+          "tint": 0.0,
+          "lift": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "gamma": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "gain": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "saturation": 1.0,
+          "contrast": 1.0,
+          "lut": "",
+          "lut_contribution": 1.0
+        },
+        "depth_of_field": {
+          "enabled": false,
+          "target": "",
+          "focus_distance": 10.0,
+          "f_stops": 2.8,
+          "bokeh": "Hexagonal",
+          "near": true,
+          "far_limit": 0.0,
+          "max_blur": 32.0
+        },
+        "motion_blur": {
+          "enabled": false,
+          "shutter_angle": 180.0,
+          "samples": 4
+        },
+        "ao": {
+          "radius": 0.7285,
+          "intensity": 1.0
+        },
+        "ssr": {
+          "enabled": false,
+          "roughness_cutoff": 0.4,
+          "thickness": 0.25
+        },
+        "chromatic_aberration": 0.0,
+        "grain": {
+          "intensity": 0.0,
+          "size": 1.5,
+          "response": 0.8
+        },
+        "sharpen": 0.0
+      }
+    },
+    {
+      "component": "Display",
+      "display": {
+        "space": "Sdr",
+        "peak_nits": 1000.0,
+        "paper_white_nits": 200.0
+      }
+    },
+    {
+      "component": "Navigation",
+      "settings": {
+        "areas": [],
+        "links": []
+      }
+    },
+    {
+      "component": "Sky",
+      "sky": {
+        "kind": "Flat",
+        "sun": {
+          "mode": "Light",
+          "azimuth": 135.0,
+          "elevation": 54.7,
+          "latitude": 40.0,
+          "longitude": 0.0,
+          "day_of_year": 172,
+          "time_of_day": 12.0,
+          "utc_offset": 0.0
+        },
+        "physical": {
+          "sun_size": 0.53,
+          "limb_darkening": 0.6,
+          "sun_intensity": 1.0,
+          "tint_sun": true,
+          "moon": false,
+          "moon_size": 0.52,
+          "moon_phase": 0.5,
+          "moon_brightness": 2500.0,
+          "moon_halo": 0.03,
+          "moon_halo_power": 1000.0,
+          "moon_azimuth": 300.0,
+          "moon_elevation": 30.0,
+          "rayleigh": [
+            5.802,
+            13.558,
+            33.1
+          ],
+          "mie": 3.996,
+          "mie_g": 0.8,
+          "ozone": [
+            0.65,
+            1.881,
+            0.085
+          ],
+          "rayleigh_height": 8.0,
+          "mie_height": 1.2,
+          "ground_albedo": "#5A5A5A",
+          "horizon_curve": 1.0,
+          "planet_radius": 6360.0,
+          "atmosphere_height": 100.0,
+          "night_color": "#1A2B4D",
+          "night_brightness": 1.0,
+          "night_ramp": [
+            2.0,
+            -12.0
+          ],
+          "moon_light": true,
+          "moon_lux": 0.25,
+          "moon_color": "#C9D6FF",
+          "moon_shadows": false
+        },
+        "gradient": {
+          "top": "#2F6BC4",
+          "middle": "#A9CBE8",
+          "bottom": "#3A3F47",
+          "horizon_offset": 0.0,
+          "softness": 0.4,
+          "warmth": 0.5,
+          "warm_color": "#FF9A50",
+          "dither": true,
+          "brightness": 1000.0
+        },
+        "hdri": {
+          "path": "",
+          "brightness": 1000.0,
+          "rotation": 0.0,
+          "tilt": 0.0,
+          "tint": "#FFFFFF",
+          "blur": 0.0,
+          "seam_fix": 0.0
+        },
+        "background": true,
+        "reflections": true,
+        "lighting": true,
+        "ambient_dimmer": 1.0,
+        "exposure": 0.0,
+        "stars": {
+          "enabled": false,
+          "density": 0.35,
+          "brightness": 60.0,
+          "magnitude_slope": 3.0,
+          "color_variation": 0.5,
+          "twinkle": 0.3,
+          "twinkle_speed": 1.5,
+          "horizon_fade": 8.0,
+          "sun_fade": [
+            -2.0,
+            -14.0
+          ],
+          "milky_way": "",
+          "milky_way_brightness": 2.0,
+          "milky_way_rotation": 0.0,
+          "milky_way_tilt": 60.0
+        },
+        "aurora": {
+          "enabled": false,
+          "kp": 4.0,
+          "layers": 2,
+          "altitude": 100.0,
+          "height": 150.0,
+          "width": 60.0,
+          "ray_scale": 1.5,
+          "bottom_color": "#38FF8A",
+          "top_color": "#A64DFF",
+          "brightness": 8.0,
+          "speed": 1.0,
+          "horizon_glow": 0.3,
+          "pole_azimuth": 0.0
+        }
+      }
+    },
+    {
+      "component": "Fog",
+      "fog": {
+        "height": {
+          "enabled": false,
+          "base_height": 0.0,
+          "falloff": 0.05,
+          "distance": 400.0,
+          "start": 0.0,
+          "day_color": "#C2CAD2",
+          "dusk_color": "#E8A778",
+          "night_color": "#2A3344",
+          "sun_boost": 0.5,
+          "sun_boost_g": 0.75
+        },
+        "volumetric": {
+          "enabled": false,
+          "density": 0.02,
+          "base_height": 0.0,
+          "falloff": 0.1,
+          "anisotropy": 0.6,
+          "albedo": "#FFFFFF",
+          "emissive": "#000000",
+          "emissive_strength": 0.0,
+          "noise": 0.5,
+          "noise_scale": 12.0,
+          "noise_wind": [
+            1.0,
+            0.0,
+            0.5
+          ],
+          "range": 96.0,
+          "quality": "Medium",
+          "sun": true,
+          "ambient": 1.0,
+          "dust": {
+            "enabled": false,
+            "count": 600,
+            "size": 0.012,
+            "alpha": 0.6,
+            "twinkle": 0.5,
+            "drift": 0.05
+          },
+          "dust_height": 3.0
+        },
+        "aerial": {
+          "enabled": false,
+          "distance": 8000.0,
+          "tint": "#FFFFFF",
+          "desaturation": 0.4,
+          "height_scale": 1200.0,
+          "blue_shift": 0.7
+        }
+      }
+    },
+    {
+      "component": "Clouds",
+      "clouds": {
+        "enabled": false,
+        "quality": "High",
+        "coverage": 0.5,
+        "density": 0.8,
+        "cloud_type": 0.7,
+        "bottom": 1500.0,
+        "top": 3500.0,
+        "tiling_km": 12.0,
+        "shear": [
+          0.0,
+          0.0
+        ],
+        "toe": 0.2,
+        "shoulder": 0.8,
+        "detail_scale": 6.0,
+        "erosion": 0.35,
+        "detail_speed": 1.0,
+        "anvil": 0.3,
+        "billow": 0.15,
+        "feather": 0.2,
+        "forward": 0.8,
+        "backward": -0.2,
+        "back_blend": 0.2,
+        "powder": 1.0,
+        "lightbleed": 0.3,
+        "ambient": 1.0,
+        "bottom_occlusion": 0.65,
+        "shadows": true,
+        "sun_shadows": true,
+        "moon_shadows": true,
+        "shadow_strength": 0.7,
+        "shadow_range": 20000.0,
+        "threshold": 0.01,
+        "shape_volume": "",
+        "detail_volume": ""
+      }
+    },
+    {
+      "component": "CloudLayers",
+      "layers": []
+    },
+    {
+      "component": "Lightning",
+      "lightning": {
+        "storm": false,
+        "rate": 6.0,
+        "region_min": [
+          -200.0,
+          0.0,
+          -200.0
+        ],
+        "region_max": [
+          200.0,
+          0.0,
+          200.0
+        ],
+        "intensity": 20000000.0,
+        "color": "#D8E4FF",
+        "decay": 0.35,
+        "flash_height": 60.0,
+        "range": 2000.0,
+        "sky_pulse": 6.0,
+        "thunder": true,
+        "thunder_volume": 80.0,
+        "thunder_sound": "",
+        "seed": 1
+      }
+    },
+    {
+      "component": "Wind",
+      "wind": {
+        "direction": 45.0,
+        "speed": 0.0,
+        "gust": 0.0,
+        "gust_frequency": 0.2,
+        "veer": 15.0,
+        "profile": true,
+        "reference_height": 10.0,
+        "roughness": 0.1,
+        "ground": 0.0,
+        "storm": 0.0,
+        "seed": 1,
+        "clouds": {
+          "altitude": 1500.0,
+          "follow": 1.0,
+          "advection": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "erosion": [
+            0.0,
+            0.5,
+            0.0
+          ],
+          "layer_scroll": 1.0,
+          "time_lapse": 1.0,
+          "seed": 1
+        }
+      }
+    },
+    {
+      "component": "Director",
+      "director": {
+        "enabled": false,
+        "time_of_day": 12.0,
+        "day_length": 600.0,
+        "loop_enabled": true,
+        "sun_azimuth": {
+          "keys": [],
+          "loop_enabled": false
+        },
+        "sun_elevation": {
+          "keys": [],
+          "loop_enabled": false
+        },
+        "moon_azimuth": {
+          "keys": [],
+          "loop_enabled": false
+        },
+        "moon_elevation": {
+          "keys": [],
+          "loop_enabled": false
+        },
+        "exposure": {
+          "keys": [],
+          "loop_enabled": false
+        },
+        "temperature": {
+          "keys": [],
+          "loop_enabled": false
+        },
+        "fog_density": {
+          "keys": [],
+          "loop_enabled": false
+        },
+        "cloud_coverage": {
+          "keys": [],
+          "loop_enabled": false
+        },
+        "cloud_type": {
+          "keys": [],
+          "loop_enabled": false
+        },
+        "precipitation": {
+          "keys": [],
+          "loop_enabled": false
+        },
+        "wetness": {
+          "keys": [],
+          "loop_enabled": false
+        },
+        "wind_speed": {
+          "keys": [],
+          "loop_enabled": false
+        },
+        "wind_direction": {
+          "keys": [],
+          "loop_enabled": false
+        },
+        "aurora_kp": {
+          "keys": [],
+          "loop_enabled": false
+        },
+        "lut_weight": {
+          "keys": [],
+          "loop_enabled": false
+        },
+        "presets": []
+      }
+    },
+    {
+      "component": "Surface",
+      "surface": {
+        "snow": 0.0,
+        "wetness": 0.0
+      }
+    },
+    {
+      "component": "Vfx",
+      "settings": {
+        "budget": 200000,
+        "cpu_only": false
+      }
+    },
+    {
+      "component": "Cutscenes",
+      "cutscenes": []
+    },
+    {
+      "component": "Interface",
+      "document": {
+        "version": 1,
+        "widgets": [],
+        "theme": "Dark",
+        "styles": {},
+        "stylesheets": [],
+        "scale": "ConstantPixel",
+        "reference_size": [
+          960.0,
+          720.0
+        ],
+        "safe_area": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "prefabs": {}
+      }
+    }
+  ],
+  "actors": [
+    {
+      "id": "17b50a7b6c054723ba9898fd80f901d7",
+      "name": "Player",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        }
+      ],
+      "strands": [
+        {
+          "id": "cfbf03f3d67943de8ac4cf73f1adb143",
+          "x": 0,
+          "y": 0,
+          "instructions": [
+            {
+              "id": "9a83472addf14dfc845dc2acb2d5dc92",
+              "kind": {
+                "type": "WhenStarted"
+              }
+            },
+            {
+              "id": "b69c5c8ef23e433c9f116330f3bfdd2b",
+              "kind": {
+                "type": "Repeat",
+                "count": {
+                  "kind": "Number",
+                  "value": 3.0
+                },
+                "body": [
+                  {
+                    "id": "f394d867b0b04eb182a7779b296a9ad9",
+                    "kind": {
+                      "type": "Move",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "30106c9b14cd4dc69b30e6a8f2f06b04",
+              "kind": {
+                "type": "IfElse",
+                "condition": {
+                  "kind": "Op",
+                  "op": "Gt",
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 0.0
+                    },
+                    {
+                      "kind": "Number",
+                      "value": 9.0
+                    }
+                  ],
+                  "saved": {
+                    "kind": "Bool"
+                  }
+                },
+                "then_body": [
+                  {
+                    "id": "70a9b1886e8044b8991775d51bf58d7a",
+                    "kind": {
+                      "type": "Say",
+                      "text": {
+                        "kind": "Text",
+                        "value": "high"
+                      }
+                    }
+                  }
+                ],
+                "else_body": [
+                  {
+                    "id": "ebe5af07084d4a3ab64f77e0eb620907",
+                    "kind": {
+                      "type": "SetVariable",
+                      "name": "points",
+                      "value": {
+                        "kind": "Number",
+                        "value": 0.0
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "e791be54183b4c4c941ff25c7e8e42bf",
+          "x": 260,
+          "y": 0,
+          "instructions": [
+            {
+              "id": "9d5bcf02eba04d90bb8e3fb80a0665a6",
+              "kind": {
+                "type": "BlockHeader",
+                "block_id": "91092086500943a5b2c3713d0e27cb00"
+              }
+            },
+            {
+              "id": "804a28a6930141fa81a0b2e045fbe245",
+              "kind": {
+                "type": "Return",
+                "value": {
+                  "kind": "Op",
+                  "op": "Mul",
+                  "args": [
+                    {
+                      "kind": "Param",
+                      "name": "value"
+                    },
+                    {
+                      "kind": "Number",
+                      "value": 2.0
+                    }
+                  ],
+                  "saved": {
+                    "kind": "Number",
+                    "value": 0.0
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "dc9ab724852249c4bb6f3d56fa3cd423",
+          "x": 600,
+          "y": 300,
+          "instructions": [
+            {
+              "id": "b69c5c8ef23e433c9f116330f3bfdd2b",
+              "kind": {
+                "type": "Repeat",
+                "count": {
+                  "kind": "Number",
+                  "value": 3.0
+                },
+                "body": [
+                  {
+                    "id": "f394d867b0b04eb182a7779b296a9ad9",
+                    "kind": {
+                      "type": "Move",
+                      "steps": {
+                        "kind": "Number",
+                        "value": 1.5
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "e72462555cb84631a4bc74ae8a3826b9",
+          "x": 0,
+          "y": 400,
+          "instructions": [
+            {
+              "id": "b0e3ea60f2794a9d875d26832c744a5e",
+              "kind": {
+                "type": "SetVariable",
+                "name": "points",
+                "value": {
+                  "kind": "Call",
+                  "block_id": "91092086500943a5b2c3713d0e27cb00",
+                  "args": [
+                    {
+                      "kind": "Number",
+                      "value": 4.0
+                    },
+                    {
+                      "kind": "Bool"
+                    }
+                  ],
+                  "branches": [],
+                  "saved": {
+                    "kind": "Number",
+                    "value": 0.0
+                  }
+                }
+              }
+            },
+            {
+              "id": "92acae1558694b7781fd7bbfe9b3b38f",
+              "kind": {
+                "type": "CallBlock",
+                "block_id": "91092086500943a5b2c3713d0e27cb00",
+                "args": [
+                  {
+                    "kind": "Number",
+                    "value": 7.0
+                  },
+                  {
+                    "kind": "Bool"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "floating_values": [
+        {
+          "id": "42559013dfbf4e46851c29134506e03c",
+          "x": 300,
+          "y": 120,
+          "value": {
+            "kind": "Op",
+            "op": "Join",
+            "args": [
+              {
+                "kind": "Text",
+                "value": "a"
+              },
+              {
+                "kind": "Var",
+                "name": "points"
+              }
+            ],
+            "saved": {
+              "kind": "Text",
+              "value": "high"
+            }
+          },
+          "origin_block_id": null
+        }
+      ],
+      "comments": [
+        {
+          "id": "76a2a02c12e7489680b5dbe3b629f21f",
+          "x": 500,
+          "y": 0,
+          "text": "loose note",
+          "collapsed": false,
+          "attached_to": null
+        },
+        {
+          "id": "0ca25be35fe0406db8ff80c900e149cb",
+          "x": 0,
+          "y": 0,
+          "text": "attached note",
+          "collapsed": false,
+          "attached_to": "b69c5c8ef23e433c9f116330f3bfdd2b"
+        }
+      ],
+      "variables": [
+        {
+          "name": "points",
+          "value": {
+            "kind": "Number",
+            "value": 0.0
+          }
+        }
+      ],
+      "lists": [
+        {
+          "name": "items",
+          "items": [
+            {
+              "kind": "Number",
+              "value": 1.0
+            },
+            {
+              "kind": "Text",
+              "value": "two"
+            }
+          ],
+          "editor_visible": false,
+          "editor_x": 36,
+          "editor_y": 36
+        }
+      ],
+      "dicts": [
+        {
+          "name": "stats",
+          "entries": [
+            {
+              "key": "hp",
+              "value": {
+                "kind": "Number",
+                "value": 3.0
+              }
+            }
+          ],
+          "editor_visible": false,
+          "editor_x": 36,
+          "editor_y": 36
+        }
+      ],
+      "block_defs": [
+        {
+          "id": "91092086500943a5b2c3713d0e27cb00",
+          "identifier": "",
+          "description": "",
+          "pieces": [
+            {
+              "kind": "Label",
+              "id": "l1",
+              "text": "double"
+            },
+            {
+              "kind": "Input",
+              "id": "in1",
+              "name": "value",
+              "value_type": "Any"
+            },
+            {
+              "kind": "Input",
+              "id": "in2",
+              "name": "flag",
+              "value_type": "Bool"
+            }
+          ],
+          "shape": "ReturnsValue",
+          "color": "#4C97FF",
+          "icon": ""
+        }
+      ]
+    },
+    {
+      "id": "d1e1a0510b8341d1a8adb9ee6c5b0d99",
+      "name": "Ground",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Plane",
+            "color": "#3E4A5B",
+            "size": [
+              20.0,
+              20.0
+            ]
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Static",
+            "gravity_scale": 1.0,
+            "lock_rotation": false,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "50c527b976cb43edb0113e6ee16dc75d",
+      "name": "With Render",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "b3a5276995864971ac562d2f6564519a",
+      "name": "With Body",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "None",
+            "gravity_scale": 1.0,
+            "lock_rotation": false,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "9e16c6c60e47413786042f026ab3f0e5",
+      "name": "With Rigidbody",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Rigidbody",
+          "rigidbody": {
+            "id": "5416ce0542104ecdbb05eefb8b46c4a8",
+            "body_type": "Dynamic",
+            "simulated": true,
+            "mass": {
+              "mode": "Explicit",
+              "mass": 1.0
+            },
+            "linear_damping": 0.0,
+            "angular_damping": 0.05,
+            "use_gravity": true,
+            "gravity_scale": 1.0,
+            "interpolation": "None",
+            "collision_detection": "Discrete",
+            "constraints": {
+              "freeze_position": [
+                false,
+                false,
+                false
+              ],
+              "freeze_rotation": [
+                false,
+                false,
+                false
+              ]
+            },
+            "max_linear_velocity": 10000.0,
+            "max_angular_velocity": 7.0,
+            "sleep_threshold": 0.005,
+            "max_depenetration_velocity": 10.0
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "42695556c54b40f38dd520d859b436c3",
+      "name": "With Constraint",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Constraint",
+          "constraint": {
+            "id": "46df1eb09fc84cf39e637b5db21a47cf",
+            "name": "",
+            "enabled": true,
+            "kind": "Fixed",
+            "target": "",
+            "anchor": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "connected_anchor": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "auto_configure": true,
+            "axis": [
+              1.0,
+              0.0,
+              0.0
+            ],
+            "connected_axis": [
+              1.0,
+              0.0,
+              0.0
+            ],
+            "limit": {
+              "enabled": false,
+              "min": 0.0,
+              "max": 0.0
+            },
+            "motor": {
+              "mode": "Off",
+              "target": 0.0,
+              "max_force": 0.0,
+              "stiffness": 100.0,
+              "damping": 10.0
+            },
+            "spring": {
+              "stiffness": 100.0,
+              "damping": 10.0,
+              "rest_length": 1.0
+            },
+            "min_distance": 0.0,
+            "max_distance": 1.0,
+            "axes": [
+              "Locked",
+              "Locked",
+              "Locked",
+              "Locked",
+              "Locked",
+              "Locked"
+            ],
+            "axis_limits": [
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ]
+            ],
+            "break_force": null,
+            "break_torque": null,
+            "enable_collision": false,
+            "break_message": ""
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "255dc3e6c86d436881e0769d77c86314",
+      "name": "With CharacterController",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "CharacterController",
+          "controller": {
+            "id": "62153533d44143868854bbf1147e772b",
+            "enabled": true,
+            "center": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "radius": 0.5,
+            "height": 2.0,
+            "slope_limit": 45.0,
+            "step_offset": 0.3,
+            "skin_width": 0.08,
+            "min_move_distance": 0.001,
+            "detect_collisions": true,
+            "overlap_recovery": true,
+            "layer": 1,
+            "up": [
+              0.0,
+              1.0,
+              0.0
+            ]
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "6c7b28d998474b4295732154be128785",
+      "name": "With CharacterMotor",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "CharacterMotor",
+          "motor": {
+            "id": "7aee1fcbfa98460b9731b96d9455408d",
+            "enabled": true,
+            "owner": "Player",
+            "player": 0,
+            "space": "Camera",
+            "top_down": false,
+            "walk_speed": 5.0,
+            "sprint_speed": 8.0,
+            "crouch_speed": 2.5,
+            "ground_acceleration": 50.0,
+            "ground_braking": 60.0,
+            "air_acceleration": 15.0,
+            "air_control": 1.0,
+            "turn_speed": 720.0,
+            "normalize_input": true,
+            "gravity_scale": 1.0,
+            "terminal_fall_speed": 50.0,
+            "ground_snap_distance": 0.3,
+            "slide_on_steep": false,
+            "slide_speed": 6.0,
+            "jump_height": 1.2,
+            "max_jumps": 1,
+            "jump_cut": 0.5,
+            "coyote_time": 0.1,
+            "jump_buffer": 0.1,
+            "crouch_height": 1.0,
+            "external_drag": 20.0
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "3e061cc94fe94656b002d005aab9c8bb",
+      "name": "With PlayerCamera",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "PlayerCamera",
+          "player_camera": {
+            "enabled": true,
+            "player": 0,
+            "look": true,
+            "sensitivity": 0.12,
+            "stick_speed": 180.0,
+            "invert_y": false,
+            "min_pitch": -80.0,
+            "max_pitch": 80.0,
+            "turn_body": false,
+            "smoothing": 0.0,
+            "collision": true,
+            "collision_radius": 0.25,
+            "min_distance": 0.6,
+            "zoom": false,
+            "zoom_min": 2.0,
+            "zoom_max": 12.0,
+            "zoom_speed": 1.0,
+            "dead_zone": [
+              0.0,
+              0.0
+            ],
+            "look_ahead": 0.0,
+            "look_ahead_smoothing": 0.25,
+            "eye_follows_stance": true
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "9b24be53749d4ff993a769f816f9830b",
+      "name": "With Brain",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Brain",
+          "brain": {
+            "target": "",
+            "speed": 4.0,
+            "sight": 12.0,
+            "fov": 120.0,
+            "separation": 1.0,
+            "layer": 1,
+            "tree": {
+              "node": "Selector",
+              "children": [
+                {
+                  "node": "Sequence",
+                  "children": [
+                    {
+                      "node": "CanSeeTarget"
+                    },
+                    {
+                      "node": "NavigateToTarget"
+                    }
+                  ]
+                },
+                {
+                  "node": "Idle"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "17c3bb6c37514da7bf27ecf926f633e6",
+      "name": "With Camera",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Camera",
+          "camera": {
+            "view": "Follow",
+            "offset": [
+              0.0,
+              0.6,
+              0.0
+            ],
+            "distance": 6.0,
+            "pitch": 15.0,
+            "fov": 75.0
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "a2a825d732864b02ad042e70a8e6afbe",
+      "name": "With Script",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Script",
+          "path": "assets/scripts/player.rs"
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "bb48f274622d4eab93af77cbcb3de3b8",
+      "name": "With Parent",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Parent",
+          "parent": "17b50a7b6c054723ba9898fd80f901d7",
+          "offset": null
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "9f174acd5d8648dc9724c843c2271e09",
+      "name": "With Health",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Custom",
+          "name": "Health",
+          "fields": []
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "5e59f5b065c440f2b0334975ef65070a",
+      "name": "With Material",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Material",
+          "material": {
+            "metallic": 0.0,
+            "roughness": 0.6,
+            "emissive": "#000000",
+            "emissive_energy": 0.0,
+            "albedo_texture": "",
+            "normal_texture": "",
+            "roughness_texture": "",
+            "tiling": [
+              1.0,
+              1.0
+            ],
+            "offset": [
+              0.0,
+              0.0
+            ],
+            "rotation": 0.0,
+            "sampler": "Clamp",
+            "anisotropy": 0,
+            "box_projection": false,
+            "texel_density": 1.0,
+            "double_sided": false,
+            "shader": null,
+            "detail": {
+              "stochastic": false,
+              "stochastic_contrast": 0.5,
+              "macro_texture": "",
+              "macro_size": 32.0,
+              "macro_strength": 0.0,
+              "detail_texture": "",
+              "detail_size": 0.5,
+              "detail_strength": 0.0,
+              "detail_distance": 20.0,
+              "masks": {
+                "slope": {
+                  "enabled": false,
+                  "start": 35.0,
+                  "blend": 10.0,
+                  "invert": false,
+                  "color": "#6E6A64",
+                  "strength": 1.0,
+                  "roughness": 0.8
+                },
+                "height": {
+                  "enabled": false,
+                  "start": 35.0,
+                  "blend": 10.0,
+                  "invert": false,
+                  "color": "#6E6A64",
+                  "strength": 1.0,
+                  "roughness": 0.8
+                },
+                "cavity": {
+                  "enabled": false,
+                  "start": 1.0,
+                  "blend": 10.0,
+                  "invert": false,
+                  "color": "#6E6A64",
+                  "strength": 1.0,
+                  "roughness": 0.8
+                },
+                "snow": {
+                  "enabled": false,
+                  "amount": 1.0,
+                  "max_slope": 50.0,
+                  "min_height": -100000.0,
+                  "blend": 8.0,
+                  "color": "#F2F5F8",
+                  "roughness": 0.75
+                },
+                "wetness": {
+                  "enabled": false,
+                  "amount": 1.0,
+                  "darken": 0.4,
+                  "roughness": 0.08,
+                  "puddles": 0.5
+                }
+              }
+            }
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "832a9d1664764d37af9568d4bc300b10",
+      "name": "With Fracture",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Fracture",
+          "fracture": {
+            "cells": 16,
+            "seed": 1,
+            "interior": {
+              "metallic": 0.0,
+              "roughness": 0.6,
+              "emissive": "#000000",
+              "emissive_energy": 0.0,
+              "albedo_texture": "",
+              "normal_texture": "",
+              "roughness_texture": "",
+              "tiling": [
+                1.0,
+                1.0
+              ],
+              "offset": [
+                0.0,
+                0.0
+              ],
+              "rotation": 0.0,
+              "sampler": "Clamp",
+              "anisotropy": 0,
+              "box_projection": false,
+              "texel_density": 1.0,
+              "double_sided": false,
+              "shader": null,
+              "detail": {
+                "stochastic": false,
+                "stochastic_contrast": 0.5,
+                "macro_texture": "",
+                "macro_size": 32.0,
+                "macro_strength": 0.0,
+                "detail_texture": "",
+                "detail_size": 0.5,
+                "detail_strength": 0.0,
+                "detail_distance": 20.0,
+                "masks": {
+                  "slope": {
+                    "enabled": false,
+                    "start": 35.0,
+                    "blend": 10.0,
+                    "invert": false,
+                    "color": "#6E6A64",
+                    "strength": 1.0,
+                    "roughness": 0.8
+                  },
+                  "height": {
+                    "enabled": false,
+                    "start": 35.0,
+                    "blend": 10.0,
+                    "invert": false,
+                    "color": "#6E6A64",
+                    "strength": 1.0,
+                    "roughness": 0.8
+                  },
+                  "cavity": {
+                    "enabled": false,
+                    "start": 35.0,
+                    "blend": 10.0,
+                    "invert": false,
+                    "color": "#6E6A64",
+                    "strength": 1.0,
+                    "roughness": 0.8
+                  },
+                  "snow": {
+                    "enabled": false,
+                    "amount": 1.0,
+                    "max_slope": 50.0,
+                    "min_height": -100000.0,
+                    "blend": 8.0,
+                    "color": "#F2F5F8",
+                    "roughness": 0.75
+                  },
+                  "wetness": {
+                    "enabled": false,
+                    "amount": 1.0,
+                    "darken": 0.4,
+                    "roughness": 0.08,
+                    "puddles": 0.5
+                  }
+                }
+              }
+            },
+            "impulse_threshold": 8.0,
+            "lifetime": 20.0,
+            "sleep_seconds": 2.0,
+            "pool_cap": 256,
+            "bounce_sound": ""
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "cf4570ccc39e4556bf58a9700c466349",
+      "name": "With Emitter",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Emitter",
+          "emitter": {
+            "rate": 24.0,
+            "lifetime": 0.8,
+            "speed": 120.0,
+            "spread": 60.0,
+            "gravity_scale": 0.5,
+            "size_start": 6.0,
+            "size_end": 1.0,
+            "color_start": "#FFFFFF",
+            "color_end": "#FFAB19",
+            "max": 128,
+            "wind": 1.0,
+            "shape": {
+              "shape": "Point"
+            },
+            "direction": "Facing",
+            "bursts": [],
+            "modules": [],
+            "render": {
+              "blend": "Additive",
+              "facing": "Camera",
+              "stretch": 0.05,
+              "lit": false,
+              "soft": 0.0,
+              "intensity": 1.0,
+              "flipbook": {
+                "image": "",
+                "columns": 1,
+                "rows": 1,
+                "fps": 0.0,
+                "random_start": false,
+                "blend": true
+              },
+              "size": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "v": 1.0
+                  }
+                ]
+              },
+              "color": {
+                "keys": []
+              },
+              "alpha": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "v": 1.0
+                  },
+                  {
+                    "t": 1.0,
+                    "v": 0.0
+                  }
+                ]
+              },
+              "rotation": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "v": 0.0
+                  }
+                ]
+              },
+              "spin": 0.0,
+              "random_rotation": false,
+              "size_random": 0.0,
+              "translucency": 0.0
+            },
+            "ribbon": {
+              "enabled": false,
+              "source": "Particles",
+              "points": 16,
+              "step": 0.25,
+              "tessellation": 2,
+              "width": 0.2,
+              "width_curve": {
+                "keys": [
+                  {
+                    "t": 0.0,
+                    "v": 1.0
+                  },
+                  {
+                    "t": 1.0,
+                    "v": 0.0
+                  }
+                ]
+              },
+              "color": {
+                "keys": []
+              },
+              "face_camera": true,
+              "intensity": 1.0,
+              "heads": true
+            },
+            "sim": "Auto",
+            "duration": 2.0
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "08026ba4200d458a83af91ab285a4453",
+      "name": "With Trail",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Trail",
+          "trail": {
+            "interval": 0.05,
+            "life": 0.4,
+            "color": "#FFFFFF"
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "6f855bcb16af43d3a11de5da4d944307",
+      "name": "With Light",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Light",
+          "light": {
+            "kind": "Point",
+            "color": "#FFFFFF",
+            "intensity": 800.0,
+            "range": 20.0,
+            "radius": 0.0,
+            "inner_angle": 30.0,
+            "outer_angle": 45.0,
+            "shadows": false,
+            "unit": "Lumens",
+            "width": 1.0,
+            "height": 1.0,
+            "cookie": "",
+            "cookie_tiling": 1.0,
+            "ies": "",
+            "contact_shadows": false,
+            "soft_shadows": false,
+            "shadow_depth_bias": null,
+            "shadow_normal_bias": null,
+            "ray_traced": true,
+            "volumetric": true,
+            "beam": {
+              "density": 0.0,
+              "anisotropy": null,
+              "falloff": 1.0,
+              "near_fade": 0.5,
+              "far_fade": 2.0,
+              "mode": "Auto",
+              "shaft_intensity": 1.0,
+              "shaft_noise": 0.4,
+              "shaft_scroll": 0.3,
+              "motes": {
+                "enabled": false,
+                "count": 160,
+                "size": 0.012,
+                "alpha": 0.6,
+                "twinkle": 0.5,
+                "drift": 0.05
+              }
+            }
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "a8a01ab8f8844b7c88caccf102a922ef",
+      "name": "With Light2D",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Light2d",
+          "light2d": {
+            "kind": "Point",
+            "color": "#FFE2A8",
+            "intensity": 1.0,
+            "range": 240.0,
+            "falloff": 2.0,
+            "inner_angle": 25.0,
+            "outer_angle": 40.0,
+            "shadows": false,
+            "softness": 8.0,
+            "flicker": {
+              "amount": 0.0,
+              "speed": 8.0,
+              "seed": 1
+            }
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "5599622c980741e1bfec7e9f4acd0672",
+      "name": "With Conveyor",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Conveyor",
+          "conveyor": {
+            "speed": 96.0,
+            "enabled": true
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "797abdc9bf43420ba02849604d180bde",
+      "name": "With Hazard",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Hazard",
+          "hazard": {
+            "enabled": true,
+            "knockback": 288.0,
+            "lift": 0.5,
+            "invulnerability": 1.0,
+            "message": "hurt"
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "442a8e97bcaa4777b3f8daa5cad0a566",
+      "name": "With Animation",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Animation",
+          "animation": {
+            "clips": [],
+            "states": [],
+            "initial": "",
+            "crossfade": 0.0,
+            "rig": "",
+            "skin": "",
+            "slot_tints": []
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "dd47f80d239e49eb9f7cafad1322c8a8",
+      "name": "With Volume",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Volume",
+          "volume": {
+            "shape": "Box",
+            "half_extents": [
+              5.0,
+              5.0,
+              5.0
+            ],
+            "radius": 5.0,
+            "priority": 0.0,
+            "blend_distance": 1.0,
+            "weight": 1.0,
+            "enabled": true,
+            "overrides": {
+              "background": {
+                "on": false,
+                "value": "#1B2431"
+              },
+              "sun_direction": {
+                "on": false,
+                "value": [
+                  8.0,
+                  16.0,
+                  8.0
+                ]
+              },
+              "sun_color": {
+                "on": false,
+                "value": "#FFFFFF"
+              },
+              "illuminance": {
+                "on": false,
+                "value": 10000.0
+              },
+              "ambient_color": {
+                "on": false,
+                "value": "#FFFFFF"
+              },
+              "ambient_brightness": {
+                "on": false,
+                "value": 80.0
+              },
+              "ao": {
+                "on": false,
+                "value": false
+              },
+              "exposure": {
+                "on": false,
+                "value": 9.7
+              },
+              "tonemapping": {
+                "on": false,
+                "value": "TonyMcMapface"
+              },
+              "bloom": {
+                "on": false,
+                "value": false
+              },
+              "bloom_threshold": {
+                "on": false,
+                "value": 1.0
+              },
+              "bloom_intensity": {
+                "on": false,
+                "value": 0.15
+              },
+              "vignette": {
+                "on": false,
+                "value": 0.0
+              },
+              "auto_exposure": {
+                "on": false,
+                "value": false
+              },
+              "auto_exposure_min": {
+                "on": false,
+                "value": 2.0
+              },
+              "auto_exposure_max": {
+                "on": false,
+                "value": 16.0
+              },
+              "exposure_compensation": {
+                "on": false,
+                "value": 0.0
+              },
+              "bloom_knee": {
+                "on": false,
+                "value": 0.5
+              },
+              "bloom_scatter": {
+                "on": false,
+                "value": 0.7
+              },
+              "bloom_dirt_intensity": {
+                "on": false,
+                "value": 0.0
+              },
+              "tone_toe": {
+                "on": false,
+                "value": 0.0
+              },
+              "tone_shoulder": {
+                "on": false,
+                "value": 0.0
+              },
+              "temperature": {
+                "on": false,
+                "value": 0.0
+              },
+              "tint": {
+                "on": false,
+                "value": 0.0
+              },
+              "lift": {
+                "on": false,
+                "value": [
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              "gamma": {
+                "on": false,
+                "value": [
+                  1.0,
+                  1.0,
+                  1.0
+                ]
+              },
+              "gain": {
+                "on": false,
+                "value": [
+                  1.0,
+                  1.0,
+                  1.0
+                ]
+              },
+              "saturation": {
+                "on": false,
+                "value": 1.0
+              },
+              "contrast": {
+                "on": false,
+                "value": 1.0
+              },
+              "lut_contribution": {
+                "on": false,
+                "value": 1.0
+              },
+              "depth_of_field": {
+                "on": false,
+                "value": false
+              },
+              "focus_distance": {
+                "on": false,
+                "value": 10.0
+              },
+              "f_stops": {
+                "on": false,
+                "value": 2.8
+              },
+              "motion_blur": {
+                "on": false,
+                "value": false
+              },
+              "shutter_angle": {
+                "on": false,
+                "value": 180.0
+              },
+              "ao_radius": {
+                "on": false,
+                "value": 0.7285
+              },
+              "ssr": {
+                "on": false,
+                "value": false
+              },
+              "ssr_roughness": {
+                "on": false,
+                "value": 0.4
+              },
+              "chromatic_aberration": {
+                "on": false,
+                "value": 0.0
+              },
+              "grain": {
+                "on": false,
+                "value": 0.0
+              },
+              "sharpen": {
+                "on": false,
+                "value": 0.0
+              },
+              "reflections": {
+                "on": false,
+                "value": 1.0
+              },
+              "indirect": {
+                "on": false,
+                "value": 1.0
+              },
+              "sky_exposure": {
+                "on": false,
+                "value": 0.0
+              },
+              "ambient_dimmer": {
+                "on": false,
+                "value": 1.0
+              },
+              "fog_density": {
+                "on": false,
+                "value": 0.0075
+              },
+              "fog_color": {
+                "on": false,
+                "value": "#C2CAD2"
+              },
+              "fog_height": {
+                "on": false,
+                "value": 0.0
+              },
+              "volumetric_density": {
+                "on": false,
+                "value": 0.02
+              },
+              "volumetric_albedo": {
+                "on": false,
+                "value": "#FFFFFF"
+              },
+              "beams": {
+                "on": false,
+                "value": 1.0
+              },
+              "haze_distance": {
+                "on": false,
+                "value": 8000.0
+              },
+              "cloud_coverage": {
+                "on": false,
+                "value": 0.5
+              },
+              "cloud_density": {
+                "on": false,
+                "value": 0.8
+              },
+              "cloud_type": {
+                "on": false,
+                "value": 0.7
+              },
+              "snow": {
+                "on": false,
+                "value": 0.0
+              },
+              "wetness": {
+                "on": false,
+                "value": 0.0
+              }
+            },
+            "fog": {
+              "enabled": false,
+              "density": 0.2,
+              "albedo": "#FFFFFF",
+              "emissive": "#000000",
+              "emissive_strength": 0.0
+            },
+            "wind": {
+              "enabled": false,
+              "mode": "Override",
+              "direction": 0.0,
+              "speed": 0.0,
+              "swirl": 20.0,
+              "inflow": 2.0,
+              "updraft": 5.0,
+              "turbulence": 0.0,
+              "turbulence_scale": 10.0
+            }
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "3cd48fc65ba549a7ba6444e27e1949c2",
+      "name": "With Probe",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Probe",
+          "probe": {
+            "kind": "Reflection",
+            "size": [
+              10.0,
+              5.0,
+              10.0
+            ],
+            "falloff": 0.2,
+            "resolution": 256,
+            "grid": [
+              4,
+              3,
+              4
+            ],
+            "intensity": 1.0,
+            "box_projection": true,
+            "auto_bake": true
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "abc9c47454004eadbb5a536502c9b4de",
+      "name": "With Terrain",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Terrain",
+          "terrain": {
+            "size": [
+              256.0,
+              256.0
+            ],
+            "height": 40.0,
+            "resolution": 257,
+            "heights": "",
+            "splat": "",
+            "holes": "",
+            "layers": [
+              {
+                "name": "Grass",
+                "color": "#5E7D3A",
+                "albedo_texture": "",
+                "normal_texture": "",
+                "roughness_texture": "",
+                "roughness": 0.85,
+                "texel_density": 0.25,
+                "rules": {
+                  "enabled": false,
+                  "slope": [
+                    0.0,
+                    90.0
+                  ],
+                  "height": [
+                    -100000.0,
+                    100000.0
+                  ],
+                  "curvature": 0.0,
+                  "softness": 0.3
+                }
+              }
+            ],
+            "pixel_error": 4.0,
+            "collision": true,
+            "texturing": {
+              "stochastic": false,
+              "stochastic_contrast": 0.5,
+              "macro_texture": "",
+              "macro_size": 32.0,
+              "macro_strength": 0.0,
+              "detail_texture": "",
+              "detail_size": 0.5,
+              "detail_strength": 0.0,
+              "detail_distance": 20.0,
+              "masks": {
+                "slope": {
+                  "enabled": false,
+                  "start": 35.0,
+                  "blend": 10.0,
+                  "invert": false,
+                  "color": "#6E6A64",
+                  "strength": 1.0,
+                  "roughness": 0.8
+                },
+                "height": {
+                  "enabled": false,
+                  "start": 35.0,
+                  "blend": 10.0,
+                  "invert": false,
+                  "color": "#6E6A64",
+                  "strength": 1.0,
+                  "roughness": 0.8
+                },
+                "cavity": {
+                  "enabled": false,
+                  "start": 1.0,
+                  "blend": 10.0,
+                  "invert": false,
+                  "color": "#6E6A64",
+                  "strength": 1.0,
+                  "roughness": 0.8
+                },
+                "snow": {
+                  "enabled": false,
+                  "amount": 1.0,
+                  "max_slope": 50.0,
+                  "min_height": -100000.0,
+                  "blend": 8.0,
+                  "color": "#F2F5F8",
+                  "roughness": 0.75
+                },
+                "wetness": {
+                  "enabled": false,
+                  "amount": 1.0,
+                  "darken": 0.4,
+                  "roughness": 0.08,
+                  "puddles": 0.5
+                }
+              }
+            },
+            "grass": [],
+            "scatter": []
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "4b913887e09b4702a21961842ec29e91",
+      "name": "With Sprite",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Sprite",
+          "sprite": {
+            "flip_x": false,
+            "flip_y": false,
+            "order": 0,
+            "y_sort": false,
+            "slice": null,
+            "stack": null,
+            "palette": "",
+            "palette_index": 0,
+            "outline_width": 0.0,
+            "outline_color": "#000000",
+            "glow": 0.0,
+            "casts_shadow": false
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "3d6553f26eb24c179ba90f398e682cb8",
+      "name": "With Water",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Water",
+          "water": {
+            "kind": "Lake",
+            "size": [
+              40.0,
+              40.0
+            ],
+            "depth": 8.0,
+            "waves": {
+              "amplitude": 0.25,
+              "wavelength": 12.0,
+              "steepness": 0.5,
+              "chop": 0.4,
+              "count": 10,
+              "direction": 45.0,
+              "spread": 40.0,
+              "follow_wind": true,
+              "wind": 0.5,
+              "fetch": 2.0,
+              "speed": 1.0,
+              "seed": 1,
+              "turn": 6.0
+            },
+            "detail": {
+              "strength": 1.0,
+              "scale": 3.0
+            },
+            "look": {
+              "shallow": "#3AB3A6",
+              "deep": "#0B2E4A",
+              "absorption": 6.0,
+              "clarity": 0.85,
+              "refraction": 0.3,
+              "roughness": 0.06,
+              "glint": 1.0
+            },
+            "foam": {
+              "amount": 1.0,
+              "color": "#F2F6F8",
+              "shore": 0.6,
+              "crest": 0.45,
+              "scale": 2.5,
+              "drift": 0.2
+            },
+            "reflections": {
+              "mode": "Auto",
+              "probe_resolution": 128,
+              "probe_refresh": 30,
+              "strength": 1.0,
+              "planar_scale": 0.5
+            },
+            "flow": [
+              0.0,
+              0.0
+            ],
+            "underwater": {
+              "fog": "#0F4C5C",
+              "distance": 18.0,
+              "caustics": 1.0,
+              "caustics_scale": 3.0,
+              "caustics_texture": ""
+            },
+            "splash": {
+              "min_speed": 1.5,
+              "particles": 16,
+              "ripples": true,
+              "sound": ""
+            },
+            "ripples": {
+              "enabled": true,
+              "speed": 2.0,
+              "fade": 3.0,
+              "wake": 1.0,
+              "extent": 48.0
+            }
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "cc0fede9353b41dd903ecf08a3016fc8",
+      "name": "With Buoyancy",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Buoyancy",
+          "buoyancy": {
+            "density": 0.5,
+            "drag": 1.0,
+            "angular_drag": 1.0,
+            "points": 4,
+            "splash": true
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "05e0b85dbccc4ec2955a409a054f205b",
+      "name": "With Parallax",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Parallax",
+          "parallax": {
+            "scroll": [
+              0.5,
+              0.5
+            ],
+            "wrap": [
+              false,
+              false
+            ],
+            "dim": 0.0
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "db0cba14d2a04e5aa0b67b6edca81f38",
+      "name": "With Room",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Room",
+          "room": {
+            "size": [
+              1280.0,
+              720.0
+            ],
+            "depth": 720.0,
+            "camera": true,
+            "blend": 0.4,
+            "stream": false
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "8ed4f76372f9457986f5f66a32621937",
+      "name": "With SoundZone",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "SoundZone",
+          "zone": {
+            "enabled": true,
+            "shape": "Box",
+            "half_extents": [
+              5.0,
+              5.0,
+              5.0
+            ],
+            "radius": 5.0,
+            "priority": 0.0,
+            "blend_distance": 1.0,
+            "reverb": {
+              "mix": 0.0,
+              "size": 0.5,
+              "decay": 1.5,
+              "damping": 0.5,
+              "excursion": 0.2
+            },
+            "muffle": 0.0,
+            "buses": [
+              "Sfx"
+            ],
+            "impulse": ""
+          }
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    },
+    {
+      "id": "c3d4f2e95d4345b7a7ad120f5b98d1be",
+      "name": "With Persist",
+      "components": [
+        {
+          "component": "Place",
+          "placement": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": 1.0
+          }
+        },
+        {
+          "component": "Look",
+          "visual": {
+            "shape": "Sphere",
+            "color": "#4C97FF",
+            "radius": 0.5
+          }
+        },
+        {
+          "component": "Render",
+          "visible": true,
+          "layer": 0
+        },
+        {
+          "component": "Body",
+          "physics": {
+            "body": "Dynamic",
+            "gravity_scale": 1.0,
+            "lock_rotation": true,
+            "restitution": 0.0,
+            "friction": 0.5,
+            "density": 1.0,
+            "mass": null,
+            "trigger": false,
+            "one_way": false,
+            "character_controller": false,
+            "collision_layer": 1,
+            "collision_mask": 255
+          }
+        },
+        {
+          "component": "Persist"
+        }
+      ],
+      "strands": [],
+      "floating_values": [],
+      "comments": [],
+      "variables": [],
+      "lists": [],
+      "dicts": [],
+      "block_defs": []
+    }
+  ]
+}

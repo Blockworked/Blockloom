@@ -1,0 +1,25 @@
+{
+  "id": "57065af7a05c411d80f38570346a7649",
+  "name": "Legacy",
+  "icon": "",
+  "android": {
+    "application_id": "",
+    "version_code": 1,
+    "version_name": "1.0.0",
+    "keystore": "",
+    "key_alias": ""
+  },
+  "active_scene": "e96548dd9e3d414c81025a3cfeeaf984",
+  "default_scene": "e96548dd9e3d414c81025a3cfeeaf984",
+  "scenes": [
+    {
+      "id": "e96548dd9e3d414c81025a3cfeeaf984",
+      "name": "Scene 1",
+      "path": "assets/scenes/e96548dd9e3d414c81025a3cfeeaf984.blockscene",
+      "mode": "TwoD"
+    }
+  ],
+  "globals": [],
+  "global_lists": [],
+  "global_dicts": []
+}

@@ -88,16 +88,7 @@ pub fn revision_path(dir: &Path) -> PathBuf {
 
 /// Writes `text` to `path` atomically, through a temp file beside it.
 fn write_atomic(path: &Path, text: &str) {
-    if let Some(parent) = path.parent()
-        && std::fs::create_dir_all(parent).is_err()
-    {
-        return;
-    }
-    let tmp = path.with_extension(format!("tmp.{}", own_pid()));
-    if std::fs::write(&tmp, text).is_err() {
-        return;
-    }
-    let _ = std::fs::rename(&tmp, path);
+    let _ = crate::files::replace_file(path, text);
 }
 
 /// The lock currently on `dir`, if it parses.
@@ -112,11 +103,7 @@ pub fn write_lock(dir: &Path, lock: &LockInfo) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
     let text = serde_json::to_string(lock).map_err(|e| e.to_string())?;
-    let path = lock_path(dir);
-    let tmp = path.with_extension(format!("tmp.{}", own_pid()));
-    std::fs::write(&tmp, &text).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(())
+    crate::files::replace_file(&lock_path(dir), text)
 }
 
 /// Drops the lock on `dir`, but only when it is ours. Returns whether one

@@ -284,9 +284,7 @@ pub fn save(project: &Path, grid: &Grid) -> Result<String, String> {
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let temp = path.with_extension("part");
-    std::fs::write(&temp, bytes).map_err(|e| format!("{}: {e}", temp.display()))?;
-    std::fs::rename(&temp, path).map_err(|e| format!("{}: {e}", path.display()))
+    crate::files::write_atomic(path, bytes)
 }
 
 pub fn read_manifest(project: &Path, name: &str) -> Result<Manifest, String> {

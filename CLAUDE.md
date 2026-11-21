@@ -207,6 +207,18 @@ uploads those bytes as an image. Elsewhere it is a child process.
   for `InstructionKind` (`blocks.rs`), names its value slots in `fields.rs`, and
   gives every actor a `BlockGraph` of its own.
 
+### Saving
+
+`project::save_project` writes every scene file, then the index, each through
+`files::write_atomic` (temp file, fsync, rename), so a crash leaves each file
+whole; a document writer should use it rather than `std::fs::write`.
+Bookkeeping that is rebuilt if lost (revision, owner lock) uses
+`files::replace_file`, which skips the fsyncs. `tests/golden.rs` holds every
+project under `blockloom-core/tests/fixtures/golden` to its saved bytes; a
+deliberate format change is `BLOCKLOOM_BLESS=1 cargo test -p blockloom-core
+--test golden`, and a new component kind goes in its generator. The edit
+cost baseline is in `docs/performance.md`.
+
 ### Components
 
 An actor is a list of components, not a fixed set of fields

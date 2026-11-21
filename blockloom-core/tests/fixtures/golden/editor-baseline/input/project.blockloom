@@ -1,0 +1,25 @@
+{
+  "id": "a611fe75dd38467b92ca81b4ce434ad5",
+  "name": "Baseline",
+  "icon": "",
+  "android": {
+    "application_id": "",
+    "version_code": 1,
+    "version_name": "1.0.0",
+    "keystore": "",
+    "key_alias": ""
+  },
+  "active_scene": "5f93b3fd9dbf42a8bf238fde01b30348",
+  "default_scene": "5f93b3fd9dbf42a8bf238fde01b30348",
+  "scenes": [
+    {
+      "id": "5f93b3fd9dbf42a8bf238fde01b30348",
+      "name": "Scene 1",
+      "path": "assets/scenes/Scene 1.blockscene",
+      "mode": "TwoD"
+    }
+  ],
+  "globals": [],
+  "global_lists": [],
+  "global_dicts": []
+}

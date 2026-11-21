@@ -1254,11 +1254,8 @@ pub fn load_manifest(project_dir: &Path) -> PipelineManifest {
 /// Write the manifest, making `.blockloom/` first.
 pub fn save_manifest(project_dir: &Path, manifest: &PipelineManifest) -> Result<(), String> {
     let path = manifest_path(project_dir);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    }
     let json = serde_json::to_string_pretty(manifest).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| format!("{}: {e}", path.display()))
+    crate::files::write_atomic(&path, json)
 }
 
 fn file_fingerprint(path: &Path) -> Result<(u32, u64, u64), String> {

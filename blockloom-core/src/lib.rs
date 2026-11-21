@@ -50,6 +50,7 @@ pub mod decals;
 pub mod destruction;
 mod distribution;
 pub mod fields;
+pub mod files;
 pub mod fog;
 pub mod hub;
 pub mod input;

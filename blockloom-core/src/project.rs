@@ -936,11 +936,8 @@ fn find_scene_file(dir: &Path, scene_id: &str) -> Option<String> {
 pub fn save_scene_file(dir: &Path, scene: &Scene) -> Result<String, String> {
     let relative = scene.asset_path();
     let full = dir.join(&relative);
-    if let Some(parent) = full.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    }
     let json = serde_json::to_string_pretty(&scene.to_file()).map_err(|e| e.to_string())?;
-    std::fs::write(&full, json).map_err(|e| format!("{}: {e}", full.display()))?;
+    crate::files::write_atomic(&full, json)?;
     Ok(relative)
 }
 
@@ -2571,9 +2568,15 @@ pub fn project_to_file(project: &Project) -> ProjectFile {
 /// bumps the folder's counter, so an idle backend can tell its in-memory
 /// copy went stale. Export stays a single embedded file - see
 /// [`export_project`].
+///
+/// Each file is replaced atomically (see [`crate::files::write_atomic`]), so
+/// a crash leaves every file whole. Scenes go first and the index last, so
+/// the index never names a scene that isn't on disk yet.
 pub fn save_project(project: &Project, dir: &Path) -> Result<u64, String> {
     std::fs::create_dir_all(assets_dir(dir)).map_err(|e| format!("{}: {e}", dir.display()))?;
     std::fs::create_dir_all(scenes_dir(dir)).map_err(|e| format!("{}: {e}", dir.display()))?;
+    crate::files::sweep_temp_files(dir);
+    crate::files::sweep_temp_files(&scenes_dir(dir));
     for scene in &project.scenes {
         save_scene_file(dir, scene)?;
     }
@@ -2583,19 +2586,14 @@ pub fn save_project(project: &Project, dir: &Path) -> Result<u64, String> {
     let path = project_file(dir);
     let json =
         serde_json::to_string_pretty(&project_to_file(project)).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| format!("{}: {e}", path.display()))?;
+    crate::files::write_atomic(&path, json)?;
     Ok(crate::sync::bump_revision(dir))
 }
 
 /// Writes a project to an arbitrary path, for "Export".
 pub fn export_project(project: &Project, path: &Path) -> Result<(), String> {
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    }
     let json = serde_json::to_string_pretty(project).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| format!("{}: {e}", path.display()))
+    crate::files::write_atomic(path, json)
 }
 
 /// Moves a project folder so its name matches `name` again, returning where it

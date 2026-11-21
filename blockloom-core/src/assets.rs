@@ -181,7 +181,7 @@ pub fn write_lighting(
     let mut value = lighting.clone();
     value.asset.clear();
     let text = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
-    std::fs::write(&full, text).map_err(|e| format!("{}: {e}", full.display()))
+    crate::files::write_atomic(&full, text)
 }
 
 /// The media type a preview data URL carries. Only the kinds the editor
