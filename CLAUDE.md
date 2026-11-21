@@ -239,6 +239,22 @@ MCP and the attach socket still read whole `state_dto` snapshots. Instruction
 `==` ignores ids, so the diff hashes them as well (`same_actor`). A document
 read off disk (live reload) is committed with nothing owed to the disk.
 
+### Resource database
+
+`blockloom-core/src/resources.rs`. Every file under `assets/` (not scenes,
+which carry their own ids, nor `*.imported` output) has a stable id in `assets.index` beside
+`project.blockloom`, keyed by path so diffs stay small. The tray's rename,
+move, delete, create and import keep it current, `open_project` reconciles
+it with the folder (a file moved outside the editor keeps its id when its
+name is unique among what vanished), and `ResourceRef { id, path }` repairs
+its path from the id. The authored import choices (role, exposure bias) live
+on the entry too; `.blockloom/pipeline.json` keeps only fingerprints and
+reads older manifests' roles for migration. `resources::uses` walks the whole
+document's JSON for strings naming an indexed path or id, which is "used by"
+(`asset-used-by`, `list_assets`'s `uses`, the tray's delete dialog), and
+`Project::repoint_asset` follows a rename by the same walk. The plugin import
+ledger (`.blockloom/imports.json`) is still its own file.
+
 ### Game settings
 
 Quality, input actions, the sound buses and the display output hold for the
@@ -1793,7 +1809,7 @@ fingerprints every file. An `ImportRole` says what a file imports *as*:
 texture, HDR (`.hdr`/`.exr`, planned as BC6H), volume (`.cube` LUTs, or an
 image strip of slices), heightmap (16-bit images, `.r16`/`.r32`), IES profile,
 or light cookie. The extension picks one; a PNG heightmap or cookie is an
-override kept in `.blockloom/pipeline.json` (`set-import-role`), and changing
+override kept in `assets.index` (`set-import-role`), and changing
 a role dirties the asset. Each role's decoder is its own submodule, and a pass
 reads files through `pipeline::load_volume`/`load_heightmap`/`load_ies` rather
 than parsing them itself. A new format extends a role here, not a second

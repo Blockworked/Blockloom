@@ -902,6 +902,8 @@ impl Backend {
                 arg(&args, "parent").unwrap_or_default(),
             )?),
             "delete_asset" => to_json(commands::delete_asset(state, app, arg(&args, "path")?)?),
+            "asset_used_by" => to_json(commands::asset_used_by(state, arg(&args, "path")?)?),
+            "resource_index" => to_json(commands::resource_index(state)?),
             "read_asset" => to_json(commands::read_asset(state, arg(&args, "path")?)?),
             "open_asset_location" => {
                 to_json(commands::open_asset_location(state, arg(&args, "path")?)?)

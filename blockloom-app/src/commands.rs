@@ -11,6 +11,7 @@ use crate::state::{
 use crate::{AppHandle, Backend};
 use blockloom_core::android;
 use blockloom_core::assets;
+use blockloom_core::resources::{self, ResourceIndex};
 use blockloom_core::blocks::{
     ActorGraph, BlockPiece, BlockShape, DictEntry, Fragment, Instruction, InstructionKind,
     ListItem, normalize_block_color, resolve_dict_reporters, resolve_list_reporters,
@@ -509,6 +510,9 @@ pub(crate) fn open_project(
     s.library = library::list();
     if let Some(dir) = s.project_dir().map(Path::to_path_buf) {
         sync_ide(&dir);
+        if owns_lock && !attached {
+            reindex(&dir);
+        }
         // Undo is empty on open, so grids nothing names can go. Another
         // owner's history might still name some.
         if owns_lock
@@ -3746,7 +3750,62 @@ pub(crate) fn list_assets(
     path: String,
 ) -> Result<Vec<assets::AssetEntry>, String> {
     let s = lock(state)?;
-    assets::list(&project_dir(&s)?, &path)
+    let dir = project_dir(&s)?;
+    let mut entries = assets::list(&dir, &path)?;
+    let index = ResourceIndex::load(&dir);
+    let uses = s
+        .project()
+        .map(|project| resources::uses(project, &index))
+        .unwrap_or_default();
+    for entry in &mut entries {
+        entry.id = index.id_of(&entry.path).map(str::to_string);
+        entry.uses = uses
+            .range(entry.path.clone()..)
+            .take_while(|(at, _)| {
+                at.as_str() == entry.path || at.starts_with(&format!("{}/", entry.path))
+            })
+            .map(|(_, found)| found.len())
+            .sum();
+    }
+    Ok(entries)
+}
+
+/// `asset-used-by`: every place the document names a file, or anything
+/// under a folder.
+pub(crate) fn asset_used_by(
+    state: &SharedState,
+    path: String,
+) -> Result<Vec<resources::Use>, String> {
+    let s = lock(state)?;
+    let dir = project_dir(&s)?;
+    let project = s.project().ok_or("No project is open")?;
+    let path = assets::normalize(&path).ok_or("That isn't a path in this project")?;
+    Ok(resources::uses_of(project, &ResourceIndex::load(&dir), &path))
+}
+
+/// `resource-index`: every indexed file's id, by path.
+pub(crate) fn resource_index(state: &SharedState) -> Result<ResourceIndex, String> {
+    let s = lock(state)?;
+    let dir = project_dir(&s)?;
+    reindex(&dir);
+    Ok(ResourceIndex::load(&dir))
+}
+
+/// Brings `assets.index` in line with the folder. Best-effort: a project
+/// on a read-only disk still opens.
+pub(crate) fn reindex(dir: &Path) {
+    if let Err(e) = ResourceIndex::update(dir, |index| index.reconcile(dir)) {
+        tracing::warn!("Couldn't update {}: {e}", resources::INDEX_FILE);
+    }
+}
+
+fn index_moved(dir: &Path, from: &str, to: &str) {
+    if let Err(e) = ResourceIndex::update(dir, |index| {
+        index.moved(from, to);
+        index.reconcile(dir);
+    }) {
+        tracing::warn!("Couldn't update {}: {e}", resources::INDEX_FILE);
+    }
 }
 
 pub(crate) fn create_asset_folder(
@@ -3809,6 +3868,7 @@ pub(crate) fn create_asset(
         asset_template(&name)
     };
     let made = assets::create_file(&dir, &parent, &name, &template)?;
+    reindex(&dir);
     if touches_scripts(&made) {
         sync_ide(&dir);
     }
@@ -3828,6 +3888,7 @@ pub(crate) fn import_assets(
     let sources: Vec<std::path::PathBuf> =
         paths.into_iter().map(std::path::PathBuf::from).collect();
     let made = assets::import(&dir, &parent, &sources)?;
+    reindex(&dir);
     for path in &made {
         // Best-effort: the pipeline learns the file's shape at import so the
         // tray can show it and reimport tracking starts clean.
@@ -3921,6 +3982,7 @@ pub(crate) fn rename_asset(
         .is_some_and(|project| project.scene_for_asset(&path).is_some());
     let dir = project_dir(&s)?;
     let moved = assets::rename(&dir, &path, &name)?;
+    index_moved(&dir, &path, &moved);
     pipeline::note_moved(&dir, &path, &moved);
     if touches_scripts(&path) || touches_scripts(&moved) {
         sync_ide(&dir);
@@ -4022,6 +4084,7 @@ pub(crate) fn move_asset(
     }
     let dir = project_dir(&s)?;
     let moved = assets::move_to(&dir, &path, &parent)?;
+    index_moved(&dir, &path, &moved);
     pipeline::note_moved(&dir, &path, &moved);
     if touches_scripts(&path) || touches_scripts(&moved) {
         sync_ide(&dir);
@@ -4090,6 +4153,7 @@ pub(crate) fn delete_asset(
         s.selected_actor = None;
         let dir = project_dir(&s)?;
         assets::delete(&dir, &path)?;
+        reindex(&dir);
         pipeline::note_removed(&dir, &path);
         auto_save(&mut s);
         sync_runtime(&mut s);
@@ -4098,6 +4162,7 @@ pub(crate) fn delete_asset(
     }
     let dir = project_dir(&s)?;
     assets::delete(&dir, &path)?;
+    reindex(&dir);
     pipeline::note_removed(&dir, &path);
     plugins::forget_import(&dir, &path);
     if touches_scripts(&path) {

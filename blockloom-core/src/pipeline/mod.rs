@@ -1199,11 +1199,15 @@ pub struct PipelineManifest {
     pub settings: ImportSettings,
     #[serde(default)]
     pub entries: HashMap<String, ManifestEntry>,
-    /// Roles the author chose over what the extension says, by path.
-    #[serde(default)]
+    /// Roles the author chose over what the extension says, by path. Kept
+    /// in `assets.index`; read here only from older manifests.
+    #[serde(default, skip_serializing)]
+    #[schema(skip)]
     pub roles: HashMap<String, ImportRole>,
-    /// Per-texture exposure bias in stops, by path. HDR files only.
-    #[serde(default)]
+    /// Per-texture exposure bias in stops, by path. HDR files only. Kept in
+    /// `assets.index` like the roles.
+    #[serde(default, skip_serializing)]
+    #[schema(skip)]
     pub exposure_bias: HashMap<String, f32>,
 }
 
@@ -1246,14 +1250,40 @@ fn manifest_path(project_dir: &Path) -> PathBuf {
 /// through the pipeline.
 pub fn load_manifest(project_dir: &Path) -> PipelineManifest {
     let path = manifest_path(project_dir);
-    let Ok(text) = crate::vfs::read_to_string(&path) else {
-        return PipelineManifest::default();
-    };
-    serde_json::from_str(&text).unwrap_or_default()
+    let mut manifest: PipelineManifest = crate::vfs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    // An older manifest's choices stand until the index has its own.
+    let index = crate::resources::ResourceIndex::load(project_dir);
+    for (path, entry) in &index.resources {
+        if let Some(role) = entry.role {
+            manifest.roles.insert(path.clone(), role);
+        }
+        if entry.exposure_bias != 0.0 {
+            manifest.exposure_bias.insert(path.clone(), entry.exposure_bias);
+        }
+    }
+    manifest
 }
 
-/// Write the manifest, making `.blockloom/` first.
+/// Write the manifest, making `.blockloom/` first. Roles and exposure bias
+/// are authored choices and go to `assets.index`, under the file's id.
 pub fn save_manifest(project_dir: &Path, manifest: &PipelineManifest) -> Result<(), String> {
+    crate::resources::ResourceIndex::update(project_dir, |index| {
+        for entry in index.resources.values_mut() {
+            entry.role = None;
+            entry.exposure_bias = 0.0;
+        }
+        for (path, role) in &manifest.roles {
+            index.entry(path).role = Some(*role);
+        }
+        for (path, bias) in &manifest.exposure_bias {
+            if *bias != 0.0 {
+                index.entry(path).exposure_bias = *bias;
+            }
+        }
+    })?;
     let path = manifest_path(project_dir);
     let json = serde_json::to_string_pretty(manifest).map_err(|e| e.to_string())?;
     crate::files::write_atomic(&path, json)

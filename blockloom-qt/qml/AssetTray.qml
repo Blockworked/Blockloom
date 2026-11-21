@@ -302,7 +302,7 @@ Rectangle {
                             active: root.selected === modelData.path || root.dropTarget === modelData.path
                             ToolTip.visible: tileHoverTip.hovered && !renaming
                             ToolTip.delay: 700
-                            ToolTip.text: modelData.path + (modelData.kind === "folder" ? "" : " · " + root.fileSize(modelData.size)) + (root.report(modelData) ? "\n" + root.report(modelData).summary : "") + (root.imported(modelData) ? "\n" + root.importText(root.imported(modelData)) : "")
+                            ToolTip.text: modelData.path + (modelData.kind === "folder" ? "" : " · " + root.fileSize(modelData.size)) + (root.report(modelData) ? "\n" + root.report(modelData).summary : "") + (root.imported(modelData) ? "\n" + root.importText(root.imported(modelData)) : "") + (modelData.uses ? "\nUsed in " + modelData.uses + (modelData.uses === 1 ? " place" : " places") : "")
                             HoverHandler { id: tileHoverTip }
                             Image {
                                 id: thumb
@@ -430,14 +430,26 @@ Rectangle {
         StitchMenuItem { visible: !!root.menuEntry && root.menuEntry.kind === "scene"; iconName: "map"; text: "Open scene"; onTriggered: root.openSceneAsset(root.menuEntry) }
         StitchMenuItem { visible: !!root.menuEntry; iconName: "pencil"; text: "Rename"; onTriggered: root.startRename(root.menuEntry) }
         StitchMenuItem { visible: !!root.menuEntry && root.path.length > 0; iconName: "upload"; text: "Move up one folder"; onTriggered: root.run("move_asset", { path: root.menuEntry.path, parent: root.parentOf(root.parentOf(root.menuEntry.path)) }) }
-        StitchMenuItem { visible: !!root.menuEntry; iconName: "trash-2"; danger: true; text: root.menuEntry ? "Delete “" + root.menuEntry.name + "”" : ""; onTriggered: { deleteDialog.entry = root.menuEntry; deleteDialog.open(); } }
+        StitchMenuItem { visible: !!root.menuEntry; iconName: "trash-2"; danger: true; text: root.menuEntry ? "Delete “" + root.menuEntry.name + "”" : ""; onTriggered: { deleteDialog.entry = root.menuEntry; deleteDialog.users = []; deleteDialog.open(); deleteDialog.lookUp(); } }
     }
     StitchDialog {
         id: deleteDialog
         property var entry: null
+        // Where the document still names it, so a delete doesn't blank an actor unseen.
+        property var users: []
+        function lookUp() {
+            const asked = entry;
+            if (asked && asked.uses) root.app.invoke("asset_used_by", { path: asked.path }, found => { if (deleteDialog.entry === asked) deleteDialog.users = found; });
+        }
+        function usersText() {
+            if (!users.length) return "";
+            const names = users.slice(0, 5).map(u => (u.actor ? "“" + u.actor + "”" : "the world settings") + " in " + u.scene);
+            return "\n\nStill used by " + names.join(", ") + (users.length > 5 ? " and " + (users.length - 5) + " more" : "") + ".";
+        }
         title: "Delete?"
         standardButtons: Dialog.Yes | Dialog.Cancel
-        Text { color: Theme.text; text: deleteDialog.entry ? "Delete " + (deleteDialog.entry.kind === "folder" ? "“" + deleteDialog.entry.name + "” and everything in it" : "“" + deleteDialog.entry.name + "”") + "?\n\nThis cannot be undone." : "" }
+        Text { objectName: "asset-delete-text"; color: Theme.text; wrapMode: Text.WordWrap; width: Math.min(implicitWidth, 420)
+            text: deleteDialog.entry ? "Delete " + (deleteDialog.entry.kind === "folder" ? "“" + deleteDialog.entry.name + "” and everything in it" : "“" + deleteDialog.entry.name + "”") + "?" + deleteDialog.usersText() + "\n\nThis cannot be undone." : "" }
         onAccepted: if (entry) root.run("delete_asset", { path: entry.path })
     }
     StitchDialog {

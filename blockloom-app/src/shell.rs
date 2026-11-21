@@ -2210,6 +2210,24 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "asset-used-by",
+        cmd: "asset_used_by",
+        aliases: &["asset_used_by", "used-by"],
+        summary: "Every place the document names a file (or anything under a folder): scene, actor and field.",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "asset path",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "resource-index",
+        cmd: "resource_index",
+        aliases: &["resource_index"],
+        summary: "The assets.index: each file's stable id and import choices, by path.",
+        args: &[],
+    },
+    CommandSpec {
         name: "read-lighting-asset",
         cmd: "read_lighting_asset",
         aliases: &["read_lighting_asset"],

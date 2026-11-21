@@ -73,6 +73,7 @@ pub mod process;
 pub mod project;
 pub mod quality;
 pub mod registry;
+pub mod resources;
 pub mod rig2d;
 pub mod save;
 pub mod scene;

@@ -2180,86 +2180,58 @@ impl Project {
     /// `from` may be a folder, in which case everything under it follows.
     /// True if anything changed.
     pub fn repoint_asset(&mut self, from: &str, to: &str) -> bool {
+        // Any string naming the file, wherever it sits: component fields,
+        // world settings and block slots alike.
+        fn walk(value: &mut serde_json::Value, from: &str, to: &str) -> bool {
+            match value {
+                serde_json::Value::String(text) => match moved_path(text, from, to) {
+                    Some(next) => {
+                        *text = next;
+                        true
+                    }
+                    None => false,
+                },
+                serde_json::Value::Array(items) => {
+                    items.iter_mut().fold(false, |hit, item| walk(item, from, to) | hit)
+                }
+                serde_json::Value::Object(map) => {
+                    map.values_mut().fold(false, |hit, item| walk(item, from, to) | hit)
+                }
+                _ => false,
+            }
+        }
+        fn repoint<T: Serialize + serde::de::DeserializeOwned>(
+            target: &mut T,
+            from: &str,
+            to: &str,
+        ) -> bool {
+            let Ok(mut value) = serde_json::to_value(&*target) else {
+                return false;
+            };
+            if !walk(&mut value, from, to) {
+                return false;
+            }
+            match serde_json::from_value(value) {
+                Ok(next) => {
+                    *target = next;
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!("couldn't follow {from} to {to}: {e}");
+                    false
+                }
+            }
+        }
         let mut changed = false;
-        let mut repoint = |path: &mut String| {
-            if let Some(next) = moved_path(path, from, to) {
-                *path = next;
-                changed = true;
-            }
-        };
-        repoint(&mut self.icon);
+        if let Some(next) = moved_path(&self.icon, from, to) {
+            self.icon = next;
+            changed = true;
+        }
+        changed |= repoint(&mut self.settings, from, to);
         for scene in &mut self.scenes {
-            let world = &mut scene.world;
-            repoint(&mut world.lighting.asset);
-            for style in world.interface.styles.values_mut() {
-                for paint in [
-                    &mut style.normal,
-                    &mut style.hover,
-                    &mut style.pressed,
-                    &mut style.disabled,
-                    &mut style.focused,
-                ] {
-                    for font in &mut paint.fonts {
-                        repoint(font);
-                    }
-                }
-            }
-            for path in &mut world.interface.stylesheets {
-                repoint(path);
-            }
-            let (widgets, prefabs) = (&mut world.interface.widgets, &mut world.interface.prefabs);
-            for widget in widgets.iter_mut().chain(prefabs.values_mut().flatten()) {
-                if widget.element.kind == crate::ui::UiKind::Image {
-                    repoint(&mut widget.element.content);
-                }
-                for paint in [
-                    &mut widget.style.normal,
-                    &mut widget.style.hover,
-                    &mut widget.style.pressed,
-                    &mut widget.style.disabled,
-                    &mut widget.style.focused,
-                ] {
-                    for font in &mut paint.fonts {
-                        repoint(font);
-                    }
-                }
-            }
-            repoint(&mut world.sky.hdri.path);
-            repoint(&mut world.sky.stars.milky_way);
-            repoint(&mut world.lightning.thunder_sound);
-            repoint(&mut world.clouds.shape_volume);
-            repoint(&mut world.clouds.detail_volume);
-            for layer in &mut world.cloud_layers {
-                repoint(&mut layer.coverage_texture);
-                repoint(&mut layer.flow_map);
-            }
-            if let Some(font) = world.speech_bubble.font_asset.as_mut() {
-                repoint(font);
-            }
+            changed |= repoint(&mut scene.world, from, to);
             for actor in &mut scene.actors {
-                for component in actor.components.iter_mut() {
-                    match component {
-                        ActorComponent::Look {
-                            visual: Visual::Image { path, .. } | Visual::Model { path, .. },
-                        } => repoint(path),
-                        ActorComponent::Look {
-                            visual: Visual::Tilemap { tilemap },
-                        } => repoint(&mut tilemap.tileset),
-                        ActorComponent::Material { material } => {
-                            repoint(&mut material.albedo_texture);
-                            repoint(&mut material.normal_texture);
-                            repoint(&mut material.roughness_texture);
-                        }
-                        ActorComponent::Fracture { fracture } => {
-                            repoint(&mut fracture.bounce_sound);
-                            repoint(&mut fracture.interior.albedo_texture);
-                            repoint(&mut fracture.interior.normal_texture);
-                            repoint(&mut fracture.interior.roughness_texture);
-                        }
-                        ActorComponent::Script { path } => repoint(path),
-                        _ => {}
-                    }
-                }
+                changed |= repoint(actor, from, to);
             }
         }
         changed

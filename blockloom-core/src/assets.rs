@@ -62,6 +62,16 @@ pub struct AssetEntry {
     /// Whether the editor refuses to rename, move or delete it - the project
     /// document itself.
     pub protected: bool,
+    /// Its id in `assets.index`, filled in by the editor's listing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// How many places the document names it (or anything under a folder).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub uses: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// A name a file can have: not empty, not a path, and nothing Windows would
@@ -219,7 +229,8 @@ fn modified_at(metadata: &std::fs::Metadata) -> u64 {
 /// leaves behind. They are not assets, so the tray leaves them out - a
 /// same-named file deeper in the tree is still listed.
 fn is_hidden_at_root(relative: &str, name: &str) -> bool {
-    relative.is_empty() && matches!(name, "Cargo.toml" | "Cargo.lock" | "target")
+    relative.is_empty()
+        && matches!(name, "Cargo.toml" | "Cargo.lock" | "target" | crate::resources::INDEX_FILE)
 }
 
 /// Everything in one folder of a project: folders first, then files, each run
@@ -249,6 +260,8 @@ pub fn list(project_dir: &Path, relative: &str) -> Result<Vec<AssetEntry>, Strin
             size: if folder { 0 } else { metadata.len() },
             modified: modified_at(&metadata),
             protected: is_protected(&path),
+            id: None,
+            uses: 0,
             name,
             path,
         });
