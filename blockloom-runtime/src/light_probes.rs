@@ -34,7 +34,8 @@ use std::path::PathBuf;
 
 pub fn register(app: &mut App) {
     app.init_resource::<ProbeBaker>()
-        .init_resource::<LoadedProbes>();
+        .init_resource::<LoadedProbes>()
+        .init_resource::<crate::lights::LightsRun>();
 }
 
 /// Face size an irradiance brick captures at: it is averaged down to six
@@ -376,13 +377,14 @@ pub fn sync_probes(
 /// Turns requests (the editor's, auto-bakes, `capture probes`) into jobs and
 /// feeds their captures to the service once the world has warmed up.
 pub fn start_bakes(
-    mut engine: NonSendMut<Engine>,
+    engine: NonSend<Engine>,
+    mut run: ResMut<crate::lights::LightsRun>,
     mut baker: ResMut<ProbeBaker>,
     mut service: ResMut<ProbeService>,
     warmup: Option<Res<Warmup>>,
     actors: Query<(Entity, &ActorId, &GlobalTransform)>,
 ) {
-    if std::mem::take(&mut engine.capture_probes) {
+    if std::mem::take(&mut run.capture_probes) {
         baker.request(Vec::new(), false);
     }
     if !baker.busy() || warmup.is_some_and(|warmup| warmup.active()) || engine.rebuild {
@@ -805,7 +807,9 @@ mod tests {
     #[test]
     fn capture_probes_lights_a_reflection_probe_in_memory() {
         let (mut app, _) = app(ProbeKind::Reflection);
-        app.world_mut().non_send_mut::<Engine>().capture_probes = true;
+        app.world_mut()
+            .resource_mut::<crate::lights::LightsRun>()
+            .capture_probes = true;
         app.update();
         app.update();
         deliver(&mut app, 0.5);

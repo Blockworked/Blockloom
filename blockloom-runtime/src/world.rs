@@ -1045,13 +1045,9 @@ pub fn rebuild_world(
     }
     engine.clones.clear();
     engine.last_created.clear();
-    engine.light_intensity.clear();
     engine.look2d = Default::default();
     engine.volume_enabled.clear();
     engine.volume_weight.clear();
-    engine.light_shadows.clear();
-    engine.shadow_distance = None;
-    engine.capture_probes = false;
     engine.precipitation = Default::default();
     engine.weather = Default::default();
     engine.director_time = None;
@@ -1736,10 +1732,16 @@ pub fn publish_simulation_actors(
         Option<&bevy_rapier2d::prelude::ReadMassProperties>,
         Option<&bevy_rapier3d::prelude::ReadMassProperties>,
     )>,
-    particles: Option<Res<crate::vfx::ParticleSenses>>,
+    (particles, lights): (
+        Option<Res<crate::vfx::ParticleSenses>>,
+        Option<Res<crate::lights::LightsRun>>,
+    ),
 ) {
     if engine.running {
-        let actors = sample_actor_senses(&engine, dimension.0, &actors, particles.as_deref());
+        let none = crate::lights::LightsRun::default();
+        let lights = lights.as_deref().unwrap_or(&none);
+        let actors =
+            sample_actor_senses(&engine, dimension.0, &actors, particles.as_deref(), &lights);
         blockloom_core::sense::publish_actors(actors);
     }
 }
@@ -1764,6 +1766,7 @@ fn sample_actor_senses(
         Option<&bevy_rapier3d::prelude::ReadMassProperties>,
     )>,
     particles: Option<&crate::vfx::ParticleSenses>,
+    lights: &crate::lights::LightsRun,
 ) -> HashMap<String, ActorSense> {
     // Retained entries are refreshed in place: most of an actor's strings
     // and sets are unchanged, so `clone_from` keeps their allocations.
@@ -1864,7 +1867,7 @@ fn sample_actor_senses(
         }
         sense.has_body = has_body;
         sense.trigger = trigger;
-        sense.casts_shadows = crate::lights::casts_shadows(engine, &id.0);
+        sense.casts_shadows = crate::lights::casts_shadows(engine, lights, &id.0);
         sense.layer = layer;
         sense.mask = mask;
         sense.shape = shape;
@@ -1936,11 +1939,12 @@ pub fn publish_sensors(
         Option<&bevy_rapier3d::prelude::ReadMassProperties>,
     )>,
     sound: Res<crate::sound::SoundState>,
-    (atmosphere, water, particles, scaling): (
+    (atmosphere, water, particles, scaling, lights): (
         Option<Res<crate::atmosphere::Atmosphere>>,
         Option<Res<crate::water::WaterSample>>,
         Option<Res<crate::vfx::ParticleSenses>>,
         Option<Res<crate::quality::Scaling>>,
+        Option<Res<crate::lights::LightsRun>>,
     ),
     preview_pointer: Option<ResMut<crate::preview::PreviewPointer>>,
 ) {
@@ -1993,7 +1997,9 @@ pub fn publish_sensors(
     let senses = if engine.running {
         blockloom_core::sense::take_actors()
     } else {
-        sample_actor_senses(&engine, dimension.0, &actors, particles.as_deref())
+        let none = crate::lights::LightsRun::default();
+        let lights = lights.as_deref().unwrap_or(&none);
+        sample_actor_senses(&engine, dimension.0, &actors, particles.as_deref(), &lights)
     };
 
     // Wanted and focused reads as held: the component alone would still say

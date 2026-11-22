@@ -384,6 +384,7 @@ fn occluders(
 /// What each light actor adds this frame, nearest the camera first.
 fn gather(
     engine: &Engine,
+    run: &crate::lights::LightsRun,
     placed: &Query<(&ActorId, &Transform, &Visibility)>,
     camera: Vec2,
     time: f32,
@@ -396,11 +397,7 @@ fn gather(
         let Some(spec) = engine.actor(&id.0).and_then(|a| a.components.light2d()) else {
             continue;
         };
-        let intensity = engine
-            .light_intensity
-            .get(&id.0)
-            .copied()
-            .unwrap_or(spec.intensity);
+        let intensity = run.intensity.get(&id.0).copied().unwrap_or(spec.intensity);
         let position = transform.translation.truncate();
         let sample = spec.sample(position.to_array(), spin(transform), intensity, time);
         found.push((position.distance_squared(camera), sample));
@@ -425,6 +422,7 @@ pub fn sync_lighting(
     mut layer: Local<Option<(Entity, Handle<LightMapMaterial>)>>,
     mut last: Local<Option<LightMapUniform>>,
     mut frame: Local<LightFrame>,
+    run: Option<Res<crate::lights::LightsRun>>,
 ) {
     let settings = &engine.project.world.lighting2d;
     let live = dimension.0 == Mode::TwoD && settings.enabled;
@@ -451,7 +449,9 @@ pub fn sync_lighting(
         .iter()
         .next()
         .map_or(Vec2::ZERO, |t| t.translation.truncate());
-    let lights = gather(&engine, &placed, camera, time);
+    let none = crate::lights::LightsRun::default();
+    let run = run.as_deref().unwrap_or(&none);
+    let lights = gather(&engine, run, &placed, camera, time);
     let blockers = match level.as_deref() {
         Some(level) => occluders(&engine, level, &placed),
         None => Vec::new(),

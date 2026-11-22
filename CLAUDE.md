@@ -1336,7 +1336,7 @@ loaded.
 
 A `Light` component is a point or spot light in lumens with a range in
 metres, 3D only. `lights::sync_lights` reconciles each actor's light against
-`engine.attached`, the authored spec and `engine.light_intensity` (what
+`engine.attached`, the authored spec and `LightsRun::intensity` (what
 `set my light to` wrote this run), and hangs it on a child entity, since
 batching hides a merged actor through an empty `RenderLayers`.
 
@@ -1661,12 +1661,12 @@ last `ShadowSettings::fade` of the distance (a shader constant, so changing
 it recompiles). Each patch is exact text against the pinned Bevy; one that
 no longer matches reports an error and leaves Bevy's shader alone. Per-light contact shadows,
 PCSS and biases ride the same spec; `turn my light's shadows` lands in
-`engine.light_shadows`, which `wanted` lays over the authored spec, and `casts
+`LightsRun::shadows`, which `wanted` lays over the authored spec, and `casts
 shadows?` reads `ActorSense::casts_shadows`.
 
 `Lighting::shadows` (`ShadowSettings`) is the sun and camera half, applied by
 `shadows.rs`: cascades (count, first split, blend, distance - which `set
-shadow distance` overrides as `engine.shadow_distance`), normal bias, a PCSS
+shadow distance` overrides as `LightsRun::shadow_distance`), normal bias, a PCSS
 sun size, the fade, the camera's `ShadowFilteringMethod` and `ContactShadows`
 (16 steps).
 `Lighting::sun_cookie` is a tiled `DirectionalLightTexture` whose tile size is
@@ -2297,7 +2297,7 @@ resources and drops it on the `WorldRebuilt` message (written by
 `rebuild_world`), and reads the run through `RunState` (synced from `Engine`
 at the head of every tick and frame) and the document through
 `SceneDocument`; `module::forget_on_rebuild::<T>` resets a run-override
-resource on that message (`RayTracingRun`, `HdrRun`, `space::SkyRun` for `set aurora`/`set fog density`, `lightning::StormRun`). `wind::WindModule` is the first: `WindRun` holds `set wind`,
+resource on that message (`RayTracingRun`, `HdrRun`, `space::SkyRun` for `set aurora`/`set fog density`, `lightning::StormRun`, `lights::LightsRun` for light intensity, light shadows, shadow distance and `capture probes`). `wind::WindModule` is the first: `WindRun` holds `set wind`,
 and it reads the weather blend through `director::WeatherNow` and volume
 specs through `volumes::LiveVolumes`, both published on the fixed tick
 before it, so it takes no `Engine` at all.

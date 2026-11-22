@@ -68,27 +68,42 @@ const POINT_MASK_SIZE: u32 = 64;
 /// render bind-group cache. Only a known-broken GPU loses the effect.
 const MALI_VENDOR: u32 = 0x13B5;
 
+/// What the light blocks set this run, over what the editor authored.
+/// Forgotten on a rebuild.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct LightsRun {
+    /// Actor id -> `set my light to`, in the light's own unit.
+    pub intensity: HashMap<String, f32>,
+    /// Actor id -> whether `turn my light's shadows` left it casting.
+    pub shadows: HashMap<String, bool>,
+    /// `set shadow distance`, over the project's.
+    pub shadow_distance: Option<f32>,
+    /// A `capture probes` waiting for the probes to pick it up.
+    pub capture_probes: bool,
+}
+
 /// `set my light to`, `turn my light's shadows`, `set shadow distance` and
-/// `capture probes` for the rest of the run. Cleared with everything else
-/// live on a rebuild.
-pub fn apply_light_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engine>) {
+/// `capture probes` for the rest of the run.
+pub fn apply_light_effects(
+    effects: Res<PendingEffects>,
+    engine: NonSend<Engine>,
+    mut run: ResMut<LightsRun>,
+) {
     if !engine.running || engine.paused {
         return;
     }
     for effect in &effects.0 {
         match effect {
             Effect::SetLightIntensity { actor, intensity } => {
-                engine
-                    .light_intensity
-                    .insert(actor.clone(), intensity.max(0.0));
+                run.intensity.insert(actor.clone(), intensity.max(0.0));
             }
             Effect::SetLightShadows { actor, enabled } => {
-                engine.light_shadows.insert(actor.clone(), *enabled);
+                run.shadows.insert(actor.clone(), *enabled);
             }
             Effect::SetShadowDistance { distance } if distance.is_finite() => {
-                engine.shadow_distance = Some(distance.clamp(1.0, 10_000.0));
+                run.shadow_distance = Some(distance.clamp(1.0, 10_000.0));
             }
-            Effect::CaptureProbes => engine.capture_probes = true,
+            Effect::CaptureProbes => run.capture_probes = true,
             _ => {}
         }
     }
@@ -97,16 +112,16 @@ pub fn apply_light_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<
 /// The light each actor should be carrying right now, from what it holds
 /// (`engine.attached`, so attach and detach work mid-run), what the editor
 /// authored and what the blocks have set it to since.
-fn wanted(engine: &Engine, actor: &str) -> Option<LightSpec> {
+fn wanted(engine: &Engine, run: &LightsRun, actor: &str) -> Option<LightSpec> {
     if !engine.has_component(actor, "Light") {
         return None;
     }
     let mut spec = engine.actor(actor)?.components.light()?.clone();
-    if let Some(intensity) = engine.light_intensity.get(actor) {
+    if let Some(intensity) = run.intensity.get(actor) {
         // The block speaks the light's own unit.
         spec.intensity = *intensity;
     }
-    if let Some(shadows) = engine.light_shadows.get(actor) {
+    if let Some(shadows) = run.shadows.get(actor) {
         spec.shadows = *shadows;
     }
     // Mali never gets point or spot shadow maps (see `no_point_shadow_maps`):
@@ -119,14 +134,15 @@ fn wanted(engine: &Engine, actor: &str) -> Option<LightSpec> {
 
 /// Whether an actor's light casts shadow maps right now. What `casts
 /// shadows?` reads; a 2D world has no lights.
-pub fn casts_shadows(engine: &Engine, actor: &str) -> bool {
-    engine.project.world.mode.is_3d() && wanted(engine, actor).is_some_and(|spec| spec.shadows)
+pub fn casts_shadows(engine: &Engine, run: &LightsRun, actor: &str) -> bool {
+    engine.project.world.mode.is_3d() && wanted(engine, run, actor).is_some_and(|spec| spec.shadows)
 }
 
 /// Builds, rebuilds or takes away each actor's light child to match.
 pub fn sync_lights(
     mut commands: Commands,
     mut engine: NonSendMut<Engine>,
+    run: Res<LightsRun>,
     adapter: Option<Res<RenderAdapter>>,
     mut warned_mali: Local<bool>,
     mut masks: ResMut<LightMasks>,
@@ -150,7 +166,7 @@ pub fn sync_lights(
         );
     }
     for (entity, id, lit) in &actors {
-        let spec = wanted(&engine, &id.0);
+        let spec = wanted(&engine, &run, &id.0);
         if spec.as_ref() == lit.map(|lit| &lit.spec) {
             continue;
         }
@@ -505,6 +521,7 @@ mod tests {
         app.insert_engine(engine)
             .init_resource::<PendingEffects>()
             .init_resource::<LightMasks>()
+            .init_resource::<LightsRun>()
             .init_resource::<Assets<Image>>()
             .add_systems(Update, (apply_light_effects, sync_lights).chain());
         let actor = app.world_mut().spawn(ActorId(id)).id();
@@ -613,7 +630,7 @@ mod tests {
         assert_eq!(twin.range, rect.range);
         let engine = app.world().non_send::<Engine>();
         let id = engine.project.actors[0].id.clone();
-        assert!(casts_shadows(engine, &id));
+        assert!(casts_shadows(engine, app.world().resource(), &id));
 
         let (mut app, _) = app_with_lamp(LightSpec {
             width: 2.0,
@@ -638,7 +655,11 @@ mod tests {
         let id = app.world().get::<ActorId>(actor).unwrap().0.clone();
         app.world_mut().non_send_mut::<Engine>().running = true;
         app.update();
-        assert!(casts_shadows(app.world().non_send::<Engine>(), &id));
+        assert!(casts_shadows(
+            app.world().non_send::<Engine>(),
+            app.world().resource(),
+            &id
+        ));
         push(
             &mut app,
             Effect::SetLightShadows {
@@ -657,9 +678,10 @@ mod tests {
                 .shadow_maps_enabled
         );
         let engine = app.world().non_send::<Engine>();
-        assert!(!casts_shadows(engine, &id));
-        assert_eq!(engine.shadow_distance, Some(40.0));
-        assert!(engine.capture_probes);
+        let run = app.world().resource::<LightsRun>();
+        assert!(!casts_shadows(engine, run, &id));
+        assert_eq!(run.shadow_distance, Some(40.0));
+        assert!(run.capture_probes);
     }
 
     /// A downlight: full straight down, half at 45 degrees, none sideways.

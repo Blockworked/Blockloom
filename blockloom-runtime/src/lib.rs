@@ -459,7 +459,12 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         bevy::audio::SpatialScale::new_2d(1.0 / 500.0)
     }));
     app.init_resource::<model::ModelCache>();
-    app.init_resource::<lights::LightMasks>();
+    app.init_resource::<lights::LightMasks>()
+        .init_resource::<lights::LightsRun>()
+        .add_systems(
+            Update,
+            module::forget_on_rebuild::<lights::LightsRun>.after(world::rebuild_world),
+        );
     // Physics Debug view: Rapier's gizmo renderer, off until the scene view asks.
     app.add_plugins(bevy_rapier2d::render::RapierDebugRenderPlugin::default().disabled());
     app.add_plugins(bevy_rapier3d::render::RapierDebugRenderPlugin::default().disabled());

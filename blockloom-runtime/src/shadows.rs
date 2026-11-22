@@ -41,6 +41,7 @@ pub struct SunCookie {
 pub fn apply_shadows(
     mut commands: Commands,
     engine: NonSend<Engine>,
+    run: Option<Res<crate::lights::LightsRun>>,
     scaling: Option<Res<crate::quality::Scaling>>,
     mut images: ResMut<Assets<Image>>,
     mut applied: Local<Option<Applied>>,
@@ -59,7 +60,9 @@ pub fn apply_shadows(
     let lighting = &engine.project.world.lighting;
     let settings = lighting.shadows.clone().sanitized();
     let now = Applied {
-        distance: engine.shadow_distance.unwrap_or(settings.distance)
+        distance: run
+            .and_then(|run| run.shadow_distance)
+            .unwrap_or(settings.distance)
             * scaling
                 .as_ref()
                 .map_or(1.0, |s| s.budget().distance.min(1.0)),
@@ -289,7 +292,10 @@ mod tests {
     fn a_block_shortens_the_shadows_for_the_run() {
         let mut app = app();
         app.update();
-        app.world_mut().non_send_mut::<Engine>().shadow_distance = Some(25.0);
+        app.world_mut().insert_resource(crate::lights::LightsRun {
+            shadow_distance: Some(25.0),
+            ..Default::default()
+        });
         app.update();
         let sun = sun(&mut app);
         let cascades = app.world().get::<CascadeShadowConfig>(sun).unwrap();
