@@ -524,17 +524,21 @@ mod common;
 
 #[test]
 fn streamed_gpu_fracture_checkpoints_match_in_the_portable_player() {
-    use blockloom_plugin_api::manifest::PluginManifest;
+    use blockloom_plugin_api::manifest::PortableEntry;
     use blockloom_plugin_host::portable::PortableModule;
     let Some(wasm) = common::build_wasm() else {
         return;
     };
-    let manifest: PluginManifest =
-        serde_json::from_str(include_str!("../package/plugin.json")).unwrap();
+    // The package ships as an engine plugin; the crate's wasm form is held to it.
+    let entry = PortableEntry {
+        module: "portable/voxel.wasm".into(),
+        memory_limit_mib: 256,
+        call_limit_ms: 10000,
+    };
     let store = Arc::new(MemoryStore::new());
     let mut portable = PortableModule::load(
         &std::fs::read(wasm).unwrap(),
-        manifest.runtime.portable.as_ref().unwrap(),
+        &entry,
         BTreeSet::from([Capability::ProjectStorage, Capability::GpuCompute]),
         HostServices::new("0.0.1")
             .with_save_store(store)

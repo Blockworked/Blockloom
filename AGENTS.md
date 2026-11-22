@@ -1175,7 +1175,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   sources with the `engine` feature, where `engine::VoxelModule` links the
   plugin's `export_plugin!` entry. Its `world`
   resource (preset `island|caves|flat|empty`, seed, size, voxel size, origin,
-  solid, palette colors/emission) is read at `world.start`; `grid.rs` holds
+  solid, palette colors/emission) is read at `world.start`, its origin measured
+  from a Voxel world anchor (`voxel_world`) actor's start when one exists; `grid.rs` holds
   32-cell sections of `u8` material ids with exact logical bounds and full-height
   32 by 32 columns (air sections unallocated, a boundary edit
   dirties the neighbour), `terrain.rs` generates from hashes of each cell's own
@@ -1199,7 +1200,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   collision (including actual shaped faces). Cube mode remains the default.
   Runtime edits can persist through `save_voxels` or `persistent: true`, using
   player storage and versioned compressed checkpoints. `streamed: true` uses
-  bounded section residency around invoker components or `stream_voxels`, with
+  bounded section residency around Voxel viewer components (`viewer`, formerly
+  `invoker`) or `stream_voxels`, with
   horizontal column radius, vertical radius and a dense-cell byte budget; canonical
   queries and sparse edits survive eviction. `gpu_meshing: true` adds GPU vertex
   generation with CPU collision and fallback meshes. `fracture_voxels` detaches

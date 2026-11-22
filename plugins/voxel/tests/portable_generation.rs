@@ -1,19 +1,24 @@
 mod common;
-use blockloom_plugin_api::manifest::{Capability, PluginManifest};
+use blockloom_plugin_api::manifest::Capability;
 use blockloom_plugin_host::{
     portable::PortableModule, services::HostServices, storage::MemoryStore,
 };
 use std::{collections::BTreeSet, sync::Arc};
 #[test]
 fn large_infinite_world_fits_portable_call_budget() {
-    let manifest: PluginManifest =
-        serde_json::from_str(include_str!("../package/plugin.json")).unwrap();
     let Some(wasm) = common::build_wasm() else {
         return;
     };
+    // The crate still builds as a portable module, though the package ships
+    // as an engine plugin; the budget holds for that form too.
+    let entry = blockloom_plugin_api::manifest::PortableEntry {
+        module: "portable/voxel.wasm".into(),
+        memory_limit_mib: 256,
+        call_limit_ms: 10000,
+    };
     let mut module = PortableModule::load(
         &std::fs::read(wasm).unwrap(),
-        manifest.runtime.portable.as_ref().unwrap(),
+        &entry,
         BTreeSet::from([Capability::ProjectStorage, Capability::GpuCompute]),
         HostServices::new("0.0.1")
             .with_save_store(Arc::new(MemoryStore::new()))

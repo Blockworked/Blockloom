@@ -1251,6 +1251,12 @@ struct Voxel {
     lod_generation: u64,
 }
 
+/// A record that streams the world around its actor: a Voxel viewer, or an
+/// invoker (its old name).
+fn is_viewer(record: &Value) -> bool {
+    record["type_id"] == "viewer" || record["type_id"] == "invoker"
+}
+
 fn int(args: &Value, key: &str) -> Result<i32, Error> {
     args[key]
         .as_f64()
@@ -1302,11 +1308,24 @@ impl Voxel {
             .and_then(|all| all.iter().find(|r| r["type_id"] == "world"))
             .map(|r| r["payload"].clone())
             .unwrap_or(Value::Null);
-        let settings: Settings = if payload.is_null() {
+        let mut settings: Settings = if payload.is_null() {
             Settings::default()
         } else {
             serde_json_from(payload).map_err(|e| Error::new(format!("the world resource: {e}")))?
         };
+        // A Voxel world component hangs the world off its actor: the origin
+        // is then measured from where that actor starts.
+        if let Some(anchor) = args["records"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|r| r["type_id"] == "voxel_world")
+            .and_then(|r| serde_json_from::<[f64; 3]>(r["position"].clone()).ok())
+        {
+            for (o, a) in settings.origin.iter_mut().zip(anchor) {
+                *o += a;
+            }
+        }
         let mut world = World::new(&settings).map_err(Error::new)?;
         world.lod_generation = self.lod_generation;
         world
@@ -1327,7 +1346,7 @@ impl Voxel {
             .as_array()
             .map(|r| {
                 r.iter()
-                    .filter(|r| r["type_id"] == "invoker")
+                    .filter(|r| is_viewer(r))
                     .filter_map(|r| r["actor"].as_str().map(str::to_string))
                     .collect()
             })
@@ -1357,7 +1376,7 @@ impl Voxel {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter(|r| r["type_id"] == "invoker")
+                .filter(|r| is_viewer(r))
                 .filter_map(|r| serde_json_from::<[f64; 3]>(r["position"].clone()).ok())
                 .map(|point| world.invoker_section(point))
                 .collect();

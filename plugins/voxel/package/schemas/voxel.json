@@ -2802,8 +2802,18 @@
   ],
   "components": [
     {
+      "type_id": "voxel_world",
+      "display_name": "Voxel world anchor",
+      "fields": []
+    },
+    {
+      "type_id": "viewer",
+      "display_name": "Voxel viewer",
+      "fields": []
+    },
+    {
       "type_id": "invoker",
-      "display_name": "Voxel invoker",
+      "display_name": "Voxel invoker (old name of Voxel viewer)",
       "fields": []
     }
   ]

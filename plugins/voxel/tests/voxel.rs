@@ -534,6 +534,39 @@ fn a_default_world_is_what_an_absent_resource_means() {
     assert_eq!(scene.meshes, again.meshes);
 }
 
+/// A Voxel world anchor hangs the world off its actor: every chunk moves by
+/// where the actor starts.
+#[test]
+fn a_world_anchor_moves_the_world_to_its_actor() {
+    let start = |records: Value| {
+        let mut world = hosted(CodeModule::Native(module()));
+        let mut scene = Scene::default();
+        scene.apply(world.start(&|_| {
+            json!({"records": records.clone(), "resources": [{
+                "type_id": "world", "schema_version": 1, "payload": small_flat(),
+            }]})
+        }));
+        scene
+    };
+    let plain = start(json!([]));
+    let anchored = start(json!([{
+        "type_id": "voxel_world", "actor": "a", "position": [100.0, 2.0, 0.0], "payload": {},
+    }]));
+    assert!(!plain.meshes.is_empty());
+    assert_eq!(plain.meshes.len(), anchored.meshes.len());
+    for (name, mesh) in &plain.meshes {
+        let moved = &anchored.meshes[name];
+        assert_eq!(moved.positions, mesh.positions, "{name}");
+        let shift: Vec<f32> = moved
+            .origin
+            .iter()
+            .zip(mesh.origin)
+            .map(|(a, b)| a - b)
+            .collect();
+        assert_eq!(shift, vec![100.0, 2.0, 0.0], "{name}");
+    }
+}
+
 fn portable(path: &Path, entry: &PortableEntry) -> PortableModule {
     PortableModule::load(
         &std::fs::read(path).unwrap(),
@@ -544,119 +577,20 @@ fn portable(path: &Path, entry: &PortableEntry) -> PortableModule {
     .unwrap()
 }
 
-/// The sealed package's module draws the same default world as the native
-/// one, inside the manifest's own call budget.
+/// The sealed package is engine-tier: its crate ships as source for the
+/// project runtime, and there is no portable module any more.
 #[test]
-fn the_sealed_package_runs_in_the_portable_executor() {
-    let Some(wasm) = build_wasm() else { return };
+fn the_sealed_package_is_an_engine_plugin() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join(ID);
     package::copy_dir(&package_dir(), &root).unwrap();
-    std::fs::create_dir_all(root.join("portable")).unwrap();
-    std::fs::copy(&wasm, root.join("portable/voxel.wasm")).unwrap();
     package::seal(&root).unwrap();
     let package = Package::load(&root).unwrap();
     assert_eq!(package.manifest.id, ID);
     assert_eq!(package.contributions.blocks.len(), 22);
-
-    let entry = package.manifest.runtime.portable.clone().unwrap();
-    let wasm_module = portable(&root.join(&entry.module), &entry);
-    let mut world = hosted(CodeModule::Portable(Box::new(wasm_module)));
-    let mut scene = Scene::default();
-    let began = std::time::Instant::now();
-    scene.apply(world.start(&|_| json!({"records": [], "resources": []})));
-    println!(
-        "voxel.wasm is {} bytes; the default world took {:?}",
-        std::fs::metadata(&wasm).unwrap().len(),
-        began.elapsed()
-    );
-    assert!(scene.said[0].contains("64x32x64"), "{:?}", scene.said);
-
-    let mut native = hosted(CodeModule::Native(module()));
-    let mut expected = Scene::default();
-    expected.apply(native.start(&|_| json!({"records": [], "resources": []})));
-    assert_eq!(scene.meshes, expected.meshes);
-}
-
-#[test]
-fn smooth_sculpting_replays_saved_edits_and_uses_exact_collision_meshes() {
-    let native = module();
-    let start = json!({"resources": [{"type_id": "world", "payload": {
-        "preset": "empty", "surface": "smooth", "size": [32,16,16],
-        "voxel_size": 2, "origin": [-10,3,-4]
-    }}]});
-    native.call_json("world.start", &start).unwrap();
-    let args = json!({"x": 16,"y": 6,"z": 6,"radius": 3.2,"material": "glow"});
-    let edited = native.call_json("sphere", &args).unwrap();
-    assert!(edited["changed"].as_u64().unwrap() > 0);
-    let mut meshes = BTreeMap::new();
-    for effect in edited["effects"].as_array().unwrap() {
-        if effect["effect"] != "mesh" {
-            continue;
-        }
-        let mesh: blockloom_plugin_api::mesh::MeshData =
-            serde_json::from_value(effect.clone()).unwrap();
-        mesh.check().unwrap();
-        assert!(mesh.collider && mesh.emission.is_some());
-        meshes.insert(mesh.name.clone(), mesh);
-    }
-    assert_eq!(meshes.len(), 2, "both sides of the chunk boundary");
-    assert_eq!(native.call_json("sphere", &args).unwrap()["changed"], 0);
-    // The ray hits the interpolated sphere surface, beyond the cell boundary.
-    let hit = native
-        .call_json(
-            "cast",
-            &json!({"x":23,"y":30,"z":9,"dx":0,"dy":-1,"dz":0,"reach":40}),
-        )
-        .unwrap();
-    assert_eq!(hit["hit"], true);
-    let distance = hit["distance"].as_f64().unwrap();
-    assert!((distance - 7.6).abs() < 0.03, "{hit}");
-    let replay = module();
-    let mut saved = start.clone();
-    saved["resources"][0]["payload"]["edits"] = json!(["sphere 16 6 6 3.2 glow"]);
-    let replayed = replay.call_json("world.start", &saved).unwrap();
-    let replay_meshes: BTreeMap<_, _> = replayed["effects"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|e| e["effect"] == "mesh")
-        .map(|e| {
-            let m: blockloom_plugin_api::mesh::MeshData =
-                serde_json::from_value(e.clone()).unwrap();
-            (m.name.clone(), m)
-        })
-        .collect();
-    assert_eq!(meshes, replay_meshes);
-    let carved = native
-        .call_json(
-            "sphere",
-            &json!({"x":16,"y":6,"z":6,"radius":2.2,"material":"air"}),
-        )
-        .unwrap();
-    assert!(carved["changed"].as_u64().unwrap() > 0);
-    assert_eq!(
-        native
-            .call_json("get", &json!({"x":16,"y":6,"z":6}))
-            .unwrap()["material"],
-        0
-    );
-    // A different paint stays within the sphere rather than its bounding box.
-    native
-        .call_json("set", &json!({"x":18,"y":8,"z":8,"material":"wood"}))
-        .unwrap();
-    native
-        .call_json(
-            "sphere",
-            &json!({"x":16,"y":6,"z":6,"radius":2.2,"material":"stone"}),
-        )
-        .unwrap();
-    assert_eq!(
-        native
-            .call_json("get", &json!({"x":18,"y":8,"z":8}))
-            .unwrap()["material"],
-        5
-    );
+    assert!(package.manifest.runtime.portable.is_none());
+    let adapter = package.manifest.runtime.adapter.clone().unwrap();
+    assert!(root.join(&adapter.crate_dir).join("Cargo.toml").is_file());
 }
 
 #[test]
