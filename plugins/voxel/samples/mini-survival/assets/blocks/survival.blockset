@@ -1,0 +1,10 @@
+{"blocks": [
+  "assets/blocks/grass.blockdef",
+  "assets/blocks/dirt.blockdef",
+  "assets/blocks/sand.blockdef",
+  "assets/blocks/water.blockdef",
+  "assets/blocks/chest.blockdef",
+  "assets/blocks/wheat.blockdef",
+  "assets/blocks/torch.blockdef",
+  {"name": "planks", "id": 60, "color": "#b08850"}
+]}

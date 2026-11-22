@@ -230,6 +230,8 @@ struct World {
     visible: BTreeSet<[i32; 3]>,
     invocation: Option<(Vec<[i32; 3]>, i32, i32, usize)>,
     pending: BTreeSet<[i32; 3]>,
+    /// Chunks waiting to be lit again for a new daylight, one a frame.
+    relight: BTreeSet<[i32; 3]>,
     collision_ready: BTreeMap<[i32; 3], u64>,
     collision_needed: BTreeSet<[i32; 3]>,
     stream_frame: u64,
@@ -643,6 +645,7 @@ impl World {
             visible: BTreeSet::new(),
             invocation: None,
             pending: BTreeSet::new(),
+            relight: BTreeSet::new(),
             collision_ready: BTreeMap::new(),
             collision_needed: BTreeSet::new(),
             stream_frame: 0,
@@ -729,6 +732,22 @@ impl World {
             self.settings.random_tick_speed,
             self.settings.tick_budget,
         );
+        if self.settings.lighting && !stepped.cells.is_empty() {
+            // Crops growing and water levels moving leave light alone, so
+            // only their own chunks remesh, not everything light could reach.
+            let rules = light::LightRules::new(&self.registry, &self.palette);
+            let quiet = stepped
+                .cells
+                .iter()
+                .zip(&stepped.before)
+                .all(|(c, (old, shape))| {
+                    rules.same_light(*old, self.grid.get(*c)) && *shape == self.grid.shape_at(*c)
+                });
+            if quiet {
+                let dirty = self.grid.take_dirty();
+                self.pending.extend(dirty);
+            }
+        }
         for cell in &stepped.cells {
             self.touch(*cell, *cell);
         }
@@ -1259,6 +1278,10 @@ impl World {
             self.collision_ready.remove(chunk);
         }
         self.pending.extend(dirty);
+        self.relight.retain(|c| !self.pending.contains(c));
+        if let Some(chunk) = self.relight.pop_first() {
+            self.pending.insert(chunk);
+        }
         if self.settings.streamed {
             self.pending.retain(|c| self.visible.contains(c));
         }
@@ -2247,6 +2270,29 @@ impl Plugin for Voxel {
                 Ok(json!({"effects":effects}))
             }
             "set" => self.set(&args),
+            "daylight" => {
+                let level = number(&args, "level")?.clamp(0.0, 1.0);
+                let world = self.world()?;
+                // Faces bake sky light, so only a visible step remeshes.
+                let step = |d: f64| (d * 15.0).round() as i32;
+                let relight =
+                    world.settings.lighting && step(level) != step(world.settings.daylight);
+                world.settings.daylight = level;
+                // Relighting everything at once would stall a frame, so the
+                // stream hook takes one chunk a frame.
+                if relight {
+                    if world.settings.streamed {
+                        world.relight.extend(&world.visible);
+                    } else {
+                        let n = world.grid.section_counts();
+                        world.relight.extend((0..n[0]).flat_map(|x| {
+                            (0..n[1]).flat_map(move |y| (0..n[2]).map(move |z| [x, y, z]))
+                        }));
+                    }
+                }
+                let effects = world.flush();
+                Ok(json!({"effects":effects,"daylight":level,"relighting":world.relight.len()}))
+            }
             "hook.tick" => {
                 let world = self.world()?;
                 if world.preview {
@@ -2463,6 +2509,7 @@ impl Plugin for Voxel {
                     "visual_lod_active":world.lod_publisher.active,
                     "visual_lod_tiles":world.lod_publisher.tiles,
                     "visual_lod_pending":world.lod_publisher.pending(),
+                    "relighting":world.relight.len(),
                     "visual_lod_revision":world.lod_publisher.revision,
                     "visual_lod_generation":world.lod_publisher.generation,
                     "visual_lod_word_limit":lod_publish::MAX_CUT_WORDS,

@@ -27,7 +27,7 @@ cells, since a cell depends only on its coordinates, the seed and the graph.
            {"thickness": 1, "material": "grass"},
            {"thickness": 3, "material": "dirt"}]},
          "stone"]},
-       "empty": {"type": "horizontal", "base": "sea", "top": 0, "material": "water"}},
+       "empty": {"type": "horizontal", "base": "sea", "top": 1, "material": "water"}},
      "props": [
        {"positions": {"type": "triangular", "spacing": 9, "jitter": 0.6, "seed": "trees"},
         "on": ["grass"], "chance": 0.7,
@@ -86,7 +86,7 @@ A provider is a block name (`air` and `empty` are air) or typed:
 | `solidity` | `solid`, `empty` |
 | `depth` | `layers` of `{thickness, material}` counted down from the surface; `min_space` (open cells above); `from: "ceiling"` counts up |
 | `range` | `density`, `ranges` of `{from, to, material}` |
-| `horizontal` | `bottom`, `top` (from `base`, a constant), `material` |
+| `horizontal` | `bottom` up to but not including `top`, both counted from `base` (a constant), `material` |
 | `weighted` | `seed`, `entries` of `{weight, material}` |
 
 ## Props

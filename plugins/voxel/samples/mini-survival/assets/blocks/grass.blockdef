@@ -1,0 +1,2 @@
+{"name": "grass", "color": "#5a9a3a",
+ "random": [{"becomes": "dirt", "when": "covered", "chance": 0.5}]}

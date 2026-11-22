@@ -1,0 +1,2 @@
+{"name": "water", "id": 20, "color": "#3a6acc", "layer": "translucent", "opacity": 0.6,
+ "fluid": {"spread": 7, "rate": 5}}

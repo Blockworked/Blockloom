@@ -49,6 +49,11 @@ impl LightRules {
         id == 0 || self.clear.contains(&id)
     }
 
+    /// Whether swapping one block for the other leaves every light level alone.
+    pub fn same_light(&self, a: Block, b: Block) -> bool {
+        self.is_clear(a) == self.is_clear(b) && self.emit.get(&a) == self.emit.get(&b)
+    }
+
     fn blocks(&self, grid: &Grid, cell: [i32; 3], id: Block) -> bool {
         !self.is_clear(id) && grid.shape_at(cell) == Shape::Cube
     }

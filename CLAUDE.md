@@ -1266,7 +1266,10 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   else 15 for a glowing palette entry) and sky light 0 to 15 over each chunk
   plus a 16-cell margin, so a face's shade is exact; a face takes the light of
   the cell it faces, `daylight` dims only the sky, and an edit remeshes the
-  neighbouring chunks and every chunk below them. Cutout and translucent
+  neighbouring chunks and every chunk below them (a block tick that changes
+  no light, such as growth or water levels, remeshes only its own chunk).
+  `set_daylight` (op `daylight`) relights at run time one chunk a stream
+  frame, and only when the 0-15 step changes. Cutout and translucent
   blocks let light and hidden faces through and mesh as their own groups with
   `MeshData.blend` (translucent vertex alpha is the definition's `opacity`,
   0.6 by default); GPU meshing stays opaque only. `texture_arrays` draws
@@ -1290,7 +1293,10 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   terrain density tree (positive is solid; `exports` copied in by `import`),
   a material provider (`solidity`, `queue`, `depth`, `range`, ...) and props
   on the surface; y-independent nodes are cached per column, columns per
-  graph, and `Grid::set_graph` samples it for streamed pages. Saved edits are the `world` resource's
+  graph, and `Grid::set_graph` samples it for streamed pages.
+  `plugins/voxel/samples/mini-survival` is the reference sample (a graph
+  world, a survival block set, `setup.py` for a first-person project);
+  `tests/sample.rs` plays it and holds its release budget. Saved edits are the `world` resource's
   `edits` lines (`set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`,
   `sphere X Y Z radius material`), applied in order over the generated terrain
   at `world.start` (a bad line is reported by number and skipped), so the scene

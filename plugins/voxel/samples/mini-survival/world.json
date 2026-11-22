@@ -1,0 +1,11 @@
+{
+  "preset": "graph",
+  "worldgen_file": "assets/worlds/survival.blockgen",
+  "block_set": "assets/blocks/survival.blockset",
+  "seed": 7,
+  "size": [96, 48, 96],
+  "lighting": true,
+  "daylight": 1,
+  "ticks": true,
+  "random_tick_speed": 8
+}

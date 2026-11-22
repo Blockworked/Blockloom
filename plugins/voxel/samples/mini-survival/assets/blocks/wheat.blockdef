@@ -1,0 +1,4 @@
+{"name": "wheat", "id": 100, "color": "#9ac040", "layer": "cutout", "collide": false,
+ "properties": {"age": ["0", "1", "2", "3"]},
+ "variants": [{"when": {"age": "3"}, "color": "#d8b840"}],
+ "random": [{"grow": "age", "chance": 0.3, "when": "open"}]}

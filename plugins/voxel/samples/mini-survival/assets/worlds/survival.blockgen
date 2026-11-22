@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "constants": {"base": 22, "sea": 20},
+  "exports": {
+    "hills": {"type": "noise2d", "scale": 48, "octaves": 3, "seed": "hills"},
+    "ground": {"type": "curve", "points": [[-16, 16], [16, -16]],
+      "input": {"type": "base_height", "name": "base"}}
+  },
+  "biome_map": {"type": "noise2d", "scale": 160, "octaves": 2, "seed": "biomes"},
+  "default_biome": "meadow",
+  "transition": 8,
+  "biomes": [
+    {"name": "meadow", "min": -1, "max": 0.25,
+     "terrain": {"type": "sum", "inputs": [
+       {"type": "multiply", "inputs": [{"type": "import", "name": "hills"}, 6]},
+       {"type": "import", "name": "ground"}]},
+     "materials": {"type": "solidity",
+       "solid": {"type": "queue", "queue": [
+         {"type": "depth", "layers": [
+           {"thickness": 1, "material": "grass"},
+           {"thickness": 3, "material": "dirt"}]},
+         "stone"]},
+       "empty": {"type": "horizontal", "base": "sea", "top": 1, "material": "water"}},
+     "props": [
+       {"positions": {"type": "triangular", "spacing": 11, "jitter": 0.6, "seed": "trees"},
+        "on": ["grass"], "chance": 0.6,
+        "prop": {"type": "tree", "trunk": "wood", "leaves": "leaves", "height": [4, 6]}},
+       {"positions": {"type": "grid", "spacing": 5, "jitter": 0.8, "seed": "wheat"},
+        "on": ["grass"], "chance": 0.15,
+        "prop": {"type": "column", "material": "wheat", "height": [1, 1]}}]},
+    {"name": "dunes", "min": 0.25, "max": 1,
+     "terrain": {"type": "sum", "inputs": [
+       {"type": "multiply", "inputs": [{"type": "import", "name": "hills"}, 3]},
+       {"type": "import", "name": "ground"}]},
+     "materials": {"type": "solidity",
+       "solid": {"type": "queue", "queue": [
+         {"type": "depth", "layers": [{"thickness": 4, "material": "sand"}]},
+         "stone"]},
+       "empty": {"type": "horizontal", "base": "sea", "top": 1, "material": "water"}}}
+  ]
+}

@@ -2160,6 +2160,23 @@
         "do": "module",
         "op": "ticks"
       }
+    },
+    {
+      "name": "set_daylight",
+      "summary": "Set how bright the sky is, 0 (night) to 1, while the world runs.",
+      "args": [
+        {
+          "name": "level",
+          "type": "number",
+          "min": 0,
+          "max": 1,
+          "default": 1
+        }
+      ],
+      "action": {
+        "do": "module",
+        "op": "daylight"
+      }
     }
   ],
   "tools": [
@@ -3271,6 +3288,20 @@
         }
       ],
       "event": "entity_broken"
+    },
+    {
+      "type_id": "set_daylight",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "set voxel daylight to {level}",
+      "slots": [
+        {
+          "name": "level",
+          "type": "number",
+          "default": 1
+        }
+      ],
+      "command": "set_daylight"
     }
   ],
   "kernels": [

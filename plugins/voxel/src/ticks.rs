@@ -235,6 +235,8 @@ pub struct Ticks {
 #[derive(Default)]
 pub struct Stepped {
     pub cells: Vec<[i32; 3]>,
+    /// What each changed cell held before, and its shape then.
+    pub before: Vec<(Block, crate::shape::Shape)>,
     pub dropped: usize,
 }
 
@@ -324,8 +326,10 @@ impl Ticks {
         self.now += 1;
         let mut out = Stepped::default();
         let mut set = |ticks: &mut Ticks, grid: &mut Grid, cell, block, out: &mut Stepped| {
+            let old = (grid.get(cell), grid.shape_at(cell));
             if grid.set(cell, block) {
                 out.cells.push(cell);
+                out.before.push(old);
                 ticks.around(rules, grid, cell);
             }
         };

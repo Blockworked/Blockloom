@@ -138,7 +138,7 @@ fn the_package_schema_is_valid_and_its_blocks_resolve() {
     contributions.check_definition().unwrap();
     assert_eq!(contributions.resources.len(), 1);
     assert_eq!(contributions.tools.len(), 4);
-    assert_eq!(blocks().len(), 28);
+    assert_eq!(blocks().len(), 29);
     // Every statement and reporter has the op it names.
     let ops: BTreeSet<_> = blocks().into_iter().map(|b| b.op).collect();
     for op in [
@@ -159,6 +159,7 @@ fn the_package_schema_is_valid_and_its_blocks_resolve() {
         "set_block_data",
         "block_data",
         "last_broken_entity",
+        "daylight",
     ] {
         assert!(ops.contains(op), "{op}");
     }
@@ -602,7 +603,7 @@ fn the_sealed_package_is_an_engine_plugin() {
     package::seal(&root).unwrap();
     let package = Package::load(&root).unwrap();
     assert_eq!(package.manifest.id, ID);
-    assert_eq!(package.contributions.blocks.len(), 29);
+    assert_eq!(package.contributions.blocks.len(), 30);
     assert!(package.manifest.runtime.portable.is_none());
     let adapter = package.manifest.runtime.adapter.clone().unwrap();
     assert!(root.join(&adapter.crate_dir).join("Cargo.toml").is_file());
