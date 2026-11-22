@@ -167,7 +167,7 @@ always open.
 | `rng.unit`, `rng.range` | deterministic numbers from `{seed, index}` (`count` for a batch) |
 | `storage.*` | project blobs: `read`, `exists`, `write`, `delete`, `list`, `commit` (atomic, several ops), `put`/`get` (content addressed) |
 | `save.*` | the same verbs over player saves, kept per player, not in the project |
-| `assets.read` | `{path, as?}` reads a file under `assets/` (read only): `{found, data}` base64, or `text` with `as: "text"` |
+| `assets.read` | `{path, as?}` reads a file under `assets/` (read only): `{found, data}` base64, or `text` with `as: "text"`. A scene-view preview starts again when a file it read changes |
 | `diag.count`, `gauge`, `time`, `marker` | your own metrics, shown in the Plugin Manager and the profiler |
 | `jobs.start`, `status`, `cancel`, `take`, `list` | background work (below) |
 | `physics.ray`, `overlap_point`, `overlap_sphere` | queries over the world's colliders (a run or a hosted preview) |

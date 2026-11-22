@@ -2,7 +2,7 @@
   "format": 1,
   "id": "com.blockworked.voxel",
   "name": "Voxel",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Infinite procedural worlds with editable noise, biomes and modular features, a JSON block registry with textures and custom models, chunk-stepped render distance with far LOD and pre-gen, and budgeted chunk generation. An engine-tier plugin linked into the project's runtime.",
   "license": "MIT",
   "engine": ">=0.0.1",
@@ -16,7 +16,10 @@
     }
   },
   "editor": {
-    "preview": true
+    "preview": true,
+    "modules": [
+      "editor/BlockTypes.qml"
+    ]
   },
   "contributions": [
     "schemas/voxel.json"
@@ -24,6 +27,7 @@
   "capabilities": [
     "native-execution",
     "project-storage",
-    "gpu-compute"
+    "gpu-compute",
+    "trusted-editor"
   ]
 }

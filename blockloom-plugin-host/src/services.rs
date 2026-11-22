@@ -32,6 +32,7 @@ pub struct HostServices {
     project: Option<Arc<dyn BlobStore>>,
     saves: Option<Arc<dyn BlobStore>>,
     assets: Option<std::path::PathBuf>,
+    reads: AssetReads,
     limits: StoreLimits,
     providers: Vec<Arc<dyn ServiceProvider>>,
     pub diagnostics: Arc<Diagnostics>,
@@ -46,6 +47,7 @@ impl HostServices {
             project: None,
             saves: None,
             assets: None,
+            reads: AssetReads::default(),
             limits: StoreLimits::default(),
             providers: Vec::new(),
             diagnostics: Arc::new(Diagnostics::default()),
@@ -69,6 +71,11 @@ impl HostServices {
     pub fn with_assets(mut self, folder: std::path::PathBuf) -> Self {
         self.assets = Some(folder);
         self
+    }
+
+    /// The files `assets.read` has handed over, so a host can tell when one changed.
+    pub fn asset_reads(&self) -> AssetReads {
+        self.reads.clone()
     }
 
     pub fn with_limits(mut self, limits: StoreLimits) -> Self {
@@ -129,7 +136,7 @@ impl HostServices {
                 &self.limits,
             ),
             "diag" => diag(&self.diagnostics, plugin, verb, input),
-            "assets" => assets(self.assets.as_deref(), verb, input),
+            "assets" => assets(self.assets.as_deref(), &self.reads, verb, input),
             "jobs" => return crate::jobs::call(&self.jobs, plugin, verb, input),
             _ => {
                 return self
@@ -175,7 +182,12 @@ const MAX_ASSET_BYTES: u64 = 256 * 1024 * 1024;
 
 /// `assets.read {path, as?}`: a file under the project's `assets/`, through
 /// the package file reader so a web or Android game reads its own copy.
-fn assets(folder: Option<&std::path::Path>, verb: &str, input: &Value) -> Result<Value, String> {
+fn assets(
+    folder: Option<&std::path::Path>,
+    reads: &AssetReads,
+    verb: &str,
+    input: &Value,
+) -> Result<Value, String> {
     if verb != "read" {
         return Err(UNKNOWN.to_string());
     }
@@ -190,6 +202,7 @@ fn assets(folder: Option<&std::path::Path>, verb: &str, input: &Value) -> Result
     if !plain || !path.starts_with("assets/") {
         return Err(format!("{path} is not a path under assets/"));
     }
+    reads.note(&folder.join(path));
     let data = match crate::files::read(&folder.join(path)) {
         Ok(data) => data,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(json!({"found": false})),
@@ -202,6 +215,36 @@ fn assets(folder: Option<&std::path::Path>, verb: &str, input: &Value) -> Result
         &data,
         input.get("as").and_then(Value::as_str) == Some("text"),
     )
+}
+
+/// Each file `assets.read` was asked for, with its size and change time then
+/// (`None` while missing).
+#[derive(Clone, Default)]
+pub struct AssetReads(Arc<Mutex<std::collections::BTreeMap<std::path::PathBuf, Option<Stamp>>>>);
+
+type Stamp = (u64, std::time::SystemTime);
+
+fn stamp(path: &std::path::Path) -> Option<Stamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()?))
+}
+
+impl AssetReads {
+    fn note(&self, path: &std::path::Path) {
+        if let Ok(mut reads) = self.0.lock() {
+            reads
+                .entry(path.to_path_buf())
+                .or_insert_with(|| stamp(path));
+        }
+    }
+
+    /// Whether any file read since has been written, made or removed.
+    pub fn changed(&self) -> bool {
+        self.0
+            .lock()
+            .map(|reads| reads.iter().any(|(path, was)| stamp(path) != *was))
+            .unwrap_or(false)
+    }
 }
 
 // ─── rng ────────────────────────────────────────────────────────────────────
@@ -460,6 +503,11 @@ mod tests {
         assert_eq!(read("assets/worlds/b.txt").unwrap()["found"], false);
         assert!(read("project.blockloom").is_err());
         assert!(read("assets/../project.blockloom").is_err());
+        // Reads are remembered, so a host can tell when a read file changed.
+        let reads = s.asset_reads();
+        assert!(!reads.changed());
+        std::fs::write(dir.path().join("assets/worlds/b.txt"), "new").unwrap();
+        assert!(reads.changed());
         assert!(call(&services(), "p", "assets.read", json!({"path": "assets/x"})).is_err());
         assert_eq!(
             CapabilityGate::required("assets.read"),

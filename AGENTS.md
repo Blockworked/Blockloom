@@ -1249,8 +1249,14 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   This does not select voxel tiles or request missing mesh jobs. Interpolated density
   seam collars and GPU voxel job requests remain unfinished. Run GPU tests serially.
   See `docs/voxel-lod-research.md` for the LOD implementation stages.
-  Its manifest asks for `editor.preview`, `project-storage` and `gpu-compute`;
-  preview does not load or write player saves. Saved edits are the `world` resource's
+  Its manifest asks for `editor.preview`, `project-storage`, `gpu-compute` and
+  `trusted-editor`; preview does not load or write player saves. Its trusted
+  editor module `editor/BlockTypes.qml` edits the `block_set`'s `.blockdef`
+  files (name, id, color, model, layer, tags, properties, variants, the states
+  they make) through `read-text-asset`/`write-text-asset`, which only touch
+  files under `assets/` (not scenes) and reload the world. A preview whose
+  modules read a file through `assets.read` starts again once that file
+  changes (`services::AssetReads`). QML test: `tst_VoxelBlockTypes.qml`. Saved edits are the `world` resource's
   `edits` lines (`set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`,
   `sphere X Y Z radius material`), applied in order over the generated terrain
   at `world.start` (a bad line is reported by number and skipped), so the scene

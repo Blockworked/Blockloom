@@ -4284,6 +4284,60 @@ pub(crate) fn read_asset(state: &SharedState, path: String) -> Result<String, St
     assets::data_url(&project_dir(&s)?, &path)
 }
 
+/// The largest file `read-text-asset` and `write-text-asset` handle.
+const MAX_TEXT_ASSET: u64 = 4 * 1024 * 1024;
+
+/// A text file under `assets/`, for an editor that changes it in place.
+pub(crate) fn read_text_asset(state: &SharedState, path: String) -> Result<String, String> {
+    let s = lock(state)?;
+    let file = text_asset_path(&project_dir(&s)?, &path)?;
+    let meta = std::fs::metadata(&file).map_err(|e| format!("{path}: {e}"))?;
+    if meta.len() > MAX_TEXT_ASSET {
+        return Err(format!("{path} is over 4 MiB"));
+    }
+    let bytes = std::fs::read(&file).map_err(|e| format!("{path}: {e}"))?;
+    String::from_utf8(bytes).map_err(|_| format!("{path} isn't text"))
+}
+
+/// Writes a text file under `assets/` whole, making it and its folders when
+/// missing. The world loads again, so what reads the file sees the change.
+pub(crate) fn write_text_asset(
+    state: &SharedState,
+    path: String,
+    text: String,
+) -> Result<String, String> {
+    let mut s = lock(state)?;
+    let dir = project_dir(&s)?;
+    let file = text_asset_path(&dir, &path)?;
+    if text.len() as u64 > MAX_TEXT_ASSET {
+        return Err(format!("{path} would be over 4 MiB"));
+    }
+    if file.is_dir() {
+        return Err(format!("{path} is a folder"));
+    }
+    blockloom_core::files::write_atomic(&file, text.as_bytes())?;
+    let path = assets::normalize(&path).unwrap_or(path);
+    reindex(&dir);
+    if touches_scripts(&path) {
+        sync_ide(&dir);
+    }
+    runtime_stale(&mut s);
+    sync_runtime(&mut s);
+    Ok(path)
+}
+
+/// A path under `assets/` that names a file the document doesn't own.
+fn text_asset_path(dir: &Path, path: &str) -> Result<PathBuf, String> {
+    let normal = assets::normalize(path).filter(|p| p.starts_with("assets/"));
+    let Some(normal) = normal else {
+        return Err(format!("\"{path}\" isn't a file under assets/"));
+    };
+    if normal.ends_with(".blockscene") {
+        return Err("A scene is edited through the scene commands".into());
+    }
+    assets::resolve(dir, &normal).ok_or_else(|| format!("\"{path}\" isn't a path in this project"))
+}
+
 /// Opens the native file manager to where this asset lives: a file gets
 /// spotlighted inside its parent folder, a folder opens itself.
 pub(crate) fn open_asset_location(state: &SharedState, path: String) -> Result<(), String> {

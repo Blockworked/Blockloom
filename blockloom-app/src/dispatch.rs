@@ -1035,6 +1035,12 @@ impl Backend {
             "asset_used_by" => to_json(commands::asset_used_by(state, arg(&args, "path")?)?),
             "resource_index" => to_json(commands::resource_index(state)?),
             "read_asset" => to_json(commands::read_asset(state, arg(&args, "path")?)?),
+            "read_text_asset" => to_json(commands::read_text_asset(state, arg(&args, "path")?)?),
+            "write_text_asset" => to_json(commands::write_text_asset(
+                state,
+                arg(&args, "path")?,
+                arg(&args, "text")?,
+            )?),
             "open_asset_location" => {
                 to_json(commands::open_asset_location(state, arg(&args, "path")?)?)
             }

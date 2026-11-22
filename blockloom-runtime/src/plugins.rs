@@ -154,6 +154,9 @@ pub struct PluginHost {
     /// are a preview and not a run.
     #[cfg(feature = "plugins")]
     previewing: Option<String>,
+    /// The asset files the preview's modules read, so writing one starts it again.
+    #[cfg(feature = "plugins")]
+    preview_reads: Option<blockloom_plugin_host::services::AssetReads>,
 }
 
 impl PluginHost {
@@ -618,8 +621,20 @@ pub fn reload(engine: &mut Engine, old: &Loadout) {
 pub fn preview(engine: &mut Engine) {
     #[cfg(feature = "plugins")]
     {
+        if engine
+            .plugins
+            .preview_reads
+            .as_ref()
+            .is_some_and(|r| r.changed())
+        {
+            end(engine);
+        }
         let host = host_services(engine);
+        let started = engine.plugins.previews;
         preview_with(engine, |wanted| WorldPlugins::load_with(wanted, &host));
+        if engine.plugins.previews != started {
+            engine.plugins.preview_reads = Some(host.asset_reads());
+        }
     }
     #[cfg(not(feature = "plugins"))]
     let _ = engine;

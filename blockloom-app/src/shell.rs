@@ -2595,6 +2595,35 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "read-text-asset",
+        cmd: "read_text_asset",
+        aliases: &["read_text_asset"],
+        summary: "A text file under assets/ as a string, up to 4 MiB.",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "asset path",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "write-text-asset",
+        cmd: "write_text_asset",
+        aliases: &["write_text_asset"],
+        summary: "Writes a text file under assets/ whole (made if missing) and reloads the world.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+            ArgSpec {
+                name: "text",
+                ty: "string",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
         name: "inspect-asset",
         cmd: "inspect_asset",
         aliases: &["inspect_asset"],
