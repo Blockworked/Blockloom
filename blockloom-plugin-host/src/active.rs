@@ -30,7 +30,9 @@ pub struct PluginProblem {
     pub message: String,
 }
 
-pub use blockloom_plugin_api::loadout::{CodeRuntime, NativeLibrary, PortableLibrary};
+pub use blockloom_plugin_api::loadout::{
+    CodeRuntime, LinkedModule, NativeLibrary, PortableLibrary,
+};
 
 #[derive(Debug, Clone)]
 pub struct LoadedPlugin {
@@ -722,10 +724,6 @@ impl ActivePlugins {
                 ));
             };
             let manifest = &p.package.manifest;
-            // Linked into the player itself, so nothing of it ships beside.
-            if manifest.tier == blockloom_plugin_api::manifest::Tier::Adapter {
-                continue;
-            }
             let support = manifest.support_for(target);
             if let blockloom_plugin_api::manifest::TargetSupport::Unsupported { reason } = &support
             {
@@ -768,6 +766,14 @@ pub(crate) fn code_runtime_of(
     target: &str,
 ) -> Result<CodeRuntime, String> {
     let manifest = &package.manifest;
+    if manifest.tier == Tier::Adapter && manifest.runtime.adapter.is_some() {
+        // Compiled into the project runtime, which registers it at start.
+        return Ok(CodeRuntime::Linked(LinkedModule {
+            plugin: plugin.to_string(),
+            hash: package.content_hash.clone(),
+            capabilities: manifest.capabilities.clone(),
+        }));
+    }
     let native = loads_native_libraries(target) && manifest.runtime.native.contains_key(target);
     if !native && let Some(entry) = &manifest.runtime.portable {
         return Ok(CodeRuntime::Portable(PortableLibrary {
@@ -858,6 +864,16 @@ fn shipped_files(
                 || path.starts_with("editor/")
                 || path.starts_with("docs/")
                 || path.starts_with("examples/")
+            {
+                return false;
+            }
+            // An engine crate is linked into the player; its manifest and
+            // schemas still ship so the player hosts its blocks and hooks.
+            if manifest
+                .runtime
+                .adapter
+                .as_ref()
+                .is_some_and(|a| path.starts_with(&format!("{}/", a.crate_dir)))
             {
                 return false;
             }

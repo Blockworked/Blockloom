@@ -4,13 +4,17 @@
 
 pub use blockloom_runtime::api::*;
 pub use blockloom_runtime::module::BlockloomModule;
+pub use {blockloom_plugin_api as plugin_api, blockloom_plugin_sdk as sdk};
 
 /// What a plugin's `runtime.adapter.engine_build` must name.
 pub const ENGINE_BUILD: &str = env!("CARGO_PKG_VERSION");
 
 pub mod prelude {
     pub use crate::bevy::prelude::*;
-    pub use crate::{AddModule, BlockloomModule, RunState, SceneDocument, WorldRebuilt};
+    pub use crate::{
+        ActorId, AddModule, BlockloomModule, PluginComponents, PluginRecord, RunState,
+        SceneDocument, WorldRebuilt,
+    };
 }
 
 /// Names a plugin's module, so a generated project runtime can find it as

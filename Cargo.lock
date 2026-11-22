@@ -2567,6 +2567,8 @@ name = "blockloom-engine"
 version = "0.0.1"
 dependencies = [
  "bevy",
+ "blockloom-plugin-api",
+ "blockloom-plugin-sdk",
  "blockloom-runtime",
 ]
 
@@ -2771,6 +2773,7 @@ version = "0.0.1"
 name = "blockloom-voxel"
 version = "0.0.1"
 dependencies = [
+ "blockloom-engine",
  "blockloom-plugin-api",
  "blockloom-plugin-gpu",
  "blockloom-plugin-host",

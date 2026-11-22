@@ -1,0 +1,23 @@
+# The engine-tier crate a project runtime builds: `just voxel-plugin` copies
+# ../../src beside this manifest when it stages the package.
+[package]
+name = "blockloom-voxel"
+version = "0.4.0"
+edition = "2024"
+license = "MIT"
+description = "VOXEL as an engine-tier plugin: cube and smooth worlds linked into a project's runtime."
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["engine"]
+engine = []
+
+[dependencies]
+# The project runtime patches these to the engine build it links against.
+blockloom-engine = "0.0.1"
+blockloom-plugin-sdk = "0.0.1"
+blockloom-plugin-api = "0.0.1"
+serde = { version = "1", features = ["derive"] }

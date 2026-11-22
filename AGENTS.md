@@ -1168,8 +1168,12 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   collider, including on replacement; `plugins::end` queues `Clear`. These are not
   actors: no batching, LOD or occlusion, and nothing else reads them yet.
 - **Voxel plugin** (`plugins/voxel`, `com.blockworked.voxel`, phase 3's first
-  slice): a finite world of cubes, SDK-built so one source is a native library
-  and the portable module (`just voxel-plugin` seals the wasm). Its `world`
+  slice): a finite world of cubes, SDK-built. Since 0.4.0 it is engine-tier
+  only (adapter, no portable module, so desktop builds only): the workspace
+  crate keeps its tests, and `just voxel-plugin` stages `package/` with
+  `src/` copied under `engine/`, whose standalone manifest builds the same
+  sources with the `engine` feature, where `engine::VoxelModule` links the
+  plugin's `export_plugin!` entry. Its `world`
   resource (preset `island|caves|flat|empty`, seed, size, voxel size, origin,
   solid, palette colors/emission) is read at `world.start`; `grid.rs` holds
   32-cell sections of `u8` material ids with exact logical bounds and full-height
@@ -1481,9 +1485,9 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   at its hash before it builds (`project_runtime::needs_trust`, granted by
   the Plugin Manager's Engine plugins section, which also builds; the
   snapshot's `plugins.engine`). A desktop build for this machine ships the
-  built project runtime as its player (`BuildRequest::engine_player`; the
-  ship plan leaves adapter packages out, being linked in); other targets are
-  refused for now. The
+  built project runtime as its player (`BuildRequest::engine_player`; an
+  adapter package ships only its manifest and schemas, its crate being linked
+  in); other targets are refused for now. The
   engine is a source tree (`BLOCKLOOM_ENGINE_SOURCE`, else the one the editor
   was built from) or, in an install, the engine kit beside the editor
   (`engine/`, `BLOCKLOOM_ENGINE_KIT`), written by `engine-kit out=...`
@@ -1501,6 +1505,17 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   `blockloom-engine/templates/lib.rs` (compiled by that crate's
   `tests/template.rs`); `docs/plugin-api.md` has the author's side.
   `plugins/examples/tally-engine` counts a run's ticks and says the total.
+  An engine module reads its data the ECS way: every authored actor entity
+  carries `PluginComponents` (its plugin records) beside `ActorId`, and
+  `SceneDocument::plugin_resource` gives the project's resources. A module
+  that hosts an SDK `Plugin` calls `link_plugin(id, entry)` with its
+  `export_plugin!` entry: an adapter package's loadout entry is then
+  `CodeRuntime::Linked`, which `blockloom_plugin_host::linked` starts through
+  the same C ABI in-process, so its blocks, hooks, scene tools and preview
+  work as a library's would (the editor has no such entry, so its `module`
+  commands answer that they run only in the project runtime). Only one
+  linked crate may use `export_plugin!` per runtime, since the symbol is
+  fixed. `engine` re-exports the SDK and API as `sdk` and `plugin_api`.
 - **Not yet**: a faster browser host (the page's own WebAssembly instead of wasmi
   in wasm; it needs a fuel substitute, since a browser instance has no budget to
   stop a runaway call), a headless browser proof and native editor modules.
@@ -3303,7 +3318,9 @@ would say where the typing is going.
 no key or collision event queues, so resuming never bursts. The one fork is
 that strands a UI event started keep ticking - otherwise a pause menu's own
 buttons would be dead - and they run on the wall clock, so a `wait 1` blink
-on a frozen menu still blinks. A `pause game` in a world strand stops that
+on a frozen menu still blinks. Only the interface broadcasts while paused,
+so a message then starts its receivers as UI strands too (escape and back
+likewise). A `pause game` in a world strand stops that
 strand where it stands, the way `delete myself` does; in a UI strand it
 doesn't. `world::set_paused` is the one place that flips it, whether the
 editor's Pause button or the block asked.
@@ -3345,7 +3362,9 @@ component, saved only when there are some) and the game in
 scene's own interface, then its screens, then the game's, each file once,
 lowered and merged (a widget id another layer took, or a style, component or
 animation of the same name that differs, skips that layer with an error; the
-others still draw). A closed layer's roots start hidden. The files aren't in
+others still draw). A closed layer's roots start hidden. Play and every
+`switch scene to` compose it again (`world::load_interface`, kept as
+`Engine::interface`, which widget actions read). The files aren't in
 the document, so `write-screen` marks the world stale to redraw it.
 Commands: `create-screen` (`fromInterface` moves the scene's interface into
 the file), `read-screen`, `write-screen`, `add-screen-layer`,

@@ -31,6 +31,7 @@ pub mod install;
 pub mod isolated;
 pub mod jobs;
 pub mod lifecycle;
+pub mod linked;
 pub mod lock;
 pub mod module;
 pub mod native;

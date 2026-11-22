@@ -32,6 +32,17 @@ pub struct PortableLibrary {
     pub entry: PortableEntry,
 }
 
+/// An engine-tier plugin's module, compiled into the project runtime itself
+/// and registered there by its engine crate (`blockloom_plugin_host::linked`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LinkedModule {
+    /// The plugin id its entry is registered under.
+    pub plugin: String,
+    /// The package's content hash; a changed package is a different module.
+    pub hash: String,
+    pub capabilities: BTreeSet<Capability>,
+}
+
 /// The code a plugin runs on this machine: its native library when it has
 /// one for the target, else its portable module.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -39,6 +50,7 @@ pub struct PortableLibrary {
 pub enum CodeRuntime {
     Native(NativeLibrary),
     Portable(PortableLibrary),
+    Linked(LinkedModule),
 }
 
 impl CodeRuntime {
@@ -46,6 +58,7 @@ impl CodeRuntime {
         match self {
             CodeRuntime::Native(n) => &n.hash,
             CodeRuntime::Portable(p) => &p.hash,
+            CodeRuntime::Linked(l) => &l.hash,
         }
     }
 
@@ -53,6 +66,7 @@ impl CodeRuntime {
         match self {
             CodeRuntime::Native(n) => &n.capabilities,
             CodeRuntime::Portable(p) => &p.capabilities,
+            CodeRuntime::Linked(l) => &l.capabilities,
         }
     }
 }

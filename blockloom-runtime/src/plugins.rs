@@ -1190,6 +1190,47 @@ mod tests {
         assert_eq!(link.available(), Some(false));
     }
 
+    /// An engine plugin's linked module loads from a loadout with no library
+    /// or wasm on disk: what VOXEL is in a project runtime.
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn a_linked_module_hosts_from_the_loadout() {
+        use blockloom_plugin_api::loadout::{CodeRuntime, LinkedModule, Loadout, LoadoutPlugin};
+        use blockloom_plugin_api::record::PluginRecord;
+
+        const ID: &str = "com.blockworked.voxel";
+        let linked = |plugin: &str| LoadoutPlugin {
+            id: plugin.to_string(),
+            runtime: CodeRuntime::Linked(LinkedModule {
+                plugin: plugin.to_string(),
+                hash: "h".into(),
+                capabilities: Default::default(),
+            }),
+            hooks: vec![],
+            blocks: vec![],
+            preview: false,
+            nodes: vec![],
+        };
+        let loadout = Loadout {
+            plugins: vec![linked(ID), linked("com.example.not-linked")],
+            ..Loadout::default()
+        };
+        crate::api::link_plugin(ID, blockloom_voxel::blockloom_plugin_entry_v1);
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(rx, Mode::ThreeD);
+        engine.project.plugin_resources.push(PluginRecord::new(
+            ID,
+            "world",
+            1,
+            json!({"preset": "flat", "size": [32, 16, 32]}),
+        ));
+        let world = WorldPlugins::load(&loadout, "0.0.1");
+        // A plugin the runtime doesn't link says so instead of loading.
+        assert_eq!(world.plugins().collect::<Vec<_>>(), vec![ID]);
+        install(&mut engine, world);
+        assert_eq!(engine.plugins.meshes.len(), 4);
+    }
+
     /// A real voxel module, through the effect path to meshes in the ECS.
     #[cfg(feature = "plugins")]
     #[test]

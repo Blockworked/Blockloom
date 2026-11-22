@@ -7,6 +7,10 @@
 
 #![allow(clippy::too_many_arguments, clippy::chunks_exact_to_as_chunks)]
 
+#[cfg(feature = "engine")]
+pub mod engine;
+#[cfg(feature = "engine")]
+pub use engine::blockloom_module;
 mod fracture;
 mod gpu_mesh;
 mod grid;

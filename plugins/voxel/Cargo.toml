@@ -3,12 +3,17 @@ name = "blockloom-voxel"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "The voxel plugin (com.blockworked.voxel): persistent streamed cube and smooth worlds with GPU meshing and editable fracture bodies."
+description = "The voxel plugin (com.blockworked.voxel): persistent streamed cube and smooth worlds with GPU meshing and editable fracture bodies, linked into a project's runtime as an engine-tier plugin."
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# The engine-tier build: what a project runtime links (see package/engine).
+engine = ["dep:blockloom-engine"]
+
 [dependencies]
+blockloom-engine = { path = "../../blockloom-engine", optional = true }
 blockloom-plugin-sdk = { path = "../../blockloom-plugin-sdk" }
 blockloom-plugin-api = { path = "../../blockloom-plugin-api" }
 serde.workspace = true

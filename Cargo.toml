@@ -116,5 +116,7 @@ bevy = "0.20.1"
 [patch.crates-io]
 # Engine-tier plugins name the facade by version; it is always this tree's.
 blockloom-engine = { path = "blockloom-engine" }
+blockloom-plugin-sdk = { path = "blockloom-plugin-sdk" }
+blockloom-plugin-api = { path = "blockloom-plugin-api" }
 wgpu-hal = { path = ".patched-deps/wgpu-hal" }
 bevy_pbr = { path = ".patched-deps/bevy-pbr" }

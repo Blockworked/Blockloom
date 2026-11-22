@@ -73,6 +73,13 @@ impl CodeModule {
                     )
                 })
                 .map(|m| CodeModule::Portable(Box::new(m))),
+            CodeRuntime::Linked(module) => {
+                let entry = crate::linked::entry(&module.plugin)
+                    .ok_or("an engine plugin's module runs only in its project runtime")?;
+                // Safety: the engine crate registered its own `export_plugin!` entry.
+                unsafe { NativeModule::from_entry(entry, module.capabilities.clone(), services) }
+                    .map(CodeModule::Native)
+            }
         }
     }
 

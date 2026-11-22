@@ -211,6 +211,7 @@ pub fn actor_bundle(actor: &Actor) -> impl Bundle {
         custom_for(actor),
         PhysicsPose(transform),
         PrevPose(transform),
+        crate::engine::PluginComponents(actor.components.plugin_records().cloned().collect()),
     )
 }
 

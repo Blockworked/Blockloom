@@ -7,6 +7,9 @@ description = "The API an engine-tier plugin is written against: Bevy, Blockloom
 
 [dependencies]
 blockloom-runtime = { path = "../blockloom-runtime" }
+# Re-exported so an engine plugin can also host a `Plugin` (SDK) module in-process.
+blockloom-plugin-sdk = { path = "../blockloom-plugin-sdk" }
+blockloom-plugin-api = { path = "../blockloom-plugin-api" }
 
 [dev-dependencies]
 # The template's derives look for `bevy` in the crate compiling them.

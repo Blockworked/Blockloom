@@ -8,9 +8,10 @@ use std::sync::Mutex;
 pub use bevy;
 pub use blockloom_core;
 
-pub use crate::engine::{Dimension, PendingEffects, SceneDocument};
+pub use crate::engine::{ActorId, Dimension, PendingEffects, PluginComponents, SceneDocument};
 pub use crate::module::{AddModule, Modules, RunState, WorldRebuilt};
 pub use crate::world::{SimulationSet, WorldCamera, apply_common, clear_effects};
+pub use blockloom_plugin_api::record::PluginRecord;
 
 static ENGINE_MODULES: Mutex<Vec<Box<dyn BlockloomModule>>> = Mutex::new(Vec::new());
 
@@ -34,6 +35,14 @@ pub(crate) fn build_engine_modules(app: &mut bevy::prelude::App) {
             .0
             .push(module.name());
     }
+}
+
+/// Makes `entry` (a crate's `export_plugin!` entry) the code of `plugin` in
+/// this process: its blocks, hooks, scene tools and preview run in-process
+/// with no library or wasm module, through the same C ABI.
+#[cfg(feature = "plugins")]
+pub fn link_plugin(plugin: &str, entry: blockloom_plugin_api::abi::EntryFn) {
+    blockloom_plugin_host::linked::register(plugin, entry);
 }
 
 /// A line in the editor's run log, from `actor` (empty for none).

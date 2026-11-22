@@ -2,18 +2,17 @@
   "format": 1,
   "id": "com.blockworked.voxel",
   "name": "Voxel",
-  "version": "0.3.10",
-  "description": "Infinite procedural worlds with editable noise, biomes and modular features, a JSON block registry with textures and custom models, chunk-stepped render distance with far LOD and pre-gen, and budgeted chunk generation. A portable sandboxed module.",
+  "version": "0.4.0",
+  "description": "Infinite procedural worlds with editable noise, biomes and modular features, a JSON block registry with textures and custom models, chunk-stepped render distance with far LOD and pre-gen, and budgeted chunk generation. An engine-tier plugin linked into the project's runtime.",
   "license": "MIT",
   "engine": ">=0.0.1",
-  "tier": "portable",
+  "tier": "adapter",
   "abi": 1,
   "sdk": "^0.0",
   "runtime": {
-    "portable": {
-      "module": "portable/voxel.wasm",
-      "memory_limit_mib": 256,
-      "call_limit_ms": 10000
+    "adapter": {
+      "engine_build": "0.0.1",
+      "crate_dir": "engine"
     }
   },
   "editor": {
@@ -23,6 +22,7 @@
     "schemas/voxel.json"
   ],
   "capabilities": [
+    "native-execution",
     "project-storage",
     "gpu-compute"
   ]

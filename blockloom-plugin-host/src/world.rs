@@ -615,7 +615,10 @@ impl WorldPlugins {
                 report.removed.push(id.to_string());
             }
         }
-        let is_native = |p: &LoadoutPlugin| matches!(p.runtime, CodeRuntime::Native(_));
+        // Linked code is baked into the runtime, so like a library it can't swap live.
+        let is_native = |p: &LoadoutPlugin| {
+            matches!(p.runtime, CodeRuntime::Native(_) | CodeRuntime::Linked(_))
+        };
         let mut effective: Vec<&LoadoutPlugin> = Vec::new();
         for plugin in &new.plugins {
             let id = plugin.id.as_str();

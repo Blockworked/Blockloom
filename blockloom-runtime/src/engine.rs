@@ -22,6 +22,24 @@ use std::sync::mpsc::{Receiver, Sender};
 #[derive(Component, Debug, Clone)]
 pub struct ActorId(pub String);
 
+/// The plugin components an actor was authored with, so an engine-tier
+/// module finds its own data with a query. Plugins never write it back.
+#[derive(Component, Debug, Clone, Default)]
+pub struct PluginComponents(pub Vec<blockloom_plugin_api::record::PluginRecord>);
+
+impl PluginComponents {
+    /// The record of `plugin`'s component type `type_id`, if the actor has one.
+    pub fn get(
+        &self,
+        plugin: &str,
+        type_id: &str,
+    ) -> Option<&blockloom_plugin_api::record::PluginRecord> {
+        self.0
+            .iter()
+            .find(|r| r.plugin == plugin && r.type_id == type_id)
+    }
+}
+
 /// One loaded script on one actor, with the path that names it. An actor
 /// runs its scripts in list order: `start`, then `event`, then `tick`.
 pub struct ActorScript {
@@ -362,6 +380,21 @@ pub struct SceneDocument {
     pub world: std::sync::Arc<blockloom_core::scene::World>,
     pub settings: std::sync::Arc<blockloom_core::settings::GameSettings>,
     pub dir: Option<PathBuf>,
+    /// The project's plugin resources (one record per plugin resource type).
+    pub plugin_resources: std::sync::Arc<Vec<blockloom_plugin_api::record::PluginRecord>>,
+}
+
+impl SceneDocument {
+    /// `plugin`'s resource of type `type_id`, if the project has one.
+    pub fn plugin_resource(
+        &self,
+        plugin: &str,
+        type_id: &str,
+    ) -> Option<&blockloom_plugin_api::record::PluginRecord> {
+        self.plugin_resources
+            .iter()
+            .find(|r| r.plugin == plugin && r.type_id == type_id)
+    }
 }
 
 pub struct Engine {
@@ -595,6 +628,7 @@ impl Engine {
             world: std::sync::Arc::new(self.project.world.clone()),
             settings: std::sync::Arc::new(self.project.settings.clone()),
             dir: self.project_dir.clone(),
+            plugin_resources: std::sync::Arc::new(self.project.plugin_resources.clone()),
         }
     }
 

@@ -1,10 +1,8 @@
-//! A shipped plugin read only through the file reader, as a browser player
-//! has it: the package is gone from disk, its bytes live in a table, and the
-//! loadout and the world still come up.
+//! A shipped engine plugin read only through the file reader: the package is
+//! gone from disk, its manifest and schemas live in a table, its code is
+//! linked into this process, and the loadout and the world still come up.
 //!
 //! Its own test binary, since the reader is installed once per process.
-
-mod common;
 
 use blockloom_plugin_api::loadout::CodeRuntime;
 use blockloom_plugin_host::files;
@@ -18,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 const ID: &str = "com.blockworked.voxel";
+const HOST: &str = "x86_64-unknown-linux-gnu";
 
 static FILES: OnceLock<BTreeMap<PathBuf, Vec<u8>>> = OnceLock::new();
 
@@ -30,10 +29,8 @@ fn from_table(path: &Path) -> io::Result<Vec<u8>> {
 }
 
 #[test]
-fn a_plugin_loads_from_memory_files_for_the_web_target() {
-    let Some(wasm) = common::build_wasm() else {
-        return;
-    };
+fn a_linked_plugin_loads_from_memory_files() {
+    blockloom_plugin_host::linked::register(ID, blockloom_voxel::blockloom_plugin_entry_v1);
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join(ID);
     package::copy_dir(
@@ -41,15 +38,19 @@ fn a_plugin_loads_from_memory_files_for_the_web_target() {
         &root,
     )
     .unwrap();
-    std::fs::create_dir_all(root.join("portable")).unwrap();
-    std::fs::copy(&wasm, root.join("portable/voxel.wasm")).unwrap();
     package::seal(&root).unwrap();
     let sealed = Package::load(&root).unwrap();
 
-    // What a web build puts in the page: the manifest and every shipped file
-    // under the plugin's folder.
+    // What a build carries: the manifest and every file but the engine crate,
+    // which is linked into the player.
     let home = Path::new("plugins").join(ID);
-    let shipped: Vec<String> = sealed.manifest.files.keys().cloned().collect();
+    let shipped: Vec<String> = sealed
+        .manifest
+        .files
+        .keys()
+        .filter(|f| !f.starts_with("engine/"))
+        .cloned()
+        .collect();
     let mut table = BTreeMap::new();
     for name in std::iter::once("plugin.json").chain(shipped.iter().map(String::as_str)) {
         table.insert(home.join(name), std::fs::read(root.join(name)).unwrap());
@@ -65,12 +66,12 @@ fn a_plugin_loads_from_memory_files_for_the_web_target() {
             hash: &sealed.content_hash,
             files: &shipped,
         }],
-        "wasm32-unknown-unknown",
+        HOST,
     )
     .unwrap();
     assert_eq!(loadout.plugins.len(), 1);
     let plugin = &loadout.plugins[0];
-    assert!(matches!(plugin.runtime, CodeRuntime::Portable(_)));
+    assert!(matches!(plugin.runtime, CodeRuntime::Linked(_)));
     assert!(plugin.preview, "the manifest asks for a preview");
 
     // A damaged table is refused, not run.
@@ -83,11 +84,11 @@ fn a_plugin_loads_from_memory_files_for_the_web_target() {
             hash: &sealed.content_hash,
             files: &broken,
         }],
-        "wasm32-unknown-unknown",
+        HOST,
     );
     assert!(refused.is_err());
 
-    // The module opens through the same reader and draws its world.
+    // The linked module opens and draws its world.
     let mut world = WorldPlugins::load(&loadout, "0.0.1");
     let outcomes = world.start(&|_| json!({"records": [], "resources": [], "preview": false}));
     let meshes = outcomes
