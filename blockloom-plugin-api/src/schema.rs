@@ -37,6 +37,10 @@ pub enum FieldType {
     Vec3,
     Choice {
         options: Vec<String>,
+        /// A list the plugin's hosted module answers (`choices` op, keyed by
+        /// this name); `options` stay the fallback and any text is accepted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
     },
     /// A project-relative asset path (`assets/...`) of the given kind
     /// (`image`, `model`, `sound`, `any`, ...). Enumerated as a reference.
@@ -242,7 +246,9 @@ impl FieldType {
             FieldType::Text { .. } => json!(""),
             FieldType::Color => json!("#FFFFFF"),
             FieldType::Vec3 => json!([0.0, 0.0, 0.0]),
-            FieldType::Choice { options } => json!(options.first().cloned().unwrap_or_default()),
+            FieldType::Choice { options, .. } => {
+                json!(options.first().cloned().unwrap_or_default())
+            }
             FieldType::Asset { .. } | FieldType::Actor => json!(""),
             FieldType::List { .. } => json!([]),
             FieldType::Struct { fields } => Value::Object(
@@ -325,8 +331,8 @@ impl FieldType {
                 }
                 _ => errors.push(err(at, "expected three numbers")),
             },
-            FieldType::Choice { options } => match value.as_str() {
-                Some(s) if options.iter().any(|o| o == s) => {}
+            FieldType::Choice { options, source } => match value.as_str() {
+                Some(s) if source.is_some() || options.iter().any(|o| o == s) => {}
                 _ => errors.push(err(at, format!("expected one of {}", options.join(", ")))),
             },
             FieldType::Asset { .. } => match value.as_str() {
@@ -445,7 +451,7 @@ impl FieldType {
                 min: Some(a),
                 max: Some(b),
             } if a > b => Err(format!("{at}: min is above max")),
-            FieldType::Choice { options } if options.is_empty() => {
+            FieldType::Choice { options, .. } if options.is_empty() => {
                 Err(format!("{at}: a choice needs options"))
             }
             FieldType::List { item, .. } => item.check_definition(at),

@@ -57,6 +57,10 @@ the package loads, so a mistake is an install error, not a run-time one.
 - **Components and resources** are typed records (`bool`, `int`, `number`,
   `text`, `color`, `vec3`, `choice`, `asset`, `actor`, `list`) with bounds,
   `ui` hints and `migrations` between versions. The inspector draws them.
+  A `choice` may name a `source`: your module's `choices` op answers
+  `{"<source>": ["value", ...]}` when the scene view hosts its preview, and
+  the editor offers that list (the static `options` are the fallback; any
+  text is then accepted, so check it in your code).
 - **Commands** are the one way a plugin changes a project: `add_component`,
   `set_field`, `set_resource`, `set_resource_field` or `module` (an op in
   your code). Every command is one undo step.

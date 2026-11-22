@@ -582,6 +582,7 @@ pub(crate) fn summary(s: &AppState) -> Value {
         "engine": engine_json(&open.dir, active),
         "problems": active.problems,
         "issues": active.audit(project.plugin_records()),
+        "choices": s.plugin_choices,
     })
 }
 

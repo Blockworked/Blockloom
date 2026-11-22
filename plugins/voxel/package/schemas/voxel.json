@@ -757,6 +757,7 @@
         {
           "name": "material",
           "type": "choice",
+          "source": "blocks",
           "options": [
             "air",
             "stone",
@@ -815,6 +816,7 @@
         {
           "name": "material",
           "type": "choice",
+          "source": "blocks",
           "options": [
             "air",
             "stone",
@@ -865,6 +867,7 @@
         {
           "name": "material",
           "type": "choice",
+          "source": "blocks",
           "options": [
             "air",
             "stone",
@@ -1873,6 +1876,7 @@
         {
           "name": "material",
           "type": "choice",
+          "source": "blocks",
           "options": [
             "air",
             "stone",
@@ -1930,6 +1934,7 @@
         {
           "name": "material",
           "type": "choice",
+          "source": "blocks",
           "options": [
             "air",
             "stone",
@@ -2007,6 +2012,7 @@
         {
           "name": "material",
           "type": "choice",
+          "source": "blocks",
           "options": [
             "air",
             "stone",
@@ -2106,6 +2112,7 @@
         {
           "name": "material",
           "type": "choice",
+          "source": "blocks",
           "options": [
             "air",
             "stone",
@@ -2152,6 +2159,7 @@
         {
           "name": "material",
           "type": "choice",
+          "source": "blocks",
           "options": [
             "air",
             "stone",

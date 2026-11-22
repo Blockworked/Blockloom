@@ -2141,6 +2141,19 @@ impl Plugin for Voxel {
                     "biomes": world.worldgen.biomes.iter().map(|b| b.name.clone()).collect::<Vec<_>>(),
                 }))
             }
+            // The lists the editor's sourced choice fields offer.
+            "choices" => {
+                let world = self.world()?;
+                let mut names = vec![json!("air")];
+                names.extend(
+                    world
+                        .registry
+                        .ids()
+                        .into_iter()
+                        .filter_map(|id| world.registry.get(id).map(|d| json!(d.name))),
+                );
+                Ok(json!({"blocks": names}))
+            }
             "blocks" => {
                 let world = self.world()?;
                 let blocks: Vec<Value> = world.registry.ids().iter().map(|id| {

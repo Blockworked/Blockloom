@@ -106,6 +106,7 @@ ColumnLayout {
                             PluginValueEditor {
                                 Layout.fillWidth: true
                                 app: root.app; ty: row.field; actors: root.actors
+                                plugin: root.type && root.type.plugin ? root.type.plugin : ""
                                 value: root.valueOf(row.field)
                                 onEdited: next => root.changed(root.with_(row.field, next))
                             }

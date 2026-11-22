@@ -13,6 +13,8 @@ ColumnLayout {
     property var value: null
     // Actors an `actor` value can name, as [{value, label}].
     property var actors: []
+    // The plugin a `choice` with a `source` asks for its live list.
+    property string plugin: ""
     signal edited(var next)
     Layout.fillWidth: true
     spacing: 4
@@ -37,7 +39,13 @@ ColumnLayout {
     }
     // The asset kinds the tray names differ from the schema's for sounds.
     function acceptOf(kind) { return kind === "any" || !kind ? [] : [kind === "sound" ? "audio" : kind]; }
-    function choices(t) { return (t.options || []).map(o => ({ value: o, label: o })); }
+    // A sourced choice lists what the plugin's preview answered, else its options.
+    function choices(t) {
+        const live = t.source && plugin && app.appState && app.appState.plugins && app.appState.plugins.choices
+            && app.appState.plugins.choices[plugin] ? app.appState.plugins.choices[plugin][t.source] : null;
+        const list = live && live.length ? live : (t.options || []);
+        return list.map(o => typeof o === "object" ? { value: o.value, label: o.label || o.value } : { value: o, label: o });
+    }
     // QVariantList values (initial properties, C++) fail Array.isArray
     // where a JS array passes; read either shape as a real array.
     function toArray(v) {

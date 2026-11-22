@@ -136,6 +136,8 @@ pub(crate) struct AppState {
     pub(crate) ray_tracing: Option<blockloom_protocol::RayTracingStatus>,
     /// The plugins' diagnostics the world last reported.
     pub(crate) plugin_diagnostics: serde_json::Value,
+    /// The `choices` lists each previewed plugin last answered.
+    pub(crate) plugin_choices: std::collections::BTreeMap<String, serde_json::Value>,
     /// Runs the game world inside this process, when the host supplies one.
     pub(crate) embedded: Option<Arc<dyn crate::runtime::EmbeddedRuntime>>,
     /// How the scene view edits, re-sent to every world that comes up.

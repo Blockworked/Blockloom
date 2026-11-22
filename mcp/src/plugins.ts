@@ -15,6 +15,7 @@ export interface PluginField {
   max?: number;
   max_len?: number;
   options?: string[];
+  source?: string;
   item?: PluginField;
   default?: unknown;
   description?: string;
@@ -101,7 +102,8 @@ export function typeSchema(field: PluginField): z.ZodType {
     case "vec3":
       return z.array(z.number()).length(3);
     case "choice":
-      return z.enum((field.options ?? []) as [string, ...string[]]);
+      // A sourced choice's list lives in the plugin, so any text may name one.
+      return field.source ? z.string() : z.enum((field.options ?? []) as [string, ...string[]]);
     case "list": {
       const schema = z.array(field.item ? typeSchema(field.item) : z.unknown());
       return field.max_len === undefined ? schema : schema.max(field.max_len);

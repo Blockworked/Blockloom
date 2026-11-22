@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped when a message changes shape. The runtime reports the version it
 /// was built with in [`RuntimeMessage::Ready`]; a mismatch means a stale
 /// binary next to a fresh editor.
-pub const PROTOCOL_VERSION: u32 = 39;
+pub const PROTOCOL_VERSION: u32 = 40;
 
 /// The size a game's window opens at, in pixels - and so the size the
 /// editor's Game view draws it at, scaled to fit, so it shows exactly what a
@@ -396,6 +396,12 @@ pub enum RuntimeMessage {
     /// Sent about once a second while any are open and the figures changed.
     PluginDiagnostics {
         snapshot: serde_json::Value,
+    },
+    /// The lists a previewed plugin answers to its `choices` op, by source
+    /// name, which choice fields with that `source` offer.
+    PluginChoices {
+        plugin: String,
+        choices: serde_json::Value,
     },
     /// A plugin block ran. The editor owns the plugins, so it looks the block
     /// up and runs its command; `args` follow the block's slot order.

@@ -89,6 +89,15 @@ TestCase {
         compare(e.recolor("#112233CC", "#445566"), "#445566CC");
         compare(e.recolor("#112233", "#445566"), "#445566");
     }
+    QtObject { id: choiceApp; property var assetDrag: ({ kind: "" }); property var appState: ({ plugins: {} }) }
+    function test_aSourcedChoiceListsWhatThePluginAnswered() {
+        const ty = { type: "choice", options: ["air", "stone"], source: "blocks" };
+        const e = createTemporaryObject(editorFactory, test, { ty: ty, value: "stone", app: choiceApp, plugin: "p" });
+        compare(e.choices(ty).map(c => c.value), ["air", "stone"]);
+        choiceApp.appState = { plugins: { choices: { p: { blocks: ["air", "oak_stairs[facing=east]"] } } } };
+        compare(e.choices(ty).map(c => c.value), ["air", "oak_stairs[facing=east]"]);
+        compare(e.choices({ type: "choice", options: ["x"] })[0].value, "x");
+    }
     function test_soundAssetsUseTheTraysAudioKind() {
         const e = createTemporaryObject(editorFactory, test, { ty: { type: "asset", kind: "sound" }, value: "" });
         compare(e.acceptOf("sound")[0], "audio");

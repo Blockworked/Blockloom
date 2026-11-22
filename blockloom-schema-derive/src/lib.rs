@@ -546,6 +546,7 @@ fn expand(input: &DeriveInput) -> syn::Result<Tokens> {
                 quote! {
                     #api::FieldType::Choice {
                         options: ::std::vec![#(#names.to_string()),*],
+                        source: ::std::option::Option::None,
                     }
                 }
             } else {

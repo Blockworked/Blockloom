@@ -592,7 +592,7 @@ Rectangle {
                                 Layout.fillWidth: true; spacing: 2
                                 Text { text: optionRow.modelData.name.replace(/_/g, " "); color: Theme.textDim; font.pixelSize: 11 }
                                 PluginValueEditor {
-                                    app: root.app; ty: optionRow.modelData
+                                    app: root.app; ty: optionRow.modelData; plugin: root.activePluginTool.plugin
                                     value: root.pluginOption(root.activePluginTool, optionRow.modelData)
                                     onEdited: next => root.setPluginOption(root.activePluginTool, optionRow.modelData, next)
                                 }

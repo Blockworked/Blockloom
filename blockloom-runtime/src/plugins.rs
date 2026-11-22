@@ -676,6 +676,10 @@ fn preview_with(engine: &mut Engine, open: impl FnOnce(&Loadout) -> WorldPlugins
         end(engine);
         let mut world = open(&wanted);
         let started = world.start(&|plugin| records_for(engine, plugin, true));
+        let ids: Vec<&str> = wanted.plugins.iter().map(|p| p.id.as_str()).collect();
+        for message in choice_messages(&mut world, &ids) {
+            bridge::send(&message);
+        }
         engine.plugins.world = Some(Rc::new(RefCell::new(world)));
         engine.plugins.previewing = Some(key);
         engine.plugins.previews += 1;
@@ -686,6 +690,22 @@ fn preview_with(engine: &mut Engine, open: impl FnOnce(&Loadout) -> WorldPlugins
             .collect();
         apply(engine, drawn);
     }
+}
+
+/// What each hosted plugin's `choices` op answers, as messages for the
+/// editor. A module without one just offers none.
+#[cfg(feature = "plugins")]
+fn choice_messages(world: &mut WorldPlugins, plugins: &[&str]) -> Vec<RuntimeMessage> {
+    plugins
+        .iter()
+        .filter_map(|id| {
+            let choices = world.query(id, "choices", &json!({})).ok()?;
+            choices.is_object().then(|| RuntimeMessage::PluginChoices {
+                plugin: id.to_string(),
+                choices,
+            })
+        })
+        .collect()
 }
 
 /// The run ends: tell the modules, then unload them.
@@ -1435,6 +1455,20 @@ mod tests {
         assert_eq!(opened.get(), 1);
         // Hooks and blocks stay off: a preview is not a run.
         assert!(!run_block(&mut engine, "a", ID, "set_voxel", &[]));
+        // Its block list reaches the editor's sourced choices.
+        let world_plugins = engine.plugins.world.clone().unwrap();
+        let messages = choice_messages(&mut world_plugins.borrow_mut(), &[ID]);
+        let [RuntimeMessage::PluginChoices { plugin, choices }] = &messages[..] else {
+            panic!("{messages:?}");
+        };
+        assert_eq!(plugin, ID);
+        assert_eq!(choices["blocks"][0], "air");
+        assert!(
+            choices["blocks"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("stone"))
+        );
 
         // A plugin tool's click casts through the hosted module.
         let tool = blockloom_protocol::PluginToolView {

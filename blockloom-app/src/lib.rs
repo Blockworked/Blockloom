@@ -115,6 +115,7 @@ impl Backend {
             ray_tracing: None,
             lan_session: None,
             plugin_diagnostics: serde_json::Value::Null,
+            plugin_choices: Default::default(),
             embedded,
             scene_view: Default::default(),
             picked_tile: None,

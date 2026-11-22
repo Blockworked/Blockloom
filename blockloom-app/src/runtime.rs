@@ -352,6 +352,9 @@ impl Backend {
             RuntimeMessage::PluginDiagnostics { snapshot } => {
                 s.plugin_diagnostics = snapshot;
             }
+            RuntimeMessage::PluginChoices { plugin, choices } => {
+                s.plugin_choices.insert(plugin, choices);
+            }
             RuntimeMessage::RayTracing(status) => {
                 s.ray_tracing = Some(status);
             }

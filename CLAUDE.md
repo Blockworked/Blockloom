@@ -202,7 +202,7 @@ uploads those bytes as an image. Elsewhere it is a child process.
   over a child's stdin/stdout, or the same enums over channels in-process. No
   sockets, no ports; the pipe or channel closing is the whole shutdown
   handshake. Bump `PROTOCOL_VERSION` whenever a message changes. Today it is
-  39, the script `ABI_VERSION` 52 and `LOGIC_ABI_VERSION` 41; a version named
+  40, the script `ABI_VERSION` 52 and `LOGIC_ABI_VERSION` 41; a version named
   further down is the one a feature arrived in.
 - **`blockloom-core`** - the engine library both processes share: `scene.rs`
   (the value types a world is built from - looks, bodies, placements, camera),
@@ -1137,6 +1137,11 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   command, argument or option. The snapshot's `plugins.tools` lists them and the
   scene view's toolbar gets a toggle per tool in 3D, with the options drawn by
   `PluginValueEditor` under it (kept in the QML `Settings` as JSON per tool).
+  A `choice` with a `source` takes its list from the plugin: when a preview
+  starts, the world asks each module's `choices` op (`{source: [values]}`) and
+  sends `RuntimeMessage::PluginChoices` (`PROTOCOL_VERSION` 40), kept as the
+  snapshot's `plugins.choices`; `options` stay the fallback and any text
+  validates (the voxel material fields list the project's blocks this way).
   `SceneTool::Plugin` plus `SceneView::plugin_tool` (`PluginToolView`: plugin,
   tool, cast op, reach, outline, drag, option values; `PROTOCOL_VERSION` 28) tell the world
   which tool is out. A left click casts the pointer ray through the hosted
