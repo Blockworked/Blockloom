@@ -516,11 +516,6 @@ pub struct Engine {
     pub shadow_distance: Option<f32>,
     /// A `capture probes` waiting for the probes to pick it up.
     pub capture_probes: bool,
-    /// `set fog density`, `set aurora` and `set lightning storm` this run,
-    /// over the project's fog, sky and lightning.
-    pub fog_density: Option<f32>,
-    pub aurora_kp: Option<f32>,
-    pub lightning_rate: Option<f32>,
     /// `set precipitation` this run, over the director and the project.
     pub precipitation: blockloom_core::director::PrecipitationOverrides,
     /// The live weather blend: what the air is right now and where it is
@@ -680,9 +675,6 @@ impl Engine {
             no_point_shadow_maps: false,
             shadow_distance: None,
             capture_probes: false,
-            fog_density: None,
-            aurora_kp: None,
-            lightning_rate: None,
             precipitation: Default::default(),
             weather: Default::default(),
             director_time: None,

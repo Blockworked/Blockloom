@@ -2297,7 +2297,7 @@ resources and drops it on the `WorldRebuilt` message (written by
 `rebuild_world`), and reads the run through `RunState` (synced from `Engine`
 at the head of every tick and frame) and the document through
 `SceneDocument`; `module::forget_on_rebuild::<T>` resets a run-override
-resource on that message (`RayTracingRun`, `HdrRun`). `wind::WindModule` is the first: `WindRun` holds `set wind`,
+resource on that message (`RayTracingRun`, `HdrRun`, `space::SkyRun` for `set aurora`/`set fog density`, `lightning::StormRun`). `wind::WindModule` is the first: `WindRun` holds `set wind`,
 and it reads the weather blend through `director::WeatherNow` and volume
 specs through `volumes::LiveVolumes`, both published on the fixed tick
 before it, so it takes no `Engine` at all.

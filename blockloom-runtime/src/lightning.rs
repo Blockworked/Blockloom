@@ -17,6 +17,7 @@ use blockloom_core::vm::Effect;
 
 pub fn register(app: &mut App) {
     app.init_resource::<LightningState>()
+        .init_resource::<StormRun>()
         .init_resource::<LightningFlash>()
         .add_systems(
             FixedUpdate,
@@ -28,11 +29,21 @@ pub fn register(app: &mut App) {
         )
         .add_systems(
             Update,
+            crate::module::forget_on_rebuild::<StormRun>.after(crate::world::rebuild_world),
+        )
+        .add_systems(
+            Update,
             (step_strikes, flash_environment)
                 .chain()
                 .after(crate::environment::blend_environment)
                 .before(crate::environment::apply_environment),
         );
+}
+
+/// `set lightning storm` this run: strikes a minute, over the project's.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct StormRun {
+    pub rate: Option<f32>,
 }
 
 /// A strike on its way from flash to thunder.
@@ -80,7 +91,8 @@ pub struct FlashLight;
 fn apply_lightning_effects(
     mut commands: Commands,
     effects: Res<PendingEffects>,
-    mut engine: NonSendMut<Engine>,
+    engine: NonSend<Engine>,
+    mut run: ResMut<StormRun>,
     mut state: ResMut<LightningState>,
     thunder: Query<Entity, With<Thunder>>,
 ) {
@@ -93,7 +105,7 @@ fn apply_lightning_effects(
                 state.queued.push(Vec3::from(*at));
             }
             Effect::SetLightningRate { rate } if rate.is_finite() => {
-                engine.lightning_rate = Some(rate.clamp(0.0, 600.0));
+                run.rate = Some(rate.clamp(0.0, 600.0));
             }
             Effect::Stopped => {
                 for entity in &thunder {
@@ -108,6 +120,7 @@ fn apply_lightning_effects(
 /// Steps the storm on the fixed tick. A stopped world starts it over.
 fn direct_storm(
     engine: NonSend<Engine>,
+    run: Res<StormRun>,
     time: Res<Time<Fixed>>,
     mut state: ResMut<LightningState>,
 ) {
@@ -119,8 +132,8 @@ fn direct_storm(
         return;
     }
     let lightning = &engine.project.world.lightning;
-    let rate = engine
-        .lightning_rate
+    let rate = run
+        .rate
         .unwrap_or(if lightning.storm { lightning.rate } else { 0.0 });
     let strikes = state.director.step(lightning, rate, time.delta_secs());
     state.queued.extend(strikes.into_iter().map(Vec3::from));
@@ -336,6 +349,7 @@ mod tests {
         .init_resource::<crate::atmosphere::AtmosphereSources>();
         app.init_resource::<LightningState>()
             .init_resource::<LightningFlash>()
+            .init_resource::<StormRun>()
             .add_systems(
                 Update,
                 (
@@ -400,7 +414,7 @@ mod tests {
             .0
             .push(Effect::SetLightningRate { rate: 30.0 });
         app.update();
-        assert_eq!(app.world().non_send::<Engine>().lightning_rate, Some(30.0));
+        assert_eq!(app.world().resource::<StormRun>().rate, Some(30.0));
     }
 
     #[test]

@@ -4399,7 +4399,7 @@ mod tests {
                     latencies.push(at.elapsed().as_secs_f64() * 1000.0);
                     pressed = None;
                 }
-                None if shown > 60 && shown % 10 == 0 => {
+                None if shown > 60 && shown.is_multiple_of(10) => {
                     let code = if white { "KeyB" } else { "KeyA" };
                     send(EditorMessage::PreviewInput {
                         input: PreviewInput::Key {

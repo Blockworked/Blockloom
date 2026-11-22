@@ -730,6 +730,7 @@ pub fn blend_environment(
     wet: Option<Res<crate::director::WetnessField>>,
     mut environment: ResMut<Environment>,
     scaling: Option<Res<crate::quality::Scaling>>,
+    sky_run: Option<Res<crate::space::SkyRun>>,
 ) {
     let mut blended = Environment::from_world(&engine.project.world);
     for (weight, over) in &volumes.0 {
@@ -815,7 +816,10 @@ pub fn blend_environment(
     }
     // `set fog density` outlasts every volume, like the director's exposure,
     // and moves volumetric fog and beams by the same ratio.
-    if let Some(density) = engine.fog_density.filter(|d| d.is_finite()) {
+    if let Some(density) = sky_run
+        .and_then(|run| run.fog_density)
+        .filter(|d| d.is_finite())
+    {
         blended.set_fog_density(&engine.project.world.fog, density);
     }
     engine.clouds.apply(&mut blended.clouds);

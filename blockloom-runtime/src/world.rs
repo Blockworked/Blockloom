@@ -1052,9 +1052,6 @@ pub fn rebuild_world(
     engine.light_shadows.clear();
     engine.shadow_distance = None;
     engine.capture_probes = false;
-    engine.fog_density = None;
-    engine.aurora_kp = None;
-    engine.lightning_rate = None;
     engine.precipitation = Default::default();
     engine.weather = Default::default();
     engine.director_time = None;

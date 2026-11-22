@@ -20,6 +20,7 @@ use blockloom_core::vm::Effect;
 
 pub fn register(app: &mut App) {
     app.init_resource::<MoonState>()
+        .init_resource::<SkyRun>()
         .init_resource::<SpaceRender>()
         .init_resource::<MilkyWay>()
         .add_plugins(ExtractResourcePlugin::<SpaceRender>::default())
@@ -32,10 +33,22 @@ pub fn register(app: &mut App) {
         )
         .add_systems(
             Update,
+            crate::module::forget_on_rebuild::<SkyRun>.after(crate::world::rebuild_world),
+        )
+        .add_systems(
+            Update,
             (sync_moon, resolve_space)
                 .chain()
                 .after(crate::environment::apply_environment),
         );
+}
+
+/// `set aurora` and `set fog density` this run, over the project's sky and
+/// fog.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct SkyRun {
+    pub aurora_kp: Option<f32>,
+    pub fog_density: Option<f32>,
 }
 
 /// The moon's light: which way it comes from and its lux per channel.
@@ -152,33 +165,34 @@ impl SpaceParams {
 
 /// The aurora's KP this run: `set aurora` over the weather blend over the
 /// project's.
-pub fn aurora_kp(engine: &Engine) -> f32 {
-    if let Some(kp) = engine.aurora_kp {
+pub fn aurora_kp(engine: &Engine, run: &SkyRun) -> f32 {
+    if let Some(kp) = run.aurora_kp {
         return kp.clamp(0.0, 9.0);
     }
     if engine.weather.is_active() {
         return engine.weather.sampled().aurora_kp.clamp(0.0, 9.0);
     }
     let aurora = &engine.project.world.sky.aurora;
-    engine
-        .aurora_kp
-        .unwrap_or(if aurora.enabled { aurora.kp } else { 0.0 })
-        .clamp(0.0, 9.0)
+    if aurora.enabled { aurora.kp } else { 0.0 }.clamp(0.0, 9.0)
 }
 
 /// `set aurora`, `set fog density`, `set clouds` and `set cloud layer` for
 /// the rest of the run.
-fn apply_space_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engine>) {
+fn apply_space_effects(
+    effects: Res<PendingEffects>,
+    mut engine: NonSendMut<Engine>,
+    mut run: ResMut<SkyRun>,
+) {
     if !engine.running {
         return;
     }
     for effect in &effects.0 {
         match effect {
             Effect::SetAurora { kp } if kp.is_finite() => {
-                engine.aurora_kp = Some(kp.clamp(0.0, 9.0));
+                run.aurora_kp = Some(kp.clamp(0.0, 9.0));
             }
             Effect::SetFogDensity { density } if density.is_finite() => {
-                engine.fog_density = Some(density.clamp(0.0, 10.0));
+                run.fog_density = Some(density.clamp(0.0, 10.0));
             }
             Effect::SetClouds { property, value } => engine.clouds.set(*property, *value),
             Effect::SetCloudLayer {
@@ -260,6 +274,7 @@ fn sync_moon(
 #[allow(clippy::too_many_arguments)]
 fn resolve_space(
     engine: NonSend<Engine>,
+    run: Res<SkyRun>,
     environment: Res<Environment>,
     time: Res<Time>,
     flash: Option<Res<LightningFlash>>,
@@ -269,7 +284,7 @@ fn resolve_space(
     mut render: ResMut<SpaceRender>,
 ) {
     let sky = &engine.project.world.sky;
-    let kp = aurora_kp(&engine);
+    let kp = aurora_kp(&engine, &run);
     let flash = flash.map(|f| *f).unwrap_or_default();
     let params = SpaceParams::resolve(sky, &environment, kp, time.elapsed_secs_wrapped(), &flash);
     let path = if sky.stars.enabled {
