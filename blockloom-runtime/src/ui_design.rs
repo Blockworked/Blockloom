@@ -901,4 +901,186 @@ mod tests {
             }
         }
     }
+
+    /// Lays a UI v2 screen out inside a 960x720 frame (the test has no real
+    /// viewport) and gives each widget's top-left corner and size by name.
+    fn lay_out(
+        mut screen: serde_json::Value,
+    ) -> std::collections::BTreeMap<String, ([f32; 2], [f32; 2], bool)> {
+        let nodes = screen["nodes"].take();
+        screen["nodes"] = serde_json::json!([{"name": "frame", "widget": {"kind": "Canvas"},
+            "place": {"mode": anchored("TopLeft", [0., 0.]), "size": [960., 720.]}, "children": nodes}]);
+        let screen: blockloom_core::ui_tree::UiScreen = serde_json::from_value(screen).unwrap();
+        let all = measure(screen.lower().unwrap());
+        let frame = all.iter().find(|w| w.id == "frame").unwrap();
+        let origin = [
+            frame.transform[4] - frame.size[0] / 2.,
+            frame.transform[5] - frame.size[1] / 2.,
+        ];
+        all.iter()
+            .map(|w| {
+                let corner = [
+                    w.transform[4] - w.size[0] / 2. - origin[0],
+                    w.transform[5] - w.size[1] / 2. - origin[1],
+                ];
+                (w.id.clone(), (corner, w.size, !w.clips.is_empty()))
+            })
+            .collect()
+    }
+
+    fn anchored(anchor: &str, position: [f32; 2]) -> serde_json::Value {
+        let point = match anchor {
+            "TopLeft" => [0., 0.],
+            "TopRight" => [1., 0.],
+            _ => [0.5, 0.5],
+        };
+        serde_json::json!({"Anchored": {"anchor_min": point, "anchor_max": point, "pivot": point, "position": position}})
+    }
+
+    fn near(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1.5
+    }
+
+    /// Phase 5 gate: a HUD pinned to the corners of the screen.
+    #[test]
+    fn gate_a_hud_sits_in_its_corners() {
+        let at = lay_out(serde_json::json!({"nodes": [
+            {"name": "score", "widget": {"kind": "Label", "text": "Score 0"},
+             "place": {"mode": anchored("TopLeft", [16., 16.]), "size": [120., 24.]}},
+            {"name": "health", "widget": {"kind": "Progress", "value": 70.0},
+             "place": {"mode": anchored("TopRight", [-16., 16.]), "size": [200., 20.]}}
+        ]}));
+        let (score, _, _) = at["score"];
+        let (health, size, _) = at["health"];
+        assert!(near(score[0], 16.) && near(score[1], 16.), "{score:?}");
+        assert!(
+            near(health[0] + size[0], 960. - 16.) && near(health[1], 16.),
+            "{health:?}"
+        );
+    }
+
+    /// Phase 5 gate: a centred modal whose buttons stack inside it.
+    #[test]
+    fn gate_a_modal_centres_and_stacks_its_buttons() {
+        let at = lay_out(serde_json::json!({"nodes": [
+            {"name": "pause", "widget": {"kind": "Panel", "title": "Paused", "modal": true},
+             "place": {"mode": anchored("Center", [0., 0.]), "size": [300., 200.]},
+             "children": [
+                {"name": "resume", "widget": {"kind": "Button", "caption": "Resume"}},
+                {"name": "quit", "widget": {"kind": "Button", "caption": "Quit"}}
+             ]}
+        ]}));
+        let (pause, size, _) = at["pause"];
+        assert!(near(pause[0], 330.) && near(pause[1], 260.), "{pause:?}");
+        let (resume, _, _) = at["resume"];
+        let (quit, quit_size, _) = at["quit"];
+        assert!(resume[1] < quit[1]);
+        for p in [resume, quit] {
+            assert!(p[0] >= pause[0] && p[1] >= pause[1], "{p:?}");
+        }
+        assert!(quit[1] + quit_size[1] <= pause[1] + size[1] + 0.5);
+    }
+
+    /// Phase 5 gate: an inventory grid of one component used by reference.
+    #[test]
+    fn gate_an_inventory_grid_of_component_slots() {
+        let cells: Vec<_> = (0..8)
+            .map(|i| {
+                serde_json::json!({"name": format!("cell{i}"),
+                "instance": {"component": "slot", "inputs": {"count": format!("{i}")}}})
+            })
+            .collect();
+        let at = lay_out(serde_json::json!({
+            "components": {"slot": {
+                "nodes": [{"name": "slot", "widget": {"kind": "Panel"}, "place": {"size": [64., 64.]},
+                    "children": [{"name": "count", "widget": {"kind": "Label", "text": "0"}}]}],
+                "exports": [{"name": "count", "widget": "count", "path": "element.content"}]
+            }},
+            "nodes": [{"name": "bag", "widget": {"kind": "Grid"}, "spacing": {"columns": 4},
+                "place": {"mode": anchored("Center", [0., 0.])}, "children": cells}]
+        }));
+        let slots: Vec<_> = (0..8).map(|i| at[&format!("cell{i}/slot")].0).collect();
+        let mut xs: Vec<i32> = slots.iter().map(|p| p[0].round() as i32).collect();
+        let mut ys: Vec<i32> = slots.iter().map(|p| p[1].round() as i32).collect();
+        xs.sort();
+        xs.dedup();
+        ys.sort();
+        ys.dedup();
+        assert_eq!((xs.len(), ys.len()), (4, 2), "{slots:?}");
+        // Row-major: the fifth slot starts the second row under the first.
+        assert!(near(slots[4][0], slots[0][0]) && slots[4][1] > slots[0][1]);
+        assert!(at.contains_key("cell7/count"));
+    }
+
+    /// Phase 5 gate: a menu longer than its box scrolls inside it.
+    #[test]
+    fn gate_a_scroll_menu_clips_what_runs_past_it() {
+        let items: Vec<_> = (0..20)
+            .map(|i| {
+                serde_json::json!({"name": format!("level{i}"),
+                "widget": {"kind": "Button", "caption": format!("Level {i}")}})
+            })
+            .collect();
+        let at = lay_out(serde_json::json!({"nodes": [
+            {"name": "menu", "widget": {"kind": "List"},
+             "place": {"mode": anchored("Center", [0., 0.]), "size": [200., 150.]},
+             "children": items}
+        ]}));
+        let (menu, size, _) = at["menu"];
+        let (first, _, clipped) = at["level0"];
+        let (last, _, _) = at["level19"];
+        assert!(clipped, "items are clipped by the list");
+        assert!(first[1] >= menu[1] - 0.5);
+        assert!(
+            last[1] > menu[1] + size[1],
+            "{last:?} past {menu:?} {size:?}"
+        );
+    }
+
+    /// Phase 5 gate: one menu file the game lists draws the same in two
+    /// different scenes.
+    #[test]
+    fn gate_one_menu_is_shared_across_scenes() {
+        use blockloom_core::ui_layers::{self, UiLayer};
+        let dir =
+            std::env::temp_dir().join(format!("blockloom-shared-menu-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let screen: blockloom_core::ui_tree::UiScreen = serde_json::from_value(serde_json::json!({"nodes": [
+            {"name": "menu", "widget": {"kind": "Panel", "modal": true},
+             "place": {"mode": anchored("Center", [0., 0.]), "size": [240., 160.]},
+             "children": [{"name": "resume", "widget": {"kind": "Button", "caption": "Resume"}}]}
+        ]}))
+        .unwrap();
+        ui_layers::write(&dir, "assets/ui/Pause.blockui", &screen).unwrap();
+        let mut settings = blockloom_core::settings::GameSettings::default();
+        settings
+            .screens
+            .push(UiLayer::new("assets/ui/Pause.blockui".to_string()));
+        let mut forest = blockloom_core::scene::World::default();
+        let mut cave = blockloom_core::scene::World::default();
+        let mut hud = blockloom_core::ui::UiWidget::default();
+        hud.element.id = "torch".into();
+        cave.interface.widgets.push(hud);
+        forest.interface.reference_size = [960., 720.];
+        let a = ui_layers::scene_interface(Some(&dir), &forest, &settings);
+        let b = ui_layers::scene_interface(Some(&dir), &cave, &settings);
+        assert!(
+            a.errors.is_empty() && b.errors.is_empty(),
+            "{:?} {:?}",
+            a.errors,
+            b.errors
+        );
+        let (a, b) = (measure(a.document), measure(b.document));
+        let pick = |all: &[blockloom_protocol::InterfaceWidgetBounds], id: &str| {
+            all.iter()
+                .find(|w| w.id == id)
+                .map(|w| (w.size, w.transform))
+                .unwrap()
+        };
+        for id in ["menu", "resume"] {
+            assert_eq!(pick(&a, id), pick(&b, id), "{id}");
+        }
+        assert!(b.iter().any(|w| w.id == "torch") && !a.iter().any(|w| w.id == "torch"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

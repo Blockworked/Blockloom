@@ -2652,8 +2652,10 @@ stretched anchors and non-top-left pins inside a stack refuse to lower until
 the runtime draws them. The gates are the round trip in `ui_tree_tests.rs`
 (the golden projects too, plus `BLOCKLOOM_UI_FIXTURES=<folder>`) and
 `a_document_read_as_a_tree_lays_out_where_it_was` in `ui_design.rs`, which
-lays both out. Immediate-mode `show` blocks are to be deprecated once
-authored screens work.
+lays both out, plus the Phase 5 `gate_*` tests beside it: a HUD in its
+corners, a centred modal, an inventory grid of component slots, a
+scrolling menu and one menu file shared by two scenes, each laid out from
+a v2 screen.
 
 A `.blockui` file is one `UiScreen` (`blockloom-core/src/ui_layers.rs`). A
 scene lists the files it draws in `World.screens` (a `Screens` scene
