@@ -41,6 +41,8 @@ pub struct Grid {
     shapes: BTreeMap<[i32; 3], Shape>,
     /// The shape a block's model gives every cell of it (a stair state).
     block_shapes: std::sync::Arc<BTreeMap<Block, Shape>>,
+    /// Blocks rays pass through (fluids and other non-colliding blocks).
+    passable: std::sync::Arc<std::collections::BTreeSet<Block>>,
     /// Signed density at cell centres, quantized to 1/256 cell.
     densities: BTreeMap<[i32; 3], i16>,
     /// Sections whose meshes are out of date: those written to, and the
@@ -80,6 +82,7 @@ impl Grid {
             edits: BTreeMap::new(),
             shapes: BTreeMap::new(),
             block_shapes: Default::default(),
+            passable: Default::default(),
             densities: BTreeMap::new(),
             dirty: BTreeSet::new(),
             lod: crate::lod::Cache::default(),
@@ -239,6 +242,16 @@ impl Grid {
     pub fn set_block_shapes(&mut self, shapes: std::sync::Arc<BTreeMap<Block, Shape>>) {
         self.block_shapes = shapes;
         self.mark_all_dirty();
+    }
+
+    pub fn set_passable(&mut self, passable: std::sync::Arc<std::collections::BTreeSet<Block>>) {
+        self.passable = passable;
+    }
+
+    /// Whether a ray stops at this cell's block.
+    pub fn stops(&self, cell: [i32; 3]) -> bool {
+        let block = self.get(cell);
+        block != 0 && !self.passable.contains(&block)
     }
 
     /// A solid cell that fills its whole cell, so it hides what it touches.

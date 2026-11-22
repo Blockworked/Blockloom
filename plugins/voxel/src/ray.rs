@@ -31,7 +31,7 @@ pub fn cast(grid: &Grid, origin: [f32; 3], dir: [f32; 3], reach: f32) -> Option<
         [0; 3],
         grid.size(),
         |cell, t, _, normal, _| {
-            (grid.get(cell) != 0).then_some(Hit {
+            grid.stops(cell).then_some(Hit {
                 cell,
                 normal,
                 distance: t,

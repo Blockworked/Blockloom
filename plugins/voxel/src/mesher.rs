@@ -44,6 +44,8 @@ pub(crate) struct Shading<'a> {
     pub rules: Option<&'a crate::light::LightRules>,
     /// The block set's textures, sorted, when cube faces use a texture array.
     pub array: Option<&'a [String]>,
+    /// See-through states mapped to their type, so water levels share faces.
+    pub family: Option<&'a BTreeMap<crate::grid::Block, crate::grid::Block>>,
 }
 
 impl Shading<'_> {
@@ -77,7 +79,11 @@ impl Shading<'_> {
 
     /// Whether neighbour `n` hides the face of block `m` it touches.
     fn hides(&self, m: crate::grid::Block, n: crate::grid::Block) -> bool {
-        n != 0 && (n == m || self.rules.is_none_or(|r| !r.is_clear(n)))
+        let kin = || {
+            self.family
+                .is_some_and(|f| f.get(&n).is_some_and(|t| f.get(&m) == Some(t)))
+        };
+        n != 0 && (n == m || kin() || self.rules.is_none_or(|r| !r.is_clear(n)))
     }
 }
 
@@ -404,7 +410,8 @@ fn group_for<'g>(
         .get(material)
         .is_some_and(|look| look.emission > 0.0);
     let layer = def.map_or(Layer::Opaque, |d| d.layer);
-    let key = (glows || layer != Layer::Opaque).then_some(material);
+    let solid = def.is_none_or(|d| d.collide);
+    let key = (glows || layer != Layer::Opaque || !solid).then_some(material);
     let group = groups.entry((key, texture.clone())).or_default();
     if group.texture.is_none() {
         group.texture = texture;
@@ -946,6 +953,7 @@ mod tests {
             light: None,
             rules: Some(&rules),
             array: None,
+            family: None,
         };
         let groups = mesh_region_with(
             &grid,
@@ -976,6 +984,7 @@ mod tests {
         assert_eq!(layers, ["bottom.png", "side.png", "top.png"]);
         let shading = Shading {
             array: Some(&layers),
+            family: None,
             ..Shading::default()
         };
         let groups = mesh_region_with(

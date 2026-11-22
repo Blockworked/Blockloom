@@ -138,12 +138,27 @@ fn the_package_schema_is_valid_and_its_blocks_resolve() {
     contributions.check_definition().unwrap();
     assert_eq!(contributions.resources.len(), 1);
     assert_eq!(contributions.tools.len(), 4);
-    assert_eq!(blocks().len(), 22);
+    assert_eq!(blocks().len(), 28);
     // Every statement and reporter has the op it names.
     let ops: BTreeSet<_> = blocks().into_iter().map(|b| b.op).collect();
     for op in [
-        "set", "fill", "sphere", "generate", "get", "height", "cast", "break", "place", "render",
+        "set",
+        "fill",
+        "sphere",
+        "generate",
+        "get",
+        "height",
+        "cast",
+        "break",
+        "place",
+        "render",
         "distant",
+        "add_items",
+        "take_items",
+        "item_count",
+        "set_block_data",
+        "block_data",
+        "last_broken_entity",
     ] {
         assert!(ops.contains(op), "{op}");
     }
@@ -587,7 +602,7 @@ fn the_sealed_package_is_an_engine_plugin() {
     package::seal(&root).unwrap();
     let package = Package::load(&root).unwrap();
     assert_eq!(package.manifest.id, ID);
-    assert_eq!(package.contributions.blocks.len(), 22);
+    assert_eq!(package.contributions.blocks.len(), 29);
     assert!(package.manifest.runtime.portable.is_none());
     let adapter = package.manifest.runtime.adapter.clone().unwrap();
     assert!(root.join(&adapter.crate_dir).join("Cargo.toml").is_file());
@@ -834,4 +849,63 @@ fn mixed_resolution_seams_and_edits_match_native_and_portable_execution() {
             portable.call_json("world.stop", &json!({})).unwrap()
         );
     }
+}
+
+/// Water placed in a run flows on the tick hook, and a chest broken by an
+/// edit raises `entity_broken` with what it held.
+#[test]
+fn the_tick_hook_flows_water_and_a_broken_chest_says_what_it_held() {
+    let mut native = module();
+    let start = json!({"resources":[{"type_id":"world","payload":{"size":[32,16,32],"preset":"flat",
+        "blocks":[r##"{"name":"water","id":20,"layer":"translucent","fluid":{"rate":1}}"##,
+            r##"{"name":"chest","id":40,"entity":{"kind":"chest","slots":9}}"##]}}]});
+    native.call_json("world.start", &start).unwrap();
+    let top = native.call_json("height", &json!({"x":5,"z":5})).unwrap()["value"]
+        .as_i64()
+        .unwrap() as i32;
+    let y = top + 1;
+    native
+        .call_json("set", &json!({"x":5,"y":y,"z":5,"material":"water"}))
+        .unwrap();
+    let mut flowed = false;
+    for tick in 0..20 {
+        let answer = native
+            .call_json("hook.tick", &json!({"tick":tick}))
+            .unwrap();
+        flowed |= answer["effects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["effect"] == "mesh");
+    }
+    assert!(flowed);
+    let side = native
+        .call_json("get", &json!({"x":7,"y":y,"z":5}))
+        .unwrap();
+    assert_eq!(side["material"], 22, "two cells out is level 2");
+    native
+        .call_json("set", &json!({"x":9,"y":y,"z":20,"material":"chest"}))
+        .unwrap();
+    let cell = json!({"x":9,"y":y,"z":20});
+    let mut args = cell.clone();
+    args["item"] = json!("apple");
+    args["count"] = json!(3);
+    assert_eq!(native.call_json("add_items", &args).unwrap()["value"], 0);
+    assert_eq!(native.call_json("item_count", &args).unwrap()["value"], 3);
+    let broken = native
+        .call_json("set", &json!({"x":9,"y":y,"z":20,"material":"air"}))
+        .unwrap();
+    let event = broken["effects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["effect"] == "event")
+        .unwrap()
+        .clone();
+    assert_eq!(event["name"], "entity_broken");
+    assert_eq!(event["args"], json!(["chest", 9, y, 20, "apple x3"]));
+    assert!(
+        native.call_json("add_items", &args).is_err(),
+        "air holds nothing"
+    );
 }

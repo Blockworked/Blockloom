@@ -12,6 +12,7 @@ pub mod engine;
 #[cfg(feature = "engine")]
 pub use engine::blockloom_module;
 mod blockworld;
+mod entities;
 
 /// How many `blocks` definition lines a world may hold.
 const MAX_BLOCK_LINES: usize = 4096;
@@ -32,6 +33,7 @@ mod section;
 mod shape;
 mod smooth;
 mod terrain;
+mod ticks;
 mod worldgen;
 
 use blockloom_plugin_api::mesh::{ColliderKind, MeshBlend, MeshData};
@@ -118,6 +120,12 @@ struct Settings {
     texture_arrays: bool,
     /// How bright the sky is, 0 (night) to 1; block light is unaffected.
     daylight: f64,
+    /// Run block ticks (fluids, falling blocks, random rules) while playing.
+    ticks: bool,
+    /// Random ticks per 16-cell cube each fixed step; 0 turns them off.
+    random_tick_speed: u32,
+    /// Scheduled ticks run per fixed step; the rest wait for the next.
+    tick_budget: usize,
 }
 
 fn default_render_distance() -> i32 {
@@ -176,6 +184,9 @@ impl Default for Settings {
             lighting: false,
             texture_arrays: false,
             daylight: 1.0,
+            ticks: true,
+            random_tick_speed: 1,
+            tick_budget: 2048,
         }
     }
 }
@@ -228,6 +239,13 @@ struct World {
     /// The mesh names each chunk has drawn, so a remesh can retire the ones
     /// it no longer makes.
     published: BTreeMap<[i32; 3], BTreeSet<String>>,
+    tick_rules: ticks::TickRules,
+    ticks: ticks::Ticks,
+    entities: entities::Entities,
+    /// Plugin events edits and ticks raised, sent with the next answer.
+    events: Vec<Value>,
+    /// The last block entity whose block went away, with what it held.
+    last_removed: Value,
 }
 
 fn check_edit_bounds(lo: [i32; 3], hi: [i32; 3]) -> Result<(), String> {
@@ -296,7 +314,8 @@ impl World {
     }
 
     fn checkpoint(&self) -> Value {
-        json!({"version":2,"settings":self.settings,"active_seed":self.seed,"grid":self.grid.snapshot(),"fragments":self.fragments.values().collect::<Vec<_>>()})
+        json!({"version":2,"settings":self.settings,"active_seed":self.seed,"grid":self.grid.snapshot(),"fragments":self.fragments.values().collect::<Vec<_>>(),
+            "ticks":self.ticks,"entities":self.entities})
     }
 
     fn save(&self, host: &Host, slot: &str) -> Result<(), Error> {
@@ -312,7 +331,13 @@ impl World {
     }
 }
 
-type Checkpoint = (Grid, BTreeMap<u64, fracture::Fragment>, i64);
+/// Grid, fragments, active seed, then pending ticks and block entities.
+type Checkpoint = (
+    Grid,
+    BTreeMap<u64, fracture::Fragment>,
+    i64,
+    (ticks::Ticks, entities::Entities),
+);
 
 fn decode_checkpoint(world: &World, value: Value) -> Result<Checkpoint, Error> {
     let version = value["version"].as_u64().unwrap_or(0);
@@ -366,6 +391,22 @@ fn decode_checkpoint(world: &World, value: Value) -> Result<Checkpoint, Error> {
         fragment.mesh(world)?;
         table.insert(fragment.id, fragment);
     }
+    let mut ticks: ticks::Ticks =
+        serde_json_from(value.get("ticks").cloned().unwrap_or(json!({}))).map_err(Error::new)?;
+    if ticks.len() > ticks::MAX_QUEUED {
+        return Err(Error::new("voxel checkpoint holds too many ticks"));
+    }
+    ticks.reindex();
+    let entities: entities::Entities = serde_json_from(
+        value
+            .get("entities")
+            .cloned()
+            .unwrap_or(json!({"by_cell":[]})),
+    )
+    .map_err(Error::new)?;
+    if entities.len() > entities::MAX_ENTITIES {
+        return Err(Error::new("voxel checkpoint holds too many block entities"));
+    }
     Ok((
         grid,
         table,
@@ -373,6 +414,7 @@ fn decode_checkpoint(world: &World, value: Value) -> Result<Checkpoint, Error> {
             .get("active_seed")
             .and_then(Value::as_i64)
             .unwrap_or(settings.seed),
+        (ticks, entities),
     ))
 }
 
@@ -503,6 +545,10 @@ impl World {
             return Err("too many noise, biome or feature lines".into());
         }
         let registry = registry::Registry::parse(&settings.blocks)?;
+        let tick_rules = ticks::TickRules::new(&registry)?;
+        if settings.random_tick_speed > 64 || !(1..=65536).contains(&settings.tick_budget) {
+            return Err("random_tick_speed is 0 to 64 and tick_budget 1 to 65536".into());
+        }
         let worldgen =
             worldgen::Worldgen::parse(&settings.noise, &settings.biomes, &settings.features)?;
         for biome in &worldgen.biomes {
@@ -577,6 +623,11 @@ impl World {
             surface: settings.surface,
             seed: settings.seed,
             published: BTreeMap::new(),
+            tick_rules,
+            ticks: ticks::Ticks::default(),
+            entities: entities::Entities::default(),
+            events: Vec::new(),
+            last_removed: Value::Null,
             settings: settings.clone(),
             preview: false,
             serial: 0,
@@ -616,6 +667,71 @@ impl World {
         if !shapes.is_empty() {
             self.grid.set_block_shapes(std::sync::Arc::new(shapes));
         }
+        let passable: BTreeSet<_> = self
+            .registry
+            .defs()
+            .filter(|d| !d.collide)
+            .map(|d| d.id)
+            .collect();
+        self.grid.set_passable(std::sync::Arc::new(passable));
+        self.entities.attach(&self.registry);
+    }
+
+    /// After an edit of the box: wakes ticks there and drops entities whose
+    /// block went away, raising `entity_broken` for each.
+    fn touch(&mut self, lo: [i32; 3], hi: [i32; 3]) {
+        let (lo, hi) = (
+            [0, 1, 2].map(|a| lo[a].min(hi[a])),
+            [0, 1, 2].map(|a| lo[a].max(hi[a])),
+        );
+        self.ticks.touch(&self.tick_rules, &self.grid, lo, hi);
+        if self.entities.len() == 0 {
+            return;
+        }
+        let grid = &self.grid;
+        for (cell, entity) in self.entities.reconcile(lo, hi, |c| grid.get(c)) {
+            let [x, y, z] = cell;
+            self.events
+                .push(json!({"effect":"event","name":"entity_broken",
+                "args":[entity.kind, x, y, z, entity.contents()]}));
+            self.last_removed = json!({"cell":cell,"kind":entity.kind,"items":entity.items,
+                "data":entity.data,"contents":entity.contents()});
+        }
+    }
+
+    /// One fixed step of block ticks.
+    fn tick(&mut self) -> Vec<Value> {
+        if !self.settings.ticks || self.tick_rules.is_idle() {
+            return Vec::new();
+        }
+        let sections: Vec<[i32; 3]> = if self.settings.random_tick_speed == 0 {
+            Vec::new()
+        } else if self.settings.streamed {
+            self.visible.iter().copied().collect()
+        } else {
+            let n = self.grid.section_counts();
+            (0..n[0])
+                .flat_map(|x| (0..n[1]).flat_map(move |y| (0..n[2]).map(move |z| [x, y, z])))
+                .filter(|c| self.grid.section(*c).is_some())
+                .collect()
+        };
+        let stepped = self.ticks.step(
+            &self.tick_rules,
+            &mut self.grid,
+            worldgen::seed32(self.seed),
+            &sections,
+            self.settings.random_tick_speed,
+            self.settings.tick_budget,
+        );
+        for cell in &stepped.cells {
+            self.touch(*cell, *cell);
+        }
+        let mut effects = std::mem::take(&mut self.events);
+        if !stepped.cells.is_empty() {
+            effects.extend(self.flush());
+            effects.push(json!({"effect":"nav_dirty"}));
+        }
+        effects
     }
 
     fn reset_lod_meshes(&mut self) {
@@ -1126,10 +1242,8 @@ impl World {
             };
             work.truncate(budget);
         }
-        let rules = self
-            .settings
-            .lighting
-            .then(|| light::LightRules::new(&self.registry, &self.palette));
+        let rules = Some(light::LightRules::new(&self.registry, &self.palette));
+        let family = self.registry.families();
         let daylight = self.settings.daylight.clamp(0.0, 1.0) as f32;
         // Past the array's size, faces keep one mesh per texture.
         let array = self
@@ -1140,7 +1254,7 @@ impl World {
         for chunk in work {
             let field = rules
                 .as_ref()
-                .filter(|_| self.surface == Surface::Cubes)
+                .filter(|_| self.settings.lighting && self.surface == Surface::Cubes)
                 .map(|rules| {
                     light::LightField::compute(
                         &self.grid,
@@ -1153,6 +1267,7 @@ impl World {
                 light: field.as_ref().map(|f| (f, daylight)),
                 rules: rules.as_ref(),
                 array: array.as_deref(),
+                family: Some(&family),
             };
             let sliced = cfg!(target_arch = "wasm32")
                 && self.settings.preset == "infinite"
@@ -1274,7 +1389,11 @@ impl World {
                                 emission,
                                 roughness: 0.9,
                                 transition_ms: 0,
-                                collider: self.solid,
+                                // Water and other non-colliding blocks draw but don't block.
+                                collider: self.solid
+                                    && glow
+                                        .and_then(|m| self.registry.get(m))
+                                        .is_none_or(|d| d.collide),
                                 collider_kind: ColliderKind::Trimesh,
                                 blend,
                                 texture_layers: if arrayed {
@@ -1496,9 +1615,11 @@ impl Voxel {
             .unwrap_or_default();
         if settings.persistent && !world.preview {
             match read_checkpoint(host, &world, &settings.save_slot) {
-                Ok(Some((grid, fragments, seed))) => {
+                Ok(Some((grid, fragments, seed, (ticks, entities)))) => {
                     world.seed = seed;
                     world.grid = grid;
+                    world.ticks = ticks;
+                    world.entities = entities;
                     world.attach_blocks();
                     if settings.preset == "infinite" {
                         world.attach_worldgen();
@@ -1547,7 +1668,8 @@ impl Voxel {
     }
 
     fn edited(world: &mut World, changed: u64) -> Value {
-        let mut effects = world.flush();
+        let mut effects = std::mem::take(&mut world.events);
+        effects.extend(world.flush());
         if changed > 0 {
             effects.push(json!({"effect":"nav_dirty"}));
         }
@@ -1561,6 +1683,7 @@ impl Voxel {
             .material_id(&args["material"])
             .map_err(Error::bad_argument)?;
         let changed = u64::from(world.grid.set(at, material));
+        world.touch(at, at);
         Ok(Voxel::edited(world, changed))
     }
 
@@ -1576,6 +1699,7 @@ impl Voxel {
         let changed = world
             .fill_box(a, b, material)
             .map_err(Error::bad_argument)?;
+        world.touch(a, b);
         Ok(Voxel::edited(world, changed))
     }
 
@@ -1585,6 +1709,7 @@ impl Voxel {
             .map_err(Error::bad_argument)?;
         let world = self.world()?;
         let changed = u64::from(world.grid.reshape(at, shape));
+        world.touch(at, at);
         Ok(Voxel::edited(world, changed))
     }
 
@@ -1601,6 +1726,8 @@ impl Voxel {
         let changed = world
             .fill_sphere(centre, radius, material)
             .map_err(Error::bad_argument)?;
+        let r = radius.ceil() as i32;
+        world.touch(centre.map(|c| c - r), centre.map(|c| c + r));
         Ok(Voxel::edited(world, changed))
     }
 
@@ -1676,11 +1803,14 @@ impl Voxel {
         let target = hit.and_then(|hit| match material {
             None => Some(hit.cell),
             // A ray that starts inside a cell has no face to build against.
-            Some(_) => {
-                (hit.normal != [0; 3] && world.grid.get(hit.before()) == 0).then(|| hit.before())
-            }
+            Some(_) => (hit.normal != [0; 3]
+                && world.tick_rules.replaceable(world.grid.get(hit.before())))
+            .then(|| hit.before()),
         });
         let changed = target.map_or(0, |at| u64::from(world.grid.set(at, material.unwrap_or(0))));
+        if let Some(at) = target {
+            world.touch(at, at);
+        }
         let mut answer = Voxel::edited(world, changed);
         answer["hit"] = json!(hit.is_some());
         answer["cell"] = json!(target);
@@ -1692,6 +1822,8 @@ impl Voxel {
         let preset = args["preset"].as_str().unwrap_or("island");
         let seed = args["seed"].as_i64().unwrap_or(world.seed);
         world.generate(preset, seed).map_err(Error::bad_argument)?;
+        world.ticks = ticks::Ticks::default();
+        world.entities.clear();
         let mut answer = Voxel::edited(world, 0);
         answer["effects"]
             .as_array_mut()
@@ -1821,7 +1953,10 @@ impl Plugin for Voxel {
             "fracture" => {
                 let a = [int(&args, "x1")?, int(&args, "y1")?, int(&args, "z1")?];
                 let b = [int(&args, "x2")?, int(&args, "y2")?, int(&args, "z2")?];
-                fracture::detach(self.world()?, a, b)
+                let world = self.world()?;
+                let answer = fracture::detach(world, a, b);
+                world.touch(a, b);
+                answer
             }
             "fragment_set" => {
                 let id = fragment_id(&args)?;
@@ -1896,9 +2031,12 @@ impl Plugin for Voxel {
             "world.save" => Ok(json!({"state":self.world()?.checkpoint()})),
             "world.restore" => {
                 let world = self.world()?;
-                let (grid, fragments, seed) = decode_checkpoint(world, args["state"].clone())?;
+                let (grid, fragments, seed, (ticks, entities)) =
+                    decode_checkpoint(world, args["state"].clone())?;
                 let mut effects = world.replace_fragments(fragments)?;
                 world.grid = grid;
+                world.ticks = ticks;
+                world.entities = entities;
                 world.attach_blocks();
                 if world.settings.preset == "infinite" {
                     world.attach_worldgen();
@@ -1924,10 +2062,13 @@ impl Plugin for Voxel {
                 if world.preview {
                     return Err(Error::new("player saves are unavailable in preview"));
                 }
-                let (grid, fragments, seed) = read_checkpoint(host, world, slot)?
-                    .ok_or_else(|| Error::new("no voxel save in this slot"))?;
+                let (grid, fragments, seed, (ticks, entities)) =
+                    read_checkpoint(host, world, slot)?
+                        .ok_or_else(|| Error::new("no voxel save in this slot"))?;
                 let mut effects = world.replace_fragments(fragments)?;
                 world.grid = grid;
+                world.ticks = ticks;
+                world.entities = entities;
                 world.attach_blocks();
                 if world.settings.preset == "infinite" {
                     world.attach_worldgen();
@@ -2056,6 +2197,69 @@ impl Plugin for Voxel {
                 Ok(json!({"effects":effects}))
             }
             "set" => self.set(&args),
+            "hook.tick" => {
+                let world = self.world()?;
+                if world.preview {
+                    return Ok(json!({"effects":[]}));
+                }
+                Ok(json!({"effects":world.tick()}))
+            }
+            "ticks" => {
+                let world = self.world()?;
+                Ok(json!({"step":world.ticks.now,"queued":world.ticks.len(),
+                    "entities":world.entities.len(),"value":world.ticks.len()}))
+            }
+            "block_entity" => {
+                let at = cell(&args)?;
+                let world = self.world()?;
+                let block = world.grid.get(at);
+                let entity = world.entities.at(at, block).map_err(Error::bad_argument)?;
+                Ok(
+                    json!({"kind":entity.kind,"data":entity.data,"items":entity.items,
+                    "contents":entity.contents(),"value":entity.contents()}),
+                )
+            }
+            "block_data" => {
+                let at = cell(&args)?;
+                let key = args["key"].as_str().unwrap_or("");
+                let world = self.world()?;
+                let block = world.grid.get(at);
+                let entity = world.entities.at(at, block).map_err(Error::bad_argument)?;
+                Ok(json!({"value":entity.data.get(key).cloned().unwrap_or(json!(""))}))
+            }
+            "set_block_data" => {
+                let at = cell(&args)?;
+                let key = args["key"].as_str().unwrap_or("");
+                let world = self.world()?;
+                let block = world.grid.get(at);
+                let entity = world.entities.at(at, block).map_err(Error::bad_argument)?;
+                entity
+                    .set_data(key, args["value"].clone())
+                    .map_err(Error::bad_argument)?;
+                Ok(json!({"effects":[]}))
+            }
+            "add_items" | "take_items" | "item_count" => {
+                let at = cell(&args)?;
+                let item = args["item"].as_str().unwrap_or("");
+                let count = args["count"].as_f64().unwrap_or(1.0).clamp(0.0, 1e9) as u32;
+                let world = self.world()?;
+                let block = world.grid.get(at);
+                let stack = world.entities.stack_of(block);
+                let entity = world.entities.at(at, block).map_err(Error::bad_argument)?;
+                let value = match op {
+                    "add_items" => entity
+                        .add(item, count, stack)
+                        .map_err(Error::bad_argument)?,
+                    "take_items" => entity.take(item, count),
+                    _ => entity.count(item),
+                };
+                Ok(json!({"value":value}))
+            }
+            "last_broken_entity" => {
+                let world = self.world()?;
+                Ok(json!({"entity":world.last_removed,
+                    "value":world.last_removed["contents"].as_str().unwrap_or("")}))
+            }
             "fill" => self.fill(&args),
             "sphere" => self.sphere(&args),
             "shape" => self.shape(&args),
@@ -2401,5 +2605,105 @@ mod lighting_tests {
         assert!(hi > lo * 10.0, "{lo} {hi}");
         let (lo, hi) = floor_top_brightness(false);
         assert_eq!(lo, hi);
+    }
+}
+
+#[cfg(test)]
+mod tick_tests {
+    use super::*;
+
+    fn pond() -> World {
+        let mut world = World::new(&Settings {
+            preset: "empty".into(),
+            size: [32.0, 16.0, 32.0],
+            blocks: vec![
+                r##"{"name":"water","id":20,"layer":"translucent","color":"#3366cc","fluid":{"rate":1}}"##.into(),
+                r##"{"name":"chest","id":40,"entity":{"kind":"chest","slots":4}}"##.into(),
+            ],
+            ..Settings::default()
+        })
+        .unwrap();
+        world.flush();
+        for x in 0..32 {
+            for z in 0..32 {
+                world.grid.set([x, 0, z], 1);
+            }
+        }
+        world
+    }
+
+    #[test]
+    fn placed_water_flows_draws_without_a_collider_and_rays_pass_it() {
+        let mut world = pond();
+        world.flush();
+        world.grid.set([8, 1, 8], 20);
+        world.touch([8, 1, 8], [8, 1, 8]);
+        let mut meshes = Vec::new();
+        for _ in 0..20 {
+            meshes.extend(world.tick());
+        }
+        assert_eq!(world.grid.get([10, 1, 8]), 22);
+        let water: Vec<_> = meshes
+            .iter()
+            .filter(|e| e["effect"] == "mesh" && e["name"].as_str().unwrap().contains("glow20"))
+            .collect();
+        assert!(!water.is_empty());
+        assert!(
+            water
+                .iter()
+                .all(|m| m["collider"] == false && m["blend"] == "translucent")
+        );
+        let hit = ray::cast(&world.grid, [8.5, 5.0, 8.5], [0.0, -1.0, 0.0], 10.0).unwrap();
+        assert_eq!(
+            hit.cell,
+            [8, 0, 8],
+            "a ray looks through water to the floor"
+        );
+        assert!(world.tick_rules.replaceable(world.grid.get([9, 1, 8])));
+    }
+
+    #[test]
+    fn a_broken_chest_says_what_it_held_and_saves_keep_ticks_and_chests() {
+        let mut world = pond();
+        world.grid.set([3, 1, 3], 40);
+        world.grid.set([5, 1, 5], 40);
+        world
+            .entities
+            .at([3, 1, 3], 40)
+            .unwrap()
+            .add("apple", 5, 64)
+            .unwrap();
+        world
+            .entities
+            .at([5, 1, 5], 40)
+            .unwrap()
+            .add("stick", 2, 64)
+            .unwrap();
+        world.grid.set([20, 1, 20], 20);
+        world.touch([20, 1, 20], [20, 1, 20]);
+        let state = world.checkpoint();
+        let (_, _, _, (ticks, entities)) = decode_checkpoint(&world, state).unwrap();
+        assert_eq!(ticks.len(), 1);
+        assert_eq!(entities.len(), 2);
+        world.grid.set([3, 1, 3], 0);
+        world.touch([3, 1, 3], [3, 1, 3]);
+        let events = std::mem::take(&mut world.events);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["name"], "entity_broken");
+        assert_eq!(events[0]["args"], json!(["chest", 3, 1, 3, "apple x5"]));
+        assert_eq!(world.last_removed["contents"], "apple x5");
+        assert_eq!(world.entities.len(), 1);
+    }
+
+    #[test]
+    fn worlds_without_tick_rules_stay_idle() {
+        let mut world = World::new(&Settings {
+            preset: "island".into(),
+            ..Settings::default()
+        })
+        .unwrap();
+        world.generate("island", 3).unwrap();
+        world.flush();
+        assert!(world.tick().is_empty());
     }
 }

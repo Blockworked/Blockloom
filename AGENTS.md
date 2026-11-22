@@ -1271,7 +1271,20 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   `MeshData.blend` (translucent vertex alpha is the definition's `opacity`,
   0.6 by default); GPU meshing stays opaque only. `texture_arrays` draws
   textured cube faces from one array per block set (`Registry::texture_layers`,
-  sorted paths), uvs tiling across merged faces. Saved edits are the `world` resource's
+  sorted paths), uvs tiling across merged faces. `ticks.rs` steps block ticks
+  on the `tick` hook (fixed simulation, runs only, never preview): scheduled
+  ticks for a definition's `fluid` (a `level` property 0 source to `spread`,
+  falling before spreading, two sources over ground making a third) and
+  `falls`, and `random_tick_speed` random picks per 16-cell cube for its
+  `random` rules (`becomes`, `grow` a property, `spreads_to`, with `when`
+  covered/open and `unless_near`), all hashed from seed, step and cell. Only
+  edits schedule (`World::touch`), so generated water rests. A fluid has no
+  collider, rays pass it (`Grid::set_passable`) and placing replaces it; see-
+  through states of one type hide shared faces (`Registry::families`).
+  `entities.rs` keeps block entities (`entity: {kind, slots, stack}`): made on
+  first use, dropped when their block changes with an `entity_broken` event
+  (`when a {kind} block is broken`); slots, data and pending ticks ride the
+  checkpoint. Saved edits are the `world` resource's
   `edits` lines (`set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`,
   `sphere X Y Z radius material`), applied in order over the generated terrain
   at `world.start` (a bad line is reported by number and skipped), so the scene

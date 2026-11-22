@@ -53,6 +53,63 @@ pub struct BlockDef {
     pub light: Option<u8>,
     /// How much a translucent block covers what is behind it, 0 to 1.
     pub opacity: f32,
+    /// Whether bodies and rays stop at it; fluids default to false.
+    pub collide: bool,
+    /// Whether fluids, falling blocks and placement may overwrite it.
+    pub replaceable: bool,
+    /// Falls while the cell below is empty or replaceable.
+    pub falls: bool,
+    pub fluid: Option<FluidDef>,
+    /// Rules a random tick tries, in order (see ticks.rs).
+    pub random: Vec<RandomRule>,
+    /// Per-cell data this block carries, such as a chest's slots.
+    pub entity: Option<EntityDef>,
+}
+
+/// A fluid's spread: `level` 0 is a source, `spread` the last flowing level.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FluidDef {
+    pub spread: u8,
+    /// Fixed steps between a fluid cell's updates.
+    pub rate: u32,
+    /// Two sources beside a cell over ground make it a source.
+    pub infinite: bool,
+}
+
+/// What a random tick does to the cell it picked.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuleAct {
+    /// Becomes this block or state.
+    Becomes(String),
+    /// Steps this property to its next value, stopping at the last.
+    Grow(String),
+    /// Turns a nearby open block of this name into itself.
+    SpreadsTo(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Condition {
+    Always,
+    /// A solid opaque block sits on top.
+    Covered,
+    Open,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RandomRule {
+    pub act: RuleAct,
+    pub chance: f64,
+    pub when: Condition,
+    /// Skips the rule while a block of this name or tag is within the
+    /// distance (a leaf near its log).
+    pub unless_near: Option<(String, i32)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EntityDef {
+    pub kind: String,
+    pub slots: usize,
+    pub stack: u32,
 }
 
 /// How a block draws: solid, alpha-tested or blended (used by M3 rendering).
@@ -186,6 +243,12 @@ impl Registry {
                 layer: Layer::Opaque,
                 light: None,
                 opacity: 1.0,
+                collide: true,
+                replaceable: false,
+                falls: false,
+                fluid: None,
+                random: Vec::new(),
+                entity: None,
             })
             .collect()
     }
@@ -277,7 +340,6 @@ impl Registry {
     }
 
     /// The type a state id belongs to, if it has properties.
-    #[cfg(test)]
     pub fn type_of(&self, id: crate::grid::Block) -> Option<&BlockType> {
         self.by_id
             .get(&id)
@@ -292,6 +354,20 @@ impl Registry {
             .flat_map(|d| d.textures.values())
             .collect();
         set.into_iter().cloned().collect()
+    }
+
+    pub fn defs(&self) -> impl Iterator<Item = &BlockDef> {
+        self.by_id.values()
+    }
+
+    /// Each see-through state of a type with properties, mapped to the
+    /// type's base id, so faces between its states (water levels) hide.
+    pub fn families(&self) -> BTreeMap<crate::grid::Block, crate::grid::Block> {
+        self.by_id
+            .values()
+            .filter(|d| d.layer != Layer::Opaque)
+            .filter_map(|d| self.types.get(&d.type_name).map(|t| (d.id, t.base)))
+            .collect()
     }
 
     pub fn ids(&self) -> Vec<crate::grid::Block> {
@@ -367,6 +443,105 @@ fn parse_look(v: &Value, def: &mut BlockDef) -> Result<(), String> {
     Ok(())
 }
 
+fn flag(v: &Value, key: &str, default: bool) -> Result<bool, String> {
+    match v.get(key).filter(|f| !f.is_null()) {
+        None => Ok(default),
+        Some(f) => f.as_bool().ok_or_else(|| format!("{key} is true or false")),
+    }
+}
+
+/// Ticks, fluids, collision and block entities.
+fn parse_behaviour(v: &Value, def: &mut BlockDef) -> Result<(), String> {
+    if let Some(f) = v
+        .get("fluid")
+        .filter(|f| !f.is_null() && *f != &Value::Bool(false))
+    {
+        let spread = f.get("spread").and_then(Value::as_u64).unwrap_or(7);
+        let rate = f.get("rate").and_then(Value::as_u64).unwrap_or(5);
+        if !(1..=15).contains(&spread) || !(1..=600).contains(&rate) {
+            return Err("a fluid spreads 1 to 15 cells, every 1 to 600 steps".into());
+        }
+        def.fluid = Some(FluidDef {
+            spread: spread as u8,
+            rate: rate as u32,
+            infinite: flag(f, "infinite", true)?,
+        });
+        if v.get("properties").is_some_and(|p| !p.is_null())
+            && v["properties"]
+                .get("level")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                != Some(spread as usize + 1)
+        {
+            return Err(format!("a fluid's level property lists 0 to {spread}"));
+        }
+    }
+    let fluid = def.fluid.is_some();
+    def.collide = flag(v, "collide", !fluid)?;
+    def.replaceable = flag(v, "replaceable", fluid)?;
+    def.falls = flag(v, "falls", false)?;
+    if fluid && def.falls {
+        return Err("a fluid flows rather than falls".into());
+    }
+    if let Some(rules) = v.get("random").filter(|r| !r.is_null()) {
+        let rules = rules.as_array().ok_or("random is a list of rules")?;
+        if rules.len() > 8 {
+            return Err("a block has at most 8 random rules".into());
+        }
+        def.random = rules.iter().map(parse_rule).collect::<Result<_, _>>()?;
+    }
+    if let Some(e) = v.get("entity").filter(|e| !e.is_null()) {
+        let kind = e.as_str().or_else(|| e["kind"].as_str()).unwrap_or("");
+        let slots = e.get("slots").and_then(Value::as_u64).unwrap_or(0);
+        let stack = e.get("stack").and_then(Value::as_u64).unwrap_or(64);
+        if slots > 256 || !(1..=65535).contains(&stack) {
+            return Err("an entity has at most 256 slots of 1 to 65535 items".into());
+        }
+        def.entity = Some(EntityDef {
+            kind: plain_word(kind, "an entity kind")?,
+            slots: slots as usize,
+            stack: stack as u32,
+        });
+    }
+    Ok(())
+}
+
+fn parse_rule(rule: &Value) -> Result<RandomRule, String> {
+    let text = |key: &str| rule.get(key).and_then(Value::as_str).map(str::to_string);
+    let act = match (text("becomes"), text("grow"), text("spreads_to")) {
+        (Some(b), None, None) => RuleAct::Becomes(b),
+        (None, Some(g), None) => RuleAct::Grow(g),
+        (None, None, Some(s)) => RuleAct::SpreadsTo(s),
+        _ => return Err("a random rule has one of becomes, grow or spreads_to".into()),
+    };
+    let chance = rule.get("chance").and_then(Value::as_f64).unwrap_or(1.0);
+    if !(0.0..=1.0).contains(&chance) {
+        return Err("a rule's chance is 0 to 1".into());
+    }
+    let when = match rule.get("when").and_then(Value::as_str).unwrap_or("always") {
+        "always" => Condition::Always,
+        "covered" => Condition::Covered,
+        "open" => Condition::Open,
+        other => return Err(format!("when {other} is always, covered or open")),
+    };
+    let unless_near = match text("unless_near") {
+        None => None,
+        Some(near) => {
+            let distance = rule.get("distance").and_then(Value::as_i64).unwrap_or(4);
+            if !(1..=6).contains(&distance) {
+                return Err("a rule looks 1 to 6 cells away".into());
+            }
+            Some((near.to_lowercase(), distance as i32))
+        }
+    };
+    Ok(RandomRule {
+        act,
+        chance,
+        when,
+        unless_near,
+    })
+}
+
 fn parse_one(line: &str) -> Result<(Vec<BlockDef>, Option<BlockType>), String> {
     let v: Value = blockloom_plugin_sdk::serde_json::from_str(line).map_err(|e| e.to_string())?;
     let name = v["name"]
@@ -422,9 +597,27 @@ fn parse_one(line: &str) -> Result<(Vec<BlockDef>, Option<BlockType>), String> {
         } else {
             1.0
         },
+        collide: true,
+        replaceable: false,
+        falls: false,
+        fluid: None,
+        random: Vec::new(),
+        entity: None,
     };
     parse_look(&v, &mut base)?;
-    let Some(props) = v.get("properties").filter(|p| !p.is_null()) else {
+    parse_behaviour(&v, &mut base)?;
+    // A fluid without its own properties gets a `level` per spread step.
+    let synthetic = match (&base.fluid, v.get("properties").filter(|p| !p.is_null())) {
+        (Some(fluid), None) => Some(blockloom_plugin_sdk::json!({
+            "level": (0..=fluid.spread).map(|l| l.to_string()).collect::<Vec<_>>()
+        })),
+        _ => None,
+    };
+    let Some(props) = v
+        .get("properties")
+        .filter(|p| !p.is_null())
+        .or(synthetic.as_ref())
+    else {
         return Ok((vec![base], None));
     };
     let props = props

@@ -197,6 +197,28 @@
           "description": "How bright the sky is, 0 at night to 1 at noon; block light is unaffected."
         },
         {
+          "name": "ticks",
+          "type": "bool",
+          "default": true,
+          "description": "Run block ticks while playing: fluids flow, falling blocks drop and random rules grow, spread and decay."
+        },
+        {
+          "name": "random_tick_speed",
+          "type": "int",
+          "min": 0,
+          "max": 64,
+          "default": 1,
+          "description": "Random ticks per 16-cell cube each fixed step; 0 turns them off."
+        },
+        {
+          "name": "tick_budget",
+          "type": "int",
+          "min": 1,
+          "max": 65536,
+          "default": 2048,
+          "description": "Scheduled ticks run per fixed step; the rest wait for the next."
+        },
+        {
           "name": "render_distance",
           "type": "int",
           "min": 32,
@@ -469,6 +491,28 @@
           "max": 1.0,
           "default": 1.0,
           "description": "How bright the sky is, 0 at night to 1 at noon; block light is unaffected."
+        },
+        {
+          "name": "ticks",
+          "type": "bool",
+          "default": true,
+          "description": "Run block ticks while playing: fluids flow, falling blocks drop and random rules grow, spread and decay."
+        },
+        {
+          "name": "random_tick_speed",
+          "type": "int",
+          "min": 0,
+          "max": 64,
+          "default": 1,
+          "description": "Random ticks per 16-cell cube each fixed step; 0 turns them off."
+        },
+        {
+          "name": "tick_budget",
+          "type": "int",
+          "min": 1,
+          "max": 65536,
+          "default": 2048,
+          "description": "Scheduled ticks run per fixed step; the rest wait for the next."
         },
         {
           "name": "render_distance",
@@ -1894,6 +1938,218 @@
         "do": "module",
         "op": "collision_ready"
       }
+    },
+    {
+      "name": "block_data",
+      "summary": "Answer one value a block entity keeps, or empty text.",
+      "args": [
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "key",
+          "type": "text",
+          "default": "name"
+        }
+      ],
+      "action": {
+        "do": "module",
+        "op": "block_data"
+      }
+    },
+    {
+      "name": "set_block_data",
+      "summary": "Keep a value on the block entity in a cell (a chest's owner, a sign's text).",
+      "args": [
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "key",
+          "type": "text",
+          "default": "name"
+        },
+        {
+          "name": "value",
+          "type": "text",
+          "default": ""
+        }
+      ],
+      "action": {
+        "do": "module",
+        "op": "set_block_data"
+      }
+    },
+    {
+      "name": "add_items",
+      "summary": "Put items into a block entity's slots; answers how many didn't fit.",
+      "args": [
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "item",
+          "type": "text",
+          "default": "stone"
+        },
+        {
+          "name": "count",
+          "type": "int",
+          "min": 0,
+          "max": 1000000,
+          "default": 1
+        }
+      ],
+      "action": {
+        "do": "module",
+        "op": "add_items"
+      }
+    },
+    {
+      "name": "take_items",
+      "summary": "Take items out of a block entity's slots; answers how many it took.",
+      "args": [
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "item",
+          "type": "text",
+          "default": "stone"
+        },
+        {
+          "name": "count",
+          "type": "int",
+          "min": 0,
+          "max": 1000000,
+          "default": 1
+        }
+      ],
+      "action": {
+        "do": "module",
+        "op": "take_items"
+      }
+    },
+    {
+      "name": "item_count",
+      "summary": "Answer how many of an item a block entity holds (empty counts every item).",
+      "args": [
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "item",
+          "type": "text",
+          "default": "stone"
+        }
+      ],
+      "action": {
+        "do": "module",
+        "op": "item_count"
+      }
+    },
+    {
+      "name": "block_entity",
+      "summary": "Answer a block entity's kind, data and slots.",
+      "args": [
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        }
+      ],
+      "action": {
+        "do": "module",
+        "op": "block_entity"
+      }
+    },
+    {
+      "name": "last_broken_entity",
+      "summary": "Answer the last block entity whose block went away, with what it held.",
+      "args": [],
+      "action": {
+        "do": "module",
+        "op": "last_broken_entity"
+      }
+    },
+    {
+      "name": "voxel_ticks",
+      "summary": "Answer the tick step, scheduled ticks waiting and block entities alive.",
+      "args": [],
+      "action": {
+        "do": "module",
+        "op": "ticks"
+      }
     }
   ],
   "tools": [
@@ -2811,6 +3067,199 @@
       },
       "command": "collision_ready",
       "help": "Holds voxel invoker controllers until their swept region has collision."
+    },
+    {
+      "type_id": "add_items",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "put {count} {item} into the block at x {x} y {y} z {z}",
+      "slots": [
+        {
+          "name": "count",
+          "type": "int",
+          "default": 1
+        },
+        {
+          "name": "item",
+          "type": "text",
+          "default": "stone"
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        }
+      ],
+      "command": "add_items"
+    },
+    {
+      "type_id": "take_items",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "take {count} {item} from the block at x {x} y {y} z {z}",
+      "slots": [
+        {
+          "name": "count",
+          "type": "int",
+          "default": 1
+        },
+        {
+          "name": "item",
+          "type": "text",
+          "default": "stone"
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        }
+      ],
+      "command": "take_items"
+    },
+    {
+      "type_id": "item_count",
+      "kind": "reporter",
+      "category": "Voxels",
+      "label": "{item} in the block at x {x} y {y} z {z}",
+      "slots": [
+        {
+          "name": "item",
+          "type": "text",
+          "default": ""
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        }
+      ],
+      "command": "item_count",
+      "returns": {
+        "type": "int"
+      },
+      "help": "How many of that item the block entity there holds; empty text counts every item."
+    },
+    {
+      "type_id": "set_block_data",
+      "kind": "statement",
+      "category": "Voxels",
+      "label": "set {key} of the block at x {x} y {y} z {z} to {value}",
+      "slots": [
+        {
+          "name": "key",
+          "type": "text",
+          "default": "name"
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "value",
+          "type": "text",
+          "default": ""
+        }
+      ],
+      "command": "set_block_data"
+    },
+    {
+      "type_id": "block_data",
+      "kind": "reporter",
+      "category": "Voxels",
+      "label": "{key} of the block at x {x} y {y} z {z}",
+      "slots": [
+        {
+          "name": "key",
+          "type": "text",
+          "default": "name"
+        },
+        {
+          "name": "x",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "y",
+          "type": "int",
+          "default": 0
+        },
+        {
+          "name": "z",
+          "type": "int",
+          "default": 0
+        }
+      ],
+      "command": "block_data",
+      "returns": {
+        "type": "text"
+      }
+    },
+    {
+      "type_id": "last_broken_items",
+      "kind": "reporter",
+      "category": "Voxels",
+      "label": "what the last broken block held",
+      "slots": [],
+      "command": "last_broken_entity",
+      "returns": {
+        "type": "text"
+      },
+      "help": "Items as 'name xN' pairs, from the block entity whose block went away last."
+    },
+    {
+      "type_id": "when_entity_broken",
+      "kind": "hat",
+      "category": "Voxels",
+      "label": "when a {kind} block is broken",
+      "slots": [
+        {
+          "name": "kind",
+          "type": "text",
+          "default": "chest"
+        }
+      ],
+      "event": "entity_broken"
     }
   ],
   "kernels": [
@@ -2860,6 +3309,10 @@
     {
       "name": "poses",
       "stage": "post_physics"
+    },
+    {
+      "name": "tick",
+      "stage": "fixed_simulation"
     }
   ],
   "components": [

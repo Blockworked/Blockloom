@@ -2,7 +2,7 @@
 # ../../src beside this manifest when it stages the package.
 [package]
 name = "blockloom-voxel"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 license = "MIT"
 description = "VOXEL as an engine-tier plugin: cube and smooth worlds linked into a project's runtime."
