@@ -450,7 +450,9 @@ fn host_services(engine: &Engine) -> blockloom_plugin_host::services::HostServic
         } else {
             Arc::new(DiskStore::new(data, false))
         };
-        host = host.with_project_store(store);
+        host = host
+            .with_project_store(store)
+            .with_assets(dir.to_path_buf());
     }
     // The browser keeps plugin saves in localStorage beside the variable saves.
     #[cfg(target_arch = "wasm32")]

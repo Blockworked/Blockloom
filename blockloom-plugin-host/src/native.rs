@@ -41,7 +41,7 @@ impl CapabilityGate {
     /// The capability a service needs, or `None` when it is always allowed.
     pub fn required(service: &str) -> Option<Capability> {
         match service.split('.').next()? {
-            "storage" | "save" => Some(Capability::ProjectStorage),
+            "storage" | "save" | "assets" => Some(Capability::ProjectStorage),
             "net" => Some(Capability::Network),
             "fs" => Some(Capability::ExternalFiles),
             "process" => Some(Capability::Subprocess),

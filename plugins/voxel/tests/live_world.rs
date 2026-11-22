@@ -1021,3 +1021,55 @@ fn visual_lod_swaps_complete_cuts_and_falls_back_without_removing_collision() {
     );
     assert!(effects.iter().any(|e| e["effect"] == "remove_mesh"));
 }
+
+#[test]
+fn converted_edit_lines_load_from_a_blockworld_as_they_applied() {
+    let edits = json!([
+        "fill 0 0 0 5 5 5 wood",
+        "set 1 1 1 air",
+        "sphere 20 8 20 3 stone",
+        "shape 2 6 2 stair west",
+        "bounce 1 2 3"
+    ]);
+    let mut lines = json!({"preset":"flat","seed":3,"size":[64,16,40]});
+    lines["edits"] = edits;
+    let (bytes, sections, skipped) = blockloom_voxel::convert_edits(&lines).unwrap();
+    assert_eq!(skipped.len(), 1, "{skipped:?}");
+    assert!(sections >= 1 && sections <= 4, "{sections}");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("assets/worlds")).unwrap();
+    std::fs::write(dir.path().join("assets/worlds/w.blockworld"), &bytes).unwrap();
+    let load = |payload: Value| {
+        let m = unsafe {
+            NativeModule::from_entry(
+                blockloom_voxel::blockloom_plugin_entry_v1,
+                BTreeSet::from([Capability::ProjectStorage]),
+                HostServices::new("0.0.1")
+                    .with_assets(dir.path().to_path_buf())
+                    .for_plugin(ID),
+            )
+        }
+        .unwrap();
+        let answer = start(&m, payload);
+        (m, answer)
+    };
+    let (a, _) = load(lines.clone());
+    let mut file = json!({"preset":"flat","seed":3,"size":[64,16,40],"world_file":"assets/worlds/w.blockworld"});
+    let (b, answer) = load(file.clone());
+    assert!(!answer.to_string().contains("\"error\""), "{answer}");
+    for x in 0..64 {
+        for y in 0..16 {
+            for z in (0..40).step_by(3) {
+                assert_eq!(
+                    material(&a, [x, y, z]),
+                    material(&b, [x, y, z]),
+                    "{x} {y} {z}"
+                );
+            }
+        }
+    }
+    // Another seed is refused rather than laid over the wrong terrain.
+    file["seed"] = json!(4);
+    let (_, answer) = load(file);
+    assert!(answer.to_string().contains("not this world's"), "{answer}");
+}

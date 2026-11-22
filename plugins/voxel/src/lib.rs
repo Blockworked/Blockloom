@@ -11,6 +11,7 @@
 pub mod engine;
 #[cfg(feature = "engine")]
 pub use engine::blockloom_module;
+mod blockworld;
 mod fracture;
 mod gpu_mesh;
 mod grid;
@@ -30,6 +31,7 @@ mod worldgen;
 
 use blockloom_plugin_api::mesh::{ColliderKind, MeshData};
 use blockloom_plugin_sdk::{Error, Host, Plugin, Value, export_plugin, json};
+
 use grid::{Grid, SECTION, Shape};
 
 const MESH_TILE: i32 = 16;
@@ -53,6 +55,8 @@ struct Settings {
     surface: Surface,
     palette_colors: Vec<String>,
     palette_emission: Vec<f64>,
+    /// A `.blockworld` asset laid over the generated terrain before `edits`.
+    world_file: String,
     /// Edits laid over the generated terrain, oldest first (see `apply_edit`).
     edits: Vec<String>,
     persistent: bool,
@@ -125,6 +129,7 @@ impl Default for Settings {
             surface: Surface::Cubes,
             palette_colors: Vec::new(),
             palette_emission: Vec::new(),
+            world_file: String::new(),
             edits: Vec::new(),
             persistent: false,
             save_slot: "world".into(),
@@ -1333,6 +1338,14 @@ impl Voxel {
             .map_err(Error::new)?;
         // A bad saved edit is reported and skipped; the rest still apply.
         let mut problems = Vec::new();
+        if !settings.world_file.is_empty()
+            && let Err(why) = load_world_file(host, &mut world, &settings)
+        {
+            problems.push(json!({
+                "effect": "error",
+                "message": format!("voxel world file {}: {why}", settings.world_file),
+            }));
+        }
         for (n, line) in settings.edits.iter().enumerate() {
             if let Err(why) = world.apply_edit(line) {
                 problems.push(json!({
@@ -1555,6 +1568,53 @@ impl Voxel {
             .push(json!({"effect":"nav_dirty"}));
         Ok(answer)
     }
+}
+
+/// Lays the settings' `.blockworld` over the freshly generated world.
+fn load_world_file(host: &Host, world: &mut World, settings: &Settings) -> Result<usize, String> {
+    let answer = host
+        .call_json("assets.read", &json!({"path": settings.world_file}))
+        .map_err(|e| format!("can't be read ({e})"))?;
+    if let Some(error) = answer["error"].as_str() {
+        return Err(error.to_string());
+    }
+    if answer["found"] != json!(true) {
+        return Err("is missing".into());
+    }
+    let bytes = blockworld::base64(answer["data"].as_str().unwrap_or(""))?;
+    let (header, regions) = blockworld::decode(&bytes)?;
+    if header["preset"] != json!(settings.preset) || header["seed"] != json!(settings.seed) {
+        return Err(format!(
+            "was made over {} seed {}, not this world's {} seed {}",
+            header["preset"], header["seed"], settings.preset, settings.seed
+        ));
+    }
+    world.grid.apply_regions(&regions, world.palette.len())
+}
+
+/// A 0.3.x world's saved `edits` lines as a `.blockworld`: the world is
+/// generated twice, the lines laid over one, and only what differs is kept.
+/// A bad line is skipped as `start` skips it. Answers the file's bytes, how
+/// many sections it holds and the skipped lines' reasons.
+pub fn convert_edits(settings: &Value) -> Result<(Vec<u8>, usize, Vec<String>), String> {
+    let settings: Settings = serde_json_from(settings.clone())?;
+    if settings.preset == "infinite" {
+        return Err("an infinite world keeps its edit lines".into());
+    }
+    let mut base = World::new(&settings)?;
+    base.generate(&settings.preset, settings.seed)?;
+    let mut edited = World::new(&settings)?;
+    edited.generate(&settings.preset, settings.seed)?;
+    let mut skipped = Vec::new();
+    for (n, line) in settings.edits.iter().enumerate() {
+        if let Err(why) = edited.apply_edit(line) {
+            skipped.push(format!("edit {} ({line}): {why}", n + 1));
+        }
+    }
+    let regions = edited.grid.edit_regions(&base.grid);
+    let header = blockworld::header(edited.grid.size(), &settings.preset, settings.seed);
+    let sections = regions.pages.len();
+    Ok((blockworld::encode(&regions, &header), sections, skipped))
 }
 
 fn serde_json_from<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, String> {

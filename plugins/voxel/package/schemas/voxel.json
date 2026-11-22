@@ -103,6 +103,13 @@
           "description": "Edits laid over the terrain in order: `set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`, `sphere X Y Z radius material`."
         },
         {
+          "name": "world_file",
+          "type": "asset",
+          "kind": "blockworld",
+          "default": "",
+          "description": "A .blockworld file of edits laid over the terrain before `edits`, written by blockloom-voxel-convert from older edit lines."
+        },
+        {
           "name": "persistent",
           "type": "bool",
           "default": false,

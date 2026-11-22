@@ -25,3 +25,7 @@ pollster = "0.4"
 blockloom-plugin-host = { path = "../../blockloom-plugin-host" }
 tempfile.workspace = true
 serde_json.workspace = true
+
+[[bin]]
+name = "blockloom-voxel-convert"
+path = "tools/convert.rs"

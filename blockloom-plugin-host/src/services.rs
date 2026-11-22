@@ -7,7 +7,7 @@
 //!
 //! Built in: `host.version`; `rng.*` (a seeded, replayable generator);
 //! `storage.*` and `save.*` (see [`crate::storage`]); `diag.*` (see
-//! [`crate::diagnostics`]). A host adds more, such as `physics.*` and `nav.*`
+//! [`crate::diagnostics`]); `assets.read` (a project asset, read only). A host adds more, such as `physics.*` and `nav.*`
 //! in a running world, with a [`ServiceProvider`].
 
 use crate::diagnostics::Diagnostics;
@@ -31,6 +31,7 @@ pub struct HostServices {
     engine: String,
     project: Option<Arc<dyn BlobStore>>,
     saves: Option<Arc<dyn BlobStore>>,
+    assets: Option<std::path::PathBuf>,
     limits: StoreLimits,
     providers: Vec<Arc<dyn ServiceProvider>>,
     pub diagnostics: Arc<Diagnostics>,
@@ -44,6 +45,7 @@ impl HostServices {
             engine: engine.to_string(),
             project: None,
             saves: None,
+            assets: None,
             limits: StoreLimits::default(),
             providers: Vec::new(),
             diagnostics: Arc::new(Diagnostics::default()),
@@ -60,6 +62,12 @@ impl HostServices {
     /// The store for player saves.
     pub fn with_save_store(mut self, store: Arc<dyn BlobStore>) -> Self {
         self.saves = Some(store);
+        self
+    }
+
+    /// The project (or built game) folder `assets.read` reads under.
+    pub fn with_assets(mut self, folder: std::path::PathBuf) -> Self {
+        self.assets = Some(folder);
         self
     }
 
@@ -121,6 +129,7 @@ impl HostServices {
                 &self.limits,
             ),
             "diag" => diag(&self.diagnostics, plugin, verb, input),
+            "assets" => assets(self.assets.as_deref(), verb, input),
             "jobs" => return crate::jobs::call(&self.jobs, plugin, verb, input),
             _ => {
                 return self
@@ -158,6 +167,42 @@ impl HostServices {
 }
 
 const UNKNOWN: &str = "\u{0}unknown";
+
+/// The largest asset `assets.read` hands over.
+const MAX_ASSET_BYTES: u64 = 256 * 1024 * 1024;
+
+// ─── assets ─────────────────────────────────────────────────────────────────
+
+/// `assets.read {path, as?}`: a file under the project's `assets/`, through
+/// the package file reader so a web or Android game reads its own copy.
+fn assets(folder: Option<&std::path::Path>, verb: &str, input: &Value) -> Result<Value, String> {
+    if verb != "read" {
+        return Err(UNKNOWN.to_string());
+    }
+    let folder = folder.ok_or("no project assets here")?;
+    let path = input
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or("path names an asset")?;
+    let plain = std::path::Path::new(path)
+        .components()
+        .all(|c| matches!(c, std::path::Component::Normal(_)));
+    if !plain || !path.starts_with("assets/") {
+        return Err(format!("{path} is not a path under assets/"));
+    }
+    let data = match crate::files::read(&folder.join(path)) {
+        Ok(data) => data,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(json!({"found": false})),
+        Err(e) => return Err(format!("{path}: {e}")),
+    };
+    if data.len() as u64 > MAX_ASSET_BYTES {
+        return Err(format!("{path} is over 256 MiB"));
+    }
+    encode(
+        &data,
+        input.get("as").and_then(Value::as_str) == Some("text"),
+    )
+}
 
 // ─── rng ────────────────────────────────────────────────────────────────────
 
@@ -390,6 +435,7 @@ fn diag(d: &Diagnostics, plugin: &str, verb: &str, input: &Value) -> Result<Valu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native::CapabilityGate;
     use crate::storage::MemoryStore;
 
     fn services() -> HostServices {
@@ -400,6 +446,25 @@ mod tests {
 
     fn call(s: &HostServices, plugin: &str, name: &str, input: Value) -> Result<Value, String> {
         s.call(plugin, name, &input).expect("known service")
+    }
+
+    #[test]
+    fn assets_are_read_only_under_the_assets_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("assets/worlds")).unwrap();
+        std::fs::write(dir.path().join("assets/worlds/a.txt"), "hi").unwrap();
+        std::fs::write(dir.path().join("project.blockloom"), "{}").unwrap();
+        let s = HostServices::new("9.9.9").with_assets(dir.path().to_path_buf());
+        let read = |path: &str| call(&s, "p", "assets.read", json!({"path": path, "as": "text"}));
+        assert_eq!(read("assets/worlds/a.txt").unwrap()["text"], "hi");
+        assert_eq!(read("assets/worlds/b.txt").unwrap()["found"], false);
+        assert!(read("project.blockloom").is_err());
+        assert!(read("assets/../project.blockloom").is_err());
+        assert!(call(&services(), "p", "assets.read", json!({"path": "assets/x"})).is_err());
+        assert_eq!(
+            CapabilityGate::required("assets.read"),
+            Some(blockloom_plugin_api::manifest::Capability::ProjectStorage)
+        );
     }
 
     #[test]

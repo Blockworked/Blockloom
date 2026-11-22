@@ -1255,6 +1255,13 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   needed). `paint_voxel`, `paint_voxel_box`, `paint_voxel_sphere` and
   `paint_voxel_shape` are those templates, and the package's four scene tools
   (paint, erase, ball, shape) click them into the world (see Plugin scene tools).
+  A `world_file` names a `.blockworld` asset (`blockworld.rs`: a JSON header with
+  preset, seed and size, then 32-cell sections as `(count, material)` runs where
+  256 keeps the generated cell, plus shapes and densities), read through
+  `assets.read` and laid over the terrain before the `edits` lines; a file made
+  over another preset or seed is refused. `blockloom-voxel-convert <project>`
+  (`tools/convert.rs`, over `convert_edits`) moves a 0.3.x world's edit lines
+  into one; infinite worlds keep their lines.
   A solid cell may be a slab, top slab, post, stair or ramp (`Shape` in
   `shape.rs`, a sparse table in `grid.rs`; a stair or ramp has a facing, the
   side it rises towards): the greedy mesher takes only whole cubes, shaped
@@ -1361,8 +1368,9 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   `aarch64-linux-android`; never run on a device.
 - **Host services** (`blockloom-plugin-host/src/services.rs`): a module's
   `host.call` reaches one `HostServices` hub, named `area.verb`: `host.version`,
-  `rng.*` (hashes of `{seed, index}`, so a replay matches), `storage.*` and
-  `save.*` (need `project-storage`), `diag.*`, `jobs.*`, and whatever a
+  `rng.*` (hashes of `{seed, index}`, so a replay matches), `storage.*`,
+  `save.*` and `assets.read` (need `project-storage`; the last reads a file under
+  the project's or game's `assets/` as base64 `data`), `diag.*`, `jobs.*`, and whatever a
   `ServiceProvider` chained on adds (the world's `physics.*` and `nav.*`,
   `blockloom-runtime/src/plugin_services.rs`, answered from the published
   sensor snapshot and the nav bake). The editor and the world each build one

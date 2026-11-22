@@ -639,6 +639,101 @@ impl Grid {
         Ok(grid)
     }
 
+    /// What differs from `base`, the same world freshly generated: the
+    /// regions a `.blockworld` keeps.
+    pub fn edit_regions(&self, base: &Grid) -> crate::blockworld::Regions {
+        use crate::blockworld::{KEEP, Regions, runs};
+        let chunk_of = |c: &[i32; 3]| c.map(|v| v.div_euclid(SECTION));
+        let mut chunks: BTreeSet<SectionAddress> = self
+            .sections
+            .keys()
+            .chain(base.sections.keys())
+            .copied()
+            .collect();
+        chunks.extend(self.edits.keys().chain(base.edits.keys()).map(chunk_of));
+        let mut regions = Regions::default();
+        for chunk in chunks {
+            let mut cells = vec![KEEP; SECTION_CELLS];
+            let mut changed = false;
+            for (i, slot) in cells.iter_mut().enumerate() {
+                let cell = decoded_cell(chunk, i, SECTION);
+                if !self.contains(cell) {
+                    continue;
+                }
+                let now = self.get(cell);
+                if now != base.get(cell) {
+                    *slot = u16::from(now);
+                    changed = true;
+                }
+            }
+            if changed {
+                regions.pages.push(Page {
+                    chunk,
+                    runs: runs(&cells),
+                });
+            }
+        }
+        let shaped: BTreeSet<[i32; 3]> = self
+            .shapes
+            .keys()
+            .chain(base.shapes.keys())
+            .copied()
+            .collect();
+        for cell in shaped {
+            let now = self.shape_at(cell);
+            if now != base.shape_at(cell) && self.get(cell) != 0 {
+                regions.shapes.push((cell, now.name()));
+            }
+        }
+        for (&cell, &density) in &self.densities {
+            if base.densities.get(&cell) != Some(&density) {
+                regions.densities.push((cell, density));
+            }
+        }
+        regions
+    }
+
+    /// Lays a `.blockworld`'s regions over this (generated) world, answering
+    /// how many cells they wrote.
+    pub fn apply_regions(
+        &mut self,
+        regions: &crate::blockworld::Regions,
+        palette_len: u8,
+    ) -> Result<usize, String> {
+        use crate::blockworld::KEEP;
+        let mut written = 0usize;
+        for page in &regions.pages {
+            let mut offset = 0usize;
+            for &(count, material) in &page.runs {
+                let count = usize::from(count);
+                if material != KEEP {
+                    if material > u16::from(palette_len) {
+                        return Err(format!("material {material} is not in the palette"));
+                    }
+                    for i in offset..offset + count {
+                        let cell = decoded_cell(page.chunk, i, SECTION);
+                        if self.contains(cell) {
+                            self.set(cell, material as u8);
+                            written += 1;
+                        }
+                    }
+                }
+                offset += count;
+            }
+        }
+        for (cell, name) in &regions.shapes {
+            if self.contains(*cell) && self.get(*cell) != 0 {
+                self.reshape(*cell, Shape::from_name(name)?);
+            }
+        }
+        for &(cell, density) in &regions.densities {
+            if self.contains(cell) && density != 0 && density.unsigned_abs() <= 256 {
+                self.set_density(cell, density, self.get(cell));
+            }
+        }
+        Ok(written)
+    }
+
     pub fn clip_legacy(&mut self, size: [i32; 3]) {
         self.lod = crate::lod::Cache::default();
         self.revision = self.revision.wrapping_add(1);
@@ -760,7 +855,7 @@ pub struct Snapshot {
     pub densities: Vec<([i32; 3], i16)>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Page {
     pub chunk: [i32; 3],
     pub runs: Vec<(u16, u16)>,
