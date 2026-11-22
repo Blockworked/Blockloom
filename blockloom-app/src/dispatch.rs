@@ -405,6 +405,7 @@ impl Backend {
                 arg(&args, "path")?,
                 arg::<Option<String>>(&args, "scope")?,
                 arg::<Option<bool>>(&args, "open")?,
+                arg(&args, "inputs")?,
             )?),
             "remove_screen_layer" => to_json(commands::screens::remove_screen_layer(
                 state,

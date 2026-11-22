@@ -8,6 +8,7 @@ use blockloom_core::assets;
 use blockloom_core::ui::{STYLE_EXTENSION, STYLE_VERSION, UiStyleFile, UiTheme};
 use blockloom_core::ui_layers::{self as layers, UiLayer};
 use blockloom_core::ui_tree::UiScreen;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 fn checked_path(path: &str) -> Result<String, String> {
@@ -135,23 +136,26 @@ pub(crate) fn write_screen(
 
 /// `add-screen-layer`: draws a screen over the open scene (`scope=scene`)
 /// or every scene (`scope=game`). Listing it again only moves it to the top
-/// and sets `open`.
+/// and sets `open` and `inputs`.
 pub(crate) fn add_screen_layer(
     state: &SharedState,
     app: &AppHandle,
     path: String,
     scope: Option<String>,
     open: Option<bool>,
+    inputs: Option<BTreeMap<String, serde_json::Value>>,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     let dir = project_dir(&s)?;
     let path = checked_path(&path)?;
-    layers::read(&dir, &path)?.lower()?;
+    let inputs = inputs.unwrap_or_default();
+    layers::read(&dir, &path)?.lower_with(&inputs)?;
     push_undo(&mut s);
     let list = list(&mut s, scope.as_deref())?;
     list.retain(|l| l.screen != path);
     list.push(UiLayer {
         open: open.unwrap_or(true),
+        inputs,
         ..UiLayer::new(path)
     });
     auto_save(&mut s);

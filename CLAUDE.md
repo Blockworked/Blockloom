@@ -2680,6 +2680,19 @@ those colors through `ui::Palette` (`UiManager::palette`), which falls back
 to the built-in theme's for anything unset and for any other theme a `set
 theme` switches to. `create-style` writes a starter one.
 
+A tree node with `instance: Some(UiInstance { component, inputs, slots })`
+uses a component by reference: `lower` (`UiScreen::expand`) writes the
+component's nodes out renamed `<node>/<member>` (so the root is
+`<node>/<root>`, the prefix form the v1 instance tools expect), puts the
+node's own placement on the root, places `slots` nodes under the exported
+slot (named where the instance is), and sets each input through the v1
+`SetExposed` edit, so the designer sees them as overrides it can reset.
+Components nest up to 16 deep, which also stops one that uses itself. A
+screen's `inputs` are exports at screen level; `lower_with` sets them, and a
+`UiLayer`'s `inputs` (`add-screen-layer inputs={...}`) are what a scene
+passes. Old documents keep their expanded instances (`instance_of`), so
+they still round-trip.
+
 ### Frontend (`blockloom-qt/qml/`)
 
 `Start.qml` is the entry point: it adds the Lucide icons blockstitch doesn't

@@ -340,3 +340,191 @@ fn find_interfaces<'a>(json: &'a serde_json::Value, out: &mut Vec<&'a serde_json
         _ => {}
     }
 }
+
+/// An inventory: one `slot` component used by reference in a grid.
+fn inventory() -> UiScreen {
+    let slot = UiComponent {
+        nodes: vec![UiNode {
+            name: "slot".into(),
+            widget: Widget::blank(UiKind::Panel),
+            children: vec![
+                UiNode {
+                    name: "icon".into(),
+                    widget: Widget::blank(UiKind::Image),
+                    ..UiNode::default()
+                },
+                UiNode {
+                    name: "count".into(),
+                    widget: Widget::Label { text: "0".into() },
+                    ..UiNode::default()
+                },
+                UiNode {
+                    name: "extra".into(),
+                    widget: Widget::blank(UiKind::VerticalBox),
+                    ..UiNode::default()
+                },
+            ],
+            ..UiNode::default()
+        }],
+        exports: vec![
+            UiExport {
+                name: "count".into(),
+                widget: "count".into(),
+                path: "element.content".into(),
+                slot: false,
+            },
+            UiExport {
+                name: "extra".into(),
+                widget: "extra".into(),
+                path: String::new(),
+                slot: true,
+            },
+        ],
+    };
+    let cell = |i: usize| UiNode {
+        name: format!("cell{i}"),
+        instance: Some(UiInstance {
+            component: "slot".into(),
+            inputs: [("count".to_string(), serde_json::json!(format!("{i}")))].into(),
+            slots: if i == 2 {
+                [(
+                    "extra".to_string(),
+                    vec![UiNode {
+                        name: "badge".into(),
+                        widget: Widget::Label { text: "New".into() },
+                        ..UiNode::default()
+                    }],
+                )]
+                .into()
+            } else {
+                BTreeMap::new()
+            },
+        }),
+        ..UiNode::default()
+    };
+    UiScreen {
+        nodes: vec![UiNode {
+            name: "bag".into(),
+            widget: Widget::blank(UiKind::Grid),
+            place: LayoutItem {
+                mode: Placement::at(UiAnchor::Center, [0., 0.]),
+                ..LayoutItem::default()
+            },
+            spacing: Spacing {
+                columns: Some(3),
+                ..Spacing::default()
+            },
+            children: (0..3).map(cell).collect(),
+            ..UiNode::default()
+        }],
+        components: [("slot".to_string(), slot)].into(),
+        inputs: vec![UiExport {
+            name: "title".into(),
+            widget: "cell0/count".into(),
+            path: "element.content".into(),
+            slot: false,
+        }],
+        ..UiScreen::default()
+    }
+}
+
+#[test]
+fn a_component_used_by_reference_lowers_to_named_instances() {
+    let doc = inventory().lower().unwrap();
+    let ids: Vec<&str> = doc.widgets.iter().map(|w| w.element.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "bag",
+            "cell0/slot",
+            "cell0/icon",
+            "cell0/count",
+            "cell0/extra",
+            "cell1/slot",
+            "cell1/icon",
+            "cell1/count",
+            "cell1/extra",
+            "cell2/slot",
+            "cell2/icon",
+            "cell2/count",
+            "cell2/extra",
+            "badge",
+        ]
+    );
+    let get = |id: &str| doc.widgets.iter().find(|w| w.element.id == id).unwrap();
+    assert_eq!(get("cell1/count").element.content, "1");
+    assert_eq!(get("cell2/slot").instance_of, "slot");
+    assert_eq!(get("cell2/slot").element.parent, "bag");
+    assert_eq!(get("badge").element.parent, "cell2/extra");
+    // What the instance set is an override the designer can reset.
+    let overrides = doc.instance_overrides("cell1/slot").unwrap();
+    assert_eq!(overrides, ["cell1/count: element.content"]);
+    doc.validate().unwrap();
+
+    // A screen input writes through to the node it names.
+    let doc = inventory()
+        .lower_with(&[("title".to_string(), serde_json::json!("Bag"))].into())
+        .unwrap();
+    let get = |id: &str| doc.widgets.iter().find(|w| w.element.id == id).unwrap();
+    assert_eq!(get("cell0/count").element.content, "Bag");
+    assert!(
+        inventory()
+            .lower_with(&[("nope".to_string(), serde_json::json!(1))].into())
+            .unwrap_err()
+            .contains("no input called nope")
+    );
+    // And the screen keeps the reference form in its own file.
+    let text = serde_json::to_string(&inventory()).unwrap();
+    assert_eq!(
+        serde_json::from_str::<UiScreen>(&text).unwrap(),
+        inventory()
+    );
+}
+
+#[test]
+fn components_nest_and_refuse_to_contain_themselves() {
+    let mut screen = inventory();
+    // A row of two slots, used once.
+    screen.components.insert(
+        "pair".into(),
+        UiComponent {
+            nodes: vec![UiNode {
+                name: "row".into(),
+                widget: Widget::blank(UiKind::HorizontalBox),
+                children: ["a", "b"]
+                    .iter()
+                    .map(|n| UiNode {
+                        name: n.to_string(),
+                        instance: Some(UiInstance {
+                            component: "slot".into(),
+                            ..UiInstance::default()
+                        }),
+                        ..UiNode::default()
+                    })
+                    .collect(),
+                ..UiNode::default()
+            }],
+            exports: Vec::new(),
+        },
+    );
+    screen.nodes.push(UiNode {
+        name: "quick".into(),
+        instance: Some(UiInstance {
+            component: "pair".into(),
+            ..UiInstance::default()
+        }),
+        ..UiNode::default()
+    });
+    let doc = screen.lower().unwrap();
+    let get = |id: &str| doc.widgets.iter().find(|w| w.element.id == id).unwrap();
+    assert_eq!(get("quick/b/count").element.parent, "quick/b/slot");
+    assert_eq!(get("quick/b/slot").element.parent, "quick/row");
+
+    // A component that uses itself has no bottom.
+    let looped = screen.components.get_mut("pair").unwrap();
+    looped.nodes[0].children[0].instance = Some(UiInstance {
+        component: "pair".into(),
+        ..UiInstance::default()
+    });
+    assert!(screen.lower().unwrap_err().contains("deeper"));
+}

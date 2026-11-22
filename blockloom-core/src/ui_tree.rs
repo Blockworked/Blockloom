@@ -37,6 +37,10 @@ pub struct UiScreen {
     pub components: BTreeMap<String, UiComponent>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub animations: BTreeMap<String, UiAnimation>,
+    /// What a scene listing this screen (or the block opening it) may set:
+    /// a property of one of its nodes, by name.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<UiExport>,
 }
 
 impl Default for UiScreen {
@@ -54,6 +58,7 @@ impl Default for UiScreen {
             safe_area: doc.safe_area,
             components: BTreeMap::new(),
             animations: BTreeMap::new(),
+            inputs: Vec::new(),
         }
     }
 }
@@ -65,6 +70,20 @@ pub struct UiComponent {
     pub nodes: Vec<UiNode>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub exports: Vec<UiExport>,
+}
+
+/// A component used by reference. Its widgets are named `<node>/<member>`,
+/// so the root is `<node>/<component root>`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiInstance {
+    pub component: String,
+    /// Values for the component's exported properties, by export name.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub inputs: BTreeMap<String, serde_json::Value>,
+    /// Nodes placed into the component's exported slots, by slot name.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub slots: BTreeMap<String, Vec<UiNode>>,
 }
 
 /// One widget and its children.
@@ -104,6 +123,10 @@ pub struct UiNode {
     /// On an instance's root: the component it came from.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub instance_of: String,
+    /// Set, this node stands for a whole component, written out when the
+    /// screen lowers; its own widget and children are not drawn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<UiInstance>,
     /// What an old document said that this model has no place for, kept so
     /// it is written back unchanged.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -133,6 +156,7 @@ impl Default for UiNode {
             variants: Vec::new(),
             page: None,
             instance_of: String::new(),
+            instance: None,
             legacy: None,
             children: Vec::new(),
         }
@@ -684,19 +708,23 @@ impl UiScreen {
                 })
                 .collect(),
             animations: doc.animations.clone(),
+            inputs: Vec::new(),
         }
     }
 
     /// The flat document the runtime draws: widgets parent first, in tree
     /// order. Fails on what the runtime can't draw yet.
     pub fn lower(&self) -> Result<UiDocument, String> {
+        let mut uses = Vec::new();
+        let nodes = self.expand(&self.nodes, "", 0, &mut uses)?;
         let mut widgets = Vec::new();
-        flatten(&self.nodes, None, &mut widgets)?;
+        flatten(&nodes, None, &mut widgets)?;
         let mut prefabs = BTreeMap::new();
         let mut exports = BTreeMap::new();
         for (name, component) in &self.components {
             let mut list = Vec::new();
-            flatten(&component.nodes, None, &mut list)?;
+            let nodes = self.expand(&component.nodes, "", 1, &mut Vec::new())?;
+            flatten(&nodes, None, &mut list)?;
             prefabs.insert(name.clone(), list);
             if !component.exports.is_empty() {
                 exports.insert(name.clone(), component.exports.clone());
@@ -716,6 +744,108 @@ impl UiScreen {
             exports,
             animations: self.animations.clone(),
         })
+        .and_then(|mut doc| {
+            for (root, inputs) in uses {
+                for (name, value) in inputs {
+                    doc.apply_edit(&crate::ui::UiEdit::SetExposed {
+                        instance: root.clone(),
+                        name,
+                        value,
+                    })
+                    .map_err(|e| format!("{root}: {e}"))?;
+                }
+            }
+            Ok(doc)
+        })
+    }
+
+    /// The document with values for some of its inputs.
+    pub fn lower_with(
+        &self,
+        values: &BTreeMap<String, serde_json::Value>,
+    ) -> Result<UiDocument, String> {
+        let mut doc = self.lower()?;
+        for (name, value) in values {
+            let input = self
+                .inputs
+                .iter()
+                .find(|i| &i.name == name && !i.slot)
+                .ok_or_else(|| format!("The screen has no input called {name}"))?;
+            let property =
+                serde_json::from_value(serde_json::json!({"path": input.path, "value": value}))
+                    .map_err(|e| format!("{name}: {e}"))?;
+            doc.apply_edit(&crate::ui::UiEdit::SetProperty {
+                id: input.widget.clone(),
+                property,
+            })
+            .map_err(|e| format!("{name}: {e}"))?;
+        }
+        Ok(doc)
+    }
+
+    /// Writes every by-reference instance out as the component's nodes,
+    /// renamed under the instance, with slot nodes in their slots. Notes each
+    /// instance's root and inputs for after lowering.
+    fn expand(
+        &self,
+        nodes: &[UiNode],
+        prefix: &str,
+        depth: usize,
+        uses: &mut Vec<(String, BTreeMap<String, serde_json::Value>)>,
+    ) -> Result<Vec<UiNode>, String> {
+        const DEEPEST: usize = 16;
+        let mut out = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            let mut node = node.clone();
+            // A slot's content is the instance user's, named as they named it.
+            let prefix = match node
+                .name
+                .strip_prefix(SLOTTED)
+                .and_then(|rest| rest.split_once(SLOTTED))
+            {
+                Some((outer, own)) => {
+                    let outer = outer.to_string();
+                    node.name = own.to_string();
+                    std::borrow::Cow::Owned(outer)
+                }
+                None => std::borrow::Cow::Borrowed(prefix),
+            };
+            let prefix = prefix.as_ref();
+            node.name = format!("{prefix}{}", node.name);
+            let Some(instance) = node.instance.take() else {
+                node.children = self.expand(&node.children, prefix, depth, uses)?;
+                out.push(node);
+                continue;
+            };
+            if depth >= DEEPEST {
+                return Err(format!(
+                    "{}: components nest deeper than {DEEPEST}, or use themselves",
+                    node.name
+                ));
+            }
+            let component = self.components.get(&instance.component).ok_or_else(|| {
+                format!("{}: no component called {}", node.name, instance.component)
+            })?;
+            let [root] = component.nodes.as_slice() else {
+                return Err(format!(
+                    "{} needs exactly one root node to be used",
+                    instance.component
+                ));
+            };
+            let inner = format!("{}/", node.name);
+            let mut root = root.clone();
+            fill_slots(&mut root, &instance, component, &node.name, prefix)?;
+            let [mut root] =
+                <[UiNode; 1]>::try_from(self.expand(&[root], &inner, depth + 1, uses)?)
+                    .map_err(|_| "unreachable".to_string())?;
+            root.place = node.place.clone();
+            root.instance_of = instance.component.clone();
+            if !instance.inputs.is_empty() {
+                uses.push((root.name.clone(), instance.inputs));
+            }
+            out.push(root);
+        }
+        Ok(out)
     }
 
     /// Every node, depth first.
@@ -728,6 +858,41 @@ impl UiScreen {
         })
     }
 }
+
+/// Puts an instance's slot nodes under the component nodes its slots name.
+/// Slot nodes are named where the instance is, not inside it.
+fn fill_slots(
+    root: &mut UiNode,
+    instance: &UiInstance,
+    component: &UiComponent,
+    at: &str,
+    outer: &str,
+) -> Result<(), String> {
+    for (slot, content) in &instance.slots {
+        let export = component
+            .exports
+            .iter()
+            .find(|e| e.slot && &e.name == slot)
+            .ok_or_else(|| format!("{at}: {} has no slot {slot}", instance.component))?;
+        fn find<'a>(node: &'a mut UiNode, name: &str) -> Option<&'a mut UiNode> {
+            if node.name == name {
+                return Some(node);
+            }
+            node.children.iter_mut().find_map(|c| find(c, name))
+        }
+        let holder = find(root, &export.widget)
+            .ok_or_else(|| format!("{at}: slot {slot} names a missing node"))?;
+        // Marked so expansion leaves their names alone.
+        holder.children.extend(content.iter().cloned().map(|mut n| {
+            n.name = format!("{SLOTTED}{outer}{SLOTTED}{}", n.name);
+            n
+        }));
+    }
+    Ok(())
+}
+
+/// Leads the name of a node an instance put into a slot, until expansion.
+const SLOTTED: &str = "\u{1}";
 
 /// Builds the tree from a flat list, children in list order.
 fn tree(widgets: &[UiWidget]) -> Vec<UiNode> {
@@ -872,6 +1037,7 @@ fn node_of(widget: &UiWidget, free: bool) -> UiNode {
         variants: widget.variants.clone(),
         page: widget.tab_index,
         instance_of: widget.instance_of.clone(),
+        instance: None,
         legacy: (legacy != Legacy::default()).then_some(legacy),
         children: Vec::new(),
     }

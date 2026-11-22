@@ -1177,7 +1177,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "add-screen-layer",
         cmd: "add_screen_layer",
         aliases: &["add_screen_layer"],
-        summary: "Draw a .blockui screen over the open scene (scope=scene) or every scene (scope=game). open=false starts it hidden.",
+        summary: "Draw a .blockui screen over the open scene (scope=scene) or every scene (scope=game). open=false starts it hidden; inputs sets the screen's inputs by name.",
         args: &[
             ArgSpec {
                 name: "path",
@@ -1192,6 +1192,11 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             ArgSpec {
                 name: "open",
                 ty: "bool",
+                required: false,
+            },
+            ArgSpec {
+                name: "inputs",
+                ty: "object",
                 required: false,
             },
         ],

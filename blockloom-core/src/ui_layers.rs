@@ -24,6 +24,10 @@ pub struct UiLayer {
     /// Shown when the scene starts; a closed one waits to be opened.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub open: bool,
+    /// Values for the screen's inputs, by name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schema(opaque)]
+    pub inputs: BTreeMap<String, serde_json::Value>,
 }
 
 fn yes() -> bool {
@@ -39,6 +43,7 @@ impl UiLayer {
         Self {
             screen: screen.into(),
             open: true,
+            inputs: BTreeMap::new(),
         }
     }
 }
@@ -125,7 +130,7 @@ pub fn scene_interface(dir: Option<&Path>, world: &World, settings: &GameSetting
         .into_iter()
         .map(|layer| {
             let document = read(dir, &layer.screen)
-                .and_then(|screen| screen.lower())
+                .and_then(|screen| screen.lower_with(&layer.inputs))
                 .and_then(|doc| themed(&doc).with_stylesheets(dir))
                 .map_err(|e| format!("{}: {e}", layer.screen));
             (layer, document)
