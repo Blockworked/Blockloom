@@ -251,9 +251,14 @@ uploads those bytes as an image. Elsewhere it is a child process.
   4 MiB per-peer queue cap (`QueueFull`), datagrams, a peer cap and `kick`.
   `Impairment` (loss, duplication, delay, jitter, seeded) wraps the send path
   for tests, and Quiche's pacing times are honoured there. Server connection
-  IDs must be full length (a short header does not carry one). Nothing depends
-  on it yet and it cannot build for wasm32 (BoringSSL), so keep it out of the
-  web and Android runtimes. `cargo test -p blockloom-net`; the RTT/loss matrix
+  IDs must be full length (a short header does not carry one). `game.rs` is
+  the LAN spectator session over it (`docs/multiplayer-lan.md`): `LanHost`
+  sends each guest acknowledged deltas of a `Snapshot` (actors, plus plugin
+  `Region`s keyed `plugin/key` such as voxel sections), staging regions that
+  don't fit one 1 MiB frame over several. The runtime's `lan/native.rs` fills
+  it, asking hosted modules `sync.sections` every `SYNC_EVERY` ticks. It
+  cannot build for wasm32 (BoringSSL), so keep it out of the web and Android
+  runtimes. `cargo test -p blockloom-net`; the RTT/loss matrix
   is `cargo test -p blockloom-net --test loopback -- --ignored --nocapture
   matrix`.
 - **`blockstitch-core`** (sibling repo, see above) - the shared block-editor
@@ -1269,7 +1274,14 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   neighbouring chunks and every chunk below them (a block tick that changes
   no light, such as growth or water levels, remeshes only its own chunk).
   `set_daylight` (op `daylight`) relights at run time one chunk a stream
-  frame, and only when the 0-15 step changes. Cutout and translucent
+  frame, and only when the 0-15 step changes. LAN sync (M5): `sync.sections
+  {generation, since}` answers the world's identity and every section edited
+  since (`Grid::take_edited`, `section_record`: runs with `KEEP` for a
+  streamed world's generated cells, shapes, densities); a regenerate, load or
+  restore starts a new generation. A guest's own copy, started from the same
+  settings, takes them with `sync.apply` (`apply_section`), regenerating
+  first for a new generation, and stops its own block ticks.
+  `tests/sync.rs` holds a copy to the host cell for cell. Cutout and translucent
   blocks let light and hidden faces through and mesh as their own groups with
   `MeshData.blend` (translucent vertex alpha is the definition's `opacity`,
   0.6 by default); GPU meshing stays opaque only. `texture_arrays` draws

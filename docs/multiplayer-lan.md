@@ -64,7 +64,7 @@ second. Reopening makes a new identity and admission token.
 
 ## Replication contract
 
-The schema version is independent of the editor protocol. A guest first passes
+The schema version (2) is independent of the editor protocol. A guest first passes
 pinned TLS, then schema/content-hash and constant-time admission-token checks.
 Only acknowledgements and heartbeats are accepted from guests. They cannot
 submit game input or administrative commands.
@@ -85,7 +85,21 @@ lifecycle tail. A scene epoch change forces a full baseline. Clients validate an
 apply whole frames atomically, then acknowledge. The native transport repairs
 loss/reordering. Datagram prediction and interest management are later work.
 
-Limits: 16 guests, 1024 actors, 1 MiB per complete frame, 256-byte identifiers,
+Plugins can replicate their own state as regions (schema 2). Every six fixed
+ticks the host asks each hosted module `sync.sections` with the generation and
+revision it last answered; a module without the op is skipped for the run.
+Each answer's identity and sections become regions keyed `plugin/identity` and
+`plugin/<key>`, and a new generation drops the plugin's old ones. A guest gets
+a region again only when its revision or bytes change, and removals are sent
+explicitly. Regions that don't fit one frame beside the actors are staged:
+each frame carries as many as fit, the guest acknowledges that partial state,
+and the next frame continues from it. The voxel plugin sends only edited
+sections, so a guest's copy generates the rest from the same settings
+(`sync_apply_calls` turns held regions into its `sync.apply` calls). The
+spectator viewer does not run plugins yet, so it draws no voxels;
+`blockloom-lan` reports region counts.
+
+Limits: 16 guests, 1024 actors, 16384 regions of at most 384 KiB, 1 MiB per complete frame, 256-byte identifiers,
 32 KiB per actor's appearance, finite pose/velocity fields. The transport also
 bounds queued reliable bytes. Admission or acknowledgement stalls time out;
 heartbeats cannot prolong an unacknowledged state transfer. Exceeding replication

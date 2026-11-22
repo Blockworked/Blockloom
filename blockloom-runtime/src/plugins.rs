@@ -525,9 +525,62 @@ pub fn scene_changed(engine: &mut Engine) {
     let _ = engine;
 }
 
+/// Each hosted module's `sync.sections` answer for LAN guests, asked with
+/// the `(generation, revision)` it last answered. A module without the op,
+/// or one that fails, lands in `unsynced` and is not asked again this run.
+#[cfg(feature = "plugins")]
+pub fn sync_sections(
+    engine: &Engine,
+    seen: &std::collections::BTreeMap<String, (u64, u64)>,
+    unsynced: &mut std::collections::BTreeSet<String>,
+) -> Vec<(String, Value)> {
+    let Some(world) = &engine.plugins.world else {
+        return Vec::new();
+    };
+    let mut world = world.borrow_mut();
+    let plugins: Vec<String> = world.plugins().map(str::to_string).collect();
+    let mut answers = Vec::new();
+    for plugin in plugins {
+        if unsynced.contains(&plugin) {
+            continue;
+        }
+        let args = match seen.get(&plugin) {
+            Some((generation, revision)) => json!({"generation":generation,"since":revision}),
+            None => json!({}),
+        };
+        match world.query(&plugin, "sync.sections", &args) {
+            Ok(answer) => answers.push((plugin, answer)),
+            Err(e) => {
+                if !e.contains("has no op") {
+                    warn!("{plugin}: LAN sync stopped: {e}");
+                }
+                unsynced.insert(plugin);
+            }
+        }
+    }
+    answers
+}
+
+/// Asks a hosted module `op` directly, for tests that drive one.
+#[cfg(all(test, feature = "plugins"))]
+pub(crate) fn query_for_test(engine: &Engine, plugin: &str, op: &str, args: &Value) -> Value {
+    let world = engine.plugins.world.as_ref().expect("plugins hosted");
+    let answer = world.borrow_mut().query(plugin, op, args);
+    answer.unwrap_or_else(|e| panic!("{op}: {e}"))
+}
+
+#[cfg(not(feature = "plugins"))]
+pub fn sync_sections(
+    _: &Engine,
+    _: &std::collections::BTreeMap<String, (u64, u64)>,
+    _: &mut std::collections::BTreeSet<String>,
+) -> Vec<(String, Value)> {
+    Vec::new()
+}
+
 /// Starts the opened modules and hosts them for the run.
 #[cfg(feature = "plugins")]
-fn install(engine: &mut Engine, mut world: WorldPlugins) {
+pub(crate) fn install(engine: &mut Engine, mut world: WorldPlugins) {
     let started = world.start(&|plugin| records_for(engine, plugin, false));
     let world = Rc::new(RefCell::new(world));
     let reader = Rc::clone(&world);

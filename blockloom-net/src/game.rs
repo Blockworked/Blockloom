@@ -10,9 +10,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub const SCHEMA: u32 = 1;
+pub const SCHEMA: u32 = 2;
 pub const MAX_FRAME: usize = 1024 * 1024;
 pub const MAX_ACTORS: usize = 1024;
+/// Plugin state records (a voxel section each) a snapshot may carry.
+pub const MAX_REGIONS: usize = 16384;
+pub const MAX_REGION: usize = 384 * 1024;
 const STREAM: u64 = 0;
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -27,6 +30,14 @@ pub struct ActorState {
     pub appearance: Vec<u8>,
 }
 
+/// One plugin state record, such as a voxel section, keyed `plugin/key`.
+/// A guest gets a record again only when its revision or bytes change.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Region {
+    pub revision: u64,
+    pub data: Arc<[u8]>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot {
     pub epoch: u64,
@@ -36,6 +47,7 @@ pub struct Snapshot {
     pub dimension: u8,
     pub scene: String,
     pub actors: BTreeMap<String, ActorState>,
+    pub regions: BTreeMap<String, Region>,
 }
 
 #[derive(Clone)]
@@ -233,7 +245,61 @@ fn state_frame(
     for id in removed {
         string(&mut out, id)?;
     }
+    let base_regions = base.map(|(_, s)| &s.regions);
+    let changed: Vec<_> = next
+        .regions
+        .iter()
+        .filter(|(k, r)| base_regions.is_none_or(|b| b.get(*k) != Some(r)))
+        .collect();
+    if next.regions.len() > MAX_REGIONS {
+        return Err("Too many plugin regions".into());
+    }
+    out.extend((changed.len() as u32).to_le_bytes());
+    for (key, region) in changed {
+        if key.is_empty() || region.data.len() > MAX_REGION {
+            return Err("Invalid plugin region".into());
+        }
+        string(&mut out, key)?;
+        out.extend(region.revision.to_le_bytes());
+        out.extend((region.data.len() as u32).to_le_bytes());
+        out.extend(region.data.iter());
+    }
+    let removed: Vec<_> = base_regions
+        .map(|b| {
+            b.keys()
+                .filter(|k| !next.regions.contains_key(*k))
+                .collect()
+        })
+        .unwrap_or_default();
+    out.extend((removed.len() as u32).to_le_bytes());
+    for key in removed {
+        string(&mut out, key)?;
+    }
     framed(out)
+}
+
+/// What a guest gets next from `base`: `latest`, or as many of its changed
+/// regions as fit `budget` bytes when they don't all fit one frame. Later
+/// frames carry the rest.
+fn stage(base: Option<&Snapshot>, latest: &Arc<Snapshot>, budget: usize) -> Arc<Snapshot> {
+    let mut regions = base.map(|b| b.regions.clone()).unwrap_or_default();
+    regions.retain(|k, _| latest.regions.contains_key(k));
+    let mut used = 0;
+    for (key, region) in &latest.regions {
+        if regions.get(key) == Some(region) {
+            continue;
+        }
+        let cost = key.len() + region.data.len() + 16;
+        if used > 0 && used + cost > budget {
+            return Arc::new(Snapshot {
+                regions,
+                ..(**latest).clone()
+            });
+        }
+        used += cost;
+        regions.insert(key.clone(), region.clone());
+    }
+    latest.clone()
 }
 
 fn apply_state(body: &[u8], old_seq: u64, old: &Snapshot) -> Result<(u64, Snapshot), String> {
@@ -309,7 +375,43 @@ fn apply_state(body: &[u8], old_seq: u64, old: &Snapshot) -> Result<(u64, Snapsh
             return Err("Invalid removal".into());
         }
     }
+    let mut regions = if base == 0 {
+        BTreeMap::new()
+    } else {
+        old.regions.clone()
+    };
+    let n = r.u32()? as usize;
+    if n > MAX_REGIONS {
+        return Err("Too many plugin regions".into());
+    }
+    let mut keys = std::collections::BTreeSet::new();
+    for _ in 0..n {
+        let key = r.text()?;
+        if key.is_empty() || !keys.insert(key.clone()) {
+            return Err("Duplicate plugin region".into());
+        }
+        let revision = r.u64()?;
+        let len = r.u32()? as usize;
+        if len > MAX_REGION {
+            return Err("Plugin region too large".into());
+        }
+        let data: Arc<[u8]> = r.bytes(len)?.into();
+        regions.insert(key, Region { revision, data });
+    }
+    let n = r.u32()? as usize;
+    if n > MAX_REGIONS {
+        return Err("Too many region removals".into());
+    }
+    for _ in 0..n {
+        let key = r.text()?;
+        if keys.contains(&key) || regions.remove(&key).is_none() {
+            return Err("Invalid region removal".into());
+        }
+    }
     r.done()?;
+    if regions.len() > MAX_REGIONS {
+        return Err("Too many plugin regions".into());
+    }
     if actors.len() > MAX_ACTORS {
         return Err("Too many actors".into());
     }
@@ -323,6 +425,7 @@ fn apply_state(body: &[u8], old_seq: u64, old: &Snapshot) -> Result<(u64, Snapsh
             dimension,
             scene,
             actors,
+            regions,
         },
     ))
 }
@@ -330,6 +433,8 @@ fn apply_state(body: &[u8], old_seq: u64, old: &Snapshot) -> Result<(u64, Snapsh
 struct Guest {
     frames: Framer,
     admitted: bool,
+    /// Frames sent to this guest, which number its sequence.
+    sent: u64,
     acked: Option<(u64, Arc<Snapshot>)>,
     flight: Option<(u64, Arc<Snapshot>)>,
     deadline: Instant,
@@ -341,8 +446,41 @@ pub struct LanHost {
     invite: Invite,
     guests: BTreeMap<PeerId, Guest>,
     latest: Arc<Snapshot>,
-    seq: u64,
+    /// Bytes of regions a frame may carry beside the actors.
+    region_budget: usize,
     closing: bool,
+}
+
+/// Checks a state the host is about to publish; answers what a frame may
+/// spend on regions beside its actors.
+fn check(state: &Snapshot) -> Result<usize, String> {
+    let actors = state_frame(
+        1,
+        None,
+        &Snapshot {
+            regions: BTreeMap::new(),
+            ..state.clone()
+        },
+    )?;
+    if state.regions.len() > MAX_REGIONS {
+        return Err("Too many plugin regions".into());
+    }
+    let largest = state.regions.iter().map(|(k, r)| {
+        if k.is_empty() || k.len() > 256 || r.data.len() > MAX_REGION {
+            None
+        } else {
+            Some(k.len() + r.data.len() + 16)
+        }
+    });
+    let mut most = 0;
+    for cost in largest {
+        most = most.max(cost.ok_or("Invalid plugin region")?);
+    }
+    let budget = MAX_FRAME.saturating_sub(actors.len() + 64);
+    if most > budget {
+        return Err("Actors leave no room for a plugin region in one frame".into());
+    }
+    Ok(budget)
 }
 impl LanHost {
     pub fn open(
@@ -357,7 +495,7 @@ impl LanHost {
         if !(1..=16).contains(&opts.max_peers) {
             return Err("Guest limit must be 1 to 16".into());
         }
-        state_frame(1, None, &initial)?;
+        let region_budget = check(&initial)?;
         let id = Identity::generate(&["blockloom-lan"]).map_err(|e| e.to_string())?;
         let server = Server::bind(bind, &id, opts).map_err(|e| e.to_string())?;
         let mut token = [0; 32];
@@ -375,7 +513,7 @@ impl LanHost {
             invite,
             guests: BTreeMap::new(),
             latest: Arc::new(initial),
-            seq: 1,
+            region_budget,
             closing: false,
         })
     }
@@ -400,9 +538,9 @@ impl LanHost {
         {
             return Err("Scene changes require a new epoch".into());
         }
-        state_frame(1, None, &state)?;
+        let budget = check(&state)?;
         if *self.latest != state {
-            self.seq = self.seq.checked_add(1).ok_or("Sequence exhausted")?;
+            self.region_budget = budget;
             self.latest = Arc::new(state);
         }
         Ok(())
@@ -431,6 +569,7 @@ impl LanHost {
                         Guest {
                             frames: Framer::default(),
                             admitted: false,
+                            sent: 0,
                             acked: None,
                             flight: None,
                             deadline: Instant::now() + TIMEOUT,
@@ -462,7 +601,9 @@ impl LanHost {
             }
             if !g.admitted
                 || g.flight.is_some()
-                || g.acked.as_ref().is_some_and(|(seq, _)| *seq == self.seq)
+                || g.acked
+                    .as_ref()
+                    .is_some_and(|(_, s)| Arc::ptr_eq(s, &self.latest))
             {
                 continue;
             }
@@ -471,12 +612,15 @@ impl LanHost {
                 .as_ref()
                 .filter(|(_, s)| s.epoch == self.latest.epoch)
                 .map(|(seq, s)| (*seq, s.as_ref()));
-            let bytes = state_frame(self.seq, base, &self.latest).expect("validated state");
+            let target = stage(base.map(|b| b.1), &self.latest, self.region_budget);
+            let seq = g.sent + 1;
+            let bytes = state_frame(seq, base, &target).expect("validated state");
             if self.server.send_stream(*id, STREAM, &bytes, false).is_err() {
                 failed.push(*id);
                 continue;
             }
-            g.flight = Some((self.seq, self.latest.clone()));
+            g.sent = seq;
+            g.flight = Some((seq, target));
             g.deadline = Instant::now() + TIMEOUT;
         }
         for id in failed {
@@ -657,6 +801,48 @@ mod tests {
         let mut extra = bytes[4..].to_vec();
         extra.push(0);
         assert!(apply_state(&extra, 0, &Snapshot::default()).is_err());
+    }
+    #[test]
+    fn region_deltas_carry_changes_and_removals_and_refuse_bad_ones() {
+        let mut a = sample();
+        let region = |n: u8| Region {
+            revision: u64::from(n),
+            data: vec![n; 4].into(),
+        };
+        a.regions.insert("p/one".into(), region(1));
+        a.regions.insert("p/two".into(), region(2));
+        let bytes = state_frame(1, None, &a).unwrap();
+        let (_, got) = apply_state(&bytes[4..], 0, &Snapshot::default()).unwrap();
+        assert_eq!(got, a);
+        let mut b = a.clone();
+        b.regions.remove("p/one");
+        b.regions.insert("p/two".into(), region(3));
+        let delta = state_frame(2, Some((1, &a)), &b).unwrap();
+        assert!(delta.len() < bytes.len());
+        assert_eq!(apply_state(&delta[4..], 1, &got).unwrap().1, b);
+        // A removal of something the guest never had is refused.
+        let delta = state_frame(2, Some((1, &a)), &b).unwrap();
+        assert!(apply_state(&delta[4..], 1, &sample()).is_err());
+    }
+    #[test]
+    fn staging_splits_regions_by_budget_and_finishes_with_the_latest() {
+        let mut latest = sample();
+        for i in 0..5u8 {
+            latest.regions.insert(
+                format!("p/{i}"),
+                Region {
+                    revision: 1,
+                    data: vec![i; 100].into(),
+                },
+            );
+        }
+        let latest = Arc::new(latest);
+        let first = stage(None, &latest, 250);
+        assert_eq!(first.regions.len(), 2);
+        let second = stage(Some(&first), &latest, 250);
+        assert_eq!(second.regions.len(), 4);
+        let third = stage(Some(&second), &latest, 250);
+        assert!(Arc::ptr_eq(&third, &latest));
     }
     #[test]
     fn new_epoch_requires_a_full_baseline() {

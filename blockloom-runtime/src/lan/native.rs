@@ -2,7 +2,8 @@ use super::*;
 use crate::engine::{ActorId, Dimension, PhysicsPose};
 use bevy::prelude::*;
 use blockloom_net::ServerOptions;
-use blockloom_net::game::{ActorState, LanHost, Snapshot, build_hash};
+use blockloom_net::game::{ActorState, LanHost, Region, Snapshot, build_hash};
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 #[derive(Default)]
@@ -15,6 +16,52 @@ pub struct Session {
     epoch: u64,
     tick: u64,
     last_guests: Vec<u64>,
+    /// Plugin state records (voxel sections) guests hold, keyed `plugin/key`.
+    regions: BTreeMap<String, Region>,
+    /// Each plugin's last `sync.sections` generation and revision.
+    synced: BTreeMap<String, (u64, u64)>,
+    unsynced: BTreeSet<String>,
+}
+
+/// How often, in fixed ticks, plugins are asked what changed.
+const SYNC_EVERY: u64 = 6;
+
+/// Folds plugins' `sync.sections` answers into the records guests get.
+fn gather_regions(e: &mut Engine) {
+    let mut unsynced = std::mem::take(&mut e.lan.unsynced);
+    let answers = crate::plugins::sync_sections(e, &e.lan.synced, &mut unsynced);
+    let lan = &mut e.lan;
+    lan.unsynced = unsynced;
+    for (plugin, answer) in answers {
+        let generation = answer["generation"].as_u64().unwrap_or(0);
+        let revision = answer["revision"].as_u64().unwrap_or(0);
+        if lan.synced.get(&plugin).map(|s| s.0) != Some(generation) {
+            let prefix = format!("{plugin}/");
+            lan.regions.retain(|k, _| !k.starts_with(&prefix));
+        }
+        let identity = serde_json::to_vec(&answer["identity"]).unwrap_or_default();
+        lan.regions.insert(
+            format!("{plugin}/identity"),
+            Region {
+                revision: generation,
+                data: identity.into(),
+            },
+        );
+        for section in answer["sections"].as_array().into_iter().flatten() {
+            let Some(key) = section["key"].as_str() else {
+                continue;
+            };
+            let data = serde_json::to_vec(&section["data"]).unwrap_or_default();
+            lan.regions.insert(
+                format!("{plugin}/{key}"),
+                Region {
+                    revision: section["revision"].as_u64().unwrap_or(0),
+                    data: data.into(),
+                },
+            );
+        }
+        lan.synced.insert(plugin, (generation, revision));
+    }
 }
 
 pub fn status(e: &Engine) -> LanSessionStatus {
@@ -38,6 +85,9 @@ pub fn status(e: &Engine) -> LanSessionStatus {
 
 pub fn begin(e: &mut Engine) {
     e.lan.settings = e.project.multiplayer.clone();
+    e.lan.regions.clear();
+    e.lan.synced.clear();
+    e.lan.unsynced.clear();
     super::report(e, None);
 }
 
@@ -152,8 +202,14 @@ fn capture(
     if e.lan.scene != scene {
         e.lan.epoch += 1;
         e.lan.scene = scene.clone();
+        // A new scene starts its plugins' worlds over.
+        e.lan.regions.clear();
+        e.lan.synced.clear();
     }
     e.lan.tick += 1;
+    if e.lan.requested.is_some() || e.lan.tick.is_multiple_of(SYNC_EVERY) {
+        gather_regions(&mut e);
+    }
     let mut state = Snapshot {
         epoch: e.lan.epoch,
         tick: e.lan.tick,
@@ -161,6 +217,7 @@ fn capture(
         paused: e.paused,
         dimension: u8::from(dimension.0 == blockloom_core::scene::Mode::ThreeD),
         scene,
+        regions: e.lan.regions.clone(),
         ..Default::default()
     };
     for (id, t, pose, visible, v2, v3) in &actors {
@@ -214,4 +271,35 @@ fn capture(
         close(&mut e);
         super::report(&e, Some(error));
     }
+}
+
+/// What a guest's own copy of each plugin applies, as `sync.apply` args per
+/// plugin: the records that differ from `old` (all of them without one),
+/// with the plugin's world identity always first. Only tests drive a guest copy so far.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn sync_apply_calls(
+    old: Option<&BTreeMap<String, Region>>,
+    regions: &BTreeMap<String, Region>,
+) -> Vec<(String, serde_json::Value)> {
+    let mut calls = BTreeMap::<String, serde_json::Value>::new();
+    for (key, region) in regions {
+        let Some((plugin, rest)) = key.split_once('/') else {
+            continue;
+        };
+        let Ok(data) = serde_json::from_slice::<serde_json::Value>(&region.data) else {
+            continue;
+        };
+        let call = calls
+            .entry(plugin.to_string())
+            .or_insert_with(|| serde_json::json!({"identity":null,"sections":[]}));
+        if rest == "identity" {
+            call["identity"] = data;
+        } else if old.is_none_or(|o| o.get(key) != Some(region)) {
+            call["sections"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({"key":rest,"data":data}));
+        }
+    }
+    calls.into_iter().collect()
 }

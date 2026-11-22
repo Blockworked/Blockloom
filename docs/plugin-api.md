@@ -116,6 +116,8 @@ A module answers ops the host raises:
 | `node.<name>` | one node of a generation graph |
 | `overlay.<name>` | an overlay is on |
 | `importer.<name>`, `build.<name>` | an asset import or a build hook (raw bytes) |
+| `sync.sections` | a LAN host asks what changed: `{generation, since}` in, `{generation, revision, identity, sections: [{key, revision, data}]}` out; a new generation replaces everything guests hold |
+| `sync.apply` | a guest's copy takes `{identity, sections: [{key, data}]}` from the host |
 
 An op answers JSON. `{"value": ...}` is a reporter's answer. `{"effects": [...]}`
 asks the world to act, in order. A plugin never touches the world itself.

@@ -41,6 +41,8 @@ fn run() -> Result<(), String> {
                     a.visible
                 );
             }
+            let bytes: usize = s.regions.values().map(|r| r.data.len()).sum();
+            println!("  {} plugin regions, {bytes} bytes", s.regions.len());
         }
         std::thread::sleep(Duration::from_millis(2));
     }

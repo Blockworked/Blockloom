@@ -605,6 +605,137 @@ mod tests {
         }
     }
 
+    #[cfg(all(
+        feature = "multiplayer",
+        feature = "plugins",
+        not(target_arch = "wasm32"),
+        not(target_os = "android")
+    ))]
+    #[test]
+    fn lan_guests_get_the_hosts_voxel_edits_and_rebuild_the_world_from_them() {
+        use blockloom_net::ClientOptions;
+        use blockloom_net::game::{Invite, LanClient};
+        use blockloom_plugin_api::record::PluginRecord;
+        use blockloom_plugin_host::{module::CodeModule, native::NativeModule, world::Preloaded};
+        use serde_json::json;
+        const ID: &str = "com.blockworked.voxel";
+        let voxel = || {
+            unsafe {
+                NativeModule::from_entry(
+                    blockloom_voxel::blockloom_plugin_entry_v1,
+                    Default::default(),
+                    blockloom_plugin_host::native::default_services("0.0.1".into()),
+                )
+            }
+            .unwrap()
+        };
+        let settings = json!({"preset":"island","seed":2,"size":[64,24,64],"solid":false});
+        let mut project = mover(Mode::ThreeD, 2.0);
+        project.multiplayer.enabled = true;
+        project
+            .plugin_resources
+            .push(PluginRecord::new(ID, "world", 1, settings.clone()));
+        let mut app = headless_with(project, Mode::ThreeD, None);
+        app.update();
+        let world = blockloom_plugin_host::world::WorldPlugins::with_modules(vec![Preloaded {
+            id: ID.to_string(),
+            module: CodeModule::Native(voxel()),
+            hooks: vec![],
+            blocks: vec![],
+        }])
+        .unwrap();
+        crate::plugins::install(&mut app.world_mut().non_send_mut::<Engine>(), world);
+        let edit = |app: &App, op: &str, args: serde_json::Value| {
+            crate::plugins::query_for_test(app.world().non_send::<Engine>(), ID, op, &args);
+        };
+        edit(
+            &app,
+            "sphere",
+            json!({"x":30,"y":12,"z":30,"radius":6,"material":"air"}),
+        );
+        crate::lan::open(
+            &mut app.world_mut().non_send_mut::<Engine>(),
+            "127.0.0.1:0",
+            2,
+        );
+        app.update();
+        let status = crate::lan::status(app.world().non_send::<Engine>());
+        assert!(status.open, "{status:?}");
+        let invite = Invite::decode(status.invite.as_ref().unwrap()).unwrap();
+        let mut guest =
+            LanClient::connect(invite.clone(), invite.build, ClientOptions::default()).unwrap();
+        let copy = voxel();
+        copy.call_json(
+            "world.start",
+            &json!({"resources":[{"type_id":"world","payload":settings}]}),
+        )
+        .unwrap();
+        let mut held = None;
+        let mut follow = |app: &mut App, guest: &mut LanClient, cell: [i32; 3]| {
+            let end = std::time::Instant::now() + Duration::from_secs(8);
+            loop {
+                app.update();
+                guest.poll().unwrap();
+                if let Some(state) = guest.state() {
+                    for (plugin, args) in
+                        crate::lan::sync_apply_calls(held.as_ref(), &state.regions)
+                    {
+                        assert_eq!(plugin, ID);
+                        copy.call_json("sync.apply", &args).unwrap();
+                    }
+                    held = Some(state.regions.clone());
+                }
+                let at = json!({"x":cell[0],"y":cell[1],"z":cell[2]});
+                let host = crate::plugins::query_for_test(
+                    app.world().non_send::<Engine>(),
+                    ID,
+                    "get",
+                    &at,
+                );
+                let mine = copy.call_json("get", &at).unwrap();
+                if held.is_some()
+                    && host["material"] == mine["material"]
+                    && host["shape"] == mine["shape"]
+                {
+                    return;
+                }
+                assert!(
+                    std::time::Instant::now() < end,
+                    "the guest's copy never caught up at {cell:?}"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        };
+        // The carved sphere reaches the guest's copy.
+        follow(&mut app, &mut guest, [30, 12, 30]);
+        // So does an edit made while the guest watches.
+        edit(
+            &app,
+            "fill",
+            json!({"x1":0,"y1":22,"z1":0,"x2":63,"y2":22,"z2":63,"material":"glow"}),
+        );
+        follow(&mut app, &mut guest, [63, 22, 63]);
+        for x in (0..64).step_by(3) {
+            for y in 0..24 {
+                for z in (0..64).step_by(3) {
+                    let at = json!({"x":x,"y":y,"z":z});
+                    let host = crate::plugins::query_for_test(
+                        app.world().non_send::<Engine>(),
+                        ID,
+                        "get",
+                        &at,
+                    );
+                    assert_eq!(
+                        host["material"],
+                        copy.call_json("get", &at).unwrap()["material"],
+                        "{at}"
+                    );
+                }
+            }
+        }
+        crate::lan::close(&mut app.world_mut().non_send_mut::<Engine>());
+    }
+
     #[test]
     fn compiled_logic_and_the_vm_step_a_world_to_the_same_place() {
         if blockloom_core::script::toolchain_version().is_err() {

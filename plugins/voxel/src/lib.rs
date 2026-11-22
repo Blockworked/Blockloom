@@ -253,6 +253,33 @@ struct World {
     events: Vec<Value>,
     /// The last block entity whose block went away, with what it held.
     last_removed: Value,
+    sync: SectionSync,
+}
+
+/// Multiplayer section sync: what changed since a guest last heard.
+#[derive(Default)]
+struct SectionSync {
+    /// Bumped whenever the world is regenerated or restored, which drops
+    /// every section a guest holds.
+    generation: u64,
+    revision: u64,
+    /// Each edited section and the revision it last changed in.
+    sections: BTreeMap<[i32; 3], u64>,
+    preset: String,
+    /// A guest's copy: the generation it last laid the host's sections over.
+    replica: Option<u64>,
+}
+
+impl SectionSync {
+    fn restart(&mut self, preset: &str) {
+        self.reset();
+        self.preset = preset.to_string();
+    }
+
+    fn reset(&mut self) {
+        self.generation += 1;
+        self.sections.clear();
+    }
 }
 
 fn check_edit_bounds(lo: [i32; 3], hi: [i32; 3]) -> Result<(), String> {
@@ -646,6 +673,7 @@ impl World {
             invocation: None,
             pending: BTreeSet::new(),
             relight: BTreeSet::new(),
+            sync: SectionSync::default(),
             collision_ready: BTreeMap::new(),
             collision_needed: BTreeSet::new(),
             stream_frame: 0,
@@ -710,7 +738,8 @@ impl World {
 
     /// One fixed step of block ticks.
     fn tick(&mut self) -> Vec<Value> {
-        if !self.settings.ticks || self.tick_rules.is_idle() {
+        // A guest's copy follows the host's ticks through sync instead.
+        if !self.settings.ticks || self.tick_rules.is_idle() || self.sync.replica.is_some() {
             return Vec::new();
         }
         let sections: Vec<[i32; 3]> = if self.settings.random_tick_speed == 0 {
@@ -847,7 +876,80 @@ impl World {
         if !self.settings.streamed {
             self.grid.mark_all_dirty();
         }
+        // Generation alone is the same on every machine; only edits are synced.
+        self.grid.take_edited();
+        self.sync.restart(preset);
         Ok(())
+    }
+
+    fn sync_identity(&self) -> Value {
+        json!({"settings":self.settings.identity(),"seed":self.seed,"preset":self.sync.preset,
+            "generation":self.sync.generation})
+    }
+
+    /// The sections edited since `since` in `generation` (all of them for
+    /// another generation), as a host sends them to guests.
+    fn sync_sections(&mut self, since: u64, generation: Option<u64>) -> Value {
+        let edited = self.grid.take_edited();
+        if !edited.is_empty() {
+            self.sync.revision += 1;
+            for chunk in edited {
+                self.sync.sections.insert(chunk, self.sync.revision);
+            }
+        }
+        let since = if generation == Some(self.sync.generation) {
+            since
+        } else {
+            0
+        };
+        let sections: Vec<Value> = self
+            .sync
+            .sections
+            .iter()
+            .filter(|(_, r)| **r > since)
+            .map(|(c, r)| {
+                json!({"key":format!("section/{}/{}/{}", c[0], c[1], c[2]),"revision":r,
+                    "data":self.grid.section_record(*c)})
+            })
+            .collect();
+        json!({"generation":self.sync.generation,"revision":self.sync.revision,
+            "identity":self.sync_identity(),"sections":sections})
+    }
+
+    /// Lays a host's sections over this copy, regenerating first when the
+    /// host's world was generated again.
+    fn sync_apply(&mut self, args: &Value) -> Result<Vec<Value>, String> {
+        let identity = &args["identity"];
+        if !identity.is_null() {
+            if identity["settings"] != self.settings.identity() {
+                return Err("the host's voxel world has different settings".into());
+            }
+            let generation = identity["generation"].as_u64().unwrap_or(0);
+            let seed = identity["seed"].as_i64().unwrap_or(self.seed);
+            let preset = identity["preset"].as_str().unwrap_or("").to_string();
+            if self.sync.replica != Some(generation)
+                && (generation > 1 || seed != self.seed || preset != self.sync.preset)
+            {
+                self.generate(&preset, seed)?;
+                self.ticks = ticks::Ticks::default();
+                self.entities.clear();
+            }
+            self.sync.replica = Some(generation);
+        } else if self.sync.replica.is_none() {
+            return Err("sync the host's world identity first".into());
+        }
+        let sections = args["sections"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let palette = self.palette.len();
+        for section in sections {
+            let record: grid::SectionRecord = serde_json_from(section["data"].clone())
+                .map_err(|e| format!("a synced section: {e}"))?;
+            self.grid.apply_section(&record, palette)?;
+        }
+        self.grid.take_edited();
+        Ok(self.flush())
     }
 
     fn invoker_section(&self, point: [f64; 3]) -> [i32; 3] {
@@ -1696,6 +1798,8 @@ impl Voxel {
             match read_checkpoint(host, &world, &settings.save_slot) {
                 Ok(Some((grid, fragments, seed, (ticks, entities)))) => {
                     world.seed = seed;
+                    // A restored grid replaces what guests hold.
+                    world.sync.reset();
                     world.grid = grid;
                     world.ticks = ticks;
                     world.entities = entities;
@@ -2105,6 +2209,16 @@ impl Plugin for Voxel {
                 Ok(json!({"effects":world.flush()}))
             }
             "world.start" => self.start(host, &args),
+            "sync.sections" => {
+                let since = args["since"].as_u64().unwrap_or(0);
+                let generation = args["generation"].as_u64();
+                Ok(self.world()?.sync_sections(since, generation))
+            }
+            "sync.apply" => {
+                let world = self.world()?;
+                let effects = world.sync_apply(&args).map_err(Error::bad_argument)?;
+                Ok(json!({"effects":effects}))
+            }
             "world.save" => Ok(json!({"state":self.world()?.checkpoint()})),
             "world.restore" => {
                 let world = self.world()?;
@@ -2118,6 +2232,8 @@ impl Plugin for Voxel {
                 world.attach_generator();
                 world.reset_lod_meshes();
                 world.seed = seed;
+                // A restored grid replaces what guests hold.
+                world.sync.reset();
                 world.pending.extend(&world.visible);
                 if !world.settings.streamed {
                     world.grid.mark_all_dirty();
@@ -2148,6 +2264,8 @@ impl Plugin for Voxel {
                 world.attach_generator();
                 world.reset_lod_meshes();
                 world.seed = seed;
+                // A restored grid replaces what guests hold.
+                world.sync.reset();
                 world.pending.extend(&world.visible);
                 if !world.settings.streamed {
                     world.grid.mark_all_dirty();

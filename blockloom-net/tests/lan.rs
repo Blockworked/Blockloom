@@ -163,3 +163,88 @@ fn slow_guest_coalesces_state_without_unbounded_tail() {
     }
     until(&mut host, &mut c, |c| c.state() == Some(&next));
 }
+
+#[test]
+fn plugin_regions_larger_than_a_frame_stream_in_pieces_under_loss() {
+    use blockloom_net::game::{MAX_FRAME, Region};
+    let build = build_hash(b"trusted fixture");
+    let impairment = Impairment {
+        loss: 0.05,
+        delay: Duration::from_millis(5),
+        ..Default::default()
+    };
+    let mut initial = sample();
+    // Eight 300 KiB sections: about two and a half frames' worth.
+    for i in 0..8u8 {
+        initial.regions.insert(
+            format!("com.example.voxel/section/{i}"),
+            Region {
+                revision: 1,
+                data: vec![i; 300 * 1024].into(),
+            },
+        );
+    }
+    let total: usize = initial.regions.values().map(|r| r.data.len()).sum();
+    assert!(total > 2 * MAX_FRAME);
+    let mut host = LanHost::open(
+        "127.0.0.1:0".parse().unwrap(),
+        build,
+        initial.clone(),
+        ServerOptions {
+            impairment,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let invite = Invite::decode(&host.invite().encode()).unwrap();
+    let mut c = LanClient::connect(
+        invite,
+        build,
+        ClientOptions {
+            impairment,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    until(&mut host, &mut c, |c| c.state() == Some(&initial));
+    assert!(c.sequence() >= 3, "sent in {} frames", c.sequence());
+
+    // One section changes and one goes: only those travel.
+    let mut next = initial.clone();
+    next.tick += 1;
+    next.regions
+        .get_mut("com.example.voxel/section/2")
+        .unwrap()
+        .revision = 2;
+    next.regions
+        .get_mut("com.example.voxel/section/2")
+        .unwrap()
+        .data = vec![9; 10].into();
+    next.regions.remove("com.example.voxel/section/5");
+    let before = c.sequence();
+    host.publish(next.clone()).unwrap();
+    until(&mut host, &mut c, |c| c.state() == Some(&next));
+    assert_eq!(c.sequence(), before + 1);
+}
+
+#[test]
+fn a_region_too_big_for_any_frame_is_refused() {
+    use blockloom_net::game::{MAX_REGION, Region};
+    let mut state = sample();
+    state.regions.insert(
+        "p/k".into(),
+        Region {
+            revision: 1,
+            data: vec![0; MAX_REGION + 1].into(),
+        },
+    );
+    assert!(
+        LanHost::open(
+            "127.0.0.1:0".parse().unwrap(),
+            build_hash(b"x"),
+            state,
+            ServerOptions::default()
+        )
+        .is_err()
+    );
+}

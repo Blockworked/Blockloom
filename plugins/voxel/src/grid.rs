@@ -50,6 +50,8 @@ pub struct Grid {
     /// Sections whose meshes are out of date: those written to, and the
     /// neighbours that see one of their cells across a boundary.
     dirty: BTreeSet<[i32; 3]>,
+    /// Sections whose own cells changed since multiplayer sync last asked.
+    edited: BTreeSet<SectionAddress>,
     lod: crate::lod::Cache,
     revision: u64,
     lod_changes: Option<([i32; 3], [i32; 3])>,
@@ -88,6 +90,7 @@ impl Grid {
             passable: Default::default(),
             densities: BTreeMap::new(),
             dirty: BTreeSet::new(),
+            edited: BTreeSet::new(),
             lod: crate::lod::Cache::default(),
             revision: 0,
             lod_changes: None,
@@ -326,6 +329,7 @@ impl Grid {
     /// Include the density-gradient halo and diagonal neighbours.
     fn dirty_sample(&mut self, cell: [i32; 3]) {
         self.revision = self.revision.wrapping_add(1);
+        self.edited.insert(cell.map(|v| v.div_euclid(SECTION)));
         self.lod.invalidate(cell);
         let (lo, hi) = self.lod_changes.get_or_insert((cell, cell));
         for a in 0..3 {
@@ -867,6 +871,109 @@ impl Grid {
         self.shapes.clear();
         self.densities.clear();
         self.dirty.clear();
+        self.edited.clear();
+    }
+
+    /// The sections written to since the last call.
+    pub fn take_edited(&mut self) -> Vec<SectionAddress> {
+        std::mem::take(&mut self.edited).into_iter().collect()
+    }
+
+    /// One section as multiplayer sync sends it: every cell's block (`KEEP`
+    /// where a streamed world's cell is still generated), shapes and densities.
+    pub fn section_record(&self, chunk: SectionAddress) -> SectionRecord {
+        let streamed = self.generator.is_some();
+        let mut runs = Vec::<(u16, Block)>::new();
+        for i in 0..SECTION_CELLS {
+            let cell = decoded_cell(chunk, i, SECTION);
+            let m = if streamed {
+                self.edits.get(&cell).copied().unwrap_or(KEEP)
+            } else {
+                self.get(cell)
+            };
+            match runs.last_mut() {
+                Some((count, value)) if *value == m => *count += 1,
+                _ => runs.push((1, m)),
+            }
+        }
+        let lo = chunk.map(|c| c * SECTION);
+        let inside = |c: &[i32; 3]| (0..3).all(|a| c[a] >= lo[a] && c[a] < lo[a] + SECTION);
+        let span = lo..[lo[0] + SECTION, 0, 0];
+        SectionRecord {
+            chunk,
+            runs,
+            shapes: self
+                .shapes
+                .range(span.clone())
+                .filter(|(c, _)| inside(c))
+                .map(|(&c, s)| (c, s.name()))
+                .collect(),
+            densities: self
+                .densities
+                .range(span)
+                .filter(|(c, _)| inside(c))
+                .map(|(&c, &d)| (c, d))
+                .collect(),
+        }
+    }
+
+    /// Lays a [`Grid::section_record`] over this grid; the section ends up
+    /// exactly as the record says.
+    pub fn apply_section(
+        &mut self,
+        record: &SectionRecord,
+        palette_len: Block,
+    ) -> Result<(), String> {
+        let chunk = record.chunk;
+        if !(0..3).all(|a| chunk[a] >= 0 && chunk[a] < (self.size[a] + SECTION - 1) / SECTION) {
+            return Err("a synced section is outside the world".into());
+        }
+        let streamed = self.generator.is_some();
+        let mut shapes = BTreeMap::new();
+        for (cell, name) in &record.shapes {
+            if cell.map(|v| v.div_euclid(SECTION)) != chunk {
+                return Err("a synced shape is outside its section".into());
+            }
+            shapes.insert(*cell, Shape::from_name(name)?);
+        }
+        let mut offset = 0usize;
+        for &(count, material) in &record.runs {
+            let count = count as usize;
+            if count == 0
+                || offset + count > SECTION_CELLS
+                || (material != KEEP && material > palette_len)
+                || (material == KEEP && !streamed)
+            {
+                return Err("invalid synced section run".into());
+            }
+            for i in offset..offset + count {
+                let cell = decoded_cell(chunk, i, SECTION);
+                if !self.contains(cell) {
+                    continue;
+                }
+                let m = if material == KEEP {
+                    self.base(cell)
+                } else {
+                    material
+                };
+                let shape = shapes.get(&cell).copied().unwrap_or(Shape::Cube);
+                self.set_shaped(cell, m, shape);
+            }
+            offset += count;
+        }
+        if offset != SECTION_CELLS {
+            return Err("incomplete synced section".into());
+        }
+        for &(cell, density) in &record.densities {
+            if cell.map(|v| v.div_euclid(SECTION)) != chunk
+                || density == 0
+                || density.unsigned_abs() > 256
+            {
+                return Err("invalid synced density".into());
+            }
+            self.set_density(cell, density, self.get(cell));
+        }
+        Ok(())
     }
 
     pub fn solid_count(&self) -> u64 {
@@ -939,6 +1046,17 @@ pub struct Snapshot {
     #[serde(default)]
     pub pages: Vec<Page>,
     pub shapes: Vec<([i32; 3], String)>,
+    pub densities: Vec<([i32; 3], i16)>,
+}
+
+/// One section's whole state, as multiplayer sync carries it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SectionRecord {
+    pub chunk: SectionAddress,
+    pub runs: Vec<(u16, Block)>,
+    #[serde(default)]
+    pub shapes: Vec<([i32; 3], String)>,
+    #[serde(default)]
     pub densities: Vec<([i32; 3], i16)>,
 }
 
