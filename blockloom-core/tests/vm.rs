@@ -875,6 +875,29 @@ fn escape_while_paused_runs_the_key_strand_as_an_interface_one() {
 }
 
 #[test]
+fn a_broadcast_while_paused_starts_interface_strands() {
+    let project = project_with(vec![
+        started(vec![say("down"), InstructionKind::PauseGame]),
+        Strand::with_instructions(
+            0,
+            400,
+            vec![
+                ins(InstructionKind::WhenMessage {
+                    name: "resume".to_string(),
+                }),
+                ins(say("up")),
+                ins(InstructionKind::ResumeGame),
+            ],
+        ),
+    ]);
+    let mut vm = Harness::started(&project);
+    assert_eq!(says(&vm.run(1)), vec!["down".to_string()]);
+    vm.vm.fire(Event::Message("resume".to_string()));
+    assert_eq!(says(&vm.run(1)), vec!["up".to_string()]);
+    assert!(!vm.vm.is_paused());
+}
+
+#[test]
 fn any_other_key_stays_frozen_while_paused() {
     let project = project_with(vec![
         started(vec![say("down"), InstructionKind::PauseGame]),

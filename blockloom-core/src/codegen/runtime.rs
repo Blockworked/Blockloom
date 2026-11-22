@@ -1031,10 +1031,11 @@ impl Runner {
         let mut state = entry.begin(&actor);
         // Escape is the pause key: while paused it starts key strands as
         // interface strands, so a pause menu can toggle itself shut. Back is
-        // the phone's equivalent (the Android back button).
+        // the phone's equivalent (the Android back button). A message while
+        // paused came from the interface, so it starts interface strands too.
         if self.actors.paused
-            && entry.trigger == "Key"
-            && (entry.detail == "escape" || entry.detail == "back")
+            && ((entry.trigger == "Key" && (entry.detail == "escape" || entry.detail == "back"))
+                || entry.trigger == "Message")
         {
             state.ui = true;
         }

@@ -239,6 +239,9 @@ pub fn apply_ui_effects(
     if !engine.running {
         return;
     }
+    if engine.interface_stale {
+        crate::world::load_interface(&mut engine, &mut manager);
+    }
     for effect in &effects.0 {
         match effect {
             Effect::ShowElement { element } => {

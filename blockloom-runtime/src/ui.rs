@@ -535,12 +535,23 @@ impl UiManager {
     }
 
     /// Takes an element off the screen without forgetting it, children and
-    /// all. An `all` hides everything and drops keyboard focus with it.
+    /// all. An `all` hides every top-level element and drops keyboard focus
+    /// with it; children keep their own visibility, so reopening a root shows them.
     pub fn hide(&mut self, id: &str, all: bool) {
         if all {
-            for node in self.nodes.values_mut() {
-                node.visible = false;
-                node.dirty = true;
+            let roots: Vec<String> = self
+                .nodes
+                .iter()
+                .filter(|(_, node)| {
+                    node.parent.is_empty() || !self.nodes.contains_key(&node.parent)
+                })
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in roots {
+                if let Some(node) = self.nodes.get_mut(&id) {
+                    node.visible = false;
+                    node.dirty = true;
+                }
             }
             self.focus = None;
             return;
@@ -1625,6 +1636,11 @@ mod tests {
         assert!(manager.open_screen("assets/ui/hud.blockui", false));
         assert!(!shown(&manager, "hud"));
         assert!(!manager.open_screen("map", true));
+        // Hiding everything then opening a screen brings back its whole tree.
+        manager.hide("", true);
+        assert!(!shown(&manager, "resume"));
+        assert!(manager.open_screen("pause", true));
+        assert!(shown(&manager, "resume"));
     }
 
     #[test]

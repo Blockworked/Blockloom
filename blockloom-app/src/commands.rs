@@ -2920,6 +2920,14 @@ pub(crate) fn open_world(
                 dir,
             }) && runtime.send(&blockloom_protocol::EditorMessage::Plugins { loadout })
         });
+    // A new world has no design session: hand it the open one.
+    s.interface_layout = None;
+    let design = s.interface_design.clone();
+    let alive = alive
+        && (design.is_none()
+            || s.runtime.as_mut().is_some_and(|runtime| {
+                runtime.send(&blockloom_protocol::EditorMessage::InterfaceDesign { design })
+            }));
     if !alive {
         s.runtime = None;
         emit(app, &mut s);
@@ -5015,7 +5023,7 @@ pub(crate) fn open_script_ide(state: &SharedState) -> Result<serde_json::Value, 
 /// game window straight away. While a run is going the edit waits for the next
 /// Play - reloading mid-run would throw the world away under the user.
 fn sync_runtime(s: &mut AppState) {
-    s.interface_design = None;
+    // The world keeps an open design session through a reload and lays it out again.
     s.interface_layout = None;
     if s.project().is_none() || s.running {
         return;

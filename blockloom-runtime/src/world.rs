@@ -354,9 +354,6 @@ pub fn pump_editor(
                     continue;
                 }
                 crate::lan::close(&mut engine);
-                if let Some(design) = design.as_mut() {
-                    design.clear();
-                }
                 engine.project = *project;
                 engine.project_dir = dir.map(std::path::PathBuf::from);
                 let loaded = engine.project.clone();
@@ -377,6 +374,15 @@ pub fn pump_editor(
                 engine.rebuild = true;
                 if let Some(scene) = scene.as_mut() {
                     scene.loaded = true;
+                }
+                // An open design session outlives the reload: the designer keeps waiting on it.
+                if let Some(design) = design.as_mut()
+                    && let Err(message) = design.reload(&engine, &mut manager)
+                {
+                    bridge::send(&RuntimeMessage::Error {
+                        actor: String::new(),
+                        message,
+                    });
                 }
                 crate::plugins::preview(&mut engine);
             }
@@ -422,19 +428,7 @@ pub fn pump_editor(
                 engine.speech.clear();
                 engine.pending_scene = None;
                 engine.veil.reset();
-                let composed = blockloom_core::ui_layers::scene_interface(
-                    engine.project_dir.as_deref(),
-                    &engine.project.world,
-                    &engine.project.settings,
-                );
-                manager.load(&composed.document);
-                manager.set_screens(composed.screens, &composed.closed);
-                for message in composed.errors {
-                    bridge::send(&RuntimeMessage::Error {
-                        actor: String::new(),
-                        message,
-                    });
-                }
+                load_interface(&mut engine, &mut manager);
                 engine.rebuild = true;
                 engine.paused = false;
                 engine.pause_began = None;
@@ -3084,6 +3078,25 @@ fn resolve_scene(engine: &Engine, wanted: &str) -> Option<String> {
 /// fresh Play before its `when scene starts` strands run. Works across
 /// dimensions too: the rebuild swaps the dim2/dim3 pipeline live under the
 /// veil's cover.
+/// Loads the active scene's interface and screens, with the game's, into the manager.
+pub(crate) fn load_interface(engine: &mut Engine, manager: &mut crate::ui::UiManager) {
+    engine.interface_stale = false;
+    let composed = blockloom_core::ui_layers::scene_interface(
+        engine.project_dir.as_deref(),
+        &engine.project.active_scene().world,
+        &engine.project.settings,
+    );
+    manager.load(&composed.document);
+    manager.set_screens(composed.screens, &composed.closed);
+    engine.interface = composed.document;
+    for message in composed.errors {
+        bridge::send(&RuntimeMessage::Error {
+            actor: String::new(),
+            message,
+        });
+    }
+}
+
 pub(crate) fn perform_scene_switch(
     engine: &mut Engine,
     transforms: &Query<&Transform, With<ActorId>>,
@@ -3171,6 +3184,7 @@ pub(crate) fn perform_scene_switch(
         }
     }
     engine.vm.load_scene_keep(&project, &keep);
+    engine.interface_stale = true;
     crate::plugins::scene_changed(engine);
     engine.rebuild = true;
     engine.fire(Event::SceneStarted);
@@ -6159,6 +6173,35 @@ mod tests {
         assert!(keep.contains(&made_id));
         assert!(!keep.contains(&passer_id));
         assert!(!keep.contains(&clone_id));
+    }
+
+    #[test]
+    fn a_scene_switch_loads_the_new_scenes_interface() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        let first = engine.project.active_scene.clone();
+        let cave = engine.project.add_scene("Cave", None);
+        engine.project.active_scene = first;
+        let mut torch = blockloom_core::ui::UiWidget::default();
+        torch.element.id = "torch".into();
+        engine
+            .project
+            .scenes
+            .iter_mut()
+            .find(|scene| scene.id == cave)
+            .unwrap()
+            .world
+            .interface
+            .widgets
+            .push(torch);
+        let mut manager = crate::ui::UiManager::default();
+        load_interface(&mut engine, &mut manager);
+        assert!(manager.get("torch").is_none());
+        engine.project.active_scene = cave;
+        engine.interface_stale = true;
+        load_interface(&mut engine, &mut manager);
+        assert!(!engine.interface_stale);
+        assert!(manager.get("torch").is_some());
     }
 
     #[test]

@@ -1350,6 +1350,7 @@ fn main() {
         // Escape mid-run, matching the VM side tick for tick.
         if tick == 3 {
             runner.fire("Key", "", "escape", "");
+            runner.fire("Message", "", "paused-broadcast", "");
         }
         if runner.tick(&mut recorder, tick as f64 * DT) {
             // Everything after this one in the tick is gone too, as the VM
@@ -2051,6 +2052,8 @@ fn by_vm_ticks(project: &Project) -> Vec<String> {
         // other case has that hat, so nothing else sees it.
         if tick == 3 {
             vm.fire(Event::Key("escape".to_string()));
+            // A pause menu's broadcast; only the case listening for it hears it.
+            vm.fire(Event::Message("paused-broadcast".to_string()));
         }
         let mut effects = Vec::new();
         vm.tick(tick as f64 * DT, &mut effects);
@@ -5451,6 +5454,41 @@ fn escape_toggles_a_pause_menu_on_both_sides() {
             .iter()
             .any(|line| line.contains("|Say") && line.contains("up")),
         "{case}: escape while paused never ran its strand"
+    );
+}
+
+#[test]
+fn a_broadcast_while_paused_reaches_its_receivers_on_both_sides() {
+    // Both harnesses broadcast "paused-broadcast" at tick 3, while the world
+    // stands still: the receiver runs as an interface strand on each side.
+    let case = "interface-broadcast";
+    if !toolchain() {
+        return;
+    }
+    let project = project_with_headers(
+        vec![
+            (K::WhenStarted, vec![say("down"), K::PauseGame]),
+            (
+                K::WhenMessage {
+                    name: "paused-broadcast".to_string(),
+                },
+                vec![say("resumed"), K::ResumeGame],
+            ),
+        ],
+        Vec::new(),
+        &[],
+    );
+    let interpreted = by_vm(&project);
+    let compiled = by_compiler(&project, &[], case);
+    assert_eq!(
+        interpreted, compiled,
+        "{case}: the VM and the compiled program disagreed"
+    );
+    assert!(
+        interpreted
+            .iter()
+            .any(|line| line.contains("|Say") && line.contains("resumed")),
+        "{case}: the paused broadcast never reached its receiver"
     );
 }
 

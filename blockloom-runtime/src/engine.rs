@@ -553,6 +553,10 @@ pub struct Engine {
     /// the outgoing scene on the wall clock first (see `transition`); the
     /// swap waits for cover.
     pub pending_scene: Option<(String, String, u8)>,
+    /// Set by a scene switch: the interface recomposes for the new scene's screens.
+    pub interface_stale: bool,
+    /// The interface the run draws: the scene's own plus its screens and the game's.
+    pub interface: blockloom_core::ui::UiDocument,
     /// The wall-clock veil over a scene switch. Started by the fixed step
     /// alongside `pending_scene`, drawn by `transition::drive_veil`.
     pub veil: crate::transition::SceneVeil,
@@ -670,6 +674,8 @@ impl Engine {
             preview_inputs: Vec::new(),
             pause_after_tick: false,
             pending_scene: None,
+            interface_stale: false,
+            interface: Default::default(),
             veil: crate::transition::SceneVeil::default(),
             survivor_keep: Default::default(),
             actor_slots: Default::default(),
@@ -837,11 +843,10 @@ impl Engine {
             _ => return,
         };
         let Some(widget) = self
-            .project
-            .world
             .interface
             .widgets
             .iter()
+            .chain(&self.project.world.interface.widgets)
             .find(|w| &w.element.id == id)
         else {
             return;
@@ -936,6 +941,30 @@ mod tests {
             id: "volume".into(),
         });
         assert_eq!(engine.variables.read("", "level"), Evaluated::Number(7.0));
+    }
+
+    #[test]
+    fn a_screen_widgets_actions_run_too() {
+        use blockloom_core::ui::{UiAction, UiDo, UiEventKind, UiWidget};
+        use blockloom_core::value::Evaluated;
+        use blockloom_core::vm::Event;
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        let mut button = UiWidget::default();
+        button.element.id = "pause/resume".into();
+        button.actions = vec![UiAction {
+            on: UiEventKind::Click,
+            run: UiDo::SetVariable {
+                actor: String::new(),
+                name: "paused".into(),
+                value: "0".into(),
+            },
+        }];
+        engine.interface.widgets.push(button);
+        engine.fire(Event::UiClicked {
+            id: "pause/resume".into(),
+        });
+        assert_eq!(engine.variables.read("", "paused"), Evaluated::Number(0.0));
     }
 
     #[test]

@@ -43,6 +43,23 @@ impl DesignSession {
         }) {
             return Err("Stale interface design revision or viewport generation".into());
         }
+        self.show(request, engine, manager)
+    }
+
+    /// Draws the open request again over a reloaded world, which cleared the interface.
+    pub fn reload(&mut self, engine: &Engine, manager: &mut UiManager) -> Result<(), String> {
+        match self.request.take() {
+            Some(request) => self.show(request, engine, manager),
+            None => Ok(()),
+        }
+    }
+
+    fn show(
+        &mut self,
+        request: InterfaceDesign,
+        engine: &Engine,
+        manager: &mut UiManager,
+    ) -> Result<(), String> {
         let document = match engine.project_dir.as_deref() {
             Some(dir) => request.document.with_stylesheets(dir)?,
             None => request.document.clone(),
@@ -148,12 +165,24 @@ pub(crate) fn report(
         return;
     };
     let mut widgets = Vec::with_capacity(request.document.widgets.len());
+    // A widget the player never draws (deferred, or in an unloaded tab)
+    // still reports, unseen, so one of them can't hold up the whole layout.
+    let mut waiting = 0;
     for widget in &request.document.widgets {
-        let Some(node) = manager.get(&widget.element.id) else {
-            return;
-        };
-        let Ok((computed, transform, order, clip)) = nodes.get(node.entity) else {
-            return;
+        let found = manager
+            .get(&widget.element.id)
+            .and_then(|node| nodes.get(node.entity).ok().map(|parts| (node, parts)));
+        let Some((node, (computed, transform, order, clip))) = found else {
+            waiting += 1;
+            widgets.push(InterfaceWidgetBounds {
+                id: widget.element.id.clone(),
+                size: [0., 0.],
+                transform: bevy::math::Affine2::IDENTITY.to_cols_array(),
+                visible: false,
+                paint_order: 0,
+                clips: Vec::new(),
+            });
+            continue;
         };
         let clips = match clip {
             Some(CalculatedClip::Rects(rects)) => rects
@@ -180,6 +209,9 @@ pub(crate) fn report(
             paint_order: order.0,
             clips,
         });
+    }
+    if waiting > 0 && waiting == widgets.len() {
+        return;
     }
     let viewport = cameras
         .iter()
@@ -227,6 +259,27 @@ mod tests {
             ))
             .unwrap(),
         }
+    }
+
+    #[test]
+    fn a_reloaded_world_draws_the_open_design_again() {
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let engine = Engine::new(receiver, Mode::TwoD);
+        let mut manager = UiManager::default();
+        let mut session = DesignSession::default();
+        let design = fixture(3);
+        let first = design.document.widgets[0].element.id.clone();
+        session.apply(Some(design), &engine, &mut manager).unwrap();
+        session.last = Some(InterfaceLayout {
+            viewport: [1, 1],
+            revision: 3,
+            generation: 1,
+            widgets: vec![],
+        });
+        manager.clear();
+        session.reload(&engine, &mut manager).unwrap();
+        assert!(session.active() && session.last.is_none());
+        assert!(manager.get(&first).is_some());
     }
 
     #[test]
@@ -788,8 +841,16 @@ mod tests {
     fn measure(
         document: blockloom_core::ui::UiDocument,
     ) -> Vec<blockloom_protocol::InterfaceWidgetBounds> {
+        measure_in(None, document)
+    }
+
+    fn measure_in(
+        dir: Option<&std::path::Path>,
+        document: blockloom_core::ui::UiDocument,
+    ) -> Vec<blockloom_protocol::InterfaceWidgetBounds> {
         let (_sender, receiver) = std::sync::mpsc::channel();
-        let engine = Engine::new(receiver, Mode::TwoD);
+        let mut engine = Engine::new(receiver, Mode::TwoD);
+        engine.project_dir = dir.map(std::path::Path::to_path_buf);
         let mut manager = UiManager::default();
         let mut session = DesignSession::default();
         let mut design = fixture(1);
@@ -1039,6 +1100,28 @@ mod tests {
 
     /// Phase 5 gate: one menu file the game lists draws the same in two
     /// different scenes.
+    #[test]
+    fn a_screen_with_a_theme_file_lays_out_in_the_designer() {
+        let dir = std::env::temp_dir().join(format!("blockloom-styled-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets/ui")).unwrap();
+        std::fs::write(
+            dir.join("assets/ui/game.blockstyle"),
+            r##"{"version": 1, "base": "Light", "tokens": {"panel": "#202020"}, "classes": {"big": {"normal": {"radius": 4}}}}"##,
+        )
+        .unwrap();
+        let screen: blockloom_core::ui_tree::UiScreen = serde_json::from_value(serde_json::json!({
+            "stylesheets": ["assets/ui/game.blockstyle"],
+            "nodes": [{"name": "menu", "widget": {"kind": "Panel"}, "class": "big",
+                "place": {"mode": anchored("Center", [0., 0.]), "size": [200., 100.]}}]
+        }))
+        .unwrap();
+        let document = screen.lower().unwrap();
+        let widgets = measure_in(Some(&dir), document);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(widgets.iter().any(|w| w.id == "menu" && w.size[0] > 0.));
+    }
+
     #[test]
     fn gate_one_menu_is_shared_across_scenes() {
         use blockloom_core::ui_layers::{self, UiLayer};

@@ -819,10 +819,15 @@ impl Vm {
     fn start_for(&mut self, event: Event) {
         // Escape is the pause key: while paused it starts key strands as
         // interface strands, so a pause menu can toggle itself shut. Back is
-        // the phone's equivalent (the Android back button).
+        // the phone's equivalent (the Android back button). Only the interface
+        // broadcasts while paused, so a message then starts interface strands too.
         let ui = event.is_ui()
             || (self.paused
-                && matches!(&event, Event::Key(key) if key == "escape" || key == "back"));
+                && match &event {
+                    Event::Key(key) => key == "escape" || key == "back",
+                    Event::Message(_) => true,
+                    _ => false,
+                });
         // An event about one actor can only start that actor's strands, so a
         // crowd's worth of collisions doesn't walk every program each.
         let matches: Vec<(String, String, usize)> = match event.actor() {
