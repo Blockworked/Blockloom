@@ -358,7 +358,9 @@ impl Backend {
             "begin_interface_edit" => to_json(commands::begin_interface_edit(
                 state,
                 arg(&args, "revision")?,
+                arg::<Option<String>>(&args, "screen")?,
             )?),
+            "screen_document" => to_json(commands::screen_document(state, arg(&args, "path")?)?),
             "update_interface_edit" => to_json(commands::update_interface_edit(
                 state,
                 arg(&args, "token")?,
@@ -376,9 +378,11 @@ impl Backend {
             )?),
             "interface_layout" => to_json(commands::interface_layout(state)?),
             "interface_properties" => to_json(commands::interface_properties()),
-            "interface_overrides" => {
-                to_json(commands::interface_overrides(state, arg(&args, "id")?)?)
-            }
+            "interface_overrides" => to_json(commands::interface_overrides(
+                state,
+                arg(&args, "id")?,
+                arg::<Option<String>>(&args, "screen")?,
+            )?),
             "create_screen" => to_json(commands::screens::create_screen(
                 state,
                 app,

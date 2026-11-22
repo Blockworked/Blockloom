@@ -748,3 +748,75 @@ fn interface_property_and_parent_transactions_round_trip_and_undo() {
         );
     }
 }
+
+#[test]
+fn the_designer_edits_a_screen_file_and_leaves_the_scene_alone() {
+    let (_guard, _data, projects) = isolated("screen-design");
+    let backend = backend();
+    let dir = create_project(&backend, projects.path(), "Screens");
+    backend
+        .dispatch("open_project", json!({"path": dir}))
+        .unwrap();
+    let document = json!({"widgets": [{"element": {"id": "box", "kind": "Canvas", "offset": [10,20], "size": [100,80]}}]});
+    backend
+        .dispatch("set_interface", json!({"document": document}))
+        .unwrap();
+    let path = backend
+        .dispatch(
+            "create_screen",
+            json!({"name": "Hud", "fromInterface": true}),
+        )
+        .unwrap();
+    let path = path.as_str().unwrap().to_string();
+    let shown = backend
+        .dispatch("screen_document", json!({"path": path}))
+        .unwrap();
+    assert_eq!(shown["widgets"][0]["element"]["id"], "box");
+    let revision = blockloom_core::sync::read_revision(&dir);
+    let token = backend
+        .dispatch(
+            "begin_interface_edit",
+            json!({"revision": revision, "screen": path}),
+        )
+        .unwrap();
+    backend
+        .dispatch(
+            "update_interface_edit",
+            json!({"token": token, "edit": {"kind": "Move", "id": "box", "offset": [40,20]}}),
+        )
+        .unwrap();
+    backend
+        .dispatch("commit_interface_edit", json!({"token": token}))
+        .unwrap();
+    let shown = backend
+        .dispatch("screen_document", json!({"path": path}))
+        .unwrap();
+    assert_eq!(
+        shown["widgets"][0]["element"]["offset"],
+        json!([40.0, 20.0])
+    );
+    let state = backend.dispatch("get_state", json!({})).unwrap();
+    assert!(
+        state["project"]["world"]["interface"]["widgets"]
+            .as_array()
+            .is_none_or(|w| w.is_empty())
+    );
+    // A file edited behind the draft's back refuses the commit.
+    let token = backend
+        .dispatch(
+            "begin_interface_edit",
+            json!({"revision": revision, "screen": path}),
+        )
+        .unwrap();
+    backend
+        .dispatch(
+            "write_screen",
+            json!({"path": path, "screen": {"version": 1}}),
+        )
+        .unwrap();
+    assert!(
+        backend
+            .dispatch("commit_interface_edit", json!({"token": token}))
+            .is_err()
+    );
+}

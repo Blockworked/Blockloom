@@ -528,3 +528,48 @@ fn components_nest_and_refuse_to_contain_themselves() {
     });
     assert!(screen.lower().unwrap_err().contains("deeper"));
 }
+
+#[test]
+fn a_designer_edit_folds_back_into_references() {
+    let original = inventory();
+    let mut doc = original.lower().unwrap();
+    // Unchanged, every reference folds back and it lowers the same.
+    let same = UiScreen::from_edit(&original, &doc);
+    assert_eq!(same.nodes[0].children, original.nodes[0].children);
+    assert_eq!(same.lower().unwrap(), doc);
+
+    // An exported property changed: still one reference, new input.
+    let at = doc
+        .widgets
+        .iter()
+        .position(|w| w.element.id == "cell1/count")
+        .unwrap();
+    doc.widgets[at].element.content = "9".into();
+    let edited = UiScreen::from_edit(&original, &doc);
+    let cell1 = &edited.nodes[0].children[1];
+    assert_eq!(cell1.name, "cell1");
+    assert_eq!(
+        cell1.instance.as_ref().unwrap().inputs["count"],
+        serde_json::json!("9")
+    );
+
+    // A change no input covers keeps that one expanded, the rest folded.
+    let at = doc
+        .widgets
+        .iter()
+        .position(|w| w.element.id == "cell0/icon")
+        .unwrap();
+    doc.widgets[at].tooltip = "Sword".into();
+    let edited = UiScreen::from_edit(&original, &doc);
+    let cells = &edited.nodes[0].children;
+    assert!(cells[0].instance.is_none());
+    assert_eq!(cells[0].name, "cell0/slot");
+    assert!(cells[1].instance.is_some() && cells[2].instance.is_some());
+    assert_eq!(
+        cells[2].instance.as_ref().unwrap().slots["extra"][0].name,
+        "badge"
+    );
+    // Either way it lowers to the edited document.
+    assert_eq!(edited.lower().unwrap().widgets, doc.widgets);
+    assert_eq!(edited.inputs, original.inputs);
+}

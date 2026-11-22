@@ -546,6 +546,8 @@ pub(crate) fn sync_dto(s: &AppState) -> SyncDto {
 /// interface document it started from, not a copy of the project.
 pub(crate) struct InterfaceEditTransaction {
     pub(crate) token: String,
+    /// The `.blockui` being edited, or `None` for the scene's own interface.
+    pub(crate) screen: Option<(String, blockloom_core::ui_tree::UiScreen)>,
     pub(crate) original: blockloom_core::ui::UiDocument,
     pub(crate) revision: u64,
     pub(crate) document: blockloom_core::ui::UiDocument,

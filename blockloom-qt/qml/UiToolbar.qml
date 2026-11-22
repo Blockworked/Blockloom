@@ -18,6 +18,18 @@ Flow {
     }
 
     Group {
+        label: "Editing"
+        StitchComboBox {
+            objectName: "interfaceTarget"
+            implicitWidth: 170; implicitHeight: 30; font.pixelSize: 12
+            model: ["Scene interface"].concat(root.designer.targets.map(p => p.split("/").pop()))
+            currentIndex: root.designer.target ? root.designer.targets.indexOf(root.designer.target) + 1 : 0
+            enabled: !root.designer.gesture
+            onActivated: root.designer.target = currentIndex > 0 ? root.designer.targets[currentIndex - 1] : ""
+            Accessible.name: "Interface or screen file to edit"
+        }
+    }
+    Group {
         label: "Screen"
         StitchComboBox {
             objectName: "interfaceScreen"

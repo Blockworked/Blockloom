@@ -848,6 +848,43 @@ impl UiScreen {
         Ok(out)
     }
 
+    /// The screen a designer edit of `original`'s lowered document gives:
+    /// read back from `doc`, keeping `original`'s inputs whose nodes still
+    /// exist, and folding each instance `original` used by reference back
+    /// into one node where the edit left it expressible as one.
+    pub fn from_edit(original: &UiScreen, doc: &UiDocument) -> UiScreen {
+        let mut screen = UiScreen::from_document(doc);
+        let names: std::collections::HashSet<&str> =
+            doc.widgets.iter().map(|w| w.element.id.as_str()).collect();
+        screen.inputs = original
+            .inputs
+            .iter()
+            .filter(|i| names.contains(i.widget.as_str()))
+            .cloned()
+            .collect();
+        let mut by_ref: HashMap<String, UiInstance> = HashMap::new();
+        fn gather(nodes: &[UiNode], out: &mut HashMap<String, UiInstance>) {
+            for node in nodes {
+                if let Some(instance) = &node.instance {
+                    out.insert(node.name.clone(), instance.clone());
+                    for content in instance.slots.values() {
+                        gather(content, out);
+                    }
+                }
+                gather(&node.children, out);
+            }
+        }
+        gather(&original.nodes, &mut by_ref);
+        if by_ref.is_empty() {
+            return screen;
+        }
+        let components = screen.components.clone();
+        let mut nodes = std::mem::take(&mut screen.nodes);
+        fold(&mut nodes, &by_ref, &components, doc);
+        screen.nodes = nodes;
+        screen
+    }
+
     /// Every node, depth first.
     pub fn walk(&self) -> impl Iterator<Item = &UiNode> {
         let mut stack: Vec<&UiNode> = self.nodes.iter().rev().collect();
@@ -857,6 +894,107 @@ impl UiScreen {
             Some(node)
         })
     }
+}
+
+/// Replaces each expanded instance that came from a by-reference node with
+/// that node again, when lowering it gives back exactly what is there.
+fn fold(
+    nodes: &mut [UiNode],
+    by_ref: &HashMap<String, UiInstance>,
+    components: &BTreeMap<String, UiComponent>,
+    doc: &UiDocument,
+) {
+    for node in nodes.iter_mut() {
+        if let Some(folded) = fold_one(node, by_ref, components, doc) {
+            *node = folded;
+            continue;
+        }
+        fold(&mut node.children, by_ref, components, doc);
+    }
+}
+
+fn fold_one(
+    node: &UiNode,
+    by_ref: &HashMap<String, UiInstance>,
+    components: &BTreeMap<String, UiComponent>,
+    doc: &UiDocument,
+) -> Option<UiNode> {
+    let component = components.get(&node.instance_of)?;
+    let [root] = component.nodes.as_slice() else {
+        return None;
+    };
+    let name = node.name.strip_suffix(&format!("/{}", root.name))?;
+    let was = by_ref.get(name)?;
+    if was.component != node.instance_of {
+        return None;
+    }
+    let inner = format!("{name}/");
+    // What the edit set on exported properties.
+    let exposed = doc.exposed_values(&node.name).ok()?;
+    let mut fresh = UiScreen {
+        components: components.clone(),
+        nodes: vec![UiNode {
+            name: name.to_string(),
+            instance: Some(UiInstance {
+                component: node.instance_of.clone(),
+                ..UiInstance::default()
+            }),
+            ..UiNode::default()
+        }],
+        ..UiScreen::default()
+    }
+    .lower()
+    .ok()?;
+    let defaults: HashMap<String, serde_json::Value> =
+        fresh.exposed_values(&node.name).ok()?.into_iter().collect();
+    let inputs: BTreeMap<String, serde_json::Value> = exposed
+        .into_iter()
+        .filter(|(key, value)| was.inputs.contains_key(key) || defaults.get(key) != Some(value))
+        .collect();
+    // Slot content is whatever sits in a slot's holder that the component
+    // didn't put there.
+    let mut slots = BTreeMap::new();
+    for export in component.exports.iter().filter(|e| e.slot) {
+        let holder = format!("{inner}{}", export.widget);
+        fn find<'a>(node: &'a UiNode, name: &str) -> Option<&'a UiNode> {
+            if node.name == name {
+                return Some(node);
+            }
+            node.children.iter().find_map(|c| find(c, name))
+        }
+        let content: Vec<UiNode> = find(node, &holder)?
+            .children
+            .iter()
+            .filter(|c| !c.name.starts_with(&inner))
+            .cloned()
+            .collect();
+        if !content.is_empty() {
+            slots.insert(export.name.clone(), content);
+        }
+    }
+    let folded = UiNode {
+        name: name.to_string(),
+        place: node.place.clone(),
+        instance: Some(UiInstance {
+            component: node.instance_of.clone(),
+            inputs,
+            slots,
+        }),
+        ..UiNode::default()
+    };
+    // Only when nothing else changed: both must lower the same.
+    let lowered = |n: &UiNode| {
+        UiScreen {
+            components: components.clone(),
+            nodes: vec![n.clone()],
+            ..UiScreen::default()
+        }
+        .lower()
+        .ok()
+        .map(|d| d.widgets)
+    };
+    fresh.widgets.clear();
+    (lowered(&folded)? == lowered(node)?).then_some(folded)
 }
 
 /// Puts an instance's slot nodes under the component nodes its slots name.

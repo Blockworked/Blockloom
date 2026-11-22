@@ -1036,20 +1036,45 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         cmd: "interface_overrides",
         aliases: &["interface_overrides"],
         summary: "List the fields a component instance (its root widget id) changed from its source, as `widget id: path`.",
-        args: &[ArgSpec {
-            name: "id",
-            ty: "string",
-            required: true,
-        }],
+        args: &[
+            ArgSpec {
+                name: "id",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "screen",
+                ty: "asset path",
+                required: false,
+            },
+        ],
     },
     CommandSpec {
         name: "begin-interface-edit",
         cmd: "begin_interface_edit",
         aliases: &["begin_interface_edit"],
-        summary: "Begin a move/resize draft at the saved project revision; returns a token.",
+        summary: "Begin a move/resize draft at the saved project revision; returns a token. With screen, the draft is that .blockui file (as screen-document shows it), written back to the file on commit.",
+        args: &[
+            ArgSpec {
+                name: "revision",
+                ty: "number",
+                required: true,
+            },
+            ArgSpec {
+                name: "screen",
+                ty: "asset path",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "screen-document",
+        cmd: "screen_document",
+        aliases: &["screen_document"],
+        summary: "A .blockui screen as the flat interface document it draws, which the designer and the interface edit commands work on.",
         args: &[ArgSpec {
-            name: "revision",
-            ty: "number",
+            name: "path",
+            ty: "asset path",
             required: true,
         }],
     },

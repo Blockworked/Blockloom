@@ -77,6 +77,8 @@ TestCase {
                 test.lastReply = reply;
                 if (test.deferUpdate) test.pendingUpdate = () => done(reply);
                 else if (done) done(reply);
+            } else if (command === "screen_document") {
+                if (done) done({widgets: [{element: {id: "hud", kind: "Panel", offset: [10,10], size: [80,40], anchor: "TopLeft"}}]});
             } else if (command === "commit_interface_edit") {
                 appState = {running: false, runtime_embedded: true, sync: {revision: 2}, project: {world: {interface: panel.copy(panel.document)}}};
                 if (done) done();
@@ -100,6 +102,24 @@ TestCase {
             {id: "front", size: [100,60], transform: [0,1,-1,0,300,300], visible: true, paint_order: 2, clips: []},
             {id: "back", size: [200,200], transform: [1,0,0,1,300,300], visible: true, paint_order: 1, clips: []}
         ]};
+    }
+    function test_a_screen_file_is_edited_in_place_of_the_scene() {
+        backend.appState = {running: false, runtime_embedded: true, sync: {revision: 1}, project: {
+            world: {interface: backend.appState.project.world.interface, screens: [{screen: "assets/ui/Hud.blockui"}]},
+            settings: {screens: [{screen: "assets/ui/Hud.blockui"}, {screen: "assets/ui/Menu.blockui"}]}}};
+        compare(panel.targets, ["assets/ui/Hud.blockui", "assets/ui/Menu.blockui"]);
+        panel.target = "assets/ui/Hud.blockui";
+        tryCompare(panel.document.widgets, "length", 1);
+        compare(panel.document.widgets[0].element.id, "hud");
+        panel.selectedId = "hud";
+        deferBegin = true;
+        panel.change("content", "Score");
+        const begin = calls.filter(c => c.command === "begin_interface_edit").pop();
+        compare(begin.args.screen, "assets/ui/Hud.blockui");
+        // Switching files drops the draft.
+        panel.target = "";
+        verify(!panel.gesture);
+        tryCompare(panel.document.widgets, "length", 2);
     }
     function test_typed_properties_and_layout_allow_flow_children() {
         const d = panel.copy(panel.document);

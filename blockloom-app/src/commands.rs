@@ -6427,13 +6427,39 @@ pub(crate) fn interface_properties() -> Vec<blockloom_core::ui::UiPropertyInfo> 
 
 /// The fields a component instance changed from its source, as
 /// `widget id: path`.
-pub(crate) fn interface_overrides(state: &SharedState, id: String) -> Result<Vec<String>, String> {
+pub(crate) fn interface_overrides(
+    state: &SharedState,
+    id: String,
+    screen: Option<String>,
+) -> Result<Vec<String>, String> {
     let s = lock(state)?;
-    s.project()
-        .ok_or("No project is open")?
-        .world
-        .interface
-        .instance_overrides(&id)
+    designed(&s, screen.as_deref())?.instance_overrides(&id)
+}
+
+/// What the designer edits: the open scene's interface, or a screen file
+/// lowered to the flat document it draws.
+fn designed(s: &AppState, screen: Option<&str>) -> Result<blockloom_core::ui::UiDocument, String> {
+    match screen.filter(|p| !p.is_empty()) {
+        None => Ok(s
+            .project()
+            .ok_or("No project is open")?
+            .world
+            .interface
+            .clone()),
+        Some(path) => {
+            blockloom_core::ui_layers::read(s.project_dir().ok_or("No project is open")?, path)?
+                .lower()
+        }
+    }
+}
+
+/// `screen-document`: a `.blockui` as the designer sees it, the flat
+/// document it lowers to.
+pub(crate) fn screen_document(
+    state: &SharedState,
+    path: String,
+) -> Result<blockloom_core::ui::UiDocument, String> {
+    designed(&*lock(state)?, Some(&path))
 }
 
 pub(crate) fn interface_layout(
@@ -6449,8 +6475,12 @@ fn check_interface_edit(s: &AppState, token: &str) -> Result<(), String> {
         .filter(|d| d.token == token)
         .ok_or("Unknown interface transaction")?;
     let open = s.open.as_ref().ok_or("No project is open")?;
+    let current = match &draft.screen {
+        None => open.project.world.interface.clone(),
+        Some((path, _)) => designed(s, Some(path))?,
+    };
     if s.running
-        || open.project.world.interface != draft.original
+        || current != draft.original
         || open.loaded_revision() != draft.revision
         || sync::read_revision(&open.dir) != draft.revision
     {
@@ -6459,7 +6489,11 @@ fn check_interface_edit(s: &AppState, token: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn begin_interface_edit(state: &SharedState, revision: u64) -> Result<String, String> {
+pub(crate) fn begin_interface_edit(
+    state: &SharedState,
+    revision: u64,
+    screen: Option<String>,
+) -> Result<String, String> {
     let mut s = lock(state)?;
     if s.running {
         return Err("Stop the game before editing the interface".into());
@@ -6474,12 +6508,26 @@ pub(crate) fn begin_interface_edit(state: &SharedState, revision: u64) -> Result
     if open.loaded_revision() != revision || sync::read_revision(&open.dir) != revision {
         return Err("Stale interface revision".into());
     }
+    let screen = match screen.filter(|p| !p.is_empty()) {
+        None => None,
+        Some(path) => {
+            let path = blockloom_core::assets::normalize(&path)
+                .ok_or("That isn't a path in this project")?;
+            let file = blockloom_core::ui_layers::read(&open.dir, &path)?;
+            Some((path, file))
+        }
+    };
+    let original = match &screen {
+        None => open.project.world.interface.clone(),
+        Some((_, file)) => file.lower()?,
+    };
     let token = uuid::Uuid::new_v4().to_string();
     s.interface_edit = Some(crate::state::InterfaceEditTransaction {
         token: token.clone(),
-        original: open.project.world.interface.clone(),
+        screen,
+        document: original.clone(),
+        original,
         revision,
-        document: open.project.world.interface.clone(),
     });
     Ok(token)
 }
@@ -6522,6 +6570,20 @@ pub(crate) fn commit_interface_edit(
     check_interface_edit(&s, &token)?;
     let draft = s.interface_edit.take().unwrap();
     if draft.document == draft.original {
+        return Ok(());
+    }
+    if let Some((path, file)) = &draft.screen {
+        // A file, not the document: written whole, and every scene drawing
+        // it redraws.
+        let screen = blockloom_core::ui_tree::UiScreen::from_edit(file, &draft.document);
+        let dir = project_dir(&s)?;
+        blockloom_core::ui_layers::write(&dir, path, &screen)?;
+        reindex(&dir);
+        runtime_stale(&mut s);
+        if s.interface_design.is_none() || s.runtime.is_none() {
+            sync_runtime(&mut s);
+        }
+        emit(app, &mut s);
         return Ok(());
     }
     push_undo(&mut s);

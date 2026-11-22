@@ -27,6 +27,27 @@ Item {
     property var document: ({widgets: [], styles: {}, prefabs: {}, reference_size: [960,720], safe_area: [0,0,0,0], theme: "Dark", scale: "ConstantPixel"})
     property string selectedId: ""
     property string screenId: ""
+    // The .blockui file being edited, or "" for the scene's own interface.
+    property string target: ""
+    property var targetDocument: null
+    // Every screen the open scene or the game draws, each once.
+    readonly property var targets: {
+        const p = app.appState.project;
+        if (!p) return [];
+        const all = ((p.world && p.world.screens) || []).concat((p.settings && p.settings.screens) || []).map(l => l.screen);
+        return all.filter((s, i) => all.indexOf(s) === i);
+    }
+    onTargetsChanged: if (target && targets.indexOf(target) < 0) target = ""
+    onTargetChanged: { cancelEdit(); selectedId = ""; extraIds = []; screenId = ""; targetDocument = null; lastSaved = null; loadTarget(); }
+    function loadTarget() {
+        if (!target) { refresh(); return; }
+        const path = target;
+        app.invoke("screen_document", {path: path}, function(doc) {
+            if (root.target !== path) return;
+            root.targetDocument = doc; root.refresh();
+            if (root.designing) previewDelay.restart();
+        }, function(e) { if (root.target === path) root.error = String(e); });
+    }
     readonly property var widgetsById: {
         const m = Object.create(null);
         document.widgets.forEach(w => { m[w.element.id] = w; });
@@ -213,7 +234,7 @@ Item {
         gesture = g;
         forceActiveFocus();
         const backend = app;
-        app.invoke("begin_interface_edit", {revision: savedRevision}, function(token) {
+        app.invoke("begin_interface_edit", {revision: savedRevision, screen: target || null}, function(token) {
             g.token = token;
             if (g.canceled) backend.invoke("cancel_interface_edit", {token: token});
             else root.flushEdit(g);
@@ -244,6 +265,8 @@ Item {
             g.busy = true; g.committing = true;
             app.invoke("commit_interface_edit", {token: g.token}, function() {
                 if (g.canceled || root.gesture !== g) return;
+                // A file isn't in the snapshot: keep the draft until it is read back.
+                if (root.target) { root.targetDocument = root.copy(root.document); root.loadTarget(); }
                 root.gesture = null; root.snapLines = []; root.refresh(); root.error = "";
                 if (root.designing) previewDelay.restart();
             }, function(e) { root.failEdit(g, e); });
@@ -516,7 +539,7 @@ Item {
     property var lastDocument: null
     function refresh() {
         if (gesture) return;
-        const saved = app.appState.project ? app.appState.project.world.interface : null;
+        const saved = !app.appState.project ? null : target ? targetDocument : app.appState.project.world.interface;
         // Skip the comparison while the snapshot and our copy of it are both unchanged.
         if (saved && (saved !== lastSaved || document !== lastDocument)) {
             lastSaved = saved;
@@ -601,7 +624,7 @@ Item {
         gesture = g;
         forceActiveFocus();
         const backend = app;
-        app.invoke("begin_interface_edit", {revision: savedRevision}, function(token) {
+        app.invoke("begin_interface_edit", {revision: savedRevision, screen: target || null}, function(token) {
             g.token = token;
             if (g.canceled) backend.invoke("cancel_interface_edit", {token: token});
             else root.flushEdit(g);
@@ -686,7 +709,7 @@ Item {
     function loadOverrides() {
         const w = widget;
         if (!designing || !w || !w.instance_of) { overrides = []; return; }
-        app.invoke("interface_overrides", {id: w.element.id}, function(list) { root.overrides = list || []; }, function() { root.overrides = []; });
+        app.invoke("interface_overrides", {id: w.element.id, screen: target || null}, function(list) { root.overrides = list || []; }, function() { root.overrides = []; });
     }
     function describeAction(a) {
         const run = a.run || {};

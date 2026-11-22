@@ -2703,6 +2703,15 @@ run, but the palette lists Screens instead of Showing and their vocabulary
 entries say so. Not yet: a script ABI verb for screens, an `is screen open?`
 reporter, and setting a screen's inputs while it runs.
 
+The designer edits either the scene's interface or one of the screens the
+scene or game lists (the toolbar's Editing picker, `UiDesigner.target`).
+For a screen, `begin_interface_edit screen=<path>` starts from the file
+lowered (`screen-document` shows the same thing), and commit writes
+`UiScreen::from_edit` back: the edited flat document read as a tree, with
+each expanded instance folded back into a reference when lowering the fold
+gives the same widgets, and the screen's inputs kept. A file edit is not a
+document change, so it has no undo step yet.
+
 ### Frontend (`blockloom-qt/qml/`)
 
 `Start.qml` is the entry point: it adds the Lucide icons blockstitch doesn't
