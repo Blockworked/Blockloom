@@ -73,6 +73,7 @@ defaults.
 
 ## Style
 
+- `CLAUDE.md` and `AGENTS.md` are the same text (only their first lines differ): change both together.
 - NEVER use em-dashes (-) in comments, code, docs, or commit messages. Use a normal hyphen (-) instead.
 - Write comments like a human: short and terse, 1-2 lines. State what and why briefly. No multi-paragraph essays, no history lessons ("Previously..."), no dangling "see X docs" pointers unless X exists.
 
@@ -175,8 +176,9 @@ uploads those bytes as an image. Elsewhere it is a child process.
   entry point: Qt Quick over cxx-qt. It owns `blockloom-app` directly - there
   is no daemon. `src/app_bridge.rs` is the one QObject QML talks to:
   `invokeCommand` runs a `Backend::dispatch` command on a worker thread, in
-  order, and answers with `replied(token, {ok, result, error})`; state the
-  backend publishes lands in the `stateJson` property, coalesced per burst.
+  order, and answers with `replied(token, {ok, result, error})`; the
+  backend's change stream lands in the `stateJson` property as a JSON array
+  of the messages since the last burst (see Saving below).
   `src/preview.rs` follows a child runtime's MJPEG preview stream into
   `previewFrame`. `src/game_view.rs`/`.cpp` are the in-process Game view, and
   `src/pointer_lock.cpp` its pointer lock.
@@ -199,7 +201,9 @@ uploads those bytes as an image. Elsewhere it is a child process.
 - **`blockloom-protocol`** - the messages between them: newline-delimited JSON
   over a child's stdin/stdout, or the same enums over channels in-process. No
   sockets, no ports; the pipe or channel closing is the whole shutdown
-  handshake. Bump `PROTOCOL_VERSION` whenever a message changes.
+  handshake. Bump `PROTOCOL_VERSION` whenever a message changes. Today it is
+  39, the script `ABI_VERSION` 52 and `LOGIC_ABI_VERSION` 41; a version named
+  further down is the one a feature arrived in.
 - **`blockloom-core`** - the engine library both processes share: `scene.rs`
   (the value types a world is built from - looks, bodies, placements, camera),
   `components.rs` (what an actor is made of - see below), `blocks.rs` (the
@@ -298,6 +302,102 @@ the old scene's units). Not converted, since the right answer isn't a plain
 scale: tilemap tile sizes (32 px by default, never under 1), emitters, water,
 volumes, rooms, parallax and the 3D camera component. Re-tune those after
 switching.
+
+### Saving
+
+`project::save_project` writes every scene file, then the index, each through
+`files::write_atomic` (temp file, fsync, rename), so a crash leaves each file
+whole; a document writer should use it rather than `std::fs::write`.
+Bookkeeping that is rebuilt if lost (revision, owner lock) uses
+`files::replace_file`, which skips the fsyncs. `tests/golden.rs` holds every
+project under `blockloom-core/tests/fixtures/golden` to its saved bytes; a
+deliberate format change is `BLOCKLOOM_BLESS=1 cargo test -p blockloom-core
+--test golden`, and a new component kind goes in its generator. The edit
+cost baseline is in `docs/performance.md`.
+
+Commands edit `open.project` in place; nothing describes its own edit.
+`blockloom-app/src/history.rs`'s `Tracker` keeps the last committed copy, and
+`commit` (run by every save and every publish) diffs against it with
+`blockloom_core::change::diff`: a `Change` is the parts an edit replaced
+(the index fields, a scene's settings, single actors, the order of scenes
+and actors), each before and after, so it is its own inverse. `push_undo`
+marks the next commit undoable (a session joins one step), undo and redo
+apply a change backwards or forwards, `save_open` writes only the scenes and
+index the commits since the last save touched (`save_project_parts`; an
+explicit Save writes everything), and `stream.rs` sends the window only what
+changed: `{"full": state}` once, then `{"patch": ...}` with the top-level
+fields whose JSON moved and, for the project, the changed fields and actors
+of the active scene. The window's copy lists scenes without their actors
+(`FrontendView`); `Main.qml`'s `applyMessage` folds each message in, and
+`tests/stream.rs` replays the stream against whole snapshots. The shell,
+MCP and the attach socket still read whole `state_dto` snapshots. Instruction
+`==` ignores ids, so the diff hashes them as well (`same_actor`). A document
+read off disk (live reload) is committed with nothing owed to the disk.
+
+### Resource database
+
+`blockloom-core/src/resources.rs`. Every file under `assets/` (not scenes,
+which carry their own ids, nor `*.imported` output) has a stable id in `assets.index` beside
+`project.blockloom`, keyed by path so diffs stay small. The tray's rename,
+move, delete, create and import keep it current, `open_project` reconciles
+it with the folder (a file moved outside the editor keeps its id when its
+name is unique among what vanished), and `ResourceRef { id, path }` repairs
+its path from the id. The authored import choices (role, exposure bias) live
+on the entry too; `.blockloom/pipeline.json` keeps only fingerprints and
+reads older manifests' roles for migration. `resources::uses` walks the whole
+document's JSON for strings naming an indexed path or id, which is "used by"
+(`asset-used-by`, `list_assets`'s `uses`, the tray's delete dialog), and
+`Project::repoint_asset` follows a rename by the same walk. The plugin import
+ledger (`.blockloom/imports.json`) is still its own file.
+
+### Prefabs
+
+`blockloom-core/src/prefab.rs`, commands in `blockloom-app/src/commands/
+prefabs.rs`. A prefab is one actor saved as a `.blockprefab` resource. An
+instance is a whole actor carrying a `Prefab` component (`PrefabLink`: the
+source `ResourceRef` and the sorted property paths it overrides), so the
+runtime and everything else see a plain actor. A path is one top-level
+field (`Look.visual`, `Collider#1.collider`, a graph key like `strands`);
+`Place`, `Parent` and the name are always the instance's own.
+`prefabs::mark_overrides` runs before every commit and compares each touched
+instance with the tracker's committed copy: a changed path that differs from
+the prefab becomes an override, one set back to the prefab's value stops
+being one. `prefab::rebuild` is the prefab plus the instance's overrides,
+which `apply-prefab` (instance into file, then every instance), `revert-
+prefab` and `open_project` (a file edited outside the editor) use. The
+inspector draws the link as a card with Apply and per-override Revert, the
+actor list has Make prefab and the tray Place in scene. One actor per
+prefab so far: children, nested prefabs and a prefab editing mode are not
+done.
+
+### Material and environment assets
+
+`blockloom-core/src/linked.rs` is what prefabs, materials and environments
+share: an `AssetLink` (source `ResourceRef`, sorted override paths), `mark`
+(a changed path that differs from the file becomes an override, one put back
+stops being one) and `merge` over JSON, paths at most two keys deep.
+A `.blockmaterial` (`material_asset.rs`) is one `SurfaceMaterial`; an actor's
+`Material` component carries `source` while it follows one, and keeps its own
+copy so the runtime never reads the file. A `.blockenv`
+(`environment_asset.rs`) is a scene's look, the `World` fields in `KEYS`; a
+scene follows one through `World.environment`, saved as an `Environment`
+scene component only while there is one. `commands/materials.rs` and
+`commands/environments.rs` mirror `prefabs.rs`: create, assign, apply (file
+then every follower), revert, unlink, `mark_overrides` before every commit
+and `sync_*` on open, so a file edited outside the editor reaches its
+followers. `.blocklighting` still links just a scene's lighting. The 2D look
+(`Lighting2d`, `Post2d`, `Camera2d`) is a scene component too.
+
+### Game settings
+
+Quality, input actions, the sound buses and the display output hold for the
+whole game: `Project.settings` (`blockloom-core/src/settings.rs`,
+`GameSettings`), saved in the index. Older documents kept them on every
+scene's `World`; those load into `World::legacy_*` (never written) and
+`Project::adopt_scene_settings` takes the default scene's values, so the next
+save drops them from the scene files. A `set_scene_component` of one of the
+four writes the project's settings. Project Settings draws them on its Game
+page.
 
 ### Components
 
@@ -505,7 +605,7 @@ frame. A query block (`CastRay`, `CastBall`, `OverlapBall`, `FindClosest`) asks 
 spot as the running actor and files the answer as that actor's query result;
 `QueryNumber`/`QueryText` read hit N back by field (a miss reads zero or empty). The
 VM, compiled logic (`ACT_PHYSICS_QUERY` is the script ABI's) and scripts
-(`ABI_VERSION` 39, `LOGIC_ABI_VERSION` 36) land on the same answers;
+land on the same answers;
 `tests/codegen.rs` holds them together with a one-wall harness world.
 `RayHit`/`RayDistance`/`CircleHit` reporters ask the same service. With no world
 installed a query reports an error and reads as a miss.
@@ -553,7 +653,7 @@ and `remove-character-controller`.
   `moved x`, `normal y`, ...; see `controller::read_number`). Scripts get
   `move_controller`, `simple_move_controller`, `set_controller`, `controller_number`,
   `controller_text` and `is_grounded` (`READ_CONTROLLER` 55, `TEXT_CONTROLLER` 23).
-  `ABI_VERSION` is 40 and `LOGIC_ABI_VERSION` 37. `tests/codegen.rs` holds the VM and
+  `tests/codegen.rs` holds the VM and
   compiled halves together against a flat-floor harness.
 - **Inspector**: `CharacterControllerForm.qml` (Add component gives an actor one;
   `tests/qml/tst_PhysicsInspector.qml`).
@@ -709,6 +809,50 @@ dimensions, pack round trip), app (opens runnable), runtime (plays 240 ticks).
 
 Packs carry the whole `Project`, so physics settings, components, constraints
 and cooked collision data ship in `game.pack` with no extra format.
+
+### Type registry
+
+Every built-in component and setting describes itself. `blockloom-schema-derive`
+is a `#[derive(Schema)]` that reads the serde attributes (renames, tags,
+`flatten`, `default`, `skip`) and emits a `blockloom_plugin_api::schema::Schema`
+impl, so a type's schema is the shape serde writes. The field types are the
+plugin ones plus `struct`, `map`, `optional`, `enum` (internally tagged or
+external) and `opaque` (a type with no `Schema`, picked by autoref
+specialization in `schema::__private`). `#[schema(...)]` adds drawing hints:
+`label`, `unit`, `min`/`max`/`step`, `slider`, `multiline`, `color`, `asset`,
+`actor`, `group`, `advanced`, `opaque`, `skip`, and `show_if`/`hide_if`
+(`kind = Spot`, `kind != Rect`, `kind in [Point, Spot]`, joined with `&&`; a
+field starting with `/` reads from the top of the component). A field's
+default is the container's `Default` where it has one, else its serde
+default.
+
+`blockloom-core/src/registry.rs` lists them: `COMPONENTS` (name, label,
+dimension, repeatable), `default_component(name, mode)`, the world settings
+(`world_fields`), the project's game settings (`settings_fields`), `to_json(mode)` (what `type-registry` returns, ids blanked so
+it is stable) and checked writes (`set_component_property`,
+`set_world_property`, `set_settings_property`, paths like `light.beam.motes.count`). The app's
+`commands/registry.rs` adds the open project's plugin types (`plugins`) and
+the generic commands: `type-registry`, `set-property
+target=world|settings|actor:<id>/<Component> path=... value=...` (a built-in component
+through `set_actor_component`, a plugin one through `set_plugin_component`, a
+world setting through `write_world`, a game setting through `write_settings`, coalesced per path into one undo step)
+and `add-component` (registry defaults; Script and Collider keep their own
+commands). The `set_*` setters stay, and `set_fog` is a wrapper over
+`write_world`. MCP gets a `blockloom://types` resource, and `src/plugins.ts`'s
+`typeSchema` turns any registry or plugin field into zod
+(`integration.test.ts` checks every default fits).
+
+The editor fetches the registry once per project and dimension (`Main.qml`'s
+`typeRegistry`, `componentFields`, `worldField`) and draws schema-built cards
+with blockstitch's `PropertyForm`/`PropertyEditor` through `RegistryForm.qml`,
+which supplies the editor's color swatch, asset box and actor picker. The
+Light and Emitter cards and the Fog settings are drawn this way, and the
+add-component menu asks `add_component`, so their defaults are Rust's only.
+`blockloom-qt/tests/qml/fixtures/Registry3d.js` is the registry the QML tests
+(`tst_RegistryCards.qml`) read; `BLESS=1 cargo test -p blockloom-core --test
+registry_fixture` regenerates it after a schema change. A new hint or
+condition form is taught to `PropertyForm.qml` (blockstitch) and `typeSchema`
+in `mcp/src/plugins.ts`.
 
 ### Actors that come and go
 
@@ -918,8 +1062,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   U+001F), started by `fire("Plugin", actor, detail, "")` - with an actor only
   that actor's strand, without one every copy's - and matched as the VM does
   (`plugin_hat_matches`). `tests/codegen.rs` holds statement, reporter and hat
-  against the VM line for line, and `LOGIC_ABI_VERSION` is 35. A script
-  reaches the same three through the script ABI (`ABI_VERSION` 38):
+  against the VM line for line. A script
+  reaches the same three through the script ABI:
   `Actor::plugin_call(plugin, block, &[PluginArg])` is `ACT_PLUGIN_CALL`
   (`c` = slots as JSON), `plugin_number`/`plugin_text` are `READ_PLUGIN`/
   `TEXT_PLUGIN` (`a` = plugin, `b` = block, U+001F, slots as JSON; answered by
@@ -1317,6 +1461,46 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   through the host's loader with memory stores. `docs/plugin-api.md` is the
   author guide. CI runs `cargo test -p blockloom-plugin-sdk --features testing`
   and the host with `test-fixtures` (the isolation test).
+- **Engine plugins** (tier `adapter`, Tier E in the review): a package whose
+  `runtime.adapter` names a crate (`crate_dir`) implementing
+  `BlockloomModule` against `blockloom-engine` (the facade: Bevy, core and
+  `blockloom_runtime::api`), named with `export_module!`. The crate is
+  standalone and asks for `blockloom-engine = "<version>"` plus `bevy` at the
+  engine's exact version without default features (Bevy's derives look for
+  `bevy` in the crate's own manifest). `build-project-runtime`
+  (`blockloom-app/src/project_runtime.rs`) writes `.blockloom/runtime/`, a
+  crate whose `main` adds each module (`api::add_engine_module`) and calls
+  `run_process`, carrying the engine's toolchain, lock, profiles and patches
+  (which point `blockloom-engine` at the engine tree), and builds it with
+  Cargo into the engine's own target directory, so only the plugin and the
+  link are new; the binary lands in `.blockloom/runtime/bin/`. While the
+  project has one, the editor starts that binary as a child instead of the
+  embedded world (on Linux drawing into the Game view, see Game view), and refuses Play until it is built and whenever a package
+  changed since (`bin/plugins.json` stamps each plugin's content hash). A
+  package not installed from a `path:` folder must be in the `TrustLedger`
+  at its hash before it builds (`project_runtime::needs_trust`, granted by
+  the Plugin Manager's Engine plugins section, which also builds; the
+  snapshot's `plugins.engine`). A desktop build for this machine ships the
+  built project runtime as its player (`BuildRequest::engine_player`; the
+  ship plan leaves adapter packages out, being linked in); other targets are
+  refused for now. The
+  engine is a source tree (`BLOCKLOOM_ENGINE_SOURCE`, else the one the editor
+  was built from) or, in an install, the engine kit beside the editor
+  (`engine/`, `BLOCKLOOM_ENGINE_KIT`), written by `engine-kit out=...`
+  (`package-release.py` runs it; `engine_kit.rs`): tracked sources and
+  `cargo vendor`ed crates for an author's own `cargo test`, plus the
+  engine's compiled crates from one Cargo build of a runtime with no
+  plugins and the rustc flags Cargo used for them (`kit.json`). Cargo's
+  target can't move (its fingerprints hold absolute paths), so an install
+  never runs Cargo: each plugin crate is one rustc run against the kit's
+  rlibs (its `Cargo.toml` read for name, edition and dependencies, which
+  must be crates the kit has, no build script) and the runtime one more,
+  in `<data dir>/blockloom/engine-build/`, with the install's `tools/rust`
+  rustc at exactly the kit's version. The kit is only read, so it may sit
+  anywhere. `plugin-new template=engine` writes a sealed starter from
+  `blockloom-engine/templates/lib.rs` (compiled by that crate's
+  `tests/template.rs`); `docs/plugin-api.md` has the author's side.
+  `plugins/examples/tally-engine` counts a run's ticks and says the total.
 - **Not yet**: a faster browser host (the page's own WebAssembly instead of wasmi
   in wasm; it needs a fuel substitute, since a browser instance has no budget to
   stop a runaway call), a headless browser proof and native editor modules.
@@ -1469,6 +1653,17 @@ thinks is opaque, which shows through to the plane while overlays still
 draw on top. That is why the window has an alpha buffer on Wayland.
 `BLOCKLOOM_HDR_VIEW=0` turns the plane off.
 
+A project runtime (engine plugins linked in) is a child, but on Linux it
+still draws into the Game view: the editor passes it one end of a socket pair
+as `--frames-fd`, and `embed::remote` (`embed_remote.rs`) carries its
+exchange's ring calls (install, claim, finished, clear, shm) to the editor's
+`FrameExchange`, the ring's dma-bufs crossing as `SCM_RIGHTS` descriptors,
+while the view's size, modifier offer and presents go back. Input stays on
+stdin. `RuntimeHandle::in_view` says which runtime shows there, and
+`runtime_embedded` follows it, so a host that can't serve frames falls back
+to the preview stream. The ignored `a_child_world_draws_into_the_view_about_as_fast`
+times key press to frame both ways (build `blockloom-runtime` first).
+
 `BLOCKLOOM_RUNTIME=process` forces the child process and MJPEG preview on
 Linux and Windows too. macOS has no embedded world yet.
 
@@ -1493,6 +1688,16 @@ as one undo step, which reloads the world like any other edit. A child placed
 in its parent's frame reports its new `offset` too, since that, not `Place`,
 is what the world builds it from, and such children follow a dragged parent
 live.
+
+An edit reaches an idle world as `EditorMessage::Patch` (`PROTOCOL_VERSION`
+39): the `Change`s committed since the world's last copy (`Tracker::
+take_runtime`; a run, a new world or a header change sends `Load` instead).
+The world applies it to its copy, and when only open-scene actors changed
+and none of them reaches past itself (`world::respawnable`: no parent or
+children, camera, controller, constraint, terrain, water, room, parallax,
+probe, tilemap or mesh collider) `world::respawn_actors` replaces just those
+entities and rebakes the navmesh; anything else loads the patched copy, a
+full rebuild.
 
 The tool, snapping and steps are `blockloom_protocol::SceneView`, an editor
 preference kept in QML `Settings` and re-sent to every world that comes up,
@@ -1724,9 +1929,9 @@ stays the one EV on `Environment`; `set exposure to` (and a script's
 `set_exposure`) takes `ExposureClaims::director` for the rest of the run, and
 the atmosphere slot's `exposure` reading reports the resolved value.
 
-`World.display` is the project's output: SDR, HDR10 (PQ) or scRGB, peak
+`GameSettings.display` is the project's output: SDR, HDR10 (PQ) or scRGB, peak
 brightness and paper white in nits. `hdr::HdrFrame` resolves it, with `set HDR
-output`/`set peak brightness` laid over it for the run, against what the
+output`/`set peak brightness` laid over it for the run (`HdrRun`), against what the
 window's display offers (`DisplayOffers`), and is extracted so both worlds
 switch on the same frame. Only the windowed player can leave SDR:
 `display.rs` makes the window's surface itself in the render world, keeps it
@@ -1763,7 +1968,7 @@ loaded.
 
 A `Light` component is a point or spot light in lumens with a range in
 metres, 3D only. `lights::sync_lights` reconciles each actor's light against
-`engine.attached`, the authored spec and `engine.light_intensity` (what
+`engine.attached`, the authored spec and `LightsRun::intensity` (what
 `set my light to` wrote this run), and hangs it on a child entity, since
 batching hides a merged actor through an empty `RenderLayers`.
 
@@ -1936,7 +2141,7 @@ resulting `WindField`: particles ease into `field.at(position)` scaled by
 their emitter's `wind`, the fog's noise scrolls by `field.drift`, and the
 cloud passes are meant to take `field.clouds`. `set wind [dial] to` and
 `set cloud drift to` (and a script's `set_wind`/`set_cloud_drift`) land in
-`engine.wind` for the run.
+`wind::WindRun` for the run.
 
 ### Water
 
@@ -1967,7 +2172,7 @@ surfaces draw) and `WaterSample`, publishes the latter with
 `sense::publish_water`, and `publish_sensors` copies it into each frame's
 snapshot, so `water height at`, `is _ underwater?` and a script's
 `water_at`/`is_underwater` read what buoyancy read. `set water level/chop/
-foam to` (and a script's `set_water`) lands in `engine.water`
+foam to` (and a script's `set_water`) lands in `water::WaterRun`
 (`WaterOverrides`): on the water actor that ran it, or every body from
 anyone else. The swell follows the live wind: `Swell` eases a heading
 towards it and, once the waves are `TURN_THRESHOLD` off, builds the new
@@ -2111,12 +2316,12 @@ last `ShadowSettings::fade` of the distance (a shader constant, so changing
 it recompiles). Each patch is exact text against the pinned Bevy; one that
 no longer matches reports an error and leaves Bevy's shader alone. Per-light contact shadows,
 PCSS and biases ride the same spec; `turn my light's shadows` lands in
-`engine.light_shadows`, which `wanted` lays over the authored spec, and `casts
+`LightsRun::shadows`, which `wanted` lays over the authored spec, and `casts
 shadows?` reads `ActorSense::casts_shadows`.
 
 `Lighting::shadows` (`ShadowSettings`) is the sun and camera half, applied by
 `shadows.rs`: cascades (count, first split, blend, distance - which `set
-shadow distance` overrides as `engine.shadow_distance`), normal bias, a PCSS
+shadow distance` overrides as `LightsRun::shadow_distance`), normal bias, a PCSS
 sun size, the fade, the camera's `ShadowFilteringMethod` and `ContactShadows`
 (16 steps).
 `Lighting::sun_cookie` is a tiled `DirectionalLightTexture` whose tile size is
@@ -2156,7 +2361,7 @@ creation crashes in the loader.
 tracing`, `set GI bounces to` and `set GI samples to` (and a script's
 `set_ray_tracing`, `set_gi_bounces` and `set_gi_samples`) override it for the
 run as
-`engine.ray_tracing`/`gi_bounces`/`gi_samples`. `RayTracingState` probes the
+`RayTracingRun`. `RayTracingState` probes the
 device once for `SolariPlugins::required_wgpu_features`; without them the
 raster rig carries on and the editor hears why once. The atmosphere sample
 copies `active`/`available` on the fixed tick, so `is ray tracing on?` and
@@ -2221,7 +2426,7 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json`, and
 lighting and quality, edited by `set_clouds` and Project Settings. The blended
 `Environment.clouds` carries volume coverage, density and type overrides, and
 `set clouds [coverage/density/type] to` (a script's `set_clouds`) lays
-`engine.clouds` over them for the run.
+`space::SkyRun::clouds` over them for the run.
 `blockloom-runtime/src/clouds.rs` bakes seeded, repeating 128³ shape and 32³
 erosion volumes on the GPU, raymarches at half resolution before fog, and
 uses the shared bilateral upsampler over the scene. WindField supplies drift.
@@ -2319,7 +2524,7 @@ turns it into cloud by coverage and contrast; `cloud_layers.wesl` mirrors
 bumps the layer's `revision`, which is how the runtime knows to reread a file
 whose path didn't change. Each stroke keeps a snapshot per revision under
 `.blockloom/cloud-paint`, and undo/redo call `restore_painted` to put the
-file back. `set cloud layer` lands in `engine.cloud_layers`
+file back. `set cloud layer` lands in `SkyRun::cloud_layers`
 (`CloudLayerOverrides`), laid over the project's layers each frame. `blockloom-runtime/src/cloud_layers.rs` loads or
 bakes every layer into one texture array when their keys change, and draws
 them in `CloudPass`: layers beyond the volumetric slab before `CloudMarch`,
@@ -2358,7 +2563,7 @@ fingerprints every file. An `ImportRole` says what a file imports *as*:
 texture, HDR (`.hdr`/`.exr`, planned as BC6H), volume (`.cube` LUTs, or an
 image strip of slices), heightmap (16-bit images, `.r16`/`.r32`), IES profile,
 or light cookie. The extension picks one; a PNG heightmap or cookie is an
-override kept in `.blockloom/pipeline.json` (`set-import-role`), and changing
+override kept in `assets.index` (`set-import-role`), and changing
 a role dirties the asset. Each role's decoder is its own submodule, and a pass
 reads files through `pipeline::load_volume`/`load_heightmap`/`load_ies` rather
 than parsing them itself. A new format extends a role here, not a second
@@ -2732,6 +2937,26 @@ project step on the fixed clock with no window or device, the same project steps
 to the same place on every run, and a project compiled to native logic steps to
 the same place as the VM.
 
+`engine::SceneDocument` is the open scene's `World`, the game settings and
+the project folder as a plain resource, republished by `rebuild_world`, so a
+system that only reads settings needn't take the main-thread `Engine`. The
+sky, fog views, moon, clouds, cloud layers, beams, post, camera quality,
+timestep and the asset-folder readers (sprites, rigs, terrain, water, the
+interface) read it; a test app gets it through `InsertEngine::insert_engine`.
+What's left on `Engine` is run state and run overrides.
+
+`blockloom-runtime/src/module.rs` is the module contract: a
+`BlockloomModule` (`name`, `build`) added with `AddModule::add_module`
+registers its own resources and systems, keeps run state in its own
+resources and drops it on the `WorldRebuilt` message (written by
+`rebuild_world`), and reads the run through `RunState` (synced from `Engine`
+at the head of every tick and frame) and the document through
+`SceneDocument`; `module::forget_on_rebuild::<T>` resets a run-override
+resource on that message (`RayTracingRun`, `HdrRun`, `space::SkyRun` for `set aurora`, `set fog density`, `set clouds` and `set cloud layer`, `water::WaterRun`, `lightning::StormRun`, `lights::LightsRun` for light intensity, light shadows, shadow distance and `capture probes`). `wind::WindModule` is the first: `WindRun` holds `set wind`,
+and it reads the weather blend through `director::WeatherNow` and volume
+specs through `volumes::LiveVolumes`, both published on the fixed tick
+before it, so it takes no `Engine` at all.
+
 `volumes::VolumeEye` says where volumes are weighed: the world camera (the
 default), a named actor or a point, so a world with no camera blends the same
 atmosphere for `sample_atmosphere`.
@@ -2755,7 +2980,7 @@ test) and the open list; GPU numbers there are inferred until profiled.
 ### Sound
 
 `blockloom-core/src/sound.rs` is the model: a `SoundBus` (`Master`, `Music`,
-`Sfx`), a `SoundMixer` of one linear gain per bus saved on the `World`, and
+`Sfx`), a `SoundMixer` of one linear gain per bus saved in the project's `settings`, and
 the 0-100 block scale both ways (`user_to_gain`/`gain_to_user`). Blocks are
 `play sound` (global), `play sound at` (positional: follows an actor, panned
 by Bevy spatial audio with per-frame distance falloff), `stop sound` (empty
@@ -2765,6 +2990,27 @@ owns the voices: one entity per play with an `AudioPlayer`, handles cached by
 path, oldest stolen past 8 of a file or 128 total. Sounds ignore the pause
 freeze (a menu click still clicks), and `stop all` silences them. Reporters
 are `is playing?` and `bus volume`, read off the published snapshot.
+
+`blockloom-core/src/soundscape.rs` (`World.soundscape`) layers rules over the
+mix: weather loops follow the atmosphere's wind, rain, snow or storm, ducking
+dips a bus while paused or while a named sound plays, and the underwater
+muffle pulls buses down and dulls them while the camera is under water.
+`drive_soundscape` steps the levels on the real clock, blends the listener's
+`SoundZone`s over the project reverb (`blend_zones`) and spawns the weather
+voices; `SoundState::bus_factor` multiplies the gains into `effective`.
+`set-soundscape` writes it, and `set reverb to` / `muffle _ while underwater?`
+override it for one run.
+
+Voices don't play the file directly: `maintain_voices` waits for the
+`AudioSource` to load, then gives the voice its own `FxSource`
+(`sound_fx.rs`), a decoder wrapper with a lowpass and a Freeverb-style reverb
+whose parameters are atomics on an `Arc<VoiceFx>` (so a parameter move never
+needs the sink). Looping is done in that decoder; Bevy's `repeat_infinite`
+would replay processed samples. Per frame each voice's cutoff is the
+combination of underwater, zone and occlusion muffle, and its reverb is the
+listener's blend for its bus. A WAV impulse response (project or zone) swaps the comb tail for per-channel partitioned FFT convolution (`RawIr`, `Convolver`). `probe_occlusion` (outside the big `Update`
+chain, which is at the tuple limit) rays positional voices to the listener
+through `QueryAccess` against static scenery only.
 
 ### Cinematics
 
@@ -2923,6 +3169,19 @@ own state, so a reporter may call another or itself and the strand's program
 counter never moves. Each actor is therefore emitted at most twice, however
 many custom blocks it has.
 
+A block's Branch inputs work the same way in both halves. A
+`BranchCallBlock` compiles to a `Call` carrying where each branch body
+starts, a jump past them, and the bodies inline in the caller's region, each
+ending in `BranchEnd`. `RunBranch` (its index settled per block at compile
+time) runs the body of the call in scope as a frame of its own, which reads
+the scope below that call: the caller's inputs, the caller's branches, and a
+`return` in it leaves the block the body was written in. `escape loop` stops
+at a branch body's edge, as at a call's. A reporter call keeps its bodies as
+canvas JSON in `Value::Call::branches`; `vm::compile` places them in front of
+the instruction holding the value (the value then keeps `{"~start": pc}` per
+body) and lifting turns the call into an `Invoke` with those starts, so the
+bodies run on the strand's own frames exactly like a statement call's.
+
 The rule it has to keep is that a compiled program and the VM ask the world for
 exactly the same things in the same order, on the same tick - including the
 mistakes, since a bad slot reports itself once and stands a zero in its place,
@@ -3061,6 +3320,80 @@ close. In the Game view the editor holds it on the world's behalf (see Game
 view above). The one safety net is that showing a modal while the pointer is locked
 logs a warning, since a locked hidden cursor can't press anything.
 
+UI v2 (`blockloom-core/src/ui_tree.rs`) is the tree the saved interface
+moves to: a `UiScreen` of `UiNode`s, each with a `Widget` carrying only its
+kind's fields, a `LayoutItem` (flowing in its parent, or `Anchored` by
+anchors, pivot and position) apart from the container its widget is, and
+`Spacing` overrides over the kind's own (`kind_spacing`, which mirrors the
+runtime's `node_for`). `UiScreen::from_document` reads a flat `UiDocument`
+(prefabs become `components`; fields a kind can't use go to `Legacy`) and
+`lower` writes one back for the runtime, which still draws flat documents;
+stretched anchors and non-top-left pins inside a stack refuse to lower until
+the runtime draws them. The gates are the round trip in `ui_tree_tests.rs`
+(the golden projects too, plus `BLOCKLOOM_UI_FIXTURES=<folder>`) and
+`a_document_read_as_a_tree_lays_out_where_it_was` in `ui_design.rs`, which
+lays both out, plus the Phase 5 `gate_*` tests beside it: a HUD in its
+corners, a centred modal, an inventory grid of component slots, a
+scrolling menu and one menu file shared by two scenes, each laid out from
+a v2 screen.
+
+A `.blockui` file is one `UiScreen` (`blockloom-core/src/ui_layers.rs`). A
+scene lists the files it draws in `World.screens` (a `Screens` scene
+component, saved only when there are some) and the game in
+`GameSettings.screens`; each is a `UiLayer { screen, open }`.
+`ui_layers::scene_interface` is what the world draws at every rebuild: the
+scene's own interface, then its screens, then the game's, each file once,
+lowered and merged (a widget id another layer took, or a style, component or
+animation of the same name that differs, skips that layer with an error; the
+others still draw). A closed layer's roots start hidden. The files aren't in
+the document, so `write-screen` marks the world stale to redraw it.
+Commands: `create-screen` (`fromInterface` moves the scene's interface into
+the file), `read-screen`, `write-screen`, `add-screen-layer`,
+`remove-screen-layer` (`commands/screens.rs`); the Problems panel lists
+layers that don't compose.
+
+A `.blockstyle` (`UiStyleFile`: `base` theme, `tokens`, `classes`) is a
+theme. Listed in a document's `stylesheets`, it sets the theme, lays its
+`UiTokens` (panel, button, input, input_focused, text, accent, track,
+toggle_off colors) under the document's own and adds its classes;
+`GameSettings.style` names one every interface starts from (Project Settings
+> Game, or `set-property target=settings path=style`). The runtime draws
+those colors through `ui::Palette` (`UiManager::palette`), which falls back
+to the built-in theme's for anything unset and for any other theme a `set
+theme` switches to. `create-style` writes a starter one.
+
+A tree node with `instance: Some(UiInstance { component, inputs, slots })`
+uses a component by reference: `lower` (`UiScreen::expand`) writes the
+component's nodes out renamed `<node>/<member>` (so the root is
+`<node>/<root>`, the prefix form the v1 instance tools expect), puts the
+node's own placement on the root, places `slots` nodes under the exported
+slot (named where the instance is), and sets each input through the v1
+`SetExposed` edit, so the designer sees them as overrides it can reset.
+Components nest up to 16 deep, which also stops one that uses itself. A
+screen's `inputs` are exports at screen level; `lower_with` sets them, and a
+`UiLayer`'s `inputs` (`add-screen-layer inputs={...}`) are what a scene
+passes. Old documents keep their expanded instances (`instance_of`), so
+they still round-trip.
+
+`open screen` and `close screen` (`OpenScreen`/`CloseScreen`, one
+`Action::SetScreenOpen`, `Effect::SetScreenOpen`, `ACT_SET_SCREEN_OPEN`)
+name a screen by its file name without the extension
+(`ui_layers::screen_name`) or its path, and set its roots' visibility
+(`UiManager::open_screen`; `Composed::screens` lists each screen's roots).
+Per J6 the immediate-mode `show` blocks are retired: they still load and
+run, but the palette lists Screens instead of Showing and their vocabulary
+entries say so. Not yet: a script ABI verb for screens, an `is screen open?`
+reporter, and setting a screen's inputs while it runs.
+
+The designer edits either the scene's interface or one of the screens the
+scene or game lists (the toolbar's Editing picker, `UiDesigner.target`).
+For a screen, `begin_interface_edit screen=<path>` starts from the file
+lowered (`screen-document` shows the same thing), and commit writes
+`UiScreen::from_edit` back: the edited flat document read as a tree, with
+each expanded instance folded back into a reference when lowering the fold
+gives the same widgets, and the screen's inputs kept. A file edit is not a
+document change, so it has no undo step yet.
+
 ### Interface editor
 
 Plan and progress: `docs/interface-editor-plan.md`. The Interface workspace
@@ -3089,6 +3422,22 @@ The designer loads `interface_properties` on start and `applies(path)` hides ins
 The workspace is split by view, all driven by the `designer` root in `UiDesigner.qml` (selection, gestures, snapping, typed edit helpers): `UiPalette` (grouped, searchable kinds), `UiHierarchy` (tree, hide/lock, arrow keys), `UiToolbar` (a wrapping `Flow`), `UiViewport` (frame, rulers, overlay, handles; its colours are named tokens), `UiInspector` (foldable `UiSection`s, a document panel when nothing is selected, one "Advanced (JSON)" property) and `UiTimeline`. New files are listed in `build.rs`. Side panels have min/max widths and drag handles so the designer fits 1100x700 (`test_panels_fit_a_small_window`). Fold state and the preview size persist in QML `Settings` when the app has an identity. Every inspector write is a typed `SetProperty`/structural edit (`world_actor` is typed too); `set_interface` is import only. An edit attempted during a gesture reports through `error` rather than being dropped. `interface-overrides` (`interface_overrides`) lists what a component instance changed, `ResetField` puts one of those fields back, and `Rename` changes a widget id (parents, scroll targets and animation tracks follow). `update-interface-edit` takes `patch=true` and then answers with `UiPatch` (`document` without widgets, `order`, changed `widgets`); the designer applies it with `applyUpdate`. Move, resize, snap, align and reparent arithmetic is in `UiEditMath.qml`, a plain object over `InterfaceGeometry.qml` (tested in `tst_InterfaceMath.qml`). A transaction holds only the interface document it started from; `UiDocument::with_edit` is one clone and one validate, `validate` walks each parent chain once, and `scale_tests::timings` prints the 1,000 and 10,000 widget cost. `ui_framework.rs` keeps the model and `ui_framework/` holds `animation`, `edit`, `prefabs`, `rich_text` and the tests; everything still re-exports through `ui::`.
 
 Components: `UiEdit::SavePrefab/InstantiatePrefab/DeletePrefab/DetachInstance` over `UiDocument.prefabs`; an instance root has `instance_of`, updating rebuilds instances but keeps widgets changed from the old source, and a missing prefab fails validation. Image widgets take `UiPaint.image_fit` (`Stretch`, `Sliced{border}`, `Tiled`), applied in `overlay.rs::image_node`.
+
+### Interface effects and animation preview
+
+`UiFx` (opacity, offset, rotation) is visual state laid over an element after
+layout: `UiWidget.fx` holds the authored start (typed edit path `fx`), and the
+`Opacity`/`OffsetX`/`OffsetY`/`Rotation` `UiProp`s write it at run time and are
+animatable tracks. It composes with the anchor without touching its
+`UiTransform` translation: offset adds to the margin (anchored), insets
+(absolute) or relative insets (flow child) in `layout_node`, rotation sets the
+same transform's rotation (`overlay::apply_fx_rotation`), and opacity
+multiplies down the tree (`UiManager::opacity_of`) into background, border,
+shadow, image and text colours. Not faded yet: slider tracks and fills.
+`InterfaceDesign.world` (default true, `PROTOCOL_VERSION` 38; the toolbar's "World behind") false hides every actor for the preview only (`ui_design::hide_world`). `InterfaceDesign.animation` (`{name, time}`, `PROTOCOL_VERSION` 37) freezes a
+document animation at a time in the design session through
+`UiManager::sample_animation`; the editor's timeline Preview/scrub uses it and
+pauses editing while it is on. Nothing is saved.
 
 ### Android devices and the emulator
 
@@ -3141,7 +3490,10 @@ row and an icon in `Blocks.qml`'s `buildRows()`, a label in its `labels`, an
 entry in one of its `baseSections` (the palette's categories and titled
 sections, drawn by blockstitch's `PalettePanel` in `BlockSidebar.qml`), a
 field id if it has value slots, and a `Step`/`Effect` if it does something
-new** - not a new QML file. `BlockHeader` and `CallBlock` take their row from
+new** - not a new QML file. A new sensing reporter's fresh value comes from its `default_args` in
+`blockloom-core/src/value.rs`: `Blocks.qml` carries those as a generated
+`hostDescriptors` table, so rerun `BLESS=1 cargo test -p blockloom-core --test
+operator_descriptors` after adding or changing one. `BlockHeader` and `CallBlock` take their row from
 a `BlockDef` rather than their type, which blockstitch draws itself.
 
 Keep the canvas's inputs identity-stable, since any change rebuilds what is
@@ -3149,7 +3501,36 @@ bound to it. `Main.qml`'s `reuse` swaps every unchanged part of a new
 snapshot for the old object, and `Blocks.qml` bumps `BlockRegistry.revision`
 only when `optionSource` (the names its dropdowns list) changes.
 
-The asset tray along the bottom (`AssetTray.qml`) is a file manager
+`MakeBlockDialog.qml` is blockstitch's shared `BlockDefinitionEditor` in a
+dialog, branches on any shape; the backend's `create_block`/`edit_block`
+take its draft as is, icon, identifier and description included, refuse more
+than `MAX_BRANCHES` branches, and turn every call into a `BranchCallBlock` or a
+plain `CallBlock` to match the new pieces before blockstitch reconciles the
+bodies. Canvas edits inside a reporter's branch name a `@reporter-branch:`
+strand and go through blockstitch's `edit_reporter_branch`
+(`commands::reporter_branch_edit`).
+
+The editor page (`EditorPage.qml`) is a shell of three blockstitch
+`DockRegion`s: actors on the left, the inspector on the right, and Assets,
+Run log and Problems as tabs along the bottom (a panel in one takes
+`docked: true`, and the region folds and resizes it). Code and Game sit
+side by side when `split` is on. Everything the window can do is an id in
+`EditorActions.qml`: a dispatch command (`undo`) or the window's own
+(`editor.*`, carried out by `EditorPage.editorAction`). The top bar's menu
+bar, `CommandPalette.qml` (Ctrl+Shift+P, which also lists every shell
+command that takes no arguments) and the window's shortcuts are all built
+from it, and the keys come from `blockloom-app/src/keymap.rs` through
+`editor-commands`, so a new binding goes in `KEYMAP` and a new menu entry in
+`EditorActions.menus`. The top bar keeps only the project's identity, the
+menus and the run controls; plugin menu items join the Plugins menu.
+`ProblemsPanel.qml` reads `problems` (`commands/problems.rs`: plugin
+preflight and audit, script build and load errors, stale imports, asset
+warnings). `ProjectSettingsDialog.qml` is a page tree: the project's own
+pages, one page per world setting in the type registry (`RegistryForm`,
+written through `set-property target=world`), and one page per plugin with
+resource types (`PluginSettingsPage.qml`), with a filter over every label.
+
+The asset tray (`AssetTray.qml`, the bottom dock's Assets tab) is a file manager
 over the project folder: it lists, makes, imports, renames, moves and deletes
 files, and an asset dragged out of it lands on any
 `AssetField.qml` (the Look component's Image, the Script component's path).
@@ -3177,8 +3558,47 @@ migration of pre-folder `<id>.blockloom` files.
 
 The app opens on the Dashboard (`Dashboard.qml`); the editor
 appears once a project is open, and `state.project` being null is what decides
-which of the two shows. Every edit is still written to disk right after it
-lands.
+which of the two shows. The window saves on idle (`Backend::save_when_idle`,
+1.5 s): `auto_save` only marks an edit owed (and the copy dirty, so a live
+reload waits), `save_if_due` writes it once edits go quiet or 10 s after the
+first, and Play, Build, Close, quit and reopening write it at once
+(`flush_save`). The shell and tests keep saving every edit, so a folder
+attached from another process lags the window by up to that delay; one
+attached over the socket shares its backend and sees every edit.
+
+### Hub coordination
+
+`blockloom-core/src/hub.rs` holds the Hub's say over the editor. The running
+installation comes from `BLOCKLOOM_INSTALLATION` (set by the Hub) or the
+manifest beside the executable; a project's binding is `.blockloom/hub.json`.
+`open_project` refuses a mismatch with a `wrong-editor:` error unless
+`other_editor=true`. Closing paths return a `save-failed:` error instead of
+dropping unsaved work unless `discard=true`. The project list
+(`library::list`) never prunes: missing folders come back with
+`available: false`, and `locate_project`/`forget_project` recover them. The Hub
+reads and writes the same `projects.json`.
+
+The editor's Dashboard re-reads the library on a timer and on window
+activation (`refresh_library`). `ProjectEntryDto` carries
+`installation_label` and `wrong_editor` so a card names the editor and flags a
+mismatch. `open_project`'s `other_editor` copies the project file to
+`.blockloom/backups/` first and `rebind` makes the running editor the
+project's. The Hub's service has `backups` and `restore-backup`; `focus`
+reports `acknowledged`; polling goes through `HubService::poll`, which never
+sets busy. The editor/Hub file formats are pinned by
+`blockloom-core/tests/fixtures/hub-contract/`, read by both
+`blockloom-core/tests/hub_contract.rs` and `blockloom-hub-state/tests/contract.rs`.
+
+`blockloom-hub-state` (Qt-free) is the one implementation of the Hub's project
+and editor logic: the project list, who holds a project, binding, snapshots,
+focus, and starting or reusing editors. The Hub window runs it as
+`blockloom-hub --hubctl <command>`; `scripts/hub.py` (installing and building
+editors only) forwards project commands to it and asks it for installation
+guards (`BLOCKLOOM_HUBCTL`, else `target/*/blockloom-hubctl`). Open and New
+project reuse an idle editor: the editor's `hub_poll` (every 1.5 s, GUI-only)
+publishes `<data dir>/blockloom/editors/<pid>.json`, the Hub drops
+`<pid>.request.json` beside it and waits for `<pid>.reply.json`, and a new
+process starts only when nothing idle answers.
 
 ### Known gaps
 
@@ -3191,10 +3611,11 @@ lands.
   key`), edited through `set-locale` and friends; scripts drive both through
   ABI 47 (`switch_save_slot`, `save_slot`/`save_slots`, `set_language`,
   `language`, `text_for`).
-- A text input has a caret, shift-selection, IME composition, pointer placement and drag selection. The caret, selection and composition underline are drawn by `input_caret.rs` from the text layout's glyph geometry (parley, via `ComputedTextBlock::buffer`); the shown text only splices the composition in. Backspace rubs out,
-  Escape and Enter let go, and every other character key appends - subject to
-  the input's own `allow` and `max length`, which is all the validation there
-  is. Backspace ignores both, so a rule written after the typing doesn't trap
+- A text input has a caret (`ui::TextCaret`): arrows, Home, End, Delete,
+  Shift-select, Ctrl/Cmd+A and IME composition, all through the input's own
+  `allow` and `max length`. The caret shows as `|` and a selection as `[..]`
+  in the text; there is no pointer placement or drawn selection yet. Backspace
+  and Delete ignore the rules, so a rule written after the typing doesn't trap
   what is already in the field.
 - A clone copies the template as the editor authored it, standing where the
   template stands now. What `attach`/`detach` did to the template since Play
@@ -3227,20 +3648,3 @@ lands.
   path attachments draw nothing. A rig's or stack's outline is one
   silhouette per piece, so a translucent outline color darkens where pieces'
   silhouettes overlap.
-
-### Interface effects and animation preview
-
-`UiFx` (opacity, offset, rotation) is visual state laid over an element after
-layout: `UiWidget.fx` holds the authored start (typed edit path `fx`), and the
-`Opacity`/`OffsetX`/`OffsetY`/`Rotation` `UiProp`s write it at run time and are
-animatable tracks. It composes with the anchor without touching its
-`UiTransform` translation: offset adds to the margin (anchored), insets
-(absolute) or relative insets (flow child) in `layout_node`, rotation sets the
-same transform's rotation (`overlay::apply_fx_rotation`), and opacity
-multiplies down the tree (`UiManager::opacity_of`) into background, border,
-shadow, image and text colours. Not faded yet: slider tracks and fills.
-`InterfaceDesign.world` (default true, `PROTOCOL_VERSION` 38; the toolbar's "World behind") false hides every actor for the preview only (`ui_design::hide_world`). `InterfaceDesign.animation` (`{name, time}`, `PROTOCOL_VERSION` 37) freezes a
-document animation at a time in the design session through
-`UiManager::sample_animation`; the editor's timeline Preview/scrub uses it and
-pauses editing while it is on. Nothing is saved.
-

@@ -12,18 +12,54 @@ editor's Game view.
 
 ## Common commands
 
+Patched Bevy/wgpu sources are generated into gitignored `.patched-deps/` from
+the small diffs under `patches/`. `just` Cargo recipes prepare them automatically.
+Before invoking Cargo directly on a fresh checkout, run `just prepare-patched-deps`.
+See `patches/README.md` for prerequisites and updating patches.
+
 ```bash
 just build              # cargo build --release --workspace (the normal build)
 just run                # build, then launch target/release/blockloom
+just qml-preview        # Qt 6.12 live QML edits, with the real backend
+just replace-fast       # Linux: rebuild/reinstall editor and runtime, reuse staged players
+just replace [jobs]     # build editor/web concurrently, reuse runtime, reinstall
+just prune-target --dry-run          # inspect the 20 GiB build-cache budget
 cargo build --workspace && target/debug/blockloom   # debug build/run - faster iteration
 just test               # cargo test --workspace (blockloom-core has the bulk of them)
 cargo bench -p blockloom-core --bench vm   # block VM ns/tick over a few canvases
 just player             # stage the hard-optimized player a built game ships
 just web-check          # runtime check-build for wasm32-unknown-unknown (Phase 8)
 just web-player [profile]            # stage the WebGPU player the Web build target ships
+just web-player release              # faster web development build without dist's fat LTO
 just web-build <project> [out]       # a project as one self-contained .html
 just web-smoke <page.html> [--scripts N] [--moves ACTOR]  # headless run of a built page
 ```
+
+`just replace` divides the CPU count across its two builds by default;
+`just replace 4` uses four Cargo jobs per build. `CARGO_BUILD_JOBS` overrides
+the default per-build limit. Web players use `target/web-build` for both final
+and intermediate artifacts to avoid the native player's host-tool output locks;
+their first build with this cache recompiles dependencies. Staged player paths
+stay the same. The native player reuses the optimized runtime from the workspace
+build, avoiding a second native compilation.
+`BLOCKLOOM_NATIVE_PROFILE=dist just replace` builds the fat-LTO native player alongside the editor and
+web player, dividing CPUs across three builds. `just player` still uses `dist`.
+Replacement fetches native and web dependencies once before starting the builds
+offline, so network access does not serialize the parallel compilation steps.
+It keeps one status row below build output in an interactive terminal, showing
+each build's state and elapsed time. Redirected output gets periodic plain lines.
+Replacement uses the incremental `release` profile for web builds by default;
+`BLOCKLOOM_WEB_PROFILE=dist just replace` requests the fat-LTO shipping profile.
+`just web-player` still defaults to `dist`. Web builds compile only the library
+that wasm-bindgen loads, skipping the unused runtime executable.
+
+Build recipes use `scripts/prune-target.py` before and after compilation
+to keep the whole target tree within a 20 GiB budget. Python 3 is required.
+`BLOCKLOOM_TARGET_LIMIT_GIB` changes the budget. Cleanup evicts old incremental
+caches first, then older profile caches, preserving binaries and staged players.
+It locks Cargo profile directories and skips active builds. Temporary overshoot
+and protected outputs are allowed; this is not a filesystem quota. Direct Cargo
+commands need `just prune-target` afterward. See README.md's Build Cache Budget.
 
 Build the whole workspace, not just `-p blockloom`: off Linux (or with
 `BLOCKLOOM_RUNTIME=process`) the editor starts the `blockloom-runtime` binary
@@ -37,6 +73,7 @@ defaults.
 
 ## Style
 
+- `CLAUDE.md` and `AGENTS.md` are the same text (only their first lines differ): change both together.
 - NEVER use em-dashes (-) in comments, code, docs, or commit messages. Use a normal hyphen (-) instead.
 - Write comments like a human: short and terse, 1-2 lines. State what and why briefly. No multi-paragraph essays, no history lessons ("Previously..."), no dangling "see X docs" pointers unless X exists.
 
@@ -48,9 +85,11 @@ It needs Qt 6.12 or newer with Quick, QuickControls2, QuickDialogs2 and Multimed
 Qt 6's `qml`/`qmlls` (`/usr/lib/qt6/bin` on Arch), not Qt 5's. A new `.qml`
 file must also be listed in `build.rs`'s `QmlModule`.
 
-Use `just qml-preview` (Python 3 required) for live QML edits through Qt 6.12.
-This enables the development-only `blockloom/qml-preview` feature. Run `just
-build` before installing or shipping; Rust/C++ edits still require a rebuild.
+For live edits, `just qml-preview` builds the workspace with the development-only
+`blockloom/qml-preview` feature and watches both QML modules through the selected
+Qt kit's `qmlpreview`. It needs Python 3. Use `restart` for structural edits that
+lose state; Rust/C++ changes and new QML files still need a rebuild. Run `just
+build` before installing or shipping. See README.md's QML Hot Reload section.
 
 ### Local `blockstitch` development
 
@@ -162,7 +201,9 @@ uploads those bytes as an image. Elsewhere it is a child process.
 - **`blockloom-protocol`** - the messages between them: newline-delimited JSON
   over a child's stdin/stdout, or the same enums over channels in-process. No
   sockets, no ports; the pipe or channel closing is the whole shutdown
-  handshake. Bump `PROTOCOL_VERSION` whenever a message changes.
+  handshake. Bump `PROTOCOL_VERSION` whenever a message changes. Today it is
+  39, the script `ABI_VERSION` 52 and `LOGIC_ABI_VERSION` 41; a version named
+  further down is the one a feature arrived in.
 - **`blockloom-core`** - the engine library both processes share: `scene.rs`
   (the value types a world is built from - looks, bodies, placements, camera),
   `components.rs` (what an actor is made of - see below), `blocks.rs` (the
@@ -182,6 +223,24 @@ uploads those bytes as an image. Elsewhere it is a child process.
 - **`blockloom-plugin-api`**, **`blockloom-plugin-host`**, **`blockloom-plugin-sdk`**, **`blockloom-plugin-gpu`** - the plugin platform:
   manifests, schemas, records and the C ABI (api, wasm-safe), resolver, cache,
   install transactions and the native loader (host). See Plugins below.
+- **`blockloom-physics-probes`** - not part of the game: Phase 0 of the physics
+  and character controller plan (`docs/physics-and-character-controller-plan.md`).
+  Test-only probes against the pinned Rapier (`rapier2d`/`rapier3d` at the rev
+  `bevy_rapier3d` uses) answering the rows of `docs/physics-compatibility-ledger.md`:
+  `materials.rs` (static/dynamic friction through a `modify_solver_contacts` hook),
+  `compounds.rs` (ownership, mass), `events.rs` (the Unity pair matrix, per-step
+  event delivery), `queries.rs`, `ccd.rs` (what each CCD flag set holds) and
+  `controller.rs` (Rapier's `KinematicCharacterController` against Unity's skin
+  width, step offset, slopes, overlap recovery and platform carry). Findings to
+  keep in mind before touching physics: queries are stale until
+  `detect_collisions` runs, and syncing a never-stepped velocity-based kinematic
+  body freezes it until `wake_up`; Rapier's `offset` is Unity's skin width but its
+  autostep is not the step offset, and overlap recovery is capped per call; parry's
+  capsule-vs-box `intersect_shape`/`contact` flicker within a centimetre of touching
+  (use `distance`); Rapier's own kinematic carry lags and double counts with an
+  explicit one. Unity values come from Unity's documentation, not an editor. CI
+  runs it with the rest of the workspace; `cargo test -p blockloom-physics-probes
+  -- --nocapture` prints the quoted numbers.
 - **`blockloom-net`** - native multiplayer transport (Phase 0 of
   `docs/multiplayer-and-embedded-server-plan.md`, findings in
   `docs/multiplayer-phase0.md`). Quiche over a nonblocking UDP socket, driven
@@ -207,6 +266,42 @@ uploads those bytes as an image. Elsewhere it is a child process.
   edit a drag/drop/typed character performs. Blockloom implements `BlockKind`
   for `InstructionKind` (`blocks.rs`), names its value slots in `fields.rs`, and
   gives every actor a `BlockGraph` of its own.
+
+### Coordinates and units
+
+World space is right-handed and Y-up in both dimensions (Bevy's, which glTF
+shares, so models import without a flip). Rotations are degrees, positive
+counterclockwise about +Z in 2D; a 2D actor faces +x and a 3D one -Z (a spot
+light's forward). A 2D `z` is only draw order (`Place` z plus the Render
+layer) and means nothing to physics.
+
+The scale is the one deliberate difference: **3D is in metres, 2D is in
+pixels**, a hundred to the metre (`scene::PIXELS_PER_METRE`, also rapier's
+physics scale in 2D). At zoom 1 one 2D unit is one logical screen pixel
+(`Camera2d`'s projection scale is `1 / zoom`), so a sprite's size is its
+image's size and pixel art lines up. That is why 2D defaults are bigger
+numbers: gravity -981 against -9.81, a 60 px starter player against a 0.5 m
+ball, `PIXELS_PER_CELL_UNIT` 16, audio falloff `1/500`. Physical settings
+(gravity, wind speed, fetch for the sea state) are in world units a second,
+so in 2D they read in pixels; metre-based maths (`sea_target`, thunder delay)
+divide by `PIXELS_PER_METRE` first.
+
+Why it isn't Unity's or Unreal's: 3D already is Unity's (1 unit = 1 m, Y-up),
+and Unreal's centimetres and Z-up would only add a conversion at every glTF
+and Bevy boundary. Unity's left-handedness is not worth fighting Bevy's maths
+and glTF for. For 2D, Godot, GameMaker and Scratch work in pixels too;
+Unity's 2D is the outlier (metres plus a pixels-per-unit on each
+sprite), and moving to it would change every saved position and size, plus
+numbers typed into blocks and scripts that can't be migrated automatically.
+
+Crossing dimensions converts lengths and nothing else. `Mode::length_from`
+is the arithmetic; `Actor::convert_units` applies it to an actor's position,
+look, parent offset and joint, and runs on a scene's `switch_mode` and on
+`Persist` survivors carried by `switch scene to` (their live position is in
+the old scene's units). Not converted, since the right answer isn't a plain
+scale: tilemap tile sizes (32 px by default, never under 1), emitters, water,
+volumes, rooms, parallax and the 3D camera component. Re-tune those after
+switching.
 
 ### Saving
 
@@ -337,6 +432,383 @@ Pre-component documents kept `visual`/`placement`/`physics`/`visible` flat on
 the actor, and the world camera named the actor it followed. Both still load:
 `Actor` deserializes through `ActorRepr`, and `Project::normalize` moves the
 old `follow` onto its actor as a camera component.
+
+### Physics document (Rigidbody, Collider)
+
+Phase 1 of the physics plan, `blockloom-core/src/physics/`. It is the saved model
+and its rules. **Actors with a legacy `Body` still play through the old path**
+(unchanged, byte for byte); actors with Rigidbody/Collider components play through
+the Phase 2 installer below. Nothing converts a project until a later phase wires
+migration into the editor, and an actor may not have both.
+
+- `ActorComponent::Rigidbody { rigidbody }` (`RigidbodySpec`: body type, mass
+  or density, damping, gravity, interpolation, collision detection, constraints,
+  velocity caps) and `ActorComponent::Collider { collider }` (`ColliderSpec`: a
+  `ColliderGeometry` of a saved `ColliderShape` or `FromLook`, center, rotation,
+  material, trigger, layer, overrides). One body per actor; **colliders repeat**,
+  so `Components::collider(id)`/`colliders()` address them by `ColliderId` and the
+  name-based `get`/`remove` refuse an ambiguous repeated name. Ids are generated,
+  unique per scene, and kept by undo (snapshots), save/load and reparenting;
+  `Actor::refresh_physics_ids` gives a duplicate its own. A capsule's `height` is
+  end to end.
+- Ownership (`ownership.rs`, `PhysicsOwnership::resolve`): a collider belongs to
+  its own actor's Rigidbody or the nearest ancestor's (via `Parent`); no body above
+  it makes it static; a nested Rigidbody starts a separate body. The shape's pose in
+  the body's frame is derived from the same world matrices `place_authored_children`
+  builds, honoring `Parent` offsets. Static colliders need no Look and a body may
+  have no shape; both are valid.
+- Settings and materials live on `Project.physics` (`PhysicsSettings`: schema
+  version, `CompatibilityProfile` Legacy or Unity, `MaterialLibrary`), written only
+  when not default so an untouched legacy project re-saves byte for byte. A newer
+  `schema_version` fails to load with a clear error. Built-in materials (Default,
+  Ice, Rubber, No Bounce) are referenced by name; stored ones by `MaterialRef::Asset`.
+  3D combine priority is Maximum, Multiply, Minimum, Average; 2D uses the geometric
+  mean of frictions and the larger bounce.
+- `meta.rs` holds one property table per component (unit, bounds, world, advanced);
+  a test keeps it in step with the serialized defaults, so a new field needs a row.
+  `validate.rs` checks specs and a whole scene (shape in the wrong dimension, a
+  solid concave shape on a dynamic body, a trigger that is also one way, an
+  unresolved material, a legacy `Body` beside the new components, ...).
+- Edits (`edit.rs`) run on one actor, validate and roll back that actor on failure;
+  only errors on the edited actor or its touched ids refuse an edit, so a
+  hand-edited bad actor elsewhere does not lock the scene.
+- Migration (`migrate.rs`): `Scene::physics_migration_preview` shows what each legacy
+  `Body` becomes (Rigidbody plus `FromLook` collider plus a stored legacy material,
+  ids `{actor}-rigidbody`/`{actor}-collider`); `migrate_physics` applies it
+  idempotently. Only the preview is exposed (`physics-migration-preview`) because
+  the runtime cannot read the result yet.
+- Commands (`blockloom-app/src/commands/physics.rs`): `add-collider`,
+  `set-collider`, `remove-collider`, `fit-collider-to-look`, `set-rigidbody`,
+  `remove-rigidbody`, `set-physics-profile`, `add|set|remove-physics-material`, and
+  the reads `physics-check`, `physics-ownership`, `physics-properties`,
+  `physics-migration-preview`. A refused edit leaves no undo step. The generic
+  `add|set-actor-component` refuse these two components and point at the typed
+  commands. The wire spelling is `{"kind": "Shape", "shape": {"kind": "Sphere", ...}}`.
+- Not yet: any UI (the inspector shows an empty card for these components) and
+  verified Unity defaults for the Blockloom-chosen values
+  (`DEFAULT_MAX_LINEAR_VELOCITY` and the sleep and solver defaults).
+  Tests: `cargo test -p blockloom-core physics` (`tests/physics_gate.rs` holds the
+  gate fixtures) and `cargo test -p blockloom-app --test physics`.
+
+### Physics runtime (bodies, shapes, filtering)
+
+Phase 2 of the physics plan. Core decides, the runtime installs.
+
+- **Core** (`blockloom-core/src/physics/`): `plan.rs` `PhysicsPlan::build(actors,
+  mode, settings)` (also `Scene::physics_plan`) turns a scene into `BodyPlan`s and
+  `ColliderPlan`s and carries every problem (`issues`, a superset of
+  `validate_scene`). `geometry.rs` applies Unity's scale rules (a box scales per axis, a
+  sphere by its largest axis, a capsule's radius by the larger of the two axes across it
+  and its length by its own axis; negative scale only mirrors) and never turns a
+  primitive into a hull. `layers.rs` is the 32-layer matrix per dimension
+  (`LayerSettings`, saved on `PhysicsSettings.layers`, written only when changed) plus
+  `ColliderFilter`/`pair_collides`: a collider's include/exclude overrides decide first
+  (exclude beats include, the higher priority wins between two, a tie excludes),
+  then the matrix, then each side's legacy mask. `needs_exact` says when two group
+  masks cannot say it (an include, or an exclude with a priority) and the plan sets
+  `exact_filtering`. `ops.rs` is the `ForceMode` math (every mode reduces to an
+  impulse for one fixed step, so a force never lingers).
+- **Mass**: shapes carry it. An explicit body mass becomes density `mass / volume`
+  over the shapes that count (enabled, not triggers, with volume), so the total is exact
+  whatever the shape count and COM and inertia come from the shapes. A body with
+  nothing to carry it holds its own mass (`ExtraMass`; default 1 kg). A custom
+  inertia (or center of mass, which needs an inertia too, else an error) moves the whole
+  mass onto the body. Static and kinematic bodies carry no density.
+- **Positions**: a collider's pose is solved in its frame actor's space (the body actor,
+  or its own actor for scenery) from the same world matrices ownership uses, in
+  metres (`position`) and as the local translation under the frame entity (`local`,
+  which bevy_rapier multiplies by the frame's scale). A rotated shape under a stretched
+  frame would shear and is an error. Zero scale is an error.
+- **Unsupported on purpose** (errors, not silent): convex hull, triangle mesh,
+  terrain and tilemap colliders (Phase 3: cooking), a polygon that is not convex, a
+  shape for the other dimension, a concave solid on a dynamic body, a custom center of
+  mass without an inertia. A collider's `contact_offset` is Rapier's `ContactSkin`
+  (times pixels per metre in 2D), `queryable` filters ray/cast/overlap queries, and a
+  body's `interpolation` is a `PoseSmoothing` component read by `world::blend_pose`
+  (None draws the fixed-step pose, Interpolate blends, Extrapolate carries the last step on;
+  an actor with no Rigidbody keeps blending, and migrated bodies are Interpolate).
+- **Runtime** (`blockloom-runtime/src/physics_install.rs`): `install` runs at the end
+  of `rebuild_world` for the scene's plan (an erroring plan installs nothing and logs).
+  A body gets `RigidBody`, `Velocity`, `ExternalImpulse`, gravity scale (Use Gravity off is
+  scale 0), damping, `LockedAxes`, `Sleeping`, CCD, extra mass and
+  `RigidBodyDisabled` for Simulated off. **Each collider is its own child entity**
+  of its frame entity (`PlannedCollider`), with `ColliderScale::Absolute` (the shape is
+  built at its final size), density, `Friction`/`Restitution`, collision groups, `Sensor`
+  for triggers (`ActiveCollisionTypes::all() - STATIC_STATIC`), `ColliderDisabled`, and
+  one-way (2D). Removing a collider entity is how a shape goes away;
+  `refresh_masses` nudges every planned body so the mass totals again (Rapier keeps
+  the old one otherwise). Contacts on a collider entity are tracked as touches on the
+  actor that owns the component (see Contact lifecycle below).
+- **Hooks**: 3D uses `Hooks3` (`RapierPhysicsPlugin::<Hooks3>`) for the stick/slip
+  friction (static friction below `STICK_SPEED` of sliding at the contact point,
+  dynamic above; only on colliders whose two coefficients differ) and the exact pair test;
+  2D reuses `OneWayHooks` (now also the pair test). 2D friction is Rapier's geometric
+  mean and bounce its maximum, set per collider. `PhysicsLayers` is the resource the
+  hooks read. Velocity caps and frozen axes are enforced by `clamp_velocities` before
+  each step (a 2D body has no angular cap; Unity 2D has none comparable).
+- **CCD**: Discrete and Continuous both leave Rapier's own sweep against fixed colliders
+  (a true Discrete would need `max_ccd_substeps = 0`, a world switch, so it is not
+  applied while legacy bodies exist); Continuous Dynamic is `Ccd`; Speculative is
+  `SoftCcd` with a 0.5 m prediction. See the ledger's CCD table for what each holds.
+- **Solver overrides**: `solver_iterations` becomes Rapier's `AdditionalSolverIterations`
+  on the body (Rapier's solver has no per-body iteration count, so this is extra
+  substeps, not a Unity iteration count). `max_depenetration_velocity` caps how fast a
+  contact pushes the body out of an overlap: Rapier's soft contacts correct position at
+  the world's `normalized_max_corrective_velocity` (3 m/s) without touching velocity, and
+  the per-body cap clamps each `SolverContact.dist` to at least `-cap * dt` in the
+  `modify_solver_contacts` hook of both dimensions (`depenetration_cap`, the slower of
+  the two bodies wins). A cap at or above 3 m/s changes nothing and installs no hook.
+- **Force blocks**: `add force` and `add torque` (`Action::AddForce`, `Effect::AddForce`,
+  `Act::AddForce`, `ACT_ADD_FORCE` 123 in the logic ABI and 101 in the script ABI, a
+  script's `add_force`/`add_torque`) pick a `ForceMode` and a vector. `d2/d3::apply_forces`
+  reduces the mode to one impulse for the fixed step (`ForceMode::linear_impulse_array`,
+  `torque_impulse_3d/2d`, with the body's mass and world inertia from
+  `ReadMassProperties`) and adds it to `ExternalImpulse`, so nothing lingers. Only dynamic
+  bodies answer; the 2D world is in pixel units, so a 2D impulse is not rescaled.
+- **Contact lifecycle** (`physics/contacts.rs`, `blockloom-runtime/src/contacts.rs`):
+  `ContactTracker` is pure core. The runtime's `track_contacts` (`dim2`/`dim3`, in
+  `FixedPostUpdate` after the writeback) feeds it Rapier's Started/Stopped reports once
+  per fixed tick (sensor pairs are `ContactKind::Trigger`, with no payload; solid ones carry
+  normal, points, relative velocity and impulse read from the contact pair), closes the tick
+  and queues Enter, Stay (at most once per pair and tick, while either body is awake) and
+  Exit in tick/pair/phase order. `step_vm` hands the VM what earlier ticks made
+  (`world::deliver_contacts`), so an event made in tick N is heard in N+1 whatever the
+  render rate. A pair is keyed by its two collider ids; the actor-level answer is a
+  refcount over pairs (`touching`, `pairs_between`, mirrored into `engine.touching` for the
+  `touching?` reporters), and `ContactEvent::edge` marks the actor-level transition that
+  `when I touch` listens to, so a compound wall is one Enter and one Exit. A pair that
+  ends because an actor was deleted (`delete_actor`) or a collider was removed/disabled
+  (Rapier's REMOVED flag, `ColliderDisabled`) or a filter changed (`engine.filter_touched`)
+  gets an Exit with an `ExitReason`; a run reset clears the tracker without delivering.
+  `when I touch` gained `phase` (Enter/Stay/Exit, default Enter) and `scope` (Any/Collision/
+  Trigger, default Any) so old documents behave as before; scripts hear `Event::Contact`
+  (`EVENT_CONTACT` 21) for every phase. Still open: the shape-replacement and teleport
+  reasons (a replaced collider entity ends its pairs as Separated).
+- **Legacy effects**: `world::is_dynamic` also recognizes a simulated dynamic
+  Rigidbody, so `push`, `set velocity` and the like act on planned bodies. The navmesh
+  and fracture still read the legacy `Body` only.
+- **Commands**: `set-physics-layer-name`, `set-layer-collision`, `physics-plan`;
+  `physics-check` now includes plan-level errors, and Play and Build refuse a scene
+  with a physics error (`commands::physics::preflight`).
+- Tests: `cargo test -p blockloom-core physics`, `cargo test -p blockloom-runtime
+  --lib physics_install` (headless mini-apps with a real Rapier world: resting, mass
+  totals and removal, modes, triggers, layers, exact filtering, stick/slip on a slope,
+  CCD, one-way, caps, forces, depenetration caps, contact events at two frame rates), `cargo test -p blockloom-app --test physics`.
+
+### Physics queries (Phase 3)
+
+`physics/query.rs` holds the request types (`QueryRequest`: ray, cast and overlap of
+ball, box and capsule, closest), `QueryFilter` (layer mask, trigger policy, ignored
+actor) and `QueryOutcome`. The runtime answers them from the live Rapier world
+(`blockloom-runtime/src/queries.rs`) through a `QueryService` installed for the
+frame. A query block (`CastRay`, `CastBall`, `OverlapBall`, `FindClosest`) asks on the
+spot as the running actor and files the answer as that actor's query result;
+`QueryNumber`/`QueryText` read hit N back by field (a miss reads zero or empty). The
+VM, compiled logic (`ACT_PHYSICS_QUERY` is the script ABI's) and scripts
+land on the same answers;
+`tests/codegen.rs` holds them together with a one-wall harness world.
+`RayHit`/`RayDistance`/`CircleHit` reporters ask the same service. With no world
+installed a query reports an error and reads as a miss.
+
+### Physics inspector
+
+`RigidbodyForm.qml` and `ColliderForm.qml` are the cards for the two components
+(`InspectorPanel.qml` loads them; a collider is removed by id with `remove_collider`, the
+Rigidbody with `remove_rigidbody`, and Add component gives an actor a Rigidbody or another
+Collider). Every edit sends the whole next spec to `set_rigidbody`/`set_collider`, so
+validation and undo are the backend's. QML test: `tests/qml/tst_PhysicsInspector.qml`.
+
+### Character controller (Phase 4)
+
+A `CharacterController` component (`ActorComponent::CharacterController`,
+`physics/controller.rs`, `CharacterControllerSpec`) is a capsule that blocks sweep
+through the world, Unity-style: radius, height, centre, slope limit, step offset, skin
+width, minimum move, detect collisions, overlap recovery, layer and up. It needs no
+Rigidbody (the runtime gives the actor a position-based kinematic body when it has
+none). `Scene::set_character_controller`/`remove_character_controller` edit it and
+the plan carries `PhysicsPlan::controllers`; the shell has `set-character-controller`
+and `remove-character-controller`.
+
+- **Contract**: core decides, the runtime installs. `controller::move_call(actor,
+  MoveMode, vector)` runs through a `ControllerService` (installed per frame by
+  `controller::with_service`, the way queries are). `Move` is a displacement without
+  gravity, `Simple` a speed with gravity (fall speed builds while airborne and is
+  zeroed on a floor or ceiling). Moves run in order on the spot with a `pending`
+  displacement; the pose is written once per fixed step by
+  `blockloom-runtime/src/controller.rs::apply_motion`. A move below
+  `min_move_distance` skips moving but still probes the ground and recovers overlap.
+  Hits are classified by normal against the slope limit into sides, above and below
+  (`CollisionFlags`, Unity's 1/2/4); triggers are never obstacles.
+- **Runtime** (`blockloom-runtime/src/controller.rs`): `KinematicCharacterController`
+  (`move_shape`) over a capsule child collider, 3D and 2D. Its hit normal points at the
+  controller. `ControllerAccess` is folded into `QueryAccess::scope`, so a VM tick,
+  compiled logic or a script can move a controller where it already asks queries.
+  Fixed obstacles the controller meets fire `Event::Collision` (Enter, Stay, Exit by
+  move); moving bodies are left to the contact lifecycle.
+- **Blocks**: `ControllerMove` (mode Move or Simple, x y z) and `SetController`
+  (property, value) are both `Action::Controller { op, vector }`, `Effect::Controller`,
+  `Act::Controller` (`ACT_CONTROLLER` 125 in the logic ABI, 103 in the script ABI) and
+  `controller::run_op`, the one entry every adapter calls. `ControllerNumber` and
+  `ControllerText` read `(hit index, field)` of the last move (`grounded`, `flags`,
+  `moved x`, `normal y`, ...; see `controller::read_number`). Scripts get
+  `move_controller`, `simple_move_controller`, `set_controller`, `controller_number`,
+  `controller_text` and `is_grounded` (`READ_CONTROLLER` 55, `TEXT_CONTROLLER` 23).
+  `tests/codegen.rs` holds the VM and
+  compiled halves together against a flat-floor harness.
+- **Inspector**: `CharacterControllerForm.qml` (Add component gives an actor one;
+  `tests/qml/tst_PhysicsInspector.qml`).
+- Tests: `cargo test -p blockloom-core controller`, `cargo test -p blockloom-runtime
+  --lib controller` (headless Rapier worlds in 3D and 2D: floor, step, slope, wall,
+  trigger, overlap recovery, idle then move).
+
+### Character motor and input actions (Phase 5)
+
+A `CharacterMotor` component (`ActorComponent::CharacterMotor`, `physics/motor.rs`,
+`CharacterMotorSpec`) is the reusable gameplay layer over a `CharacterController`: walk,
+sprint and crouch speeds, ground and air acceleration, air control, turn speed, gravity
+scale, terminal speed, ground snap, steep-slope sliding, jump height, max jumps, jump
+cut, coyote time, jump buffer, crouch height and knockback drag. `owner` says who steers
+it (`Player` reads the project's actions, `Script` is blocks and scripts, `Ai` is for
+brains), `space` what a direction is measured against (`World`, `Actor`, `Camera`), and
+`player` which local player's actions drive it. `validate` and the `set_character_motor`
+edit refuse a motor without a controller, a second motor, or bad numbers.
+
+- **Split**: `MotorState::plan` is pure (intent and environment in, displacement and
+  events out) and `settle` takes the move's hits back (landing, head hits, slope,
+  sliding, support). `motor::drive` is the glue that calls the controller service
+  (`probe_move` for crouch headroom, `move_call(Move)` for the displacement, a second
+  call for ground snap). It lives in core so the runtime stays thin.
+- **Runtime** (`blockloom-runtime/src/motor.rs`): `latch_player_input` (Update, after
+  `publish_sensors`) copies the Move/Jump/Sprint/Crouch actions (`Move P2` for the
+  second player) into the intent of every player-owned motor; `drive_motors` runs first
+  in the fixed chain, before `controller::apply_motion`, with the camera's yaw, the
+  actor's facing, platform carry (the support actor's movement since last tick, ignored
+  past 5 m as a teleport) and turning towards the move at `turn_speed`.
+- **Blocks**: `MotorAct` (steer, jump, let go of jump, sprint/crouch on and off, push,
+  stop) and `SetMotor` ride the controller op channel (`"motor <op>"` through
+  `controller::run_op`, so no ABI change); `MotorNumber`/`MotorText` read the motor
+  (`grounded`, `speed`, `jumps left`, `jumped`, `landed`, ...). Scripts get
+  `motor_steer`, `motor_jump`, `motor_sprint`, `motor_crouch`, `motor_push`,
+  `motor_stop`, `set_motor`, `motor_number` and `motor_text`. Events are exposed as
+  one-tick reporter flags (`jumped`, `landed`, `left ground`, `hit head`); there is no
+  `when I land` hat yet.
+- **Input** (`input.rs`): actions have a `kind` (Button, Axis, Vector2), a four-key
+  `composite`, `processors` (dead zone, scale, invert, normalize), a `map` that can be
+  switched off with `set_map_enabled`, and a `player`. `InputBinding::MouseDelta` binds
+  look. `InputConfig::add_player_actions` adds the standard Gameplay map (Move, Look,
+  Jump, Sprint, Crouch, Interact) and `player_copy` makes per-player copies. The
+  runtime publishes each pad on its own, so a second player reads only their pad.
+- **Inspector**: `CharacterMotorForm.qml`. Shell: `set-character-motor`,
+  `remove-character-motor`.
+- Tests: `cargo test -p blockloom-core motor input`, `cargo test -p blockloom-runtime
+  --lib controller_tests_2d` (a headless 2D motor walking, braking and jumping).
+
+### Player camera, presets and profiles (Phase 6)
+
+`blockloom-core/src/player_camera.rs` is `PlayerCameraSpec`, the
+`ActorComponent::PlayerCamera` that *configures* the actor's existing `Camera`
+(it never adds one): look sensitivity and stick speed, invert Y, pitch limits,
+`turn_body`, smoothing, wall avoidance (`collision`, radius, `min_distance`),
+scroll zoom, a 2D dead zone and look-ahead, and `eye_follows_stance`. The maths
+(`look_turn`, `clamp_pitch`, `clear_distance`, `follow_2d`, `lead`) is pure and
+tested in core. The generic `add_actor_component`/`set_actor_component` path
+carries it and refuses a bad setting by field name (`check_player_camera`).
+
+`blockloom-runtime/src/player_camera.rs` installs it inside `world::drive_camera`.
+The stored `rig.pitch` is the look state, so `set camera pitch` blocks and look
+input share it; yaw lives in `RigState`. Mouse look applies only while
+`mouse_locked`; sticks use the "rightstickx/y" axes (0.1 dead zone). Third-person
+pitch is elevation. Wall avoidance is a swept ball `QueryRequest::Cast` from the
+pivot that skips the target and triggers. `BodyFacing` (actor to yaw) is how a
+first-person `turn_body` camera hands its yaw to `motor::drive_motors`.
+`Engine.look_lock_offered`: `apply_cursor_lock` takes the pointer once per run
+when a `PlayerCamera` with look sits beside a `Camera`.
+
+`blockloom-core/src/physics/presets.rs` is `PlayerPreset` (first person, third
+person, top down 3D, platformer 2D, top down 2D). `Scene::preview_player_preset`
+lists what applying would add, replace, keep, remove or convert;
+`apply_player_preset` installs a visual, controller, motor, camera, player camera
+and the input actions in one undo step. A dynamic Rigidbody or legacy Body is a
+conflict that needs `convert`, and a refused apply leaves no trace.
+`PlayerProfile` (version 1) captures a finished setup as
+`assets/profiles/<name>.profile.json` and applies it to another actor.
+
+Commands (dispatch, shell and MCP): `preview-player-preset`,
+`apply-player-preset`, `save-player-profile`, `list-player-profiles`,
+`apply-player-profile`, `import-player-profile`. QML: `PlayerSetupCard.qml`
+(under the Name row: preset, preview, convert, profiles), `PlayerCameraForm.qml`
+(the component card, "PlayerCamera" in Add component). Tests:
+`tst_PhysicsInspector.qml`.
+
+Open: no collision gizmos in the scene view, profile instance overrides and
+reset-to-profile, QML not run here (no Qt), GPU paths not run.
+
+### Constraints and integration (Phase 7)
+
+`blockloom-core/src/physics/joints.rs` is `ConstraintSpec`, the repeatable
+`ActorComponent::Constraint` (addressed by `ConstraintId`; the old single
+`Joint` component is untouched). Kinds: Fixed, Hinge, Ball (3D), Slider,
+Spring, Distance, Wheel, Configurable. An empty `target` anchors to the world.
+Both ends need Rigidbodies. Lengths are document units (2D pixels), angles
+degrees. With `auto_configure` the other end's frame is worked out from where
+the actors stand, so Play starts with no snap. `blueprint()` is the backend
+neutral recipe (locked axes, limits in radians, motors, `coupled_linear`), and
+`plan_constraints` validates and resolves frames into `PhysicsPlan.constraints`.
+Break force/torque thresholds snap the joint and may broadcast `break_message`.
+
+`blockloom-runtime/src/constraints.rs` maps the recipe onto Rapier's
+`GenericJoint`, one child entity per constraint (an `ImpulseJoint` is one per
+entity). `drive` runs after `PhysicsSet::Writeback`: queued commands, rebuild on
+motor/spring change, break detection off `ImpulseJointImpulses`, and status
+(`position`, `speed`, `force`, `torque`) published for reporters.
+
+Blocks/scripts use the op channel, so `ABI_VERSION` and `LOGIC_ABI_VERSION` are
+unchanged: `JointAct` lowers to `Action::Controller` op `joint <verb>|<name>`
+(`controller::run_op` routes the "joint " prefix) and `JointNumber` is an
+ExtOperator over `joints::read_number`. A name is the constraint's `name` or its
+1-based place. Scripts: `Actor::joint`, `joint_number`. Commands (dispatch,
+shell, MCP): `add-constraint`, `set-constraint`, `remove-constraint`,
+`list-constraints`. QML: `ConstraintForm.qml`, "Constraint" in Add component.
+
+Integration: a buoyant body is sized by its colliders (`water/buoy.rs`
+`collider_extents`), falling back to its Look, so it needs no Look. Fracture
+shards keep the source collider's `CollisionGroups`, `SolverGroups`, friction and
+restitution and share its body mass (`destruction.rs` `Sources`). A clone made
+mid-run gets its Rigidbody, colliders and constraints through
+`physics_install::install_actor` (fresh ids from `Actor::refresh_physics_ids`,
+constraints appended with `constraints::install_more`); its mesh colliders and
+CharacterController/Motor are not installed.
+
+Physics Debug: `SceneView.physics` (`PhysicsDebug`: shapes, aabbs, contacts,
+joints, axes; `PROTOCOL_VERSION` 30) switches Rapier's own debug renderer
+(`physics_debug::sync`), off by default. The profiler gets
+`physics/{bodies,active_bodies,sleeping_bodies,colliders,joints,step_ms}`.
+The scene view has a box button that opens the panel (`PreviewPanel.qml`).
+
+Open: no joint gizmo editing, no ragdoll handoff from animation, AI/navigation
+still drives its own movement rather than the motor, collision streaming is not
+separate from visual LOD, no single-step or fixture replay, no pair/contact
+counts in the profiler, QML and GPU paths not run here.
+
+### Upgrade, samples and shipping (Phase 8)
+
+Docs: `docs/physics.md` (creator guide), `docs/physics-api-coverage.md` (what
+each surface does and what is open), `docs/physics-compatibility-ledger.md`.
+
+Upgrading legacy `Body` actors: `physics-migration-preview [actorId]` previews
+across every scene; `migrate-physics [actorId]` converts them (`Scene::migrate_physics`
+or `migrate_actor_physics`) as one undo step and copies `project.blockloom` to
+`.blockloom/backups/` first. A call with nothing to convert files no undo step
+and no backup. QML: `PhysicsUpgradeCard.qml` at the top of the Body card.
+
+Samples: `blockloom_core::physics::sample::build` (`physics-playground`: player
+preset, crates, rope pendulum, motor wheel, 3D door, snapping weld, trigger zone,
+all components). `create-project ... sample=physics-playground` and the New
+Project dialog's "Start from" use it. Tests: core (plans clean in both
+dimensions, pack round trip), app (opens runnable), runtime (plays 240 ticks).
+
+Packs carry the whole `Project`, so physics settings, components, constraints
+and cooked collision data ship in `game.pack` with no extra format.
 
 ### Type registry
 
@@ -590,8 +1062,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   U+001F), started by `fire("Plugin", actor, detail, "")` - with an actor only
   that actor's strand, without one every copy's - and matched as the VM does
   (`plugin_hat_matches`). `tests/codegen.rs` holds statement, reporter and hat
-  against the VM line for line, and `LOGIC_ABI_VERSION` is 34. A script
-  reaches the same three through the script ABI (`ABI_VERSION` 36):
+  against the VM line for line. A script
+  reaches the same three through the script ABI:
   `Actor::plugin_call(plugin, block, &[PluginArg])` is `ACT_PLUGIN_CALL`
   (`c` = slots as JSON), `plugin_number`/`plugin_text` are `READ_PLUGIN`/
   `TEXT_PLUGIN` (`a` = plugin, `b` = block, U+001F, slots as JSON; answered by
@@ -692,14 +1164,16 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   carries them out: one entity per (plugin, name) with `Mesh3d`, a standard
   material shared by roughness and emission (vertex colors multiply the base),
   and a fixed trimesh collider when `collider` is set. A same-named mesh
-  replaces the old entity, and `plugins::end` queues `Clear`. These are not
+  replaces the old entity. `mesh_visibility` changes drawing and retains the
+  collider, including on replacement; `plugins::end` queues `Clear`. These are not
   actors: no batching, LOD or occlusion, and nothing else reads them yet.
 - **Voxel plugin** (`plugins/voxel`, `com.blockworked.voxel`, phase 3's first
   slice): a finite world of cubes, SDK-built so one source is a native library
   and the portable module (`just voxel-plugin` seals the wasm). Its `world`
   resource (preset `island|caves|flat|empty`, seed, size, voxel size, origin,
   solid, palette colors/emission) is read at `world.start`; `grid.rs` holds
-  16-cell chunks of `u8` material ids (air chunks unallocated, a boundary edit
+  32-cell sections of `u8` material ids with exact logical bounds and full-height
+  32 by 32 columns (air sections unallocated, a boundary edit
   dirties the neighbour), `terrain.rs` generates from hashes of each cell's own
   coordinates (the same seed always gives the same cells, trees and ore
   included), `mesher.rs` is the greedy cube mesher (visible faces only, faces
@@ -713,10 +1187,57 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   edit along one); edits last for the run. The package schema declares the
   resource, commands and nine blocks (a material is a dropdown of the built-in names; ids work
   too). Measured: the default 64x32x64 island is drawn from the wasm module in
-  under a second, inside its 10 s call budget. Not yet: smooth terrain,
-  streaming and LOD, instancing, GPU meshing, fracture. Its manifest asks for `editor.preview`,
-  so the scene view shows the generated world without Play (edits made by
-  blocks still last only for a run). Saved edits are the `world` resource's
+  under a second, inside its 10 s call budget. `surface=smooth` selects the
+  CPU density mesher (`smooth.rs`): fixed tetrahedra, shared vertices and
+  central-gradient normals across chunk halos. Signed density overrides in
+  `grid.rs` are quantized to 1/256 cell; sphere brushes union or carve them,
+  saved sphere lines replay them, and rays intersect the same triangles as
+  collision (including actual shaped faces). Cube mode remains the default.
+  Runtime edits can persist through `save_voxels` or `persistent: true`, using
+  player storage and versioned compressed checkpoints. `streamed: true` uses
+  bounded section residency around invoker components or `stream_voxels`, with
+  horizontal column radius, vertical radius and a dense-cell byte budget; canonical
+  queries and sparse edits survive eviction. `gpu_meshing: true` adds GPU vertex
+  generation with CPU collision and fallback meshes. `fracture_voxels` detaches
+  unsupported six-connected regions into editable convex bodies, retaining cells
+  when fragment budgets are exhausted. See the voxel milestone in
+  `docs/plugin-adr-0001.md` for settings, limits and validation. Render jobs stay
+  in bounded 16-cell tiles; checkpoint v2 migrates v1 pages by cell coordinate.
+  `lod.rs` caches derived samples at levels 1 through 4, bounded to 8192 records,
+  with shape occupancy proxies, averaged smooth densities and edit invalidation
+  along the ancestor chain. `voxel_lod_sample` inspects them in level lattice
+  coordinates. `lod_mesh.rs` builds cube/smooth coarse CPU previews in 8-sample
+  tiles, with two-sample halos, edit dependencies, a 65536-base-visit poll budget
+  and four cached jobs. `voxel_lod_mesh` polls them until ready; these mesh data
+  have no collision and do not replace full-detail renderer meshes yet.
+  `voxel_lod_select` previews bounded perspective tile selection with frustum
+  and distance checks and split/merge hysteresis. Camera inputs are explicit;
+  selection does not publish meshes or change gameplay residency. Optional
+  `visual_lod` uses presentation camera snapshots to stage a complete visual cut
+  before replacing the previous one. Fine meshes are hidden through
+  `mesh_visibility`, retaining their colliders; distant visuals have no collider.
+  Pending cuts have a 2 MiB geometry budget and advance one tile job per frame.
+  Edits invalidate intersecting halos, retaining unrelated tiles and jobs;
+  generation changes restart jobs. `lod_seam.rs` clips visual tiles and emits
+  planar solid-difference joins for mixed cube/shape/smooth resolutions, keeping
+  boundary caps within the cut budget. Seam clipping advances one tile per frame.
+  Renderer GPU mesh copies wait for a visible entity or instance, retaining hidden
+  fine buffers and colliders. Ready copies use FIFO order under 64-mesh/10-MiB
+  per-frame limits; CPU fallback remains until a whole-mesh copy completes.
+  GPU cubes and rectangular cube LOD seams draw persistent eight-byte records
+  through `plugin_quads.rs` (PBR/depth/shadow/motion/deferred), retaining only four
+  vertex IDs and six indices per quad. Byte coordinates cover 128-cell LOD tiles;
+  fractional/nonrectangular geometry keeps the CPU path. Smooth GPU meshes retain
+  prefix sums and packed triangle spans; interpolation stays on the GPU.
+  Visual cuts use 150 ms complementary dither crossfades, retaining one old cut.
+  `plugin_lod.rs` traverses at most 2048 GPU-backed instances against the depth
+  pyramid, requesting up to 512 deduplicated triangle uploads with two asynchronous
+  readbacks. Stale/unsupported/overflow feedback falls back to CPU visibility.
+  This does not select voxel tiles or request missing mesh jobs. Interpolated density
+  seam collars and GPU voxel job requests remain unfinished. Run GPU tests serially.
+  See `docs/voxel-lod-research.md` for the LOD implementation stages.
+  Its manifest asks for `editor.preview`, `project-storage` and `gpu-compute`;
+  preview does not load or write player saves. Saved edits are the `world` resource's
   `edits` lines (`set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`,
   `sphere X Y Z radius material`), applied in order over the generated terrain
   at `world.start` (a bad line is reported by number and skipped), so the scene
@@ -734,7 +1255,28 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   cells are a few boxes (and a wedge) meshed on their own from `Shape::faces`,
   with faces on a cell's edge hidden by a whole-cube neighbour, `shape` is the op, `shape_voxel` the command and block
   (ten blocks now), `shape X Y Z name` a saved edit line (`stair west`, `ramp north`). Writing a cube or air
-  takes a shape away; rays still treat a shaped cell as the whole cell.
+  takes a shape away; cube-world rays treat a shaped cell as the whole cell,
+  while smooth-world rays intersect its actual faces.
+  The `infinite` preset (0.3.x) streams edgeless terrain: editable `noise`
+  layers shape the land, `biomes` lines carve temperature/humidity rectangles
+  with their own surface and hills, and `features` lines spawn ponds, trees
+  and rocks, all canonical per cell so paging never changes the world.
+  `render_distance` (default 256 blocks, steps of 32) drives the streamed
+  radius, `distant_chunks` (default 128) drives the LOD reach, `pregen_distant`
+  warms far tiles in budgeted slices. `pages_per_tick` limits nearest-first
+  page work per call; portable infinite cube worlds process at most one
+  8-cell mesh tile, skipping empty tiles.
+  `chunk_workers` does not launch concurrent workers yet. Terrain features are
+  computed per column with a bounded 4096-column derived cache. Checkpoint
+  loads reattach the generator configuration before sampling unloaded cells.
+  The `blocks` list is the block registry: one JSON object per line
+  (`assets/blocks/*.json` import into it) with id, color, textures and model
+  (cube, shape or inline mesh with optional uvs); the cube mesher groups faces
+  by material and per-face texture (`top`, `bottom`, `side`, `all`) with planar
+  uvs, `MeshData` carries uvs plus a texture path the
+  runtime loads once and shares, and registry names resolve everywhere a
+  material does. Smooth terrain, coarse LOD, GPU meshing and fracture debris
+  stay vertex-colored.
 - **Importers and build hooks** (`blockloom-plugin-api/src/assets.rs`,
   `blockloom-plugin-host/src/imports.rs`): a package's schema may list
   `importers` (name, extensions, `limit_ms`) and `build` hooks (name,
@@ -1203,6 +1745,96 @@ reduced to a max-depth pyramid. Bevy's GPU `OcclusionCulling` and GPU frustum
 culling (`NoCpuCulling`) are camera toggles in `OcclusionPolicy`. Counts reach
 the profiler as `culling/*`.
 
+### Quality and scaling
+
+`blockloom-core/src/quality.rs` owns saved settings, preset budgets and frame-time
+feedback. `blockloom-runtime/src/quality.rs` applies run-only overrides, LOD and
+render-target scaling, and publishes `quality/*` and `budget/*` profiler rows.
+Geometry pressure drops density/distance without reducing pixel rate; frame-time
+pressure lowers resolution to its floor first. Draw counts estimate mesh and
+material groups in the active world camera's visible list, excluding shadow/post
+passes and 2D sprites. Rebuilds clear the previous world's sampled costs.
+Terrain, vegetation, VFX and debris have independent sustained auto-drop
+multipliers for LOD distance, grass density and transient pool capacity. They
+reach a local floor before geometry asks for a shared preset drop. These run-only
+reductions reset on setting changes or rebuilds. The profiler reports terrain
+and vegetation under `budget/<system>/distance_scale`, VFX and debris under
+`budget/<system>/density_scale`. Fractured child meshes count toward debris.
+Water has its own sustained tessellation throttle, reported as
+`budget/water/tessellation_scale`. Preset density and the local multiplier thin
+lake/river grids and ocean rings while keeping their full extent. Water floors
+count toward water costs and keep their meshes when only tessellation changes.
+Props have a local LOD-distance throttle too (`budget/props/distance_scale`),
+applied to every prop level. Spheres and capsules swap to coarser meshes and
+then leave the view far out; cuboids and planes carry a
+cull-only level, so visible ones still merge into batches while culled ones
+stay out of merges entirely. Model placeholders carry a cull-only level:
+`model::sync_model_lod` keeps visible meshes intact and hides the `ModelChild`
+subtree when culled, shedding the scene's draws. If props stay over budget at the local
+floor, shared preset feedback takes over. Draw groups serving more than one
+visible mesh count as `quality/instanced_draws`, with the absorbed meshes in
+`quality/batched_instances`. The render world also counts what batching
+actually issued (`indirect.rs`): the world cameras' binned opaque, mask,
+deferred and transparent phases after batching, as `indirect/api_draws`,
+`commands`, `instances`, `multidraw_sets` and `transparent_draws` with a
+`gpu` flag saying the renderer has counted, plus per-system
+`indirect/draws/<system>` membership from the CPU's grouping, since bins
+don't know which system a mesh belongs to. Before the first render count
+the totals mirror that grouping instead. Texture streaming maps the preset onto surface
+samplers (a lod clamp plus an anisotropy cap, re-applied on quality change),
+laid over per-texture distance steps (`Quality::distance_mip_steps`, tracked
+from each variant's nearest material user in `materials::track_texture_distances`):
+far walls stream coarser while near ones stay sharp. Baked data textures
+(cloud noise volumes, grading LUTs, lens dirt) never register as variants.
+Grading LUTs share one depth-stacked 3D atlas (`post::LutAtlas`, paged in the
+finish shader; a new grid size rebuilds it), and authored cloud noise shares
+one stacked 3D atlas too (`clouds::noise_atlas_texture` over
+`pipeline::pack_volume_atlas` sizes): shape under detail in one image, paged
+in the march shader through `noise_shape`/`noise_detail`, so the march and
+the shadow pass bind once instead of once per volume. Baked pages render
+into scratch textures and copy into their slab once.
+
+The main-world camera stays at native size for input. Extracted world-view targets
+scale before rendering and Bevy's spatial blit fills the output. Custom sub-viewports
+stay native. TAA is 3D only. A DLSS ask runs Bevy's `dlss` path in a build made
+with `--features dlss` (`just player-dlss`): `just dlss-sdk` fetches the pinned
+SDK once per clone (sparse, about 330MB under gitignored `third-party/dlss`;
+cloning it accepts NVIDIA's license), the justfile exports `DLSS_SDK`, and a
+Vulkan SDK plus clang complete the build (`VULKAN_SDK`, default `/usr` on
+Linux). The `Dlss` component carries the effective perf mode on perspective
+HDR world cameras - plain super resolution, or the ray-reconstruction
+variant while Hybrid Solari lights the view - and drives its own render resolution while the spatial
+`scale_views` stands down. Manual modes step down with the dynamic-resolution
+signal; `Auto` (the default) leaves the ratio to the SDK. Otherwise - no SDK
+build, no RTX, no Vulkan,
+missing DLLs, 2D, or web - it rides TAA plus spatial in 3D and
+spatial in 2D and on web. The probe reads `DlssSuperResolutionSupported` where
+the feature exists and the adapter elsewhere, reports through the same
+`dlss_available` flag the reporters read, and says why once in the run log
+when a run asks for it. The redistributable (`nvngx_dlss` / `libnvidia-ngx-dlss`
+plus the `dlssd` twin and a license blurb) stages beside the player payload and
+ships beside each built game; without it the game falls back to TAA. With scene scaling,
+a separate unlit UI camera composites at native resolution after the scene blit,
+using premultiplied alpha and no world render layers. It follows the world output
+and owns `IsDefaultUiCamera` while active. Under HDR the world's tone curve stays
+on the scaled scene while the encode moves onto the UI camera, so the HUD is
+encoded at paper white at full resolution instead of blending in linear light.
+Script rendering overrides end on a world rebuild.
+
+`ssr.rs` traces only specular light into the shared half-size scratch target,
+then adds it to the scene with the depth-guided upsampler. Bevy still supplies
+SSR uniforms and view layouts; `pbr_patch` makes its shader emit just the light
+under `BLOCKLOOM_HALF_SSR`. Unpatched shaders, compiling pipelines and custom
+viewports keep Bevy's full-size pass. The trace timing is `ssr_half`.
+
+`CellTasks` bounds concurrent work per payload type and admits nearest cells first.
+Global HDRI/noise jobs use `GLOBAL_CELL`, remain part of warmup accounting across
+cell resets, and cancel when their content key changes. HDRI quality caps discard
+highest-resolution baked mips before GPU upload, retaining BC6H where supported.
+The preset caps authored volumetric quality too: fog grids step down to the
+preset's grid and cloud march steps step down to its `CloudQuality`
+(`clouds::capped_quality`), so a Low world never marches Ultra steps.
+
 ### GPU measurement
 
 `blockloom-runtime/src/gpu.rs`. Bevy's `RenderDiagnosticsPlugin` times each
@@ -1509,7 +2141,7 @@ resulting `WindField`: particles ease into `field.at(position)` scaled by
 their emitter's `wind`, the fog's noise scrolls by `field.drift`, and the
 cloud passes are meant to take `field.clouds`. `set wind [dial] to` and
 `set cloud drift to` (and a script's `set_wind`/`set_cloud_drift`) land in
-`engine.wind` for the run.
+`wind::WindRun` for the run.
 
 ### Water
 
@@ -1624,7 +2256,8 @@ the render-world half: pool bytes land through
 `VfxFrame` uploads, and the compute pass runs once a frame in `Core3d`
 between the prepass and the main pass. GPU counts come back through a
 `Readback` of the state buffer, tagged with a step sequence so each set is
-used once; each event kind carries where its last one happened, and
+used once and tied to its pool's reader so resizing cannot reuse old counts;
+each event kind carries where its last one happened, and
 `ParticleSenses` hands counts and positions to `publish_sensors` for the
 particle reporters and a script's `particles()`. Overdraw is counted, not
 estimated: every particle fragment adds to one `OverdrawMeter` counter,
@@ -1639,6 +2272,28 @@ droplets and trails. Counts reach the profiler as `vfx/*`. The emitter is a modu
 (spawn, initialize, update, output), not a node graph. The GPU half is the
 ignored `embed` tests: GPU and CPU particles draw, a GPU spark lands on a
 hidden body, ribbons draw without heads, and the overdraw meter counts.
+
+### Decals
+
+`blockloom-core/src/decals.rs` owns transient marks: a 256-entry LRU pool,
+lifetimes and radius fades, plus four matching atlas pages for blood,
+footprints and fresh scorch. `SpawnDecal` takes a position, outward normal,
+size, lifetime and final fade; `FadeDecals` fades centres within a sphere.
+Both run through the VM and compiled logic. Marks are never saved.
+
+`blockloom-runtime/src/decals.rs` projects the atlas with Bevy's clustered
+decals. `pbr_patch` appends `shaders/decals.wesl` to Bevy's decal module:
+the tag packs atlas cell and opacity, and the shader fades by surface angle
+and projector depth before blending albedo, normal, roughness and emission.
+Standard, instanced, box-projected and terrain PBR surfaces receive them.
+`decals_deferred.rs` applies the same shader to the G-buffer between prepass
+and lighting, using a scratch target to avoid reading an attachment being
+written. This also feeds Solari and the traced game lighting. The pool
+touches visible projectors, pauses with the run and clears before rebuilds.
+Profiler counts are `decals/active`, `decals/budget` and `decals/stolen`.
+This path needs native texture binding arrays and reports an error once on
+unsupported renderers, including WebGPU. Unlit graph surfaces and the
+reference path tracer do not receive decals.
 
 ### Lighting rig
 
@@ -2357,6 +3012,27 @@ listener's blend for its bus. A WAV impulse response (project or zone) swaps the
 chain, which is at the tuple limit) rays positional voices to the listener
 through `QueryAccess` against static scenery only.
 
+### Cinematics
+
+A cutscene is a named reel on the `World` (`blockloom-core/src/cinematic.rs`,
+a `Cutscenes` scene component): shots of a camera actor, an FOV and a
+length, each with an optional dolly path of look-at/roll/FOV keys eased
+between, plus signal, slow-motion and volume-weight keys.
+`blockloom-runtime/src/cinematic.rs` plays it on the real clock ahead of the
+sensor publish, so it runs through `pause game` like UI strands do. Shots
+drive the world camera after the rig and the room confine; signals fire
+`when cutscene signal` strands; slow-motion keys scale the virtual clock
+the fixed clock follows, so blocks and physics keep their tick; volume keys
+borrow weights and restore them at the end; `skip cutscene` fires the
+remaining signals before `when cutscene ends`. Trauma shakes the camera on
+seeded gradient noise and decays; letterbox bars (z 45) and a black/white
+fade wash (z 47) ease in over the interface but under the scene veil.
+Blocks are `play cutscene`, `skip cutscene`, `shake camera by`,
+`set time scale to`, `hitstop`, `set letterbox to` and `fade screen to`,
+with `is cutscene playing?` and `cutscene time` reporters. Reels are
+authored as JSON through `set-scene-component`; there is no visual
+timeline editor.
+
 ### Building a game
 
 Build is not Export. Export writes a `.blockloom` file for somebody else's
@@ -2418,7 +3094,8 @@ machine's there (the `dist` profile - fat LTO, one codegen unit, stripped -
 while `just build` keeps the release profile's quicker link for the edit-run
 loop), and `just stage-player <triple> <file>` takes one built elsewhere. The
 machine doing the building always has one, since the runtime the editor plays
-with is a player. Scripts are native too, so a project with one can only be
+with is a player. Host exports use the newer of the staged player and that
+runtime, so a stale staged copy cannot undo a recent editor/runtime fix. Scripts are native too, so a project with one can only be
 built for a platform this machine's rustc can compile for; `script::compile_for`
 cross-builds them into `.blockloom/build/<triple>/`, leaving Play's own build
 where the runtime has always looked for it. `build::targets` answers both
@@ -2547,9 +3224,12 @@ and for the same reason - `delete` and `create a clone of` name an actor the
 way every block does, and both have to be answerable before the host has done
 anything about them. So the program mints the id, copies the scheduling and
 queues the copy's `when I start as a clone` strands for the top of the next
-tick, and the host is left with the entity. `NAMES` lists every actor the
-document has, blocks or none, because an empty canvas still answers to its
-name. A clone or a deletion from outside the program - a script's - comes in
+tick, and the host is left with the entity. Each scene gets its own names
+and entries tables (`NAMES_n`/`ENTRIES_n`) under one `SCENES` index, because
+an empty canvas still answers to its name. The runner runs the active
+table and `load_scene` swaps it the way `Vm::load_scene` does, so a
+compiled game switches scenes without falling back to the VM. A clone or a
+deletion from outside the program - a script's - comes in
 through `fire` as a `Cloned`, `Created` or `Deleted` kind instead.
 
 What it won't compile is a custom block that can reach itself through
@@ -2714,6 +3394,87 @@ each expanded instance folded back into a reference when lowering the fold
 gives the same widgets, and the screen's inputs kept. A file edit is not a
 document change, so it has no undo step yet.
 
+### Interface editor
+
+Plan and progress: `docs/interface-editor-plan.md`. The Interface workspace
+(`UiDesigner.qml`) draws no layout of its own: `preview_interface` runs the
+document through the player's retained widget renderer in an idle design
+session and the reply carries each widget's computed transform, size, clips,
+visibility and paint order, tagged with a document revision and viewport
+generation. QML picks and draws handles from that geometry only.
+
+Edits are `blockloom_core::ui_framework::UiEdit` (`apply_edit` validates and
+swaps atomically): `Move`, `Resize`, `SetProperty` (canonical paths),
+`Reparent` (free or flow), `Reorder`, `Create`, `Delete` and `Duplicate`. A
+gesture is `begin_interface_edit` -> `update_interface_edit` (replaces the
+draft, never saves) -> `commit_interface_edit` (one undo step) or
+`cancel_interface_edit`; the same commands serve shell and MCP. `Create`
+appends a widget (a Canvas parent forces it free, any other parent flow),
+`Delete` removes the subtree and clears `scroll_target`s into it, `Duplicate`
+copies the subtree after the original as `new_id` and `new_id.<old id>`,
+remapping parents and `scroll_target`s inside the copy only. Blocks and
+scripts that name the original ids are not rewritten. `set_interface` stays
+the whole-document import path. The hierarchy is a tree built in QML from sibling order (`treeRows`) with search and fold state; Lock (`lockedIds`) is editor-only and never saved. `UiDocument.version` (`UI_SCHEMA_VERSION`) is stamped by `migrate()` on load and in `set_interface`; a newer document is refused by `validate`, not rewritten. Editor hide travels as `InterfaceDesign.hidden` and only affects the design preview. `Batch` applies several edits atomically; `property_metadata()` (`interface-properties`) is the table of `SetProperty` paths and is kept in step with `UiPropertyEdit` by a test. Selection is `selectedId` plus `extraIds` in QML (Shift-click, marquee) and Delete/Duplicate send one `Batch`. Group drag, Align and Space H/V (`arrange`) compute in QML from runtime geometry and send a `Batch` of `Move`s. Content and style fields (`style`, `class`, `bindings`, `items`, `tooltip`, `scroll_target`, `tab_index`, `transition`, `element.range`) plus `SetDocument` and `SetClass` are typed too, so `set_interface` is only the import path. Committing with a design session open sends no `Load`. A new edit shape needs the `update-interface-edit`
+summary in `shell.rs` and a case in `tst_InterfaceViewport.qml`'s mock backend.
+
+The designer loads `interface_properties` on start and `applies(path)` hides inspector rows that do not suit the selected widget kind (Modal, scroll target, Items).
+
+The workspace is split by view, all driven by the `designer` root in `UiDesigner.qml` (selection, gestures, snapping, typed edit helpers): `UiPalette` (grouped, searchable kinds), `UiHierarchy` (tree, hide/lock, arrow keys), `UiToolbar` (a wrapping `Flow`), `UiViewport` (frame, rulers, overlay, handles; its colours are named tokens), `UiInspector` (foldable `UiSection`s, a document panel when nothing is selected, one "Advanced (JSON)" property) and `UiTimeline`. New files are listed in `build.rs`. Side panels have min/max widths and drag handles so the designer fits 1100x700 (`test_panels_fit_a_small_window`). Fold state and the preview size persist in QML `Settings` when the app has an identity. Every inspector write is a typed `SetProperty`/structural edit (`world_actor` is typed too); `set_interface` is import only. An edit attempted during a gesture reports through `error` rather than being dropped. `interface-overrides` (`interface_overrides`) lists what a component instance changed, `ResetField` puts one of those fields back, and `Rename` changes a widget id (parents, scroll targets and animation tracks follow). `update-interface-edit` takes `patch=true` and then answers with `UiPatch` (`document` without widgets, `order`, changed `widgets`); the designer applies it with `applyUpdate`. Move, resize, snap, align and reparent arithmetic is in `UiEditMath.qml`, a plain object over `InterfaceGeometry.qml` (tested in `tst_InterfaceMath.qml`). A transaction holds only the interface document it started from; `UiDocument::with_edit` is one clone and one validate, `validate` walks each parent chain once, and `scale_tests::timings` prints the 1,000 and 10,000 widget cost. `ui_framework.rs` keeps the model and `ui_framework/` holds `animation`, `edit`, `prefabs`, `rich_text` and the tests; everything still re-exports through `ui::`.
+
+Components: `UiEdit::SavePrefab/InstantiatePrefab/DeletePrefab/DetachInstance` over `UiDocument.prefabs`; an instance root has `instance_of`, updating rebuilds instances but keeps widgets changed from the old source, and a missing prefab fails validation. Image widgets take `UiPaint.image_fit` (`Stretch`, `Sliced{border}`, `Tiled`), applied in `overlay.rs::image_node`.
+
+### Interface effects and animation preview
+
+`UiFx` (opacity, offset, rotation) is visual state laid over an element after
+layout: `UiWidget.fx` holds the authored start (typed edit path `fx`), and the
+`Opacity`/`OffsetX`/`OffsetY`/`Rotation` `UiProp`s write it at run time and are
+animatable tracks. It composes with the anchor without touching its
+`UiTransform` translation: offset adds to the margin (anchored), insets
+(absolute) or relative insets (flow child) in `layout_node`, rotation sets the
+same transform's rotation (`overlay::apply_fx_rotation`), and opacity
+multiplies down the tree (`UiManager::opacity_of`) into background, border,
+shadow, image and text colours. Not faded yet: slider tracks and fills.
+`InterfaceDesign.world` (default true, `PROTOCOL_VERSION` 38; the toolbar's "World behind") false hides every actor for the preview only (`ui_design::hide_world`). `InterfaceDesign.animation` (`{name, time}`, `PROTOCOL_VERSION` 37) freezes a
+document animation at a time in the design session through
+`UiManager::sample_animation`; the editor's timeline Preview/scrub uses it and
+pauses editing while it is on. Nothing is saved.
+
+### Android devices and the emulator
+
+The Devices tab (`DevicesPanel.qml`, `DevicePanel.qml`) lists what adb sees,
+boots emulators and shows a device's screen. `blockloom-core/src/android.rs`
+holds the adb/AVD plumbing and `android_tuning.rs` what makes a boot fast.
+
+An embedded emulator boot is `-no-window`, and `-gpu auto` falls back to
+software drawing once the window is hidden, so `android::start_emulator`
+always passes `-gpu host` (`BLOCKLOOM_EMULATOR_GPU` picks another mode from
+`tuning::gpu_mode`'s list), plus `-cores`/`-memory` raised (never lowered)
+from the AVD's own `config.ini`, `-no-metrics`, and `-grpc <port>`. Its output
+goes to `emulator-<avd>.log` in the data dir and the child is tracked, so a
+boot that dies (no hypervisor, a bad GPU mode) shows up as
+`EmulatorState.failure` on the next status read instead of a five minute
+wait. `EmulatorStatus.acceleration` is `emulator -accel-check`'s answer
+(`/dev/kvm` hints on Linux), asked once when good and every 30 s when not.
+The x86_64 image can't be accelerated on an arm64 host; that is reported, not
+worked around.
+
+The screen is a push stream, not polled commands. `blockloom-app/src/screen/`
+is one `Session` per watched device, owned by `AppBridge` (`watchScreen`,
+`screenInput`, `screenJson`) rather than `Backend::dispatch`, so a slow command
+on the backend's single worker never delays a tap. A session picks its
+transport on its own thread: the emulator's gRPC service (`grpc.rs`:
+`streamScreenshot` scaled by the emulator, `sendTouch` for real pointers;
+messages are declared by hand with the field numbers of
+`emulator_controller.proto`) when the editor started that emulator and wrote
+its port (`android::emulator_grpc_port`), else one long-lived `screencap -p`
+loop over a single adb pipe (`stream.rs`, PNGs framed by their `IEND`, the
+newest kept and older dropped). Frames leave as JPEG data URLs
+(`frames.rs`). Touch reaches the device through `Routes`: gRPC once its stream
+is up, else one persistent `adb shell` (`shell.rs`) typing `input motionevent
+DOWN/MOVE/UP` (or tap/swipe where the device lacks it), which also takes keys
+and counts finished commands so moves coalesce instead of queueing. The
+`android_mirror_*` commands stay for the shell and MCP, one grab per call.
+
 ### Frontend (`blockloom-qt/qml/`)
 
 `Start.qml` is the entry point: it adds the Lucide icons blockstitch doesn't
@@ -2778,7 +3539,12 @@ Asset paths are relative to the project folder with forward slashes
 `Project::repoint_asset` follows a renamed or moved file through the document
 so the actor using it doesn't end up pointing at nothing. The listing is not
 part of the state snapshot - a folder changes for reasons the editor never
-hears about - so the tray re-lists after each of its own changes.
+hears about - so the tray re-lists after each of its own changes. Scenes are
+tray files too: one `.blockscene` per scene, made from the tray's New scene
+item, renamed like any other file (the filename is the scene name), and opened
+with a double-click (or the Open scene menu item). Project settings names the
+default scene, which is what a fresh open - and a built game - boots into;
+the actor list's scene box only shows which scene is open.
 
 A project is a folder, not a file: `<name>/project.blockloom` beside an
 `assets/`. The folder sits wherever the New Project dialog was pointed
