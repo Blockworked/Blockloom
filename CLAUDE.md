@@ -1288,7 +1288,7 @@ the atmosphere slot's `exposure` reading reports the resolved value.
 
 `GameSettings.display` is the project's output: SDR, HDR10 (PQ) or scRGB, peak
 brightness and paper white in nits. `hdr::HdrFrame` resolves it, with `set HDR
-output`/`set peak brightness` laid over it for the run, against what the
+output`/`set peak brightness` laid over it for the run (`HdrRun`), against what the
 window's display offers (`DisplayOffers`), and is extracted so both worlds
 switch on the same frame. Only the windowed player can leave SDR:
 `display.rs` makes the window's surface itself in the render world, keeps it
@@ -1695,7 +1695,7 @@ creation crashes in the loader.
 tracing`, `set GI bounces to` and `set GI samples to` (and a script's
 `set_ray_tracing`, `set_gi_bounces` and `set_gi_samples`) override it for the
 run as
-`engine.ray_tracing`/`gi_bounces`/`gi_samples`. `RayTracingState` probes the
+`RayTracingRun`. `RayTracingState` probes the
 device once for `SolariPlugins::required_wgpu_features`; without them the
 raster rig carries on and the editor hears why once. The atmosphere sample
 copies `active`/`available` on the fixed tick, so `is ray tracing on?` and
@@ -2285,7 +2285,8 @@ registers its own resources and systems, keeps run state in its own
 resources and drops it on the `WorldRebuilt` message (written by
 `rebuild_world`), and reads the run through `RunState` (synced from `Engine`
 at the head of every tick and frame) and the document through
-`SceneDocument`. `wind::WindModule` is the first: `WindRun` holds `set wind`,
+`SceneDocument`; `module::forget_on_rebuild::<T>` resets a run-override
+resource on that message (`RayTracingRun`, `HdrRun`). `wind::WindModule` is the first: `WindRun` holds `set wind`,
 and it reads the weather blend through `director::WeatherNow` and volume
 specs through `volumes::LiveVolumes`, both published on the fixed tick
 before it, so it takes no `Engine` at all.

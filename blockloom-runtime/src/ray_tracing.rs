@@ -24,10 +24,11 @@
 use crate::batching::{InstanceSlot, InstanceTable, InstancedMaterial, MergedBatch};
 use crate::bridge;
 use crate::edit::SceneEditor;
-use crate::engine::{Dimension, Engine};
+use crate::engine::{Dimension, SceneDocument};
 use crate::environment::Environment;
 use crate::lights::{ActorLight, Lit};
 use crate::materials::{BoxMaterial, GraphMaterial3d};
+use crate::module::RunState;
 use crate::world::{WorldCamera, WorldLight, parse_color};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::{CameraMainTextureUsages, Hdr};
@@ -67,6 +68,10 @@ const HOOD_WIDEST: f32 = 75.0;
 const PROGRESS_EVERY: f32 = 0.5;
 
 pub fn register(app: &mut App, mode: Mode) {
+    app.init_resource::<RayTracingRun>().add_systems(
+        Update,
+        crate::module::forget_on_rebuild::<RayTracingRun>.after(crate::world::rebuild_world),
+    );
     if mode != Mode::ThreeD {
         app.insert_resource(RayTracingState {
             probed: true,
@@ -181,44 +186,47 @@ struct EmitterKey {
     cone: u16,
 }
 
+/// What `enable ray tracing`, `set GI bounces` and `set GI samples` wrote
+/// this run.
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq)]
+pub struct RayTracingRun {
+    pub enabled: Option<bool>,
+    pub bounces: Option<u32>,
+    pub samples: Option<u32>,
+}
+
 /// What the project and this run ask for.
-fn wanted(engine: &Engine) -> RayTracingSettings {
-    let mut settings = engine
-        .project
-        .world
-        .lighting
-        .ray_tracing
-        .clone()
-        .sanitized();
-    if let Some(enabled) = engine.ray_tracing {
+fn wanted(project: &RayTracingSettings, run: &RayTracingRun) -> RayTracingSettings {
+    let mut settings = project.clone().sanitized();
+    if let Some(enabled) = run.enabled {
         settings.enabled = enabled;
     }
-    if let Some(bounces) = engine.gi_bounces {
+    if let Some(bounces) = run.bounces {
         settings.bounces = bounces;
     }
-    if let Some(samples) = engine.gi_samples {
+    if let Some(samples) = run.samples {
         settings.samples = samples;
     }
     settings.sanitized()
 }
 
-/// `enable ray tracing`, `set GI bounces` and `set GI samples` for the rest
-/// of the run. Cleared with everything else live on a rebuild.
+/// Those blocks, for the rest of the run.
 pub fn apply_ray_tracing_effects(
     effects: Res<crate::engine::PendingEffects>,
-    mut engine: NonSendMut<Engine>,
+    state: Res<RunState>,
+    mut run: ResMut<RayTracingRun>,
 ) {
-    if !engine.running || engine.paused {
+    if !state.running || state.paused {
         return;
     }
     for effect in &effects.0 {
         match effect {
-            Effect::SetRayTracing { enabled } => engine.ray_tracing = Some(*enabled),
+            Effect::SetRayTracing { enabled } => run.enabled = Some(*enabled),
             Effect::SetGiBounces { bounces } if bounces.is_finite() => {
-                engine.gi_bounces = Some(bounces.round().clamp(1.0, 64.0) as u32);
+                run.bounces = Some(bounces.round().clamp(1.0, 64.0) as u32);
             }
             Effect::SetGiSamples { samples } if samples.is_finite() => {
-                engine.gi_samples = Some(samples.round().clamp(1.0, 64.0) as u32);
+                run.samples = Some(samples.round().clamp(1.0, 64.0) as u32);
             }
             _ => {}
         }
@@ -271,7 +279,7 @@ type TraceComponents<'a> = (
 #[allow(clippy::type_complexity)]
 pub fn apply_ray_tracing(
     mut commands: Commands,
-    engine: NonSend<Engine>,
+    (document, run): (Res<SceneDocument>, Res<RayTracingRun>),
     editor: Option<Res<SceneEditor>>,
     dimension: Res<Dimension>,
     device: Option<Res<RenderDevice>>,
@@ -304,7 +312,7 @@ pub fn apply_ray_tracing(
         state.available = why.is_none();
         state.reason = why.unwrap_or_default();
     }
-    let settings = wanted(&engine);
+    let settings = wanted(&document.world.lighting.ray_tracing, &run);
     let path = editor
         .as_ref()
         .is_some_and(|editor| editor.view.path_tracer.enabled);
@@ -1245,7 +1253,6 @@ pub fn report_ray_tracing(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::InsertEngine;
     use bevy::mesh::MeshBuilder;
 
     #[test]
@@ -1348,13 +1355,14 @@ mod tests {
 
     #[test]
     fn the_blocks_override_the_project_for_the_run() {
-        let (_tx, rx) = std::sync::mpsc::channel();
-        let mut engine = Engine::new(rx, Mode::ThreeD);
-        engine.running = true;
         let mut app = App::new();
-        app.insert_engine(engine)
-            .init_resource::<crate::engine::PendingEffects>()
-            .add_systems(Update, apply_ray_tracing_effects);
+        app.insert_resource(RunState {
+            running: true,
+            paused: false,
+        })
+        .init_resource::<RayTracingRun>()
+        .init_resource::<crate::engine::PendingEffects>()
+        .add_systems(Update, apply_ray_tracing_effects);
         app.world_mut()
             .resource_mut::<crate::engine::PendingEffects>()
             .0
@@ -1364,8 +1372,8 @@ mod tests {
                 Effect::SetGiSamples { samples: 2.4 },
             ]);
         app.update();
-        let engine = app.world().non_send::<Engine>();
-        let settings = wanted(engine);
+        let run = app.world().resource::<RayTracingRun>();
+        let settings = wanted(&RayTracingSettings::default(), run);
         assert!(settings.enabled);
         assert_eq!(settings.bounces, RayTracingSettings::MAX_BOUNCES);
         assert_eq!(settings.samples, 2);

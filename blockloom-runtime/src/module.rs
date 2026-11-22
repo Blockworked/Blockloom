@@ -47,6 +47,17 @@ pub struct RunState {
 #[derive(Message, Debug, Clone, Copy, Default)]
 pub struct WorldRebuilt;
 
+/// Puts a module's run overrides back to nothing when the world is rebuilt.
+/// Register it in `Update` after `rebuild_world`.
+pub fn forget_on_rebuild<T: Resource<Mutability = bevy::ecs::component::Mutable> + Default>(
+    mut rebuilt: MessageReader<WorldRebuilt>,
+    mut run: ResMut<T>,
+) {
+    if rebuilt.read().count() > 0 {
+        *run = T::default();
+    }
+}
+
 fn sync_run_state(engine: NonSend<Engine>, mut run: ResMut<RunState>) {
     let now = RunState {
         running: engine.running,
@@ -71,4 +82,25 @@ pub fn register(app: &mut App) {
                 .after(crate::world::pump_editor)
                 .before(crate::world::rebuild_world),
         );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Resource, Default, PartialEq, Debug)]
+    struct Dial(Option<f32>);
+
+    #[test]
+    fn a_rebuild_drops_run_overrides() {
+        let mut app = App::new();
+        app.add_message::<WorldRebuilt>()
+            .insert_resource(Dial(Some(2.0)))
+            .add_systems(Update, forget_on_rebuild::<Dial>);
+        app.update();
+        assert_eq!(app.world().resource::<Dial>(), &Dial(Some(2.0)));
+        app.world_mut().write_message(WorldRebuilt);
+        app.update();
+        assert_eq!(app.world().resource::<Dial>(), &Dial(None));
+    }
 }

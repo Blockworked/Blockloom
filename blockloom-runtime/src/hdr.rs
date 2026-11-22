@@ -10,7 +10,7 @@
 //! this frame going out as" that the camera, the render world and the
 //! reporters share.
 
-use crate::engine::{Engine, PendingEffects};
+use crate::engine::PendingEffects;
 use bevy::core_pipeline::fullscreen_material::{
     FullscreenMaterial, FullscreenMaterialPlugin, fullscreen_material_system,
 };
@@ -42,6 +42,11 @@ use std::sync::{Arc, Mutex};
 pub fn register(app: &mut App) {
     bevy::asset::embedded_asset!(app, "shaders/hdr.wesl");
     app.init_resource::<HdrDebug>()
+        .init_resource::<HdrRun>()
+        .add_systems(
+            Update,
+            crate::module::forget_on_rebuild::<HdrRun>.after(crate::world::rebuild_world),
+        )
         .init_resource::<HdrFrame>()
         .init_resource::<DisplayOffers>()
         .add_plugins((
@@ -372,14 +377,20 @@ pub struct HdrMetadata {
     pub max_fall: f32,
 }
 
-/// The project's display settings with this run's `set HDR output` and
-/// `set peak brightness` laid over them.
-pub fn wanted_output(engine: &Engine) -> DisplayOutput {
-    let mut display = engine.project.settings.display;
-    if let Some(nits) = engine.peak_nits {
+/// What `set HDR output` and `set peak brightness` wrote this run.
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq)]
+pub struct HdrRun {
+    pub output: Option<bool>,
+    pub peak_nits: Option<f32>,
+}
+
+/// The project's display settings with this run's overrides laid over them.
+pub fn wanted_output(project: DisplayOutput, run: &HdrRun) -> DisplayOutput {
+    let mut display = project;
+    if let Some(nits) = run.peak_nits {
         display.peak_nits = nits;
     }
-    match engine.hdr_output {
+    match run.output {
         Some(false) => display.space = OutputSpace::Sdr,
         Some(true) if !display.space.is_hdr() => display.space = OutputSpace::Scrgb,
         _ => {}
@@ -390,29 +401,34 @@ pub fn wanted_output(engine: &Engine) -> DisplayOutput {
 
 /// Resolves this frame's output. Only a real change marks it changed.
 pub fn resolve_frame(
-    engine: NonSend<Engine>,
+    document: Res<crate::engine::SceneDocument>,
+    run: Res<HdrRun>,
     offers: Res<DisplayOffers>,
     policy: Res<HdrPolicy>,
     mut frame: ResMut<HdrFrame>,
 ) {
     let offers = offers.get();
     frame.set_if_neq(HdrFrame::resolve(
-        wanted_output(&engine),
+        wanted_output(document.settings.display, &run),
         offers.as_deref(),
         *policy,
     ));
 }
 
 /// `set HDR output` and `set peak brightness` for the rest of the run.
-pub fn apply_hdr_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engine>) {
-    if !engine.running || engine.paused {
+pub fn apply_hdr_effects(
+    effects: Res<PendingEffects>,
+    state: Res<crate::module::RunState>,
+    mut run: ResMut<HdrRun>,
+) {
+    if !state.running || state.paused {
         return;
     }
     for effect in &effects.0 {
         match effect {
-            Effect::SetHdrOutput { enabled } => engine.hdr_output = Some(*enabled),
+            Effect::SetHdrOutput { enabled } => run.output = Some(*enabled),
             Effect::SetPeakBrightness { nits } if nits.is_finite() => {
-                engine.peak_nits = Some(*nits);
+                run.peak_nits = Some(*nits);
             }
             _ => {}
         }
@@ -863,17 +879,17 @@ mod tests {
 
     #[test]
     fn blocks_override_the_projects_display_for_the_run() {
-        let (_tx, rx) = std::sync::mpsc::channel();
-        let mut engine = Engine::new(rx, blockloom_core::scene::Mode::TwoD);
-        assert_eq!(wanted_output(&engine).space, OutputSpace::Sdr);
-        engine.hdr_output = Some(true);
-        engine.peak_nits = Some(50_000.0);
-        let wanted = wanted_output(&engine);
+        let mut project = DisplayOutput::default();
+        let mut run = HdrRun::default();
+        assert_eq!(wanted_output(project, &run).space, OutputSpace::Sdr);
+        run.output = Some(true);
+        run.peak_nits = Some(50_000.0);
+        let wanted = wanted_output(project, &run);
         assert_eq!(wanted.space, OutputSpace::Scrgb);
         assert_eq!(wanted.peak_nits, 10_000.0);
-        engine.project.settings.display.space = OutputSpace::Hdr10;
-        assert_eq!(wanted_output(&engine).space, OutputSpace::Hdr10);
-        engine.hdr_output = Some(false);
-        assert_eq!(wanted_output(&engine).space, OutputSpace::Sdr);
+        project.space = OutputSpace::Hdr10;
+        assert_eq!(wanted_output(project, &run).space, OutputSpace::Hdr10);
+        run.output = Some(false);
+        assert_eq!(wanted_output(project, &run).space, OutputSpace::Sdr);
     }
 }

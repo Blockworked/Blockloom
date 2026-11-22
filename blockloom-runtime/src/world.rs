@@ -1052,11 +1052,6 @@ pub fn rebuild_world(
     engine.light_shadows.clear();
     engine.shadow_distance = None;
     engine.capture_probes = false;
-    engine.hdr_output = None;
-    engine.peak_nits = None;
-    engine.ray_tracing = None;
-    engine.gi_bounces = None;
-    engine.gi_samples = None;
     engine.fog_density = None;
     engine.aurora_kp = None;
     engine.lightning_rate = None;

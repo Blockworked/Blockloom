@@ -516,15 +516,6 @@ pub struct Engine {
     pub shadow_distance: Option<f32>,
     /// A `capture probes` waiting for the probes to pick it up.
     pub capture_probes: bool,
-    /// `set HDR output` and `set peak brightness` this run, over the
-    /// project's display settings.
-    pub hdr_output: Option<bool>,
-    pub peak_nits: Option<f32>,
-    /// `enable ray tracing`, `set GI bounces` and `set GI samples` this run,
-    /// over the project's ray tracing settings.
-    pub ray_tracing: Option<bool>,
-    pub gi_bounces: Option<u32>,
-    pub gi_samples: Option<u32>,
     /// `set fog density`, `set aurora` and `set lightning storm` this run,
     /// over the project's fog, sky and lightning.
     pub fog_density: Option<f32>,
@@ -689,11 +680,6 @@ impl Engine {
             no_point_shadow_maps: false,
             shadow_distance: None,
             capture_probes: false,
-            hdr_output: None,
-            peak_nits: None,
-            ray_tracing: None,
-            gi_bounces: None,
-            gi_samples: None,
             fog_density: None,
             aurora_kp: None,
             lightning_rate: None,
