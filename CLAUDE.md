@@ -2693,6 +2693,16 @@ screen's `inputs` are exports at screen level; `lower_with` sets them, and a
 passes. Old documents keep their expanded instances (`instance_of`), so
 they still round-trip.
 
+`open screen` and `close screen` (`OpenScreen`/`CloseScreen`, one
+`Action::SetScreenOpen`, `Effect::SetScreenOpen`, `ACT_SET_SCREEN_OPEN`)
+name a screen by its file name without the extension
+(`ui_layers::screen_name`) or its path, and set its roots' visibility
+(`UiManager::open_screen`; `Composed::screens` lists each screen's roots).
+Per J6 the immediate-mode `show` blocks are retired: they still load and
+run, but the palette lists Screens instead of Showing and their vocabulary
+entries say so. Not yet: a script ABI verb for screens, an `is screen open?`
+reporter, and setting a screen's inputs while it runs.
+
 ### Frontend (`blockloom-qt/qml/`)
 
 `Start.qml` is the entry point: it adds the Lucide icons blockstitch doesn't

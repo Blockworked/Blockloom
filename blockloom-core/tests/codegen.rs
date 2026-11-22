@@ -341,6 +341,7 @@ impl Host for Recorder {
             | Act::ShowElement { .. }
             | Act::SetUiProp { .. }
             | Act::HideElement { .. }
+            | Act::SetScreenOpen { .. }
             | Act::DeleteElement { .. }
             | Act::SetFocus { .. }
             | Act::SetUiTheme { .. }
@@ -1258,6 +1259,7 @@ fn line_of(act: &Act) -> String {
             format!("SetUiProp {id} {prop} {}", shown(value))
         }
         Act::HideElement { id, all } => format!("HideElement {id} {all}"),
+        Act::SetScreenOpen { screen, open } => format!("SetScreenOpen {screen} {open}"),
         Act::DeleteElement { id } => format!("DeleteElement {id}"),
         Act::SetFocus { id } => format!("SetFocus {id}"),
         Act::SetUiTheme { theme } => format!("SetUiTheme {theme}"),
@@ -1653,6 +1655,7 @@ fn line_of(effect: &Effect) -> Option<String> {
             format!("|SetUiProp {id} {} {}", prop.name(), shown(value))
         }
         Effect::HideElement { id, all } => format!("|HideElement {id} {all}"),
+        Effect::SetScreenOpen { screen, open } => format!("|SetScreenOpen {screen} {open}"),
         Effect::DeleteElement { id } => format!("|DeleteElement {id}"),
         Effect::SetFocus { id } => format!("|SetFocus {id}"),
         Effect::SetUiTheme { theme } => format!("|SetUiTheme {}", theme.index()),
@@ -5198,6 +5201,12 @@ fn writing_hiding_and_deleting_an_element_land_the_same_way() {
                 element: Value::text("score"),
             },
             K::HideAllUi,
+            K::OpenScreen {
+                screen: op("Join", vec![Value::text("pau"), Value::text("se ")]),
+            },
+            K::CloseScreen {
+                screen: Value::text("pause"),
+            },
         ],
         &[],
     );

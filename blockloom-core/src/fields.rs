@@ -868,6 +868,9 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         | (K::HideElement { element }, F::UiTarget)
         | (K::DeleteElement { element }, F::UiTarget)
         | (K::FocusElement { element }, F::UiTarget) => Some(element),
+        (K::OpenScreen { screen }, F::UiTarget) | (K::CloseScreen { screen }, F::UiTarget) => {
+            Some(screen)
+        }
         (K::BindUi { value, .. }, F::UiPropValue)
         | (K::SetUiItems { value, .. }, F::UiPropValue)
         | (K::ScrollUi { value, .. }, F::UiPropValue)

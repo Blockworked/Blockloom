@@ -1083,6 +1083,14 @@ pub enum InstructionKind {
     },
     /// Hides every element at once, and drops keyboard focus with them.
     HideAllUi,
+    /// Shows a `.blockui` screen the scene draws, named by its file name
+    /// without the extension (or its path).
+    OpenScreen {
+        screen: Value,
+    },
+    CloseScreen {
+        screen: Value,
+    },
     /// Forgets an element entirely, children and all.
     DeleteElement {
         element: Value,
@@ -1826,6 +1834,7 @@ impl BlockKind for InstructionKind {
             K::HideElement { element }
             | K::DeleteElement { element }
             | K::FocusElement { element } => f(element, InputValueType::Any),
+            K::OpenScreen { screen } | K::CloseScreen { screen } => f(screen, InputValueType::Any),
             K::If { condition, .. } | K::IfElse { condition, .. } | K::While { condition, .. } => {
                 f(condition, InputValueType::Bool)
             }

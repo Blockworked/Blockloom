@@ -576,6 +576,10 @@ pub enum Act {
         id: String,
         all: bool,
     },
+    SetScreenOpen {
+        screen: String,
+        open: bool,
+    },
     DeleteElement {
         id: String,
     },
@@ -1425,7 +1429,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 40;
+pub const LOGIC_ABI_VERSION: u32 = 41;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1673,6 +1677,8 @@ pub const ACT_SET_LANGUAGE: u32 = 128;
 pub const ACT_SET_REVERB: u32 = 129;
 /// `b` the bus, `n0` on or off.
 pub const ACT_MUFFLE_UNDERWATER: u32 = 130;
+/// `a` = the screen, `n0` = 1 to open.
+pub const ACT_SET_SCREEN_OPEN: u32 = 131;
 /// `a` = dial name, `b` = the value as text. Window-global.
 pub const ACT_SET_LOOK_2D: u32 = 200;
 
@@ -2630,6 +2636,14 @@ impl Host for AbiHost {
             Act::DeleteElement { id } => {
                 self.act_wire(actor, ACT_DELETE_ELEMENT, &id, "", [0.0; 3], &zero)
             }
+            Act::SetScreenOpen { screen, open } => self.act_wire(
+                actor,
+                ACT_SET_SCREEN_OPEN,
+                &screen,
+                "",
+                [if open { 1.0 } else { 0.0 }, 0.0, 0.0],
+                &zero,
+            ),
             Act::SetFocus { id } => self.act_wire(actor, ACT_SET_FOCUS, &id, "", [0.0; 3], &zero),
             Act::SetUiTheme { theme } => self.act_wire(
                 actor,

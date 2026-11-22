@@ -170,7 +170,7 @@ QtObject {
         SwitchScene:"layers", WhenSceneStarts:"play", WhenSceneEnds:"square", PlayCutscene:"video", SkipCutscene:"skip-forward", CameraShake:"zap", SetTimeScale:"timer", Hitstop:"square", SetLetterbox:"eye", FadeScreen:"square", WhenCutsceneSignal:"flag", WhenCutsceneEnds:"square",
         SetMouseLocked:"lock", RumbleGamepad:"vibrate", BindAction:"keyboard", ClearActionBindings:"eraser", ShowPanel:"layout-panel-top",
         ShowLabel:"type", ShowButton:"square-mouse-pointer", ShowImage:"image", ShowInput:"text-cursor-input", ShowSlider:"sliders-horizontal",
-        ShowWidget:"layout-grid", ShowToggle:"toggle-left", ShowList:"list-checks", SetUiTheme:"palette", BindUi:"list-checks", SetUiItems:"list-checks", ScrollUi:"list-checks", SetElementTheme:"list-checks", SetUiProp:"list-checks", HideElement:"eye", HideAllUi:"eye",
+        ShowWidget:"layout-grid", ShowToggle:"toggle-left", ShowList:"list-checks", SetUiTheme:"palette", BindUi:"list-checks", SetUiItems:"list-checks", ScrollUi:"list-checks", SetElementTheme:"list-checks", SetUiProp:"list-checks", HideElement:"eye", HideAllUi:"eye", OpenScreen:"app-window", CloseScreen:"app-window",
         DeleteElement:"trash-2", FocusElement:"text-select", ClearFocus:"text-select", PauseGame:"pause", ResumeGame:"play", SetVariable:"asterisk",
         ChangeVariable:"trending-up", SaveVariable:"save", ClearSavedVariable:"trash-2", SwitchSaveSlot:"save", DeleteSaveSlot:"trash-2", SetLanguage:"languages", AddToList:"plus", DeleteOfList:"trash-2",
         DeleteAllOfList:"trash-2", ShiftList:"arrow-left", InsertIntoList:"plus", ReplaceItemOfList:"repeat", ReverseList:"rotate-cw",
@@ -361,6 +361,8 @@ QtObject {
             SetUiProp: row([lb("set"), dd("prop", uiPropOptions), lb("of"), slot("UiTarget", "element"), lb("to"), slot("UiPropValue", "value")]),
             HideElement: row([lb("hide"), slot("UiTarget", "element")]),
             HideAllUi: row([lb("hide all ui")]),
+            OpenScreen: row([lb("open screen"), slot("UiTarget", "screen")]),
+            CloseScreen: row([lb("close screen"), slot("UiTarget", "screen")]),
             DeleteElement: row([lb("delete"), slot("UiTarget", "element")]),
             FocusElement: row([lb("focus"), slot("UiTarget", "element")]),
             ClearFocus: row([lb("clear focus")]),
@@ -676,6 +678,7 @@ QtObject {
         case "LoadJsonIntoDict": return { name: firstName(2), json: txt("") };
         case "HideElement": case "DeleteElement": return { element: txt("menu") };
         case "FocusElement": return { element: txt("name") };
+        case "OpenScreen": case "CloseScreen": return { screen: txt("Pause") };
         default: return {};
         }
     }
@@ -936,7 +939,8 @@ QtObject {
         { category: "sound", title: "", items: ["PlaySound", "PlaySoundAt", "StopSound", "SetSoundVolume", "SetSoundPitch", "SetBusVolume", "SetReverb", "MuffleUnderwater", "SoundPlaying", "BusVolume"] },
         { category: "actors", title: "Clones and actors", items: ["CreateClone", "CreateActor", "DeleteActor", "IsClone", "NewActor", "ActorCount"] },
         { category: "actors", title: "Components", items: ["AttachComponent", "DetachComponent", "SetComponentField", "ComponentField", "SetParent", "MyParent"] },
-        { category: "interface", title: "Showing", items: ["ShowWidget", "ShowPanel", "ShowLabel", "ShowButton", "ShowImage", "ShowInput", "ShowSlider", "ShowToggle", "ShowList"] },
+        // The `show` blocks still load and run, but new work uses authored screens.
+        { category: "interface", title: "Screens", items: ["OpenScreen", "CloseScreen"] },
         { category: "interface", title: "Changing", items: ["SetUiProp", "SetUiTheme", "SetElementTheme", "BindUi", "SetUiItems", "ScrollUi", "HideElement", "HideAllUi", "DeleteElement", "FocusElement", "ClearFocus"] },
         { category: "interface", title: "Reading", items: ["UiValue", "UiText", "UiSelectedIndex", "UiShown", "UiExists", "UiFocus"] },
         { category: "sensing", title: "Keyboard and mouse", items: ["KeyDown", "MouseDown", "MouseButtonDown", "MouseX", "MouseY", "MouseDeltaX", "MouseDeltaY", "MouseLocked", "SetMouseLocked"] },
@@ -1046,7 +1050,7 @@ QtObject {
         ClearActionBindings:"clear all bindings of an action", ShowPanel:"show a panel", ShowLabel:"show a label", ShowButton:"show a button",
         ShowImage:"show an image", ShowInput:"show a text input", ShowSlider:"show a slider", ShowToggle:"show a toggle",
         ShowWidget:"show a widget", ShowList:"show a scrollable list", SetUiTheme:"set the ui theme", BindUi:"bind widget to value", SetUiItems:"set items of widget to value", ScrollUi:"scroll widget to value", SetElementTheme:"set theme of widget to value", SetUiProp:"set an element property", HideElement:"hide an element",
-        HideAllUi:"hide all ui", DeleteElement:"delete an element", FocusElement:"focus an input", ClearFocus:"clear the focus",
+        HideAllUi:"hide all ui", OpenScreen:"open a screen", CloseScreen:"close a screen", DeleteElement:"delete an element", FocusElement:"focus an input", ClearFocus:"clear the focus",
         PauseGame:"pause the game", ResumeGame:"resume the game", SetVariable:"set a variable", ChangeVariable:"change a variable",
         SaveVariable:"save a variable", ClearSavedVariable:"clear a saved variable", SwitchSaveSlot:"switch save slot", DeleteSaveSlot:"delete a save slot", SetLanguage:"set the language", AddToList:"add to a list", DeleteOfList:"delete a list item",
         DeleteAllOfList:"clear a list", ShiftList:"shift a list", InsertIntoList:"insert into a list", ReplaceItemOfList:"replace a list item",

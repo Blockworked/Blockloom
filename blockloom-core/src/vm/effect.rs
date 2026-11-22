@@ -583,6 +583,11 @@ pub enum Effect {
     DeleteElement {
         id: String,
     },
+    /// Shows or hides every widget of one of the scene's screens.
+    SetScreenOpen {
+        screen: String,
+        open: bool,
+    },
     SetUiProp {
         id: String,
         prop: UiProp,

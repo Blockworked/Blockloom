@@ -263,6 +263,14 @@ pub fn apply_ui_effects(
             }
             Effect::HideElement { id, all } => manager.hide(id, *all),
             Effect::DeleteElement { id } => manager.delete(id),
+            Effect::SetScreenOpen { screen, open } => {
+                if !manager.open_screen(screen, *open) {
+                    bridge::send(&RuntimeMessage::Error {
+                        actor: String::new(),
+                        message: format!("this scene draws no screen called \"{screen}\""),
+                    });
+                }
+            }
             Effect::SetUiProp { id, prop, value } => {
                 if !manager.set(id, *prop, value) {
                     bridge::send(&RuntimeMessage::Error {

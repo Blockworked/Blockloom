@@ -48,6 +48,12 @@ impl UiLayer {
     }
 }
 
+/// What blocks call a screen: its file name without the extension.
+pub fn screen_name(path: &str) -> &str {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    file.rsplit_once('.').map_or(file, |(stem, _)| stem)
+}
+
 pub fn is_screen(path: &str) -> bool {
     path.rsplit_once('.')
         .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case(EXTENSION))
@@ -85,6 +91,8 @@ pub struct Composed {
     pub document: UiDocument,
     /// Root widgets of closed layers, hidden at the start.
     pub closed: Vec<String>,
+    /// Each screen drawn and its root widgets, for opening and closing.
+    pub screens: Vec<(String, Vec<String>)>,
     /// Layers that couldn't be drawn, each with why. The rest still are.
     pub errors: Vec<String>,
 }
@@ -145,8 +153,9 @@ pub fn scene_interface(dir: Option<&Path>, world: &World, settings: &GameSetting
             Ok(roots) => {
                 first = false;
                 if !layer.open {
-                    out.closed.extend(roots);
+                    out.closed.extend(roots.iter().cloned());
                 }
+                out.screens.push((layer.screen.clone(), roots));
             }
             Err(message) => out.errors.push(message),
         }

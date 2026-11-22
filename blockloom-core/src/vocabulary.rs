@@ -2939,7 +2939,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "ShowPanel",
         category: "Interface",
-        purpose: "Makes or updates a panel: a vertical stack its children flow down. An empty title means no header row; modal swallows world clicks behind it.",
+        purpose: "Makes or updates a panel: a vertical stack its children flow down. An empty title means no header row; modal swallows world clicks behind it. Retired: draw a .blockui screen instead (create-screen, open screen).",
         header: false,
         three_d: false,
         slots: &[
@@ -2963,7 +2963,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "ShowWidget",
         category: "Interface",
-        purpose: "Makes or updates a layout container or widget.",
+        purpose: "Makes or updates a layout container or widget. Retired: draw a .blockui screen instead (create-screen, open screen).",
         header: false,
         three_d: false,
         slots: &[
@@ -3020,7 +3020,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "ShowLabel",
         category: "Interface",
-        purpose: "Makes or updates a text label - the HUD workhorse.",
+        purpose: "Makes or updates a text label - the HUD workhorse. Retired: draw a .blockui screen instead (create-screen, open screen).",
         header: false,
         three_d: false,
         slots: &[
@@ -3044,7 +3044,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "ShowButton",
         category: "Interface",
-        purpose: "Makes or updates a clickable button.",
+        purpose: "Makes or updates a clickable button. Retired: draw a .blockui screen instead (create-screen, open screen).",
         header: false,
         three_d: false,
         slots: &[
@@ -3068,7 +3068,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "ShowImage",
         category: "Interface",
-        purpose: "Makes or updates an image, by project-relative asset path.",
+        purpose: "Makes or updates an image, by project-relative asset path. Retired: draw a .blockui screen instead (create-screen, open screen).",
         header: false,
         three_d: false,
         slots: &[
@@ -3092,7 +3092,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "ShowInput",
         category: "Interface",
-        purpose: "Makes or updates a single-line text input. The text is its placeholder.",
+        purpose: "Makes or updates a single-line text input. The text is its placeholder. Retired: draw a .blockui screen instead (create-screen, open screen).",
         header: false,
         three_d: false,
         slots: &[
@@ -3116,7 +3116,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "ShowSlider",
         category: "Interface",
-        purpose: "Makes or updates a slider between min and max.",
+        purpose: "Makes or updates a slider between min and max. Retired: draw a .blockui screen instead (create-screen, open screen).",
         header: false,
         three_d: false,
         slots: &[
@@ -3150,7 +3150,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "ShowToggle",
         category: "Interface",
-        purpose: "Makes or updates an on/off toggle.",
+        purpose: "Makes or updates an on/off toggle. Retired: draw a .blockui screen instead (create-screen, open screen).",
         header: false,
         three_d: false,
         slots: &[
@@ -3174,7 +3174,7 @@ pub const BLOCKS: &[BlockSpec] = &[
     BlockSpec {
         r#type: "ShowList",
         category: "Interface",
-        purpose: "Makes or updates a vertical list whose children scroll inside its fixed height.",
+        purpose: "Makes or updates a vertical list whose children scroll inside its fixed height. Retired: draw a .blockui screen instead (create-screen, open screen).",
         header: false,
         three_d: false,
         slots: &[
@@ -3346,6 +3346,38 @@ pub const BLOCKS: &[BlockSpec] = &[
         header: false,
         three_d: false,
         slots: NO_SLOTS,
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "OpenScreen",
+        category: "Interface",
+        purpose: "Shows one of the scene's .blockui screens, named by its file name.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "screen",
+            id: "UiTarget",
+            value: "Any",
+        }],
+        dropdowns: NO_DROPDOWNS,
+        strings: NO_STRINGS,
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
+        r#type: "CloseScreen",
+        category: "Interface",
+        purpose: "Hides one of the scene's .blockui screens, named by its file name.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "screen",
+            id: "UiTarget",
+            value: "Any",
+        }],
         dropdowns: NO_DROPDOWNS,
         strings: NO_STRINGS,
         bools: NO_BOOLS,

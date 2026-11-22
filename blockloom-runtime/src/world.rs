@@ -428,9 +428,7 @@ pub fn pump_editor(
                     &engine.project.settings,
                 );
                 manager.load(&composed.document);
-                for id in &composed.closed {
-                    manager.hide(id, false);
-                }
+                manager.set_screens(composed.screens, &composed.closed);
                 for message in composed.errors {
                     bridge::send(&RuntimeMessage::Error {
                         actor: String::new(),
@@ -5696,6 +5694,7 @@ fn effect_actor(effect: &Effect) -> Option<&String> {
         | Effect::ShowElement { .. }
         | Effect::HideElement { .. }
         | Effect::DeleteElement { .. }
+        | Effect::SetScreenOpen { .. }
         | Effect::SetUiProp { .. }
         | Effect::SetFocus { .. }
         | Effect::SetUiTheme { .. }

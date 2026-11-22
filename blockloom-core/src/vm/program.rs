@@ -426,6 +426,11 @@ pub enum Action {
         all: bool,
     },
     DeleteElement(Value),
+    /// Shows or hides a screen's widgets by the screen's name.
+    SetScreenOpen {
+        screen: Value,
+        open: bool,
+    },
     /// Hands the keyboard to a text input. An empty id, or one that names
     /// anything else, takes it back instead.
     SetFocus(Value),
@@ -970,6 +975,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
         Action::SetLetterbox { on } => vec![on],
         Action::FadeScreen { color } => vec![color],
         Action::HideElement { id, .. } => vec![id],
+        Action::SetScreenOpen { screen, .. } => vec![screen],
         Action::CreateActor { name, position } => {
             let mut values = vec![name];
             values.extend(position.iter());
@@ -1504,6 +1510,10 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
             all,
         },
         Action::DeleteElement(v) => Action::DeleteElement(lift_one(v, ctx)),
+        Action::SetScreenOpen { screen, open } => Action::SetScreenOpen {
+            screen: lift_one(screen, ctx),
+            open,
+        },
         Action::SetFocus(v) => Action::SetFocus(lift_one(v, ctx)),
         Action::SetVariable { name, value } => Action::SetVariable {
             name,
@@ -2606,6 +2616,14 @@ fn emit_kind(steps: &mut Vec<Step>, kind: &InstructionKind) {
         K::HideAllUi => steps.push(Step::Action(Action::HideElement {
             id: Value::text(""),
             all: true,
+        })),
+        K::OpenScreen { screen } => steps.push(Step::Action(Action::SetScreenOpen {
+            screen: screen.clone(),
+            open: true,
+        })),
+        K::CloseScreen { screen } => steps.push(Step::Action(Action::SetScreenOpen {
+            screen: screen.clone(),
+            open: false,
         })),
         K::DeleteElement { element } => {
             steps.push(Step::Action(Action::DeleteElement(element.clone())))

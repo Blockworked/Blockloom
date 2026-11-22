@@ -156,6 +156,8 @@ impl UiNode {
 #[derive(Resource, Default)]
 pub struct UiManager {
     palette: Palette,
+    /// The scene's screens: file path and root widgets.
+    screens: Vec<(String, Vec<String>)>,
     order: Vec<String>,
     nodes: HashMap<String, UiNode>,
     /// The text input holding the keyboard, if any. While one does, game
@@ -384,6 +386,28 @@ impl UiManager {
         &self.palette
     }
 
+    /// Takes the scene's screens; closed ones' roots go hidden.
+    pub fn set_screens(&mut self, screens: Vec<(String, Vec<String>)>, closed: &[String]) {
+        self.screens = screens;
+        for id in closed {
+            self.set(id, UiProp::Visible, &Evaluated::Bool(false));
+        }
+    }
+
+    /// Shows or hides a screen named by its file name or path. False when
+    /// the scene draws no such screen.
+    pub fn open_screen(&mut self, name: &str, open: bool) -> bool {
+        let Some((_, roots)) = self.screens.iter().find(|(path, _)| {
+            path == name || blockloom_core::ui_layers::screen_name(path).eq_ignore_ascii_case(name)
+        }) else {
+            return false;
+        };
+        for id in roots.clone() {
+            self.set(&id, UiProp::Visible, &Evaluated::Bool(open));
+        }
+        true
+    }
+
     pub fn set_theme(&mut self, theme: UiTheme) {
         if self.theme == theme {
             return;
@@ -553,6 +577,7 @@ impl UiManager {
         }
         self.nodes.clear();
         self.order.clear();
+        self.screens.clear();
         self.pending.clear();
         self.focus = None;
         self.theme = UiTheme::default();
@@ -1570,6 +1595,36 @@ mod tests {
         manager.hide("", true);
         assert_eq!(manager.focus(), None);
         assert!(!manager.get("name").unwrap().visible);
+    }
+
+    #[test]
+    fn a_screen_opens_and_closes_by_its_file_name() {
+        let mut manager = UiManager::default();
+        let mut document = UiDocument::default();
+        for (id, parent) in [("pause", ""), ("resume", "pause"), ("hud", "")] {
+            let mut widget = UiWidget::default();
+            widget.element.id = id.into();
+            widget.element.kind = UiKind::Panel;
+            widget.element.parent = parent.into();
+            document.widgets.push(widget);
+        }
+        manager.load(&document);
+        manager.set_screens(
+            vec![
+                ("assets/ui/Pause.blockui".into(), vec!["pause".into()]),
+                ("assets/ui/hud.blockui".into(), vec!["hud".into()]),
+            ],
+            &["pause".to_string()],
+        );
+        let shown = |m: &UiManager, id: &str| m.shown(m.get(id).unwrap());
+        assert!(!shown(&manager, "resume"));
+        assert!(shown(&manager, "hud"));
+        assert!(manager.open_screen("pause", true));
+        // The root carries its children back with it.
+        assert!(shown(&manager, "resume"));
+        assert!(manager.open_screen("assets/ui/hud.blockui", false));
+        assert!(!shown(&manager, "hud"));
+        assert!(!manager.open_screen("map", true));
     }
 
     #[test]

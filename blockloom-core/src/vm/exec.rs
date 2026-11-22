@@ -2327,6 +2327,13 @@ impl Vm {
                     id: id.trim().to_string(),
                 });
             }
+            Action::SetScreenOpen { screen, open } => {
+                let screen = self.eval(screen, actor, params, temps, out).as_text();
+                out.push(Effect::SetScreenOpen {
+                    screen: screen.trim().to_string(),
+                    open: *open,
+                });
+            }
             Action::SetFocus(id) => {
                 let id = self.eval(id, actor, params, temps, out).as_text();
                 out.push(Effect::SetFocus {
