@@ -110,6 +110,13 @@
           "description": "A .blockworld file of edits laid over the terrain before `edits`, written by blockloom-voxel-convert from older edit lines."
         },
         {
+          "name": "block_set",
+          "type": "asset",
+          "kind": "blockset",
+          "default": "",
+          "description": "A .blockset file listing .blockdef block types (with states) that come before `blocks`."
+        },
+        {
           "name": "persistent",
           "type": "bool",
           "default": false,
@@ -273,7 +280,7 @@
             "type": "text",
             "max_len": 2000
           },
-          "max_len": 256,
+          "max_len": 4096,
           "default": [],
           "description": "Block registry: one JSON object per line ({name, id, color, emission, textures, model}). Files under assets/blocks/*.json import into this list."
         },
@@ -500,7 +507,7 @@
             "type": "text",
             "max_len": 2000
           },
-          "max_len": 256,
+          "max_len": 4096,
           "default": [],
           "description": "Block registry: one JSON object per line ({name, id, color, emission, textures, model}). Files under assets/blocks/*.json import into this list."
         },

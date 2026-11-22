@@ -3,7 +3,7 @@
 //! Layout, little endian: `BLKWORLD`, a u32 version, a u32 length and that
 //! many bytes of JSON header (`page_size`, `size`, `preset`, `seed`), then
 //! u32 page count and per page its section `i32 x3`, a u32 run count and
-//! `(u16 count, u16 material)` runs over the section's cells, where 256 keeps
+//! `(u16 count, u16 block)` runs over the section's cells, where 65535 keeps
 //! the generated cell. Then u32 shape count, per shape `i32 x3`, a u8 length
 //! and the shape's name, and u32 density count, per density `i32 x3, i16`.
 
@@ -12,8 +12,6 @@ use blockloom_plugin_sdk::{Value, json};
 
 pub const MAGIC: &[u8; 8] = b"BLKWORLD";
 pub const VERSION: u32 = 1;
-/// What a run over a section says when the generated cell stays.
-pub const KEEP: u16 = 256;
 const MAX_PAGES: usize = 262_144;
 const MAX_LIST: usize = 4_194_304;
 
@@ -90,7 +88,7 @@ pub fn decode(bytes: &[u8]) -> Result<(Value, Regions), String> {
         for _ in 0..runs {
             let count = r.u16()?;
             let material = r.u16()?;
-            if count == 0 || material > KEEP {
+            if count == 0 {
                 return Err("a bad .blockworld run".into());
             }
             total += usize::from(count);
@@ -198,6 +196,7 @@ impl Reader<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::grid::KEEP;
 
     #[test]
     fn regions_round_trip_and_damage_is_refused() {

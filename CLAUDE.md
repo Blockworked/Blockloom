@@ -1177,7 +1177,9 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   resource (preset `island|caves|flat|empty`, seed, size, voxel size, origin,
   solid, palette colors/emission) is read at `world.start`, its origin measured
   from a Voxel world anchor (`voxel_world`) actor's start when one exists; `grid.rs` holds
-  32-cell sections of `u8` material ids with exact logical bounds and full-height
+  32-cell sections of 16-bit block ids (`Block`, palette-compressed by `section.rs`
+  at 0 to 16 bits a cell; `KEEP` 65535 marks an unchanged cell in checkpoints and
+  `.blockworld`, older checkpoints say 256) with exact logical bounds and full-height
   32 by 32 columns (air sections unallocated, a boundary edit
   dirties the neighbour), `terrain.rs` generates from hashes of each cell's own
   coordinates (the same seed always gives the same cells, trees and ore
@@ -1282,9 +1284,15 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   `chunk_workers` does not launch concurrent workers yet. Terrain features are
   computed per column with a bounded 4096-column derived cache. Checkpoint
   loads reattach the generator configuration before sampling unloaded cells.
-  The `blocks` list is the block registry: one JSON object per line
-  (`assets/blocks/*.json` import into it) with id, color, textures and model
-  (cube, shape or inline mesh with optional uvs); the cube mesher groups faces
+  The `blocks` list is the block registry: one JSON object per line, after the
+  `.blockdef` files a `block_set` asset (`.blockset`, `{"blocks": [...]}`) lists,
+  with id, color, textures, model (cube, shape or inline mesh with optional uvs),
+  tags and layer. A definition with `properties` is a block type: each state takes
+  an id counted from `id` (last property fastest), `variants` (`{when, ...}`) lay
+  looks and models over matching states, and `name[prop=value]` names a state
+  wherever a material is named (the bare name is the default). A state whose model
+  is a shape is shaped wherever the grid answers (`Grid::set_block_shapes`); the
+  `blocks` op lists blocks and types. The cube mesher groups faces
   by material and per-face texture (`top`, `bottom`, `side`, `all`) with planar
   uvs, `MeshData` carries uvs plus a texture path the
   runtime loads once and shares, and registry names resolve everywhere a

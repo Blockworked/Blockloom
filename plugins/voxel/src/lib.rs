@@ -12,6 +12,9 @@ pub mod engine;
 #[cfg(feature = "engine")]
 pub use engine::blockloom_module;
 mod blockworld;
+
+/// How many `blocks` definition lines a world may hold.
+const MAX_BLOCK_LINES: usize = 4096;
 mod fracture;
 mod gpu_mesh;
 mod grid;
@@ -24,6 +27,7 @@ mod mesher;
 mod palette;
 mod ray;
 mod registry;
+mod section;
 mod shape;
 mod smooth;
 mod terrain;
@@ -35,6 +39,7 @@ use blockloom_plugin_sdk::{Error, Host, Plugin, Value, export_plugin, json};
 use grid::{Grid, SECTION, Shape};
 
 const MESH_TILE: i32 = 16;
+use blockloom_plugin_sdk::serde_json::map as serde_json_map;
 use palette::Palette;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -57,6 +62,8 @@ struct Settings {
     palette_emission: Vec<f64>,
     /// A `.blockworld` asset laid over the generated terrain before `edits`.
     world_file: String,
+    /// A `.blockset` asset whose `.blockdef` files come before `blocks`.
+    block_set: String,
     /// Edits laid over the generated terrain, oldest first (see `apply_edit`).
     edits: Vec<String>,
     persistent: bool,
@@ -130,6 +137,7 @@ impl Default for Settings {
             palette_colors: Vec::new(),
             palette_emission: Vec::new(),
             world_file: String::new(),
+            block_set: String::new(),
             edits: Vec::new(),
             persistent: false,
             save_slot: "world".into(),
@@ -383,7 +391,7 @@ fn floats(values: &[f32]) -> Vec<f64> {
     values.iter().map(|&v| round(v)).collect()
 }
 
-fn chunk_name(chunk: [i32; 3], glow: Option<u8>, texture: Option<&str>) -> String {
+fn chunk_name(chunk: [i32; 3], glow: Option<crate::grid::Block>, texture: Option<&str>) -> String {
     let [x, y, z] = chunk;
     let mut name = match glow {
         None => format!("chunk/{x}/{y}/{z}"),
@@ -475,8 +483,10 @@ impl World {
         validate_save_slot(&settings.save_slot)?;
         worldgen::stream_radius_for(settings.render_distance)?;
         worldgen::lod_distance_for(settings.distant_chunks)?;
-        if settings.blocks.len() > 256 {
-            return Err("a world holds at most 256 block definitions".into());
+        if settings.blocks.len() > MAX_BLOCK_LINES {
+            return Err(format!(
+                "a world holds at most {MAX_BLOCK_LINES} block definitions"
+            ));
         }
         if settings.noise.len() > 16 || settings.biomes.len() > 32 || settings.features.len() > 64 {
             return Err("too many noise, biome or feature lines".into());
@@ -574,10 +584,27 @@ impl World {
                 .stream_center
                 .map(|v| (v as i32).div_euclid(SECTION)),
         };
+        world.attach_blocks();
         if settings.preset == "infinite" {
             world.attach_worldgen();
         }
         Ok(world)
+    }
+
+    /// Hands the grid the shapes the registry's block models give.
+    fn attach_blocks(&mut self) {
+        let shapes: BTreeMap<_, _> = self
+            .registry
+            .ids()
+            .into_iter()
+            .filter_map(|id| match &self.registry.get(id)?.model {
+                registry::BlockModel::Shape(shape) if *shape != Shape::Cube => Some((id, *shape)),
+                _ => None,
+            })
+            .collect();
+        if !shapes.is_empty() {
+            self.grid.set_block_shapes(std::sync::Arc::new(shapes));
+        }
     }
 
     fn reset_lod_meshes(&mut self) {
@@ -781,7 +808,7 @@ impl World {
 
     /// A slot's material by id or by registry/block name. Registry names
     /// win so JSON blocks are paintable the moment they register.
-    fn material_id(&self, value: &Value) -> Result<u8, String> {
+    fn material_id(&self, value: &Value) -> Result<crate::grid::Block, String> {
         if let Some(name) = value.as_str()
             && let Some(id) = self.registry.id_of(name)
         {
@@ -791,7 +818,12 @@ impl World {
     }
 
     /// Fills the box between two corners (any order), clipped to the world.
-    fn fill_box(&mut self, a: [i32; 3], b: [i32; 3], material: u8) -> Result<u64, String> {
+    fn fill_box(
+        &mut self,
+        a: [i32; 3],
+        b: [i32; 3],
+        material: crate::grid::Block,
+    ) -> Result<u64, String> {
         let size = self.grid.size();
         let lo = [0, 1, 2].map(|i| a[i].min(b[i]).max(0));
         let hi = [0, 1, 2].map(|i| a[i].max(b[i]).min(size[i] - 1));
@@ -808,7 +840,12 @@ impl World {
     }
 
     /// Fills a ball in cell units; smooth worlds combine signed sphere density.
-    fn fill_sphere(&mut self, centre: [i32; 3], radius: f64, material: u8) -> Result<u64, String> {
+    fn fill_sphere(
+        &mut self,
+        centre: [i32; 3],
+        radius: f64,
+        material: crate::grid::Block,
+    ) -> Result<u64, String> {
         let size = self.grid.size();
         let reach = radius.ceil() as i32 + i32::from(self.surface == Surface::Smooth);
         let lo = [0, 1, 2].map(|i| (centre[i] - reach).max(0));
@@ -874,7 +911,7 @@ impl World {
                 })
                 .collect()
         };
-        let material = |at: usize| -> Result<u8, String> {
+        let material = |at: usize| -> Result<crate::grid::Block, String> {
             let word = rest.get(at).ok_or("the material is missing")?;
             let value = word
                 .parse::<i64>()
@@ -1110,27 +1147,29 @@ impl World {
                         }
                         // Smooth terrain stays vertex-colored; cubes carry
                         // per-face textures through the same loop.
-                        let groups: BTreeMap<(Option<u8>, Option<String>), mesher::Group> =
-                            match self.surface {
-                                Surface::Cubes => mesher::mesh_region_with(
-                                    &self.grid,
-                                    &self.palette,
-                                    Some(&self.registry),
-                                    base,
-                                    extent,
-                                    self.voxel,
-                                ),
-                                Surface::Smooth => smooth::mesh_region(
-                                    &self.grid,
-                                    &self.palette,
-                                    base,
-                                    extent,
-                                    self.voxel,
-                                )
-                                .into_iter()
-                                .map(|(glow, group)| ((glow, None), group))
-                                .collect(),
-                            };
+                        let groups: BTreeMap<
+                            (Option<crate::grid::Block>, Option<String>),
+                            mesher::Group,
+                        > = match self.surface {
+                            Surface::Cubes => mesher::mesh_region_with(
+                                &self.grid,
+                                &self.palette,
+                                Some(&self.registry),
+                                base,
+                                extent,
+                                self.voxel,
+                            ),
+                            Surface::Smooth => smooth::mesh_region(
+                                &self.grid,
+                                &self.palette,
+                                base,
+                                extent,
+                                self.voxel,
+                            )
+                            .into_iter()
+                            .map(|(glow, group)| ((glow, None), group))
+                            .collect(),
+                        };
                         for ((glow, texture), group) in groups {
                             // Keep mesh names stable while storage uses larger sections.
                             let name =
@@ -1331,6 +1370,13 @@ impl Voxel {
                 *o += a;
             }
         }
+        if !settings.block_set.is_empty() {
+            let mut lines = load_block_set(host, &settings.block_set).map_err(|why| {
+                Error::new(format!("voxel block set {}: {why}", settings.block_set))
+            })?;
+            lines.append(&mut settings.blocks);
+            settings.blocks = lines;
+        }
         let mut world = World::new(&settings).map_err(Error::new)?;
         world.lod_generation = self.lod_generation;
         world
@@ -1369,6 +1415,7 @@ impl Voxel {
                 Ok(Some((grid, fragments, seed))) => {
                     world.seed = seed;
                     world.grid = grid;
+                    world.attach_blocks();
                     if settings.preset == "infinite" {
                         world.attach_worldgen();
                     }
@@ -1570,6 +1617,47 @@ impl Voxel {
     }
 }
 
+fn read_asset(host: &Host, path: &str) -> Result<String, String> {
+    let answer = host
+        .call_json("assets.read", &json!({"path": path, "as": "text"}))
+        .map_err(|e| format!("{path} can't be read ({e})"))?;
+    if let Some(error) = answer["error"].as_str() {
+        return Err(format!("{path}: {error}"));
+    }
+    if answer["found"] != json!(true) {
+        return Err(format!("{path} is missing"));
+    }
+    Ok(answer["text"].as_str().unwrap_or("").to_string())
+}
+
+/// A `.blockset` (`{"blocks": [...]}` of `.blockdef` paths or inline
+/// definitions) as `blocks` lines, in order.
+fn load_block_set(host: &Host, path: &str) -> Result<Vec<String>, String> {
+    let set: Value = blockloom_plugin_sdk::serde_json::from_str(&read_asset(host, path)?)
+        .map_err(|e| format!("not a block set ({e})"))?;
+    let entries = set["blocks"]
+        .as_array()
+        .ok_or("a block set lists its blocks")?;
+    if entries.len() > MAX_BLOCK_LINES {
+        return Err(format!(
+            "a block set holds at most {MAX_BLOCK_LINES} blocks"
+        ));
+    }
+    entries
+        .iter()
+        .map(|entry| match entry {
+            Value::String(file) => {
+                let text = read_asset(host, file)?;
+                let def: Value = blockloom_plugin_sdk::serde_json::from_str(&text)
+                    .map_err(|e| format!("{file} is not a block definition ({e})"))?;
+                Ok(def.to_string())
+            }
+            Value::Object(_) => Ok(entry.to_string()),
+            other => Err(format!("{other} is not a .blockdef path or a definition")),
+        })
+        .collect()
+}
+
 /// Lays the settings' `.blockworld` over the freshly generated world.
 fn load_world_file(host: &Host, world: &mut World, settings: &Settings) -> Result<usize, String> {
     let answer = host
@@ -1727,6 +1815,7 @@ impl Plugin for Voxel {
                 let (grid, fragments, seed) = decode_checkpoint(world, args["state"].clone())?;
                 let mut effects = world.replace_fragments(fragments)?;
                 world.grid = grid;
+                world.attach_blocks();
                 if world.settings.preset == "infinite" {
                     world.attach_worldgen();
                 }
@@ -1755,6 +1844,7 @@ impl Plugin for Voxel {
                     .ok_or_else(|| Error::new("no voxel save in this slot"))?;
                 let mut effects = world.replace_fragments(fragments)?;
                 world.grid = grid;
+                world.attach_blocks();
                 if world.settings.preset == "infinite" {
                     world.attach_worldgen();
                 }
@@ -2053,11 +2143,18 @@ impl Plugin for Voxel {
             }
             "blocks" => {
                 let world = self.world()?;
-                Ok(json!({"blocks": world.registry.ids().iter().map(|id| {
+                let blocks: Vec<Value> = world.registry.ids().iter().map(|id| {
                     let def = world.registry.get(*id).unwrap();
-                    json!({"id": def.id, "name": def.name, "textures": def.textures,
+                    json!({"id": def.id, "name": def.name, "type": def.type_name,
+                        "state": def.state.iter().map(|(k, v)| (k.clone(), json!(v))).collect::<serde_json_map::Map<String, Value>>(),
+                        "tags": def.tags, "layer": def.layer.name(), "textures": def.textures,
                         "model": format!("{:?}", def.model)})
-                }).collect::<Vec<_>>()}))
+                }).collect();
+                let types: Vec<Value> = world.registry.types().map(|t| {
+                    json!({"name": t.name, "first": t.base, "states": t.states(), "default": t.default,
+                        "properties": t.properties.iter().map(|(k, v)| (k.clone(), json!(v))).collect::<serde_json_map::Map<String, Value>>()})
+                }).collect();
+                Ok(json!({"blocks": blocks, "types": types}))
             }
             _ => Err(Error::unsupported(op)),
         }?;

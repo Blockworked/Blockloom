@@ -8,7 +8,7 @@ pub fn build(
     chunk: [i32; 3],
     base: [i32; 3],
     extent: [i32; 3],
-    glow: Option<u8>,
+    glow: Option<crate::grid::Block>,
     group: &crate::mesher::Group,
     effects: &mut Vec<Value>,
 ) -> Option<GpuVertices> {
@@ -162,11 +162,11 @@ fn packed_offsets(
     n: [i32; 3],
     anchors: [i32; 3],
     palette: &crate::palette::Palette,
-    glow: Option<u8>,
+    glow: Option<crate::grid::Block>,
 ) -> Vec<u32> {
     let sample = |p: [i32; 3]| {
         let i = ((p[2] * n[1] + p[1]) * n[0] + p[0]) as usize * 2;
-        (samples[i], samples[i + 1] as u8)
+        (samples[i], samples[i + 1] as crate::grid::Block)
     };
     let selected = |m| {
         palette

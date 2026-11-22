@@ -114,7 +114,7 @@ pub fn height_bound(size: [i32; 3], preset: &str, seed: i64, x: i32, z: i32) -> 
 }
 
 /// A canonical sample, including trees crossing page borders.
-pub fn sample(size: [i32; 3], preset: &str, seed: i64, cell: [i32; 3]) -> u8 {
+pub fn sample(size: [i32; 3], preset: &str, seed: i64, cell: [i32; 3]) -> crate::grid::Block {
     if preset == "infinite" {
         // Infinite cells need their worldgen config; Grid::base answers
         // those directly. A bare terrain sample is air.
@@ -270,7 +270,7 @@ pub fn generate(grid: &mut Grid, preset: &str, seed: i64) -> Result<(), String> 
 mod tests {
     use super::*;
 
-    fn cells(grid: &Grid) -> Vec<u8> {
+    fn cells(grid: &Grid) -> Vec<crate::grid::Block> {
         let [sx, sy, sz] = grid.size();
         let mut all = Vec::new();
         for z in 0..sz {

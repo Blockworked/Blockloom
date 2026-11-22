@@ -296,6 +296,7 @@ pub fn edit(
     settings.gpu_meshing = false;
     let mut local = World::new(&settings).map_err(Error::new)?;
     local.grid = Grid::restore(fragment.grid.clone(), world.palette.len()).map_err(Error::new)?;
+    local.attach_blocks();
     let changed = change(&mut local)?;
     if local.grid.solid_count() > world.settings.max_fragment_cells as u64 {
         return Err(Error::bad_argument("fragment cell budget exceeded"));

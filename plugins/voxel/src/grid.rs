@@ -15,7 +15,14 @@ pub type ColumnAddress = [i32; 2];
 pub type SectionAddress = [i32; 3];
 pub const SECTION_CELLS: usize = (SECTION * SECTION * SECTION) as usize;
 
-pub type Cells = [u8; SECTION_CELLS];
+/// A block id: 0 is air. Ids up to `MAX_BLOCK`; `KEEP` marks an unchanged cell.
+pub type Block = u16;
+pub const MAX_BLOCK: Block = u16::MAX - 1;
+pub const KEEP: Block = u16::MAX;
+/// What a checkpoint written before 16-bit ids used for `KEEP`.
+const LEGACY_KEEP: u16 = 256;
+
+pub type Cells = crate::section::Packed;
 
 pub struct Grid {
     /// Exact logical bounds in cells; section padding is air.
@@ -27,11 +34,13 @@ pub struct Grid {
     /// Infinite config for the `infinite` preset (noise, biomes, features).
     worldgen: Option<crate::worldgen::Worldgen>,
     /// Registry block names to ids for infinite sampling.
-    block_ids: BTreeMap<String, u8>,
+    block_ids: BTreeMap<String, Block>,
     columns: Mutex<BTreeMap<ColumnAddress, crate::worldgen::Column>>,
-    edits: BTreeMap<[i32; 3], u8>,
+    edits: BTreeMap<[i32; 3], Block>,
     /// The cells that are not whole cubes.
     shapes: BTreeMap<[i32; 3], Shape>,
+    /// The shape a block's model gives every cell of it (a stair state).
+    block_shapes: std::sync::Arc<BTreeMap<Block, Shape>>,
     /// Signed density at cell centres, quantized to 1/256 cell.
     densities: BTreeMap<[i32; 3], i16>,
     /// Sections whose meshes are out of date: those written to, and the
@@ -70,6 +79,7 @@ impl Grid {
             columns: Mutex::new(BTreeMap::new()),
             edits: BTreeMap::new(),
             shapes: BTreeMap::new(),
+            block_shapes: Default::default(),
             densities: BTreeMap::new(),
             dirty: BTreeSet::new(),
             lod: crate::lod::Cache::default(),
@@ -157,7 +167,7 @@ impl Grid {
     }
 
     pub fn allocated_bytes(&self) -> usize {
-        self.sections.len() * SECTION_CELLS
+        self.sections.values().map(|c| c.bytes()).sum()
     }
 
     pub fn contains(&self, cell: [i32; 3]) -> bool {
@@ -173,7 +183,7 @@ impl Grid {
         self.sections.get(&chunk).map(Box::as_ref)
     }
 
-    pub fn get(&self, cell: [i32; 3]) -> u8 {
+    pub fn get(&self, cell: [i32; 3]) -> Block {
         if !self.contains(cell) {
             return 0;
         }
@@ -187,7 +197,7 @@ impl Grid {
                         self.base(cell)
                     }
                 },
-                |cells| cells[local(cell)],
+                |cells| cells.get(local(cell)),
             )
         })
     }
@@ -197,13 +207,13 @@ impl Grid {
         let Some(cells) = self.section(base.map(|c| c.div_euclid(SECTION))) else {
             return false;
         };
+        if cells.is_uniform(0) {
+            return false;
+        }
         for z in 0..extent[2] {
             for y in 0..extent[1] {
                 let offset = local([base[0], base[1] + y, base[2] + z]);
-                if cells[offset..offset + extent[0] as usize]
-                    .iter()
-                    .any(|&m| m != 0)
-                {
+                if (offset..offset + extent[0] as usize).any(|i| cells.get(i) != 0) {
                     return true;
                 }
             }
@@ -211,24 +221,52 @@ impl Grid {
         false
     }
 
+    /// A cell's own shape, else the one its block's model gives it.
     pub fn shape_at(&self, cell: [i32; 3]) -> Shape {
-        self.shapes.get(&cell).copied().unwrap_or_default()
+        if let Some(shape) = self.shapes.get(&cell) {
+            return *shape;
+        }
+        if self.block_shapes.is_empty() {
+            return Shape::Cube;
+        }
+        self.block_shapes
+            .get(&self.get(cell))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Which blocks draw as a shape by their model.
+    pub fn set_block_shapes(&mut self, shapes: std::sync::Arc<BTreeMap<Block, Shape>>) {
+        self.block_shapes = shapes;
+        self.mark_all_dirty();
     }
 
     /// A solid cell that fills its whole cell, so it hides what it touches.
     pub fn is_full(&self, cell: [i32; 3]) -> bool {
-        self.get(cell) != 0 && !self.shapes.contains_key(&cell)
+        self.get(cell) != 0 && self.shape_at(cell) == Shape::Cube
     }
 
     /// The shaped cells inside one section.
     pub fn shaped_in(&self, chunk: [i32; 3]) -> Vec<([i32; 3], Shape)> {
         let lo = chunk.map(|c| c * SECTION);
         let hi = lo.map(|c| c + SECTION);
-        self.shapes
+        let mut out: BTreeMap<[i32; 3], Shape> = self
+            .shapes
             .range(lo..hi)
             .filter(|(cell, _)| (0..3).all(|a| (lo[a]..hi[a]).contains(&cell[a])))
             .map(|(&cell, &shape)| (cell, shape))
-            .collect()
+            .collect();
+        if !self.block_shapes.is_empty() {
+            for i in 0..SECTION_CELLS {
+                let cell = decoded_cell(chunk, i, SECTION);
+                if !out.contains_key(&cell)
+                    && let Some(&shape) = self.block_shapes.get(&self.get(cell))
+                {
+                    out.insert(cell, shape);
+                }
+            }
+        }
+        out.into_iter().collect()
     }
 
     /// Negative is solid. Shaped cells are drawn separately from the field.
@@ -242,7 +280,7 @@ impl Grid {
             .unwrap_or_else(|| if self.get(cell) == 0 { 256 } else { -256 })
     }
 
-    pub fn set_density(&mut self, cell: [i32; 3], density: i16, material: u8) -> bool {
+    pub fn set_density(&mut self, cell: [i32; 3], density: i16, material: Block) -> bool {
         if !self.contains(cell) {
             return false;
         }
@@ -293,7 +331,7 @@ impl Grid {
     }
 
     /// Writes a whole cube; true when that changed the cell.
-    pub fn set(&mut self, cell: [i32; 3], material: u8) -> bool {
+    pub fn set(&mut self, cell: [i32; 3], material: Block) -> bool {
         self.set_shaped(cell, material, Shape::Cube)
     }
 
@@ -306,7 +344,7 @@ impl Grid {
     }
 
     /// Writes a cell and its shape; true when that changed it.
-    pub fn set_shaped(&mut self, cell: [i32; 3], material: u8, shape: Shape) -> bool {
+    pub fn set_shaped(&mut self, cell: [i32; 3], material: Block, shape: Shape) -> bool {
         if !self.contains(cell) {
             return false;
         }
@@ -332,14 +370,15 @@ impl Grid {
         } else {
             self.sections
                 .entry(chunk)
-                .or_insert_with(|| Box::new([0; SECTION_CELLS]))[local(cell)] = material;
+                .or_insert_with(|| Box::new(Cells::filled(0)))
+                .set(local(cell), material);
         }
         if material != 0 && self.resident.contains(&chunk) && !self.sections.contains_key(&chunk) {
             self.resident.remove(&chunk);
             self.load_page(chunk);
         }
         if let Some(cells) = self.sections.get_mut(&chunk) {
-            cells[local(cell)] = material;
+            cells.set(local(cell), material);
         }
         if shape == Shape::Cube {
             self.shapes.remove(&cell);
@@ -355,13 +394,13 @@ impl Grid {
         if self
             .sections
             .get(&chunk)
-            .is_some_and(|cells| cells.iter().all(|&m| m == 0))
+            .is_some_and(|cells| cells.is_uniform(0))
         {
             self.sections.remove(&chunk);
         }
     }
 
-    fn base(&self, cell: [i32; 3]) -> u8 {
+    fn base(&self, cell: [i32; 3]) -> Block {
         self.generator.as_ref().map_or(0, |(preset, seed)| {
             if preset == "infinite" {
                 if let Some(wg) = &self.worldgen {
@@ -408,7 +447,7 @@ impl Grid {
     }
 
     /// Registry names for infinite sampling; built-ins fill the gaps.
-    pub fn set_block_ids(&mut self, ids: BTreeMap<String, u8>) {
+    pub fn set_block_ids(&mut self, ids: BTreeMap<String, Block>) {
         self.block_ids = ids;
         self.columns.get_mut().unwrap().clear();
     }
@@ -428,7 +467,7 @@ impl Grid {
         if self.slot(chunk).is_none() || self.resident.contains(&chunk) {
             return;
         }
-        let mut cells = Box::new([0; SECTION_CELLS]);
+        let mut cells = vec![0 as Block; SECTION_CELLS];
         if let (Some((preset, seed)), Some(wg)) = (&self.generator, &self.worldgen)
             && preset == "infinite"
         {
@@ -446,7 +485,7 @@ impl Grid {
                 },
                 seed,
                 chunk,
-                &mut cells,
+                (&mut cells[..]).try_into().unwrap(),
                 &mut self.columns.lock().unwrap(),
             );
             let lo = chunk.map(|c| c * SECTION);
@@ -472,7 +511,8 @@ impl Grid {
         }
         self.resident.insert(chunk);
         if cells.iter().any(|m| *m != 0) {
-            self.sections.insert(chunk, cells);
+            self.sections
+                .insert(chunk, Box::new(Cells::from_cells(&cells)));
         }
     }
 
@@ -485,10 +525,10 @@ impl Grid {
         self.resident.retain(|c| pages.contains(c));
     }
 
-    pub fn solid_cells(&self) -> Vec<([i32; 3], u8)> {
+    pub fn solid_cells(&self) -> Vec<([i32; 3], Block)> {
         let mut out = Vec::new();
         for (&chunk, data) in &self.sections {
-            for (i, &material) in data.iter().enumerate() {
+            for (i, material) in data.unpack().into_iter().enumerate() {
                 if material != 0 {
                     out.push((decoded_cell(chunk, i, SECTION), material));
                 }
@@ -503,17 +543,17 @@ impl Grid {
             for (&cell, &material) in &self.edits {
                 pages
                     .entry(cell.map(|c| c.div_euclid(SECTION)))
-                    .or_insert_with(|| Box::new([256; SECTION_CELLS]))[local(cell)] =
-                    u16::from(material);
+                    .or_insert_with(|| Box::new([KEEP; SECTION_CELLS]))[local(cell)] = material;
             }
         } else {
             for (&chunk, data) in &self.sections {
-                pages.insert(chunk, Box::new(data.map(u16::from)));
+                pages.insert(chunk, data.unpack().into_boxed_slice().try_into().unwrap());
             }
         }
         Snapshot {
             page_size: SECTION,
             size: self.size,
+            keep: KEEP,
             generator: self.generator.clone(),
             generator_size: self.generator_size,
             cells: Vec::new(),
@@ -538,7 +578,7 @@ impl Grid {
         }
     }
 
-    pub fn restore(snapshot: Snapshot, palette_len: u8) -> Result<Self, String> {
+    pub fn restore(snapshot: Snapshot, palette_len: Block) -> Result<Self, String> {
         let width = snapshot.page_size;
         if ![LEGACY_PAGE, SECTION].contains(&width) {
             return Err("unsupported voxel checkpoint page size".into());
@@ -565,6 +605,10 @@ impl Grid {
             }
             grid.generator_size = Some(size);
         }
+        let keep = snapshot.keep;
+        if ![LEGACY_KEEP, KEEP].contains(&keep) {
+            return Err("unsupported voxel checkpoint keep marker".into());
+        }
         let mut written = 0usize;
         let mut seen = BTreeSet::new();
         for page in snapshot.pages {
@@ -580,12 +624,12 @@ impl Grid {
                 let count = count as usize;
                 if count == 0
                     || offset + count > page_cells
-                    || (material != 256 && material > u16::from(palette_len))
-                    || (material == 256 && grid.generator.is_none())
+                    || (material != keep && material > palette_len)
+                    || (material == keep && grid.generator.is_none())
                 {
                     return Err("invalid checkpoint page run".into());
                 }
-                if material != 256 {
+                if material != keep {
                     for i in offset..offset + count {
                         let cell = decoded_cell(page.chunk, i, width);
                         if !grid.contains(cell) {
@@ -598,7 +642,7 @@ impl Grid {
                         if written > 4194304 {
                             return Err("voxel checkpoint edit budget exceeded".into());
                         }
-                        grid.set(cell, material as u8);
+                        grid.set(cell, material);
                     }
                 }
                 offset += count;
@@ -608,10 +652,10 @@ impl Grid {
             }
         }
         for (cell, m) in snapshot.cells {
-            if !grid.contains(cell) || m > palette_len {
+            if !grid.contains(cell) || Block::from(m) > palette_len {
                 return Err("invalid checkpoint cell".into());
             }
-            grid.set(cell, m);
+            grid.set(cell, Block::from(m));
         }
         for (cell, shape) in snapshot.shapes {
             let shape = Shape::from_name(&shape)?;
@@ -642,7 +686,7 @@ impl Grid {
     /// What differs from `base`, the same world freshly generated: the
     /// regions a `.blockworld` keeps.
     pub fn edit_regions(&self, base: &Grid) -> crate::blockworld::Regions {
-        use crate::blockworld::{KEEP, Regions, runs};
+        use crate::blockworld::{Regions, runs};
         let chunk_of = |c: &[i32; 3]| c.map(|v| v.div_euclid(SECTION));
         let mut chunks: BTreeSet<SectionAddress> = self
             .sections
@@ -662,7 +706,7 @@ impl Grid {
                 }
                 let now = self.get(cell);
                 if now != base.get(cell) {
-                    *slot = u16::from(now);
+                    *slot = now;
                     changed = true;
                 }
             }
@@ -680,8 +724,8 @@ impl Grid {
             .copied()
             .collect();
         for cell in shaped {
-            let now = self.shape_at(cell);
-            if now != base.shape_at(cell) && self.get(cell) != 0 {
+            let now = self.shapes.get(&cell).copied().unwrap_or_default();
+            if Some(&now) != base.shapes.get(&cell) && self.get(cell) != 0 {
                 regions.shapes.push((cell, now.name()));
             }
         }
@@ -698,22 +742,21 @@ impl Grid {
     pub fn apply_regions(
         &mut self,
         regions: &crate::blockworld::Regions,
-        palette_len: u8,
+        palette_len: Block,
     ) -> Result<usize, String> {
-        use crate::blockworld::KEEP;
         let mut written = 0usize;
         for page in &regions.pages {
             let mut offset = 0usize;
             for &(count, material) in &page.runs {
                 let count = usize::from(count);
                 if material != KEEP {
-                    if material > u16::from(palette_len) {
+                    if material > palette_len {
                         return Err(format!("material {material} is not in the palette"));
                     }
                     for i in offset..offset + count {
                         let cell = decoded_cell(page.chunk, i, SECTION);
                         if self.contains(cell) {
-                            self.set(cell, material as u8);
+                            self.set(cell, material);
                             written += 1;
                         }
                     }
@@ -749,13 +792,14 @@ impl Grid {
         self.densities
             .retain(|cell, _| (0..3).all(|a| cell[a] < size[a]));
         self.sections.retain(|section, data| {
-            for (i, m) in data.iter_mut().enumerate() {
+            for i in 0..SECTION_CELLS {
                 let cell = decoded_cell(*section, i, SECTION);
                 if (0..3).any(|a| cell[a] >= size[a]) {
-                    *m = 0;
+                    data.set(i, 0);
                 }
             }
-            data.iter().any(|m| *m != 0)
+            data.compact();
+            !data.is_uniform(0)
         });
         self.dirty.clear();
         if self.generator.is_none() {
@@ -798,7 +842,7 @@ impl Grid {
     pub fn solid_count(&self) -> u64 {
         self.sections
             .values()
-            .map(|cells| cells.iter().filter(|&&m| m != 0).count() as u64)
+            .map(|cells| cells.unpack().iter().filter(|&&m| m != 0).count() as u64)
             .sum()
     }
 
@@ -839,11 +883,18 @@ fn legacy_page_size() -> i32 {
     LEGACY_PAGE
 }
 
+fn legacy_keep() -> u16 {
+    LEGACY_KEEP
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Snapshot {
     #[serde(default = "legacy_page_size")]
     pub page_size: i32,
     pub size: [i32; 3],
+    /// What a page run says for "keep the generated cell".
+    #[serde(default = "legacy_keep")]
+    pub keep: u16,
     pub generator: Option<(String, i64)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generator_size: Option<[i32; 3]>,
@@ -864,6 +915,33 @@ pub struct Page {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn block_ids_past_255_store_and_restore_and_old_checkpoints_still_read() {
+        let mut grid = Grid::new([40, 8, 8]);
+        grid.set([1, 1, 1], 300);
+        grid.set([33, 2, 2], 65_000);
+        assert_eq!(grid.get([1, 1, 1]), 300);
+        let restored = Grid::restore(grid.snapshot(), 65_000).unwrap();
+        assert_eq!(restored.solid_cells(), grid.solid_cells());
+        // Runs written before 16-bit ids said 256 for "keep".
+        let mut generated = Grid::new([32, 8, 32]);
+        generated.stream("flat", 1);
+        let flat = generated.get([0, 0, 0]);
+        let mut old = Snapshot {
+            keep: 256,
+            ..generated.snapshot()
+        };
+        let runs = vec![(1u16, 5u16), (SECTION_CELLS as u16 - 1, 256)];
+        old.pages = vec![Page {
+            chunk: [0, 0, 0],
+            runs,
+        }];
+        let old = Grid::restore(old, 7).unwrap();
+        assert_eq!(old.get([0, 0, 0]), 5);
+        assert_eq!(old.get([0, 0, 1]), generated.get([0, 0, 1]));
+        assert_ne!(flat, 5);
+    }
 
     #[test]
     fn partial_sections_keep_padding_air_and_round_trip() {

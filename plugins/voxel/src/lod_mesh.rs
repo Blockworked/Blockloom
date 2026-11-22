@@ -46,7 +46,7 @@ pub struct Tile {
     lo: [i32; 3],
     hi: [i32; 3],
     samples: Vec<Sample>,
-    pub groups: Option<BTreeMap<Option<u8>, Group>>,
+    pub groups: Option<BTreeMap<Option<crate::grid::Block>, Group>>,
 }
 
 impl Tile {
@@ -394,7 +394,7 @@ mod tests {
         key: Key,
         grid: &mut Grid,
         surface: Surface,
-    ) -> BTreeMap<Option<u8>, Group> {
+    ) -> BTreeMap<Option<crate::grid::Block>, Group> {
         let palette = Palette::new(&[], &[]).unwrap();
         for _ in 0..200 {
             let tile = cache.poll(key, grid, &palette, surface, 1.0).unwrap();

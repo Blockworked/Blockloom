@@ -11,7 +11,7 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
-pub type Groups = BTreeMap<Option<u8>, Group>;
+pub type Groups = BTreeMap<Option<crate::grid::Block>, Group>;
 pub type Caps = [Vec<Cap>; 6];
 const EPS: f64 = 1e-9;
 pub const MAX_WORK: usize = 2_000_000;
@@ -19,7 +19,7 @@ pub const MAX_WORK: usize = 2_000_000;
 #[derive(Clone, Debug)]
 pub struct Cap {
     pub points: Vec<[f64; 2]>,
-    pub material: u8,
+    pub material: crate::grid::Block,
 }
 
 #[derive(Clone)]
@@ -240,7 +240,7 @@ pub fn caps(
         let uv = [(axis + 1) % 3, (axis + 2) % 3];
         let plane = if face % 2 == 0 { lo[axis] } else { hi[axis] } as f64;
         let patch = rect(uv.map(|a| lo[a]), uv.map(|a| hi[a]));
-        let mut push = |p: Vec<[f64; 2]>, material: u8| -> Result<(), String> {
+        let mut push = |p: Vec<[f64; 2]>, material: crate::grid::Block| -> Result<(), String> {
             let p = hull(
                 p.into_iter()
                     .map(|p| [0, 1].map(|i| p[i].clamp(0.0, grid.size()[uv[i]] as f64)))

@@ -23,13 +23,13 @@ const DEFAULTS: [(&str, f32); 7] = [
     ("#ffb14a", 6.0),
 ];
 
-pub const STONE: u8 = 1;
-pub const DIRT: u8 = 2;
-pub const GRASS: u8 = 3;
-pub const SAND: u8 = 4;
-pub const WOOD: u8 = 5;
-pub const LEAVES: u8 = 6;
-pub const GLOW: u8 = 7;
+pub const STONE: crate::grid::Block = 1;
+pub const DIRT: crate::grid::Block = 2;
+pub const GRASS: crate::grid::Block = 3;
+pub const SAND: crate::grid::Block = 4;
+pub const WOOD: crate::grid::Block = 5;
+pub const LEAVES: crate::grid::Block = 6;
+pub const GLOW: crate::grid::Block = 7;
 
 pub struct Palette {
     materials: Vec<Material>,
@@ -59,8 +59,8 @@ impl Palette {
     /// position; entries past the built-ins add materials of their own.
     pub fn new(colors: &[String], emission: &[f64]) -> Result<Palette, String> {
         let count = DEFAULTS.len().max(colors.len()).max(emission.len());
-        if count > 255 {
-            return Err("a palette holds at most 255 materials".to_string());
+        if count > usize::from(crate::grid::MAX_BLOCK) {
+            return Err("a palette holds at most 65534 materials".to_string());
         }
         let mut materials = Vec::with_capacity(count);
         for i in 0..count {
@@ -81,32 +81,32 @@ impl Palette {
         Ok(Palette { materials })
     }
 
-    pub fn len(&self) -> u8 {
-        self.materials.len() as u8
+    pub fn len(&self) -> crate::grid::Block {
+        self.materials.len() as crate::grid::Block
     }
 
-    pub fn get(&self, id: u8) -> Option<&Material> {
+    pub fn get(&self, id: crate::grid::Block) -> Option<&Material> {
         usize::from(id)
             .checked_sub(1)
             .and_then(|i| self.materials.get(i))
     }
 
     /// A slot's material: an id, or a name. 0 and "air" are no material.
-    pub fn id_of(&self, value: &Value) -> Result<u8, String> {
+    pub fn id_of(&self, value: &Value) -> Result<crate::grid::Block, String> {
         match value {
             Value::String(name) if name.eq_ignore_ascii_case("air") || name.is_empty() => Ok(0),
             Value::String(name) => self
                 .materials
                 .iter()
                 .position(|m| m.name.eq_ignore_ascii_case(name))
-                .map(|i| (i + 1) as u8)
+                .map(|i| (i + 1) as crate::grid::Block)
                 .or_else(|| name.parse().ok().filter(|&id| id <= self.len()))
                 .ok_or_else(|| format!("no material called {name}")),
             Value::Number(n) => n
                 .as_f64()
                 .map(|f| f.floor())
                 .filter(|&f| f >= 0.0 && f <= f64::from(self.len()))
-                .map(|f| f as u8)
+                .map(|f| f as crate::grid::Block)
                 .ok_or_else(|| format!("no material {n}")),
             Value::Null => Ok(0),
             other => Err(format!("{other} is not a material")),

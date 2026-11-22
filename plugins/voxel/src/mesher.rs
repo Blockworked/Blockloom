@@ -156,7 +156,7 @@ pub fn mesh_chunk(
     palette: &Palette,
     chunk: [i32; 3],
     voxel: f32,
-) -> BTreeMap<Option<u8>, Group> {
+) -> BTreeMap<Option<crate::grid::Block>, Group> {
     mesh_region(
         grid,
         palette,
@@ -172,7 +172,7 @@ pub(crate) fn mesh_region(
     base: [i32; 3],
     extent: [i32; 3],
     voxel: f32,
-) -> BTreeMap<Option<u8>, Group> {
+) -> BTreeMap<Option<crate::grid::Block>, Group> {
     // Without a registry no face is textured, so the texture key is empty.
     mesh_region_with(grid, palette, None, base, extent, voxel)
         .into_iter()
@@ -190,7 +190,7 @@ pub(crate) fn mesh_region_with(
     base: [i32; 3],
     extent: [i32; 3],
     voxel: f32,
-) -> BTreeMap<(Option<u8>, Option<String>), Group> {
+) -> BTreeMap<(Option<crate::grid::Block>, Option<String>), Group> {
     // Sample the tile and its face halo once, instead of looking up each
     // voxel repeatedly for all six face directions.
     let width = extent.map(|n| (n + 2) as usize);
@@ -249,9 +249,9 @@ pub(crate) fn mesh_cubes(
     base: [i32; 3],
     extent: [i32; 3],
     voxel: f32,
-    material_at: impl Fn([i32; 3]) -> u8,
-) -> BTreeMap<Option<u8>, Group> {
-    let mut groups: BTreeMap<Option<u8>, Group> = BTreeMap::new();
+    material_at: impl Fn([i32; 3]) -> crate::grid::Block,
+) -> BTreeMap<Option<crate::grid::Block>, Group> {
+    let mut groups: BTreeMap<Option<crate::grid::Block>, Group> = BTreeMap::new();
     cube_quads(palette, base, extent, material_at, |quad, material| {
         let look = palette.get(material).unwrap();
         let key = (look.emission > 0.0).then_some(material);
@@ -267,9 +267,9 @@ pub(crate) fn mesh_cubes_with(
     base: [i32; 3],
     extent: [i32; 3],
     voxel: f32,
-    material_at: impl Fn([i32; 3]) -> u8,
-) -> BTreeMap<(Option<u8>, Option<String>), Group> {
-    let mut groups: BTreeMap<(Option<u8>, Option<String>), Group> = BTreeMap::new();
+    material_at: impl Fn([i32; 3]) -> crate::grid::Block,
+) -> BTreeMap<(Option<crate::grid::Block>, Option<String>), Group> {
+    let mut groups: BTreeMap<(Option<crate::grid::Block>, Option<String>), Group> = BTreeMap::new();
     cube_quads(palette, base, extent, material_at, |quad, material| {
         let look = palette.get(material).unwrap();
         let key = (look.emission > 0.0).then_some(material);
@@ -290,15 +290,15 @@ pub(crate) fn cube_quads(
     palette: &Palette,
     base: [i32; 3],
     extent: [i32; 3],
-    material_at: impl Fn([i32; 3]) -> u8,
-    mut emit: impl FnMut(Quad, u8),
+    material_at: impl Fn([i32; 3]) -> crate::grid::Block,
+    mut emit: impl FnMut(Quad, crate::grid::Block),
 ) {
     for axis in 0..3 {
         let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
         for sign in [1, -1] {
             let n = extent[u] as usize;
             let rows = extent[v] as usize;
-            let mut mask = vec![0u8; n * rows];
+            let mut mask = vec![0 as crate::grid::Block; n * rows];
             for slice in 0..extent[axis] {
                 mask.fill(0);
                 for j in 0..extent[v] {
@@ -367,7 +367,7 @@ pub(crate) fn mesh_shapes(
     extent: [i32; 3],
     voxel: f32,
     smooth: bool,
-    groups: &mut BTreeMap<Option<u8>, Group>,
+    groups: &mut BTreeMap<Option<crate::grid::Block>, Group>,
 ) {
     mesh_shapes_inner(
         grid,
@@ -394,8 +394,8 @@ pub(crate) fn face_for_normal(normal: [f32; 3]) -> &'static str {
 }
 
 enum TupleGroups<'a> {
-    Plain(&'a mut BTreeMap<Option<u8>, Group>),
-    Textured(&'a mut BTreeMap<(Option<u8>, Option<String>), Group>),
+    Plain(&'a mut BTreeMap<Option<crate::grid::Block>, Group>),
+    Textured(&'a mut BTreeMap<(Option<crate::grid::Block>, Option<String>), Group>),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -463,7 +463,7 @@ pub(crate) fn mesh_shapes_textured(
     extent: [i32; 3],
     voxel: f32,
     smooth: bool,
-    groups: &mut BTreeMap<(Option<u8>, Option<String>), Group>,
+    groups: &mut BTreeMap<(Option<crate::grid::Block>, Option<String>), Group>,
 ) {
     mesh_shapes_inner(
         grid,
@@ -487,7 +487,7 @@ pub(crate) fn emit_custom_models(
     base: [i32; 3],
     extent: [i32; 3],
     voxel: f32,
-    groups: &mut BTreeMap<(Option<u8>, Option<String>), Group>,
+    groups: &mut BTreeMap<(Option<crate::grid::Block>, Option<String>), Group>,
 ) {
     use crate::registry::BlockModel;
     for z in 0..extent[2] {
@@ -567,7 +567,7 @@ mod tests {
         Palette::new(&[], &[]).unwrap()
     }
 
-    fn lit(groups: &BTreeMap<Option<u8>, Group>) -> usize {
+    fn lit(groups: &BTreeMap<Option<crate::grid::Block>, Group>) -> usize {
         groups.get(&None).map_or(0, Group::triangles)
     }
 

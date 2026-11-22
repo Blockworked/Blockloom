@@ -22,12 +22,12 @@ impl Address {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sample {
-    pub material: u8,
+    pub material: crate::grid::Block,
     /// Shape occupancy proxy, used to rank representative materials.
     pub opacity: u8,
     /// Signed distance proxy in units of 1/256 of this level's sample width.
     pub density: i16,
-    pub density_material: u8,
+    pub density_material: crate::grid::Block,
     /// Occupied octants, ordered x + 2*y + 4*z.
     pub children: u8,
 }

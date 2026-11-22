@@ -294,7 +294,7 @@ pub fn seed32(seed: i64) -> u32 {
 }
 
 /// A built-in material id. Custom blocks resolve through the registry map.
-pub fn builtin_id(name: &str) -> u8 {
+pub fn builtin_id(name: &str) -> crate::grid::Block {
     match name {
         "stone" => 1,
         "dirt" => 2,
@@ -331,7 +331,12 @@ pub fn height_bound_infinite(wg: &Worldgen, seed: i64, x: i32, z: i32) -> i32 {
 
 /// One canonical infinite cell. `id_of` maps material names to ids.
 #[cfg(test)]
-pub fn sample_infinite(wg: &Worldgen, seed: i64, cell: [i32; 3], id_of: &dyn Fn(&str) -> u8) -> u8 {
+pub fn sample_infinite(
+    wg: &Worldgen,
+    seed: i64,
+    cell: [i32; 3],
+    id_of: &dyn Fn(&str) -> crate::grid::Block,
+) -> crate::grid::Block {
     let seed = seed32(seed);
     let [x, y, z] = cell;
     if !(0..=128).contains(&y) {
@@ -410,10 +415,10 @@ pub fn sample_infinite(wg: &Worldgen, seed: i64, cell: [i32; 3], id_of: &dyn Fn(
 #[cfg(test)]
 pub fn fill_infinite_page(
     wg: &Worldgen,
-    id_of: &dyn Fn(&str) -> u8,
+    id_of: &dyn Fn(&str) -> crate::grid::Block,
     seed: i64,
     chunk: [i32; 3],
-    cells: &mut [u8; 32768],
+    cells: &mut [crate::grid::Block; 32768],
 ) {
     fill_infinite_page_cached(
         wg,
@@ -427,10 +432,10 @@ pub fn fill_infinite_page(
 
 pub fn fill_infinite_page_cached(
     wg: &Worldgen,
-    id_of: &dyn Fn(&str) -> u8,
+    id_of: &dyn Fn(&str) -> crate::grid::Block,
     seed: i64,
     chunk: [i32; 3],
-    cells: &mut [u8; 32768],
+    cells: &mut [crate::grid::Block; 32768],
     columns: &mut std::collections::BTreeMap<[i32; 2], Column>,
 ) {
     let seed = seed32(seed);
@@ -466,16 +471,16 @@ pub struct Column {
     top: i32,
     ground: i32,
     trunk_end: i32,
-    surface: u8,
-    subsurface: u8,
-    stone: u8,
-    wood: u8,
-    leaves: u8,
+    surface: crate::grid::Block,
+    subsurface: crate::grid::Block,
+    stone: crate::grid::Block,
+    wood: crate::grid::Block,
+    leaves: crate::grid::Block,
     rock: bool,
     crowns: [u64; 3],
 }
 impl Column {
-    pub fn sample(&self, y: i32) -> u8 {
+    pub fn sample(&self, y: i32) -> crate::grid::Block {
         if !(0..=128).contains(&y) {
             return 0;
         }
@@ -503,7 +508,7 @@ pub fn column(
     seed: u32,
     x: i32,
     z: i32,
-    id_of: &dyn Fn(&str) -> u8,
+    id_of: &dyn Fn(&str) -> crate::grid::Block,
     height: &dyn Fn(i32, i32) -> i32,
 ) -> Column {
     let biome = wg.biome_at(seed, x, z);
@@ -877,7 +882,7 @@ mod tests {
             _ => 1,
         };
         for chunk in [[0, 0, 0], [3, 1, -2], [-4, 0, 7]] {
-            let mut cells = [0u8; 32768];
+            let mut cells = [0 as crate::grid::Block; 32768];
             fill_infinite_page(&wg, &id_of, 7, chunk, &mut cells);
             for z in 0..32 {
                 for y in 0..32 {

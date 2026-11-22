@@ -703,9 +703,10 @@ fn column_streaming_has_independent_vertical_and_byte_budgets() {
     assert_eq!(count["allocated_bytes"], 0);
     a.call_json("set", &json!({"x":1,"y":33,"z":1,"material":"stone"}))
         .unwrap();
+    // Two blocks in a section pack to one bit a cell plus the palette.
     assert_eq!(
         a.call_json("count", &json!({})).unwrap()["allocated_bytes"],
-        32768
+        4100
     );
     a.call_json("stream", &json!({"x":80,"y":99,"z":80}))
         .unwrap();
@@ -1072,4 +1073,73 @@ fn converted_edit_lines_load_from_a_blockworld_as_they_applied() {
     file["seed"] = json!(4);
     let (_, answer) = load(file);
     assert!(answer.to_string().contains("not this world's"), "{answer}");
+}
+
+#[test]
+fn a_block_set_brings_typed_blocks_whose_states_draw_their_shapes() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocks = dir.path().join("assets/blocks");
+    std::fs::create_dir_all(&blocks).unwrap();
+    std::fs::write(
+        blocks.join("oak_stairs.blockdef"),
+        r##"{"name":"oak_stairs","id":400,"tags":["stairs"],"color":"#8a6a3a",
+            "properties":{"facing":["north","east","south","west"]},
+            "variants":[{"when":{"facing":"north"},"model":"stair north"},
+                        {"when":{"facing":"east"},"model":"stair east"},
+                        {"when":{"facing":"south"},"model":"stair south"},
+                        {"when":{"facing":"west"},"model":"stair west"}]}"##,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("assets/blocks/overworld.blockset"),
+        r#"{"blocks":["assets/blocks/oak_stairs.blockdef",{"name":"marble","id":900}]}"#,
+    )
+    .unwrap();
+    let m = unsafe {
+        NativeModule::from_entry(
+            blockloom_voxel::blockloom_plugin_entry_v1,
+            BTreeSet::from([Capability::ProjectStorage]),
+            HostServices::new("0.0.1")
+                .with_assets(dir.path().to_path_buf())
+                .for_plugin(ID),
+        )
+    }
+    .unwrap();
+    let answer = start(
+        &m,
+        json!({"preset":"empty","size":[16,16,16],"block_set":"assets/blocks/overworld.blockset"}),
+    );
+    assert!(!answer.to_string().contains("\"error\""), "{answer}");
+    m.call_json(
+        "set",
+        &json!({"x":2,"y":2,"z":2,"material":"oak_stairs[facing=west]"}),
+    )
+    .unwrap();
+    m.call_json("set", &json!({"x":5,"y":2,"z":2,"material":"marble"}))
+        .unwrap();
+    assert_eq!(material(&m, [2, 2, 2])["material"], 403);
+    assert_eq!(material(&m, [5, 2, 2])["material"], 900);
+    let listed = m.call_json("blocks", &json!({})).unwrap();
+    let ty = &listed["types"][0];
+    assert_eq!(ty["name"], "oak_stairs");
+    assert_eq!(ty["states"], 4);
+    let west = listed["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["id"] == 403)
+        .unwrap();
+    assert_eq!(west["state"]["facing"], "west");
+    assert_eq!(west["tags"], json!(["stairs"]));
+    // The stair state is a shaped cell everywhere the grid answers.
+    assert_eq!(material(&m, [2, 2, 2])["shape"], "stair west");
+    assert_eq!(material(&m, [5, 2, 2])["shape"], "cube");
+    // A missing set stops the world.
+    assert!(
+        m.call_json(
+            "world.start",
+            &json!({"resources":[{"type_id":"world","payload":{"preset":"empty","block_set":"assets/blocks/none.blockset"}}]}),
+        )
+        .is_err()
+    );
 }

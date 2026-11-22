@@ -135,7 +135,7 @@ pub fn mesh_chunk(
     palette: &Palette,
     chunk: [i32; 3],
     voxel: f32,
-) -> BTreeMap<Option<u8>, Group> {
+) -> BTreeMap<Option<crate::grid::Block>, Group> {
     mesh_region(
         grid,
         palette,
@@ -151,7 +151,7 @@ pub(crate) fn mesh_region(
     base: [i32; 3],
     extent: [i32; 3],
     voxel: f32,
-) -> BTreeMap<Option<u8>, Group> {
+) -> BTreeMap<Option<crate::grid::Block>, Group> {
     let mut groups = mesh_samples(palette, base, extent, voxel, |cell| {
         (grid.density(cell), grid.get(cell))
     });
@@ -164,8 +164,8 @@ pub(crate) fn mesh_samples(
     base: [i32; 3],
     extent: [i32; 3],
     voxel: f32,
-    sample_at: impl Fn([i32; 3]) -> (i16, u8),
-) -> BTreeMap<Option<u8>, Group> {
+    sample_at: impl Fn([i32; 3]) -> (i16, crate::grid::Block),
+) -> BTreeMap<Option<crate::grid::Block>, Group> {
     mesh_samples_inner(palette, base, extent, voxel, false, sample_at)
 }
 
@@ -174,8 +174,8 @@ pub(crate) fn mesh_visual_samples(
     base: [i32; 3],
     extent: [i32; 3],
     voxel: f32,
-    sample_at: impl Fn([i32; 3]) -> (i16, u8),
-) -> BTreeMap<Option<u8>, Group> {
+    sample_at: impl Fn([i32; 3]) -> (i16, crate::grid::Block),
+) -> BTreeMap<Option<crate::grid::Block>, Group> {
     mesh_samples_inner(palette, base, extent, voxel, true, sample_at)
 }
 
@@ -185,10 +185,10 @@ fn mesh_samples_inner(
     extent: [i32; 3],
     voxel: f32,
     visual: bool,
-    sample_at: impl Fn([i32; 3]) -> (i16, u8),
-) -> BTreeMap<Option<u8>, Group> {
-    let mut groups = BTreeMap::<Option<u8>, Group>::new();
-    let mut vertices = BTreeMap::<Option<u8>, BTreeMap<[u32; 4], u32>>::new();
+    sample_at: impl Fn([i32; 3]) -> (i16, crate::grid::Block),
+) -> BTreeMap<Option<crate::grid::Block>, Group> {
+    let mut groups = BTreeMap::<Option<crate::grid::Block>, Group>::new();
+    let mut vertices = BTreeMap::<Option<crate::grid::Block>, BTreeMap<[u32; 4], u32>>::new();
     let lo = base.map(|c| if visual || c == 0 { c - 1 } else { c });
     let hi = [0, 1, 2].map(|a| base[a] + extent[a]);
     // Read the shared halo once rather than eight times per lattice cube.
@@ -200,7 +200,7 @@ fn mesh_samples_inner(
         (c[2] * n[1] + c[1]) * n[0] + c[0]
     };
     let mut samples = vec![0i16; n.iter().product()];
-    let mut materials = vec![0u8; samples.len()];
+    let mut materials = vec![0 as crate::grid::Block; samples.len()];
     for z in sample_lo[2]..=sample_hi[2] {
         for y in sample_lo[1]..=sample_hi[1] {
             for x in sample_lo[0]..=sample_hi[0] {
