@@ -284,76 +284,81 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent; spacing: 4
-        RowLayout {
-            Layout.fillWidth: true; Layout.preferredHeight: 36; Layout.leftMargin: 8; Layout.rightMargin: 8; spacing: 6
-            SwitchField { visible: !root.embedded; value: root.appState.preview_enabled; onToggled: on => root.report("set_preview_enabled", { enabled: on }) }
-            Text { visible: !root.embedded; text: "Preview"; color: Theme.text; font.pixelSize: 12; Layout.rightMargin: 8 }
-            SwitchField { visible: root.appState.preview_enabled && !root.embedded; value: root.appState.preview_headless; onToggled: on => root.report("set_preview_headless", { headless: on }) }
-            Text { visible: root.appState.preview_enabled && !root.embedded; text: "Headless"; color: Theme.textDim; font.pixelSize: 12 }
-            Item { Layout.fillWidth: true }
-            Text {
-                visible: root.embedded
-                text: root.drawnSize.width + " × " + root.drawnSize.height + (root.shownPercent < 100 ? "  (shown at " + root.shownPercent + "%)" : "")
-                color: Theme.textDim; font.pixelSize: 11
-            }
-            Text { text: "View"; color: Theme.textDim; font.pixelSize: 12; Layout.leftMargin: 6 }
-            ChoiceField {
-                Layout.fillWidth: false; Layout.preferredWidth: 120
-                options: [{ value: "lit", label: "Lit" }, { value: "false_color", label: "False color" }, { value: "clipping", label: "Clipping" },
-                          { value: "histogram", label: "Histogram" }, { value: "waveform", label: "Waveform" },
-                          { value: "calibration", label: "Calibration" }, { value: "hdr_preview", label: "HDR preview" }]
-                          .concat([{ value: "bloom_mip", label: "Bloom level" }])
-                          .concat(root.is3d ? [{ value: "surface_blend", label: "Surface blend" }, { value: "circle_of_confusion", label: "Blur size (CoC)" },
-                                               { value: "ambient_occlusion", label: "AO only" }] : [])
-                value: scene.debugView
-                onChosen: v => scene.debugView = v
-                ToolTip.visible: hovered; ToolTip.delay: 500
-                ToolTip.text: "False color bands the exposed image by stops: green is middle grey, yellow nears white, red is past it.\n"
-                    + "Clipping stripes whatever the display can't show. Histogram and waveform plot luminance in stops.\n"
-                    + "Calibration shows patches at black, paper white and peak brightness.\n"
-                    + "HDR preview shows the HDR output at paper white, clipping what only an HDR display could show.\n"
-                    + "Surface blend paints terrain layers red, green, blue and yellow, rule masks magenta, snow white and wetness cyan.\n"
-                    + "Bloom level shows one level of the glow chain; blur size paints depth of field's blur, near orange and far blue; AO only shows ambient occlusion."
-            }
-            NumberField {
-                visible: scene.debugView === "bloom_mip"
-                Layout.preferredWidth: 44; value: scene.bloomMip; fallback: 0
-                onCommitted: n => scene.bloomMip = Math.min(4, Math.max(0, Math.round(n)))
-                ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: "Bloom level, 0 the sharpest to 4 the widest"
-            }
-            IconButton {
-                iconName: "layers"; tip: "Environment volumes: bounds, heat map, the blend and its lerp"
-                onClicked: scene.volumePanel = !scene.volumePanel
-            }
-            IconButton {
-                iconName: "box"; highlighted: scene.physShapes || scene.physAabbs || scene.physContacts || scene.physJoints || scene.physAxes
-                tip: "Physics debug: collider shapes, bounding boxes, contacts, joints and body axes"
-                onClicked: scene.physicsPanel = !scene.physicsPanel
-            }
-            IconButton {
-                visible: root.is3d
-                iconName: "sparkles"; highlighted: root.pathTracing
-                tip: "Path tracer: a converging reference image of the scene's lighting, to check the raster and ray-traced looks against. Not for play."
-                onClicked: root.pathTracing = !root.pathTracing
-            }
-            IconButton {
-                visible: root.embedded || root.appState.preview_enabled
-                iconName: "camera"; tip: "Save this frame as an EXR file (linear, before tonemapping). With the path tracer on, it waits for the sample budget."
-                onClicked: root.report("capture_exr", {})
-            }
-            Text { text: "Aspect"; color: Theme.textDim; font.pixelSize: 12; Layout.leftMargin: 6 }
-            ChoiceField {
-                Layout.fillWidth: false; Layout.preferredWidth: 96
-                options: root.aspects.map(a => ({ value: a, label: a === "free" ? "Free" : a }))
-                value: view.aspect
-                onChosen: a => view.aspect = a
-            }
-            Text { text: "Resolution"; color: Theme.textDim; font.pixelSize: 12; Layout.leftMargin: 6 }
-            ChoiceField {
-                Layout.fillWidth: false; Layout.preferredWidth: 130
-                options: root.resolutionOptions
-                value: view.resolution
-                onChosen: r => view.resolution = r
+        // A plain Item keeps the toolbar's implicit width out of the column:
+        // the size label reads frameArea, which the column sizes (polish loop).
+        Item {
+            Layout.fillWidth: true; Layout.preferredHeight: 36
+            RowLayout {
+                anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8; spacing: 6
+                SwitchField { visible: !root.embedded; value: root.appState.preview_enabled; onToggled: on => root.report("set_preview_enabled", { enabled: on }) }
+                Text { visible: !root.embedded; text: "Preview"; color: Theme.text; font.pixelSize: 12; Layout.rightMargin: 8 }
+                SwitchField { visible: root.appState.preview_enabled && !root.embedded; value: root.appState.preview_headless; onToggled: on => root.report("set_preview_headless", { headless: on }) }
+                Text { visible: root.appState.preview_enabled && !root.embedded; text: "Headless"; color: Theme.textDim; font.pixelSize: 12 }
+                Item { Layout.fillWidth: true }
+                Text {
+                    visible: root.embedded
+                    text: root.drawnSize.width + " × " + root.drawnSize.height + (root.shownPercent < 100 ? "  (shown at " + root.shownPercent + "%)" : "")
+                    color: Theme.textDim; font.pixelSize: 11
+                }
+                Text { text: "View"; color: Theme.textDim; font.pixelSize: 12; Layout.leftMargin: 6 }
+                ChoiceField {
+                    Layout.fillWidth: false; Layout.preferredWidth: 120
+                    options: [{ value: "lit", label: "Lit" }, { value: "false_color", label: "False color" }, { value: "clipping", label: "Clipping" },
+                              { value: "histogram", label: "Histogram" }, { value: "waveform", label: "Waveform" },
+                              { value: "calibration", label: "Calibration" }, { value: "hdr_preview", label: "HDR preview" }]
+                              .concat([{ value: "bloom_mip", label: "Bloom level" }])
+                              .concat(root.is3d ? [{ value: "surface_blend", label: "Surface blend" }, { value: "circle_of_confusion", label: "Blur size (CoC)" },
+                                                   { value: "ambient_occlusion", label: "AO only" }] : [])
+                    value: scene.debugView
+                    onChosen: v => scene.debugView = v
+                    ToolTip.visible: hovered; ToolTip.delay: 500
+                    ToolTip.text: "False color bands the exposed image by stops: green is middle grey, yellow nears white, red is past it.\n"
+                        + "Clipping stripes whatever the display can't show. Histogram and waveform plot luminance in stops.\n"
+                        + "Calibration shows patches at black, paper white and peak brightness.\n"
+                        + "HDR preview shows the HDR output at paper white, clipping what only an HDR display could show.\n"
+                        + "Surface blend paints terrain layers red, green, blue and yellow, rule masks magenta, snow white and wetness cyan.\n"
+                        + "Bloom level shows one level of the glow chain; blur size paints depth of field's blur, near orange and far blue; AO only shows ambient occlusion."
+                }
+                NumberField {
+                    visible: scene.debugView === "bloom_mip"
+                    Layout.preferredWidth: 44; value: scene.bloomMip; fallback: 0
+                    onCommitted: n => scene.bloomMip = Math.min(4, Math.max(0, Math.round(n)))
+                    ToolTip.visible: hovered; ToolTip.delay: 500; ToolTip.text: "Bloom level, 0 the sharpest to 4 the widest"
+                }
+                IconButton {
+                    iconName: "layers"; tip: "Environment volumes: bounds, heat map, the blend and its lerp"
+                    onClicked: scene.volumePanel = !scene.volumePanel
+                }
+                IconButton {
+                    iconName: "box"; highlighted: scene.physShapes || scene.physAabbs || scene.physContacts || scene.physJoints || scene.physAxes
+                    tip: "Physics debug: collider shapes, bounding boxes, contacts, joints and body axes"
+                    onClicked: scene.physicsPanel = !scene.physicsPanel
+                }
+                IconButton {
+                    visible: root.is3d
+                    iconName: "sparkles"; highlighted: root.pathTracing
+                    tip: "Path tracer: a converging reference image of the scene's lighting, to check the raster and ray-traced looks against. Not for play."
+                    onClicked: root.pathTracing = !root.pathTracing
+                }
+                IconButton {
+                    visible: root.embedded || root.appState.preview_enabled
+                    iconName: "camera"; tip: "Save this frame as an EXR file (linear, before tonemapping). With the path tracer on, it waits for the sample budget."
+                    onClicked: root.report("capture_exr", {})
+                }
+                Text { text: "Aspect"; color: Theme.textDim; font.pixelSize: 12; Layout.leftMargin: 6 }
+                ChoiceField {
+                    Layout.fillWidth: false; Layout.preferredWidth: 96
+                    options: root.aspects.map(a => ({ value: a, label: a === "free" ? "Free" : a }))
+                    value: view.aspect
+                    onChosen: a => view.aspect = a
+                }
+                Text { text: "Resolution"; color: Theme.textDim; font.pixelSize: 12; Layout.leftMargin: 6 }
+                ChoiceField {
+                    Layout.fillWidth: false; Layout.preferredWidth: 130
+                    options: root.resolutionOptions
+                    value: view.resolution
+                    onChosen: r => view.resolution = r
+                }
             }
         }
         Item {
