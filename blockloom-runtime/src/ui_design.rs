@@ -782,4 +782,123 @@ mod tests {
         assert!(find("screen").paint_order < find("other").paint_order);
         assert!(!app.world().non_send::<Engine>().running);
     }
+
+    /// Lays `document` out the way a design session does and reports every
+    /// widget's box.
+    fn measure(
+        document: blockloom_core::ui::UiDocument,
+    ) -> Vec<blockloom_protocol::InterfaceWidgetBounds> {
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let engine = Engine::new(receiver, Mode::TwoD);
+        let mut manager = UiManager::default();
+        let mut session = DesignSession::default();
+        let mut design = fixture(1);
+        design.document = document;
+        session.apply(Some(design), &engine, &mut manager).unwrap();
+        let mut app = App::new();
+        app.add_plugins((
+            bevy::asset::AssetPlugin::default(),
+            bevy::time::TimePlugin,
+            bevy::text::TextPlugin,
+            bevy::ui::UiPlugin,
+        ));
+        app.init_resource::<bevy::picking::hover::HoverMap>();
+        app.init_resource::<bevy::picking::events::PointerState>();
+        app.add_message::<bevy::picking::pointer::PointerInput>();
+        app.add_message::<bevy::picking::backend::PointerHits>();
+        app.init_resource::<ButtonInput<MouseButton>>();
+        app.init_resource::<bevy::input::touch::Touches>();
+        app.init_asset::<Image>();
+        app.init_asset::<TextureAtlasLayout>();
+        app.insert_engine(engine);
+        app.insert_resource(manager);
+        app.insert_resource(session);
+        app.world_mut()
+            .spawn((Window::default(), bevy::window::PrimaryWindow));
+        app.world_mut().spawn((
+            Camera2d,
+            Camera::default(),
+            Transform::default(),
+            GlobalTransform::default(),
+            crate::world::WorldCamera,
+        ));
+        app.add_systems(
+            Update,
+            (
+                crate::ui_systems::canvas,
+                crate::ui_systems::collections,
+                crate::overlay::draw_ui,
+            )
+                .chain(),
+        );
+        app.add_systems(
+            PostUpdate,
+            report
+                .after(bevy::ui::UiSystems::PostLayout)
+                .after(bevy::ui::UiSystems::Stack),
+        );
+        for _ in 0..6 {
+            app.update();
+        }
+        let mut widgets = app
+            .world()
+            .resource::<DesignSession>()
+            .last
+            .clone()
+            .unwrap()
+            .widgets;
+        widgets.sort_by(|a, b| a.id.cmp(&b.id));
+        widgets
+    }
+
+    /// The UI v2 gate: an old document read as a tree and written back lays
+    /// every widget out exactly where it was.
+    #[test]
+    fn a_document_read_as_a_tree_lays_out_where_it_was() {
+        use blockloom_core::ui::{UiAnchor, UiKind, UiLayout, UiWidget};
+        let mut documents = vec![fixture(1).document];
+        // Widgets listed before their parents, pinned children and a canvas.
+        let mut shuffled = fixture(1).document;
+        shuffled.widgets.reverse();
+        let mut canvas = UiWidget::default();
+        canvas.element.id = "board".into();
+        canvas.element.kind = UiKind::Canvas;
+        canvas.element.size = [300., 200.];
+        let mut corner = UiWidget::default();
+        corner.element.id = "corner".into();
+        corner.element.kind = UiKind::Label;
+        corner.element.content = "Corner".into();
+        corner.element.parent = "board".into();
+        corner.element.anchor = UiAnchor::BottomRight;
+        corner.element.offset = [-4., -4.];
+        let mut pinned = UiWidget::default();
+        pinned.element.id = "pin".into();
+        pinned.element.kind = UiKind::Button;
+        pinned.element.content = "Pin".into();
+        pinned.element.anchor = UiAnchor::Right;
+        pinned.element.offset = [6., 12.];
+        pinned.layout = Some(UiLayout {
+            absolute: true,
+            ..UiLayout::default()
+        });
+        shuffled.widgets.extend([corner, canvas, pinned]);
+        documents.push(shuffled);
+        for document in documents {
+            let lowered = blockloom_core::ui_tree::UiScreen::from_document(&document)
+                .lower()
+                .unwrap();
+            let (before, after) = (measure(document), measure(lowered));
+            assert!(before.len() >= 6, "{}", before.len());
+            assert_eq!(before.len(), after.len());
+            for (a, b) in before.iter().zip(&after) {
+                assert_eq!(a.id, b.id);
+                assert_eq!(
+                    (a.size, a.transform, a.visible),
+                    (b.size, b.transform, b.visible),
+                    "{}",
+                    a.id
+                );
+            }
+        }
+    }
 }

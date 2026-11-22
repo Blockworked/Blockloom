@@ -2640,6 +2640,21 @@ close. In the Game view the editor holds it on the world's behalf (see Game
 view above). The one safety net is that showing a modal while the pointer is locked
 logs a warning, since a locked hidden cursor can't press anything.
 
+UI v2 (`blockloom-core/src/ui_tree.rs`) is the tree the saved interface
+moves to: a `UiScreen` of `UiNode`s, each with a `Widget` carrying only its
+kind's fields, a `LayoutItem` (flowing in its parent, or `Anchored` by
+anchors, pivot and position) apart from the container its widget is, and
+`Spacing` overrides over the kind's own (`kind_spacing`, which mirrors the
+runtime's `node_for`). `UiScreen::from_document` reads a flat `UiDocument`
+(prefabs become `components`; fields a kind can't use go to `Legacy`) and
+`lower` writes one back for the runtime, which still draws flat documents;
+stretched anchors and non-top-left pins inside a stack refuse to lower until
+the runtime draws them. The gates are the round trip in `ui_tree_tests.rs`
+(the golden projects too, plus `BLOCKLOOM_UI_FIXTURES=<folder>`) and
+`a_document_read_as_a_tree_lays_out_where_it_was` in `ui_design.rs`, which
+lays both out. Immediate-mode `show` blocks are to be deprecated once
+authored screens work.
+
 ### Frontend (`blockloom-qt/qml/`)
 
 `Start.qml` is the entry point: it adds the Lucide icons blockstitch doesn't
