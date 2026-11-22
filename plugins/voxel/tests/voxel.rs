@@ -855,7 +855,7 @@ fn mixed_resolution_seams_and_edits_match_native_and_portable_execution() {
 /// edit raises `entity_broken` with what it held.
 #[test]
 fn the_tick_hook_flows_water_and_a_broken_chest_says_what_it_held() {
-    let mut native = module();
+    let native = module();
     let start = json!({"resources":[{"type_id":"world","payload":{"size":[32,16,32],"preset":"flat",
         "blocks":[r##"{"name":"water","id":20,"layer":"translucent","fluid":{"rate":1}}"##,
             r##"{"name":"chest","id":40,"entity":{"kind":"chest","slots":9}}"##]}}]});

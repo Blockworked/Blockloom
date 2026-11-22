@@ -18,6 +18,7 @@ mod entities;
 const MAX_BLOCK_LINES: usize = 4096;
 mod fracture;
 mod gpu_mesh;
+mod graphgen;
 mod grid;
 mod light;
 mod lod;
@@ -67,6 +68,8 @@ struct Settings {
     world_file: String,
     /// A `.blockset` asset whose `.blockdef` files come before `blocks`.
     block_set: String,
+    /// The `.blockgen` worldgen graph the `graph` preset generates from.
+    worldgen_file: String,
     /// Edits laid over the generated terrain, oldest first (see `apply_edit`).
     edits: Vec<String>,
     persistent: bool,
@@ -154,6 +157,7 @@ impl Default for Settings {
             palette_emission: Vec::new(),
             world_file: String::new(),
             block_set: String::new(),
+            worldgen_file: String::new(),
             edits: Vec::new(),
             persistent: false,
             save_slot: "world".into(),
@@ -240,6 +244,7 @@ struct World {
     /// it no longer makes.
     published: BTreeMap<[i32; 3], BTreeSet<String>>,
     tick_rules: ticks::TickRules,
+    graph: Option<std::sync::Arc<graphgen::Graph>>,
     ticks: ticks::Ticks,
     entities: entities::Entities,
     /// Plugin events edits and ticks raised, sent with the next answer.
@@ -624,6 +629,7 @@ impl World {
             seed: settings.seed,
             published: BTreeMap::new(),
             tick_rules,
+            graph: None,
             ticks: ticks::Ticks::default(),
             entities: entities::Entities::default(),
             events: Vec::new(),
@@ -756,6 +762,27 @@ impl World {
         self.grid.set_block_ids(ids);
     }
 
+    /// Hands a streamed grid what its preset samples from.
+    fn attach_generator(&mut self) {
+        match self.settings.preset.as_str() {
+            "infinite" => self.attach_worldgen(),
+            "graph" => {
+                if let Some(graph) = &self.graph {
+                    self.grid.set_graph(graph.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Compiles a `.blockgen` against this world's blocks.
+    fn load_graph(&mut self, text: &str, seed: i64) -> Result<(), String> {
+        let registry = &self.registry;
+        let graph = graphgen::parse(text, seed, &|name| registry.state_id(name))?;
+        self.graph = Some(std::sync::Arc::new(graph));
+        Ok(())
+    }
+
     fn generate(&mut self, preset: &str, seed: i64) -> Result<(), String> {
         if !terrain::PRESETS.contains(&preset) {
             return Err(format!(
@@ -768,13 +795,32 @@ impl World {
                 "the infinite preset streams pages near the player; turn streamed on".into(),
             );
         }
+        if preset == "graph" && self.graph.is_none() {
+            return Err("the graph preset needs a worldgen_file (.blockgen)".into());
+        }
         self.reset_lod_meshes();
         if self.settings.streamed {
             self.grid.stream(preset, seed);
             if preset == "infinite" {
                 self.attach_worldgen();
+            } else if let Some(graph) = self.graph.clone().filter(|_| preset == "graph") {
+                self.grid.set_graph(graph);
             }
             self.pending.extend(&self.visible);
+        } else if let Some(graph) = self.graph.clone().filter(|_| preset == "graph") {
+            self.grid.clear();
+            let [sx, sy, sz] = self.grid.size();
+            let s = worldgen::seed32(seed);
+            for x in 0..sx {
+                for z in 0..sz {
+                    let column = graph.column(s, x, z, sy);
+                    for (y, block) in column.iter().enumerate() {
+                        if *block != 0 {
+                            self.grid.set([x, y as i32, z], *block);
+                        }
+                    }
+                }
+            }
         } else {
             terrain::generate(&mut self.grid, preset, seed)?;
         }
@@ -1582,6 +1628,16 @@ impl Voxel {
         }
         let mut world = World::new(&settings).map_err(Error::new)?;
         world.lod_generation = self.lod_generation;
+        if !settings.worldgen_file.is_empty() {
+            read_asset(host, &settings.worldgen_file)
+                .and_then(|text| world.load_graph(&text, settings.seed))
+                .map_err(|why| {
+                    Error::new(format!(
+                        "voxel worldgen file {}: {why}",
+                        settings.worldgen_file
+                    ))
+                })?;
+        }
         world
             .generate(&settings.preset, settings.seed)
             .map_err(Error::new)?;
@@ -1621,9 +1677,7 @@ impl Voxel {
                     world.ticks = ticks;
                     world.entities = entities;
                     world.attach_blocks();
-                    if settings.preset == "infinite" {
-                        world.attach_worldgen();
-                    }
+                    world.attach_generator();
                     world.reset_lod_meshes();
                     world.fragments = fragments;
                     world.next_fragment =
@@ -2038,9 +2092,7 @@ impl Plugin for Voxel {
                 world.ticks = ticks;
                 world.entities = entities;
                 world.attach_blocks();
-                if world.settings.preset == "infinite" {
-                    world.attach_worldgen();
-                }
+                world.attach_generator();
                 world.reset_lod_meshes();
                 world.seed = seed;
                 world.pending.extend(&world.visible);
@@ -2070,9 +2122,7 @@ impl Plugin for Voxel {
                 world.ticks = ticks;
                 world.entities = entities;
                 world.attach_blocks();
-                if world.settings.preset == "infinite" {
-                    world.attach_worldgen();
-                }
+                world.attach_generator();
                 world.reset_lod_meshes();
                 world.seed = seed;
                 world.pending.extend(&world.visible);
@@ -2705,5 +2755,59 @@ mod tick_tests {
         world.generate("island", 3).unwrap();
         world.flush();
         assert!(world.tick().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod graph_tests {
+    use super::*;
+
+    const GEN: &str = r#"{"constants": {"base": 12},
+        "biomes": [{"name": "hills",
+          "terrain": {"type": "sum", "inputs": [
+            {"type": "multiply", "inputs": [{"type": "noise2d", "scale": 24, "seed": "h"}, 5]},
+            {"type": "curve", "points": [[-8, 8], [8, -8]], "input": {"type": "base_height", "name": "base"}}]},
+          "materials": {"type": "solidity", "solid": {"type": "queue", "queue": [
+            {"type": "depth", "layers": [{"thickness": 1, "material": "grass"}]}, "stone"]}},
+          "props": [{"positions": {"type": "grid", "spacing": 8, "jitter": 0.5}, "on": ["grass"],
+            "prop": {"type": "tree", "trunk": "wood", "leaves": "leaves", "height": 4, "radius": 2}}]}]}"#;
+
+    fn world(streamed: bool) -> World {
+        let settings = Settings {
+            preset: "graph".into(),
+            size: [64.0, 32.0, 64.0],
+            streamed,
+            worldgen_file: "assets/hills.blockgen".into(),
+            ..Settings::default()
+        };
+        let mut world = World::new(&settings).unwrap();
+        world.load_graph(GEN, settings.seed).unwrap();
+        world.generate("graph", settings.seed).unwrap();
+        world
+    }
+
+    #[test]
+    fn a_graph_world_is_the_same_streamed_or_whole() {
+        let whole = world(false);
+        let streamed = world(true);
+        let mut wood = 0;
+        for x in 0..64 {
+            for z in 0..64 {
+                for y in 0..32 {
+                    let cell = [x, y, z];
+                    assert_eq!(whole.grid.get(cell), streamed.grid.get(cell), "{cell:?}");
+                    wood += usize::from(whole.grid.get(cell) == 5);
+                }
+                assert_eq!(whole.grid.height_at(x, z), streamed.grid.height_at(x, z));
+            }
+        }
+        assert!(wood > 20, "trees grew: {wood}");
+        let mut fresh = World::new(&Settings::default()).unwrap();
+        assert!(
+            fresh
+                .generate("graph", 1)
+                .unwrap_err()
+                .contains("worldgen_file")
+        );
     }
 }

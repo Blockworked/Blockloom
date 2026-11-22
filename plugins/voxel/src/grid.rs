@@ -33,6 +33,8 @@ pub struct Grid {
     generator_size: Option<[i32; 3]>,
     /// Infinite config for the `infinite` preset (noise, biomes, features).
     worldgen: Option<crate::worldgen::Worldgen>,
+    /// The `.blockgen` a `graph` preset samples.
+    graph: Option<std::sync::Arc<crate::graphgen::Graph>>,
     /// Registry block names to ids for infinite sampling.
     block_ids: BTreeMap<String, Block>,
     columns: Mutex<BTreeMap<ColumnAddress, crate::worldgen::Column>>,
@@ -77,6 +79,7 @@ impl Grid {
             generator: None,
             generator_size: None,
             worldgen: None,
+            graph: None,
             block_ids: BTreeMap::new(),
             columns: Mutex::new(BTreeMap::new()),
             edits: BTreeMap::new(),
@@ -415,6 +418,15 @@ impl Grid {
 
     fn base(&self, cell: [i32; 3]) -> Block {
         self.generator.as_ref().map_or(0, |(preset, seed)| {
+            if preset == "graph" {
+                let height = self.generator_size.unwrap_or(self.size)[1];
+                return self.graph.as_ref().map_or(0, |g| {
+                    g.column(crate::worldgen::seed32(*seed), cell[0], cell[2], height)
+                        .get(cell[1] as usize)
+                        .copied()
+                        .unwrap_or(0)
+                });
+            }
             if preset == "infinite" {
                 if let Some(wg) = &self.worldgen {
                     let address = [cell[0], cell[2]];
@@ -457,6 +469,10 @@ impl Grid {
     pub fn set_worldgen(&mut self, wg: crate::worldgen::Worldgen) {
         self.worldgen = Some(wg);
         self.columns.get_mut().unwrap().clear();
+    }
+
+    pub fn set_graph(&mut self, graph: std::sync::Arc<crate::graphgen::Graph>) {
+        self.graph = Some(graph);
     }
 
     /// Registry names for infinite sampling; built-ins fill the gaps.
@@ -845,6 +861,7 @@ impl Grid {
         self.generator = None;
         self.generator_size = None;
         self.worldgen = None;
+        self.graph = None;
         self.block_ids.clear();
         self.columns.get_mut().unwrap().clear();
         self.shapes.clear();
@@ -865,7 +882,13 @@ impl Grid {
             return None;
         }
         let top = if let Some((preset, seed)) = &self.generator {
-            let base = if preset == "infinite" {
+            let base = if preset == "graph" {
+                // Props may stand above the terrain; a tree is never taller than this.
+                let height = self.generator_size.unwrap_or(self.size)[1];
+                self.graph.as_ref().map_or(-1, |g| {
+                    (g.surface(crate::worldgen::seed32(*seed), x, z, height) + 24).min(height - 1)
+                })
+            } else if preset == "infinite" {
                 self.worldgen.as_ref().map_or(-1, |wg| {
                     crate::worldgen::height_bound_infinite(wg, *seed, x, z)
                 })

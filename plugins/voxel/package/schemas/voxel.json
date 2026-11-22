@@ -12,7 +12,8 @@
             "caves",
             "flat",
             "empty",
-            "infinite"
+            "infinite",
+            "graph"
           ],
           "default": "island",
           "description": "The terrain the world starts as."
@@ -115,6 +116,13 @@
           "kind": "blockset",
           "default": "",
           "description": "A .blockset file listing .blockdef block types (with states) that come before `blocks`."
+        },
+        {
+          "name": "worldgen_file",
+          "type": "asset",
+          "kind": "blockgen",
+          "default": "",
+          "description": "A .blockgen worldgen graph (density nodes, material providers, biomes and props, after Hytale's Worldgen V2) that the graph preset generates from."
         },
         {
           "name": "persistent",
@@ -375,7 +383,8 @@
             "caves",
             "flat",
             "empty",
-            "infinite"
+            "infinite",
+            "graph"
           ],
           "default": "island"
         },
@@ -1144,7 +1153,8 @@
             "caves",
             "flat",
             "empty",
-            "infinite"
+            "infinite",
+            "graph"
           ],
           "default": "island"
         },
@@ -2486,7 +2496,8 @@
             "caves",
             "flat",
             "empty",
-            "infinite"
+            "infinite",
+            "graph"
           ],
           "default": "island"
         },

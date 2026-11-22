@@ -1284,7 +1284,13 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   `entities.rs` keeps block entities (`entity: {kind, slots, stack}`): made on
   first use, dropped when their block changes with an `entity_broken` event
   (`when a {kind} block is broken`); slots, data and pending ticks ride the
-  checkpoint. Saved edits are the `world` resource's
+  checkpoint. `graphgen.rs` is the `graph` preset: a `worldgen_file`
+  (`.blockgen`, after Hytale's Worldgen V2, `docs/voxel-worldgen.md`) of
+  biomes picked by `biome_map` ranges and blended over `transition`, each a
+  terrain density tree (positive is solid; `exports` copied in by `import`),
+  a material provider (`solidity`, `queue`, `depth`, `range`, ...) and props
+  on the surface; y-independent nodes are cached per column, columns per
+  graph, and `Grid::set_graph` samples it for streamed pages. Saved edits are the `world` resource's
   `edits` lines (`set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`,
   `sphere X Y Z radius material`), applied in order over the generated terrain
   at `world.start` (a bad line is reported by number and skipped), so the scene

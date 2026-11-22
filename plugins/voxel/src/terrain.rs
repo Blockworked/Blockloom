@@ -5,7 +5,7 @@
 use crate::grid::Grid;
 use crate::palette::{DIRT, GLOW, GRASS, LEAVES, SAND, STONE, WOOD};
 
-pub const PRESETS: [&str; 5] = ["island", "caves", "flat", "empty", "infinite"];
+pub const PRESETS: [&str; 6] = ["island", "caves", "flat", "empty", "infinite", "graph"];
 
 fn hash(seed: u32, x: i32, y: i32, z: i32) -> u32 {
     let mut h = seed
@@ -189,6 +189,9 @@ pub fn generate(grid: &mut Grid, preset: &str, seed: i64) -> Result<(), String> 
     if preset == "infinite" {
         return Err("the infinite preset streams pages near the player; turn streamed on".into());
     }
+    if preset == "graph" {
+        return Err("a graph world generates from its worldgen file".into());
+    }
     let seed = seed32(seed);
     let [sx, sy, sz] = grid.size();
     let height = sy as f32;
@@ -287,7 +290,7 @@ mod tests {
     fn paged_samples_match_eager_generation_including_trees() {
         for preset in PRESETS {
             // Infinite streams pages near the player; eager grids stay finite.
-            if preset == "infinite" {
+            if preset == "infinite" || preset == "graph" {
                 continue;
             }
             let mut grid = Grid::new([48, 32, 48]);
