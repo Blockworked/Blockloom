@@ -516,16 +516,10 @@ pub struct Engine {
     /// The director clock's explicit time, 0-24, once `set time of day` or
     /// `advance time by` has moved it. `None` follows the project's clock.
     pub director_time: Option<f32>,
-    /// `set clouds` this run, over the blended volumetric clouds.
-    pub clouds: blockloom_core::clouds::CloudOverrides,
     /// `set snow cover to` and `set surface wetness to`, for the run.
     pub surface: SurfaceOverrides,
     /// Erosion previews the editor asked for, by terrain actor.
     pub terrain_previews: Vec<(String, Option<blockloom_core::terrain::sculpt::Erosion>)>,
-    /// `set cloud layer` this run, over the project's layers.
-    pub cloud_layers: blockloom_core::cloud_layers::CloudLayerOverrides,
-    /// `set water level/chop/foam` this run, over each body's authored spec.
-    pub water: blockloom_core::water::WaterOverrides,
     /// Dynamic actors a walk verb (`move`, `change position`) drove this
     /// tick. A walk sets an absolute velocity, so when a driven actor goes
     /// quiet the dimension pass brakes it - otherwise the last written
@@ -666,11 +660,8 @@ impl Engine {
             precipitation: Default::default(),
             weather: Default::default(),
             director_time: None,
-            clouds: Default::default(),
             surface: Default::default(),
             terrain_previews: Vec::new(),
-            cloud_layers: Default::default(),
-            water: Default::default(),
             last_created: HashMap::new(),
             driven: HashSet::new(),
             physics_filter: HashMap::new(),

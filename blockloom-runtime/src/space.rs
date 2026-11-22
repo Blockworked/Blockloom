@@ -43,12 +43,14 @@ pub fn register(app: &mut App) {
         );
 }
 
-/// `set aurora` and `set fog density` this run, over the project's sky and
-/// fog.
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+/// `set aurora`, `set fog density`, `set clouds` and `set cloud layer` this
+/// run, over the project's sky, fog and clouds.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct SkyRun {
     pub aurora_kp: Option<f32>,
     pub fog_density: Option<f32>,
+    pub clouds: blockloom_core::clouds::CloudOverrides,
+    pub cloud_layers: blockloom_core::cloud_layers::CloudLayerOverrides,
 }
 
 /// The moon's light: which way it comes from and its lux per channel.
@@ -180,7 +182,7 @@ pub fn aurora_kp(engine: &Engine, run: &SkyRun) -> f32 {
 /// the rest of the run.
 fn apply_space_effects(
     effects: Res<PendingEffects>,
-    mut engine: NonSendMut<Engine>,
+    engine: NonSend<Engine>,
     mut run: ResMut<SkyRun>,
 ) {
     if !engine.running {
@@ -194,7 +196,7 @@ fn apply_space_effects(
             Effect::SetFogDensity { density } if density.is_finite() => {
                 run.fog_density = Some(density.clamp(0.0, 10.0));
             }
-            Effect::SetClouds { property, value } => engine.clouds.set(*property, *value),
+            Effect::SetClouds { property, value } => run.clouds.set(*property, *value),
             Effect::SetCloudLayer {
                 layer,
                 property,
@@ -203,7 +205,7 @@ fn apply_space_effects(
                 let known = engine.project.world.cloud_layers.len();
                 let named =
                     blockloom_core::cloud_layers::layer_index(*layer).is_some_and(|i| i < known);
-                if !named || !engine.cloud_layers.set(*layer, *property, *value) {
+                if !named || !run.cloud_layers.set(*layer, *property, *value) {
                     crate::bridge::send(&blockloom_protocol::RuntimeMessage::Error {
                         actor: "Blockloom".into(),
                         message: format!("there's no cloud layer {layer}"),

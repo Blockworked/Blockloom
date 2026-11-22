@@ -816,13 +816,12 @@ pub fn blend_environment(
     }
     // `set fog density` outlasts every volume, like the director's exposure,
     // and moves volumetric fog and beams by the same ratio.
-    if let Some(density) = sky_run
-        .and_then(|run| run.fog_density)
-        .filter(|d| d.is_finite())
-    {
-        blended.set_fog_density(&engine.project.world.fog, density);
+    if let Some(run) = sky_run {
+        if let Some(density) = run.fog_density.filter(|d| d.is_finite()) {
+            blended.set_fog_density(&engine.project.world.fog, density);
+        }
+        run.clouds.apply(&mut blended.clouds);
     }
-    engine.clouds.apply(&mut blended.clouds);
     // `set snow cover` and `set surface wetness` outlast every volume too.
     if let Some(snow) = engine.surface.snow {
         blended.snow = snow;

@@ -1540,7 +1540,7 @@ surfaces draw) and `WaterSample`, publishes the latter with
 `sense::publish_water`, and `publish_sensors` copies it into each frame's
 snapshot, so `water height at`, `is _ underwater?` and a script's
 `water_at`/`is_underwater` read what buoyancy read. `set water level/chop/
-foam to` (and a script's `set_water`) lands in `engine.water`
+foam to` (and a script's `set_water`) lands in `water::WaterRun`
 (`WaterOverrides`): on the water actor that ran it, or every body from
 anyone else. The swell follows the live wind: `Swell` eases a heading
 towards it and, once the waves are `TURN_THRESHOLD` off, builds the new
@@ -1771,7 +1771,7 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json`, and
 lighting and quality, edited by `set_clouds` and Project Settings. The blended
 `Environment.clouds` carries volume coverage, density and type overrides, and
 `set clouds [coverage/density/type] to` (a script's `set_clouds`) lays
-`engine.clouds` over them for the run.
+`space::SkyRun::clouds` over them for the run.
 `blockloom-runtime/src/clouds.rs` bakes seeded, repeating 128³ shape and 32³
 erosion volumes on the GPU, raymarches at half resolution before fog, and
 uses the shared bilateral upsampler over the scene. WindField supplies drift.
@@ -1869,7 +1869,7 @@ turns it into cloud by coverage and contrast; `cloud_layers.wesl` mirrors
 bumps the layer's `revision`, which is how the runtime knows to reread a file
 whose path didn't change. Each stroke keeps a snapshot per revision under
 `.blockloom/cloud-paint`, and undo/redo call `restore_painted` to put the
-file back. `set cloud layer` lands in `engine.cloud_layers`
+file back. `set cloud layer` lands in `SkyRun::cloud_layers`
 (`CloudLayerOverrides`), laid over the project's layers each frame. `blockloom-runtime/src/cloud_layers.rs` loads or
 bakes every layer into one texture array when their keys change, and draws
 them in `CloudPass`: layers beyond the volumetric slab before `CloudMarch`,
@@ -2297,7 +2297,7 @@ resources and drops it on the `WorldRebuilt` message (written by
 `rebuild_world`), and reads the run through `RunState` (synced from `Engine`
 at the head of every tick and frame) and the document through
 `SceneDocument`; `module::forget_on_rebuild::<T>` resets a run-override
-resource on that message (`RayTracingRun`, `HdrRun`, `space::SkyRun` for `set aurora`/`set fog density`, `lightning::StormRun`, `lights::LightsRun` for light intensity, light shadows, shadow distance and `capture probes`). `wind::WindModule` is the first: `WindRun` holds `set wind`,
+resource on that message (`RayTracingRun`, `HdrRun`, `space::SkyRun` for `set aurora`, `set fog density`, `set clouds` and `set cloud layer`, `water::WaterRun`, `lightning::StormRun`, `lights::LightsRun` for light intensity, light shadows, shadow distance and `capture probes`). `wind::WindModule` is the first: `WindRun` holds `set wind`,
 and it reads the weather blend through `director::WeatherNow` and volume
 specs through `volumes::LiveVolumes`, both published on the fixed tick
 before it, so it takes no `Engine` at all.

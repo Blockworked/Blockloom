@@ -253,6 +253,7 @@ fn resolve(
     env: Res<Environment>,
     wind: Res<WindField>,
     engine: NonSend<Engine>,
+    run: Option<Res<crate::space::SkyRun>>,
     moon: Option<Res<crate::space::MoonState>>,
     mut render: ResMut<LayerRender>,
     mut sources: ResMut<crate::atmosphere::AtmosphereSources>,
@@ -260,7 +261,9 @@ fn resolve(
 ) {
     let mut layers = engine.project.world.cloud_layers.clone();
     blockloom_core::cloud_layers::normalize(&mut layers);
-    engine.cloud_layers.apply(&mut layers);
+    if let Some(run) = run {
+        run.cloud_layers.apply(&mut layers);
+    }
     let ramp = blockloom_core::fog::color_weights(env.sun.direction.y);
     render.layers = layers
         .iter()

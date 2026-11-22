@@ -35,6 +35,11 @@ pub fn register(app: &mut App, mode: Mode) {
     let _ = mode;
     app.init_resource::<WaterState>()
         .init_resource::<WaterSample>()
+        .init_resource::<WaterRun>()
+        .add_systems(
+            Update,
+            crate::module::forget_on_rebuild::<WaterRun>.after(crate::world::rebuild_world),
+        )
         .add_systems(
             FixedUpdate,
             (
@@ -54,6 +59,10 @@ pub fn register(app: &mut App, mode: Mode) {
     surface::register(app);
     under::register(app);
 }
+
+/// `set water level/chop/foam` this run, over each body's authored spec.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct WaterRun(pub blockloom_core::water::WaterOverrides);
 
 /// Every body as of the last fixed tick, as the reporters read it.
 #[derive(Resource, Clone, Debug, Default)]
@@ -310,6 +319,7 @@ pub(crate) fn rgb(hex: &str) -> Vec3 {
 #[allow(clippy::too_many_arguments)]
 pub fn sample_water(
     engine: NonSend<Engine>,
+    run: Res<WaterRun>,
     dimension: Res<Dimension>,
     time: Res<Time<Fixed>>,
     wind: Option<Res<WindField>>,
@@ -348,7 +358,7 @@ pub fn sample_water(
         else {
             continue;
         };
-        let dials = engine.water.for_body(&id.0);
+        let dials = run.0.for_body(&id.0);
         let mut center = transform.translation;
         if let Some(level) = dials.level {
             center.y = level;
@@ -483,7 +493,11 @@ pub fn sample_water(
 
 /// `set water level/chop/foam` for the rest of the run: on the water actor
 /// that ran it, or on every body from anyone else.
-fn apply_water_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engine>) {
+fn apply_water_effects(
+    effects: Res<PendingEffects>,
+    engine: NonSend<Engine>,
+    mut run: ResMut<WaterRun>,
+) {
     if !engine.running {
         return;
     }
@@ -498,7 +512,7 @@ fn apply_water_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engi
                 .has_component(actor, "Water")
                 .then_some(actor.as_str());
             let body = body.map(str::to_string);
-            engine.water.set(body.as_deref(), *property, *value);
+            run.0.set(body.as_deref(), *property, *value);
         }
     }
 }
@@ -533,6 +547,7 @@ mod tests {
             .init_resource::<PendingEffects>()
             .init_resource::<WaterState>()
             .init_resource::<WaterSample>()
+            .init_resource::<WaterRun>()
             .add_systems(Update, (apply_water_effects, sample_water).chain());
         app.world_mut().spawn((
             ActorId("pool".to_string()),

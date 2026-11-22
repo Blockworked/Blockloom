@@ -1051,10 +1051,7 @@ pub fn rebuild_world(
     engine.precipitation = Default::default();
     engine.weather = Default::default();
     engine.director_time = None;
-    engine.clouds = Default::default();
     engine.surface = Default::default();
-    engine.cloud_layers = Default::default();
-    engine.water = Default::default();
     engine.parents = engine
         .project
         .actors
@@ -1741,7 +1738,7 @@ pub fn publish_simulation_actors(
         let none = crate::lights::LightsRun::default();
         let lights = lights.as_deref().unwrap_or(&none);
         let actors =
-            sample_actor_senses(&engine, dimension.0, &actors, particles.as_deref(), &lights);
+            sample_actor_senses(&engine, dimension.0, &actors, particles.as_deref(), lights);
         blockloom_core::sense::publish_actors(actors);
     }
 }
@@ -1999,7 +1996,7 @@ pub fn publish_sensors(
     } else {
         let none = crate::lights::LightsRun::default();
         let lights = lights.as_deref().unwrap_or(&none);
-        sample_actor_senses(&engine, dimension.0, &actors, particles.as_deref(), &lights)
+        sample_actor_senses(&engine, dimension.0, &actors, particles.as_deref(), lights)
     };
 
     // Wanted and focused reads as held: the component alone would still say
