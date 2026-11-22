@@ -500,7 +500,9 @@ pub(crate) fn state_dto_with(s: &AppState, project: Option<serde_json::Value>) -
         preview_headless: s.preview_headless,
         preview_port: s.preview_port,
         game_size: blockloom_protocol::GAME_SIZE,
-        runtime_embedded: s.embedded.is_some(),
+        // A project runtime only shows there when its view took the socket.
+        runtime_embedded: s.embedded.is_some()
+            && s.runtime.as_ref().is_none_or(|runtime| runtime.in_view),
         pointer_locked: s.pointer_locked && s.running && s.runtime.is_some(),
         ray_tracing: s.runtime.as_ref().and(s.ray_tracing.clone()),
         lan_session: s.runtime.as_ref().and(s.lan_session.clone()),

@@ -933,7 +933,7 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   Cargo into the engine's own target directory, so only the plugin and the
   link are new; the binary lands in `.blockloom/runtime/bin/`. While the
   project has one, the editor starts that binary as a child instead of the
-  embedded world, and refuses Play until it is built and whenever a package
+  embedded world (on Linux drawing into the Game view, see Game view), and refuses Play until it is built and whenever a package
   changed since (`bin/plugins.json` stamps each plugin's content hash). A
   package not installed from a `path:` folder must be in the `TrustLedger`
   at its hash before it builds (`project_runtime::needs_trust`, granted by
@@ -1110,6 +1110,17 @@ ring slot, and `hdr_live` tells the view to draw a zero-alpha texture Qt
 thinks is opaque, which shows through to the plane while overlays still
 draw on top. That is why the window has an alpha buffer on Wayland.
 `BLOCKLOOM_HDR_VIEW=0` turns the plane off.
+
+A project runtime (engine plugins linked in) is a child, but on Linux it
+still draws into the Game view: the editor passes it one end of a socket pair
+as `--frames-fd`, and `embed::remote` (`embed_remote.rs`) carries its
+exchange's ring calls (install, claim, finished, clear, shm) to the editor's
+`FrameExchange`, the ring's dma-bufs crossing as `SCM_RIGHTS` descriptors,
+while the view's size, modifier offer and presents go back. Input stays on
+stdin. `RuntimeHandle::in_view` says which runtime shows there, and
+`runtime_embedded` follows it, so a host that can't serve frames falls back
+to the preview stream. The ignored `a_child_world_draws_into_the_view_about_as_fast`
+times key press to frame both ways (build `blockloom-runtime` first).
 
 `BLOCKLOOM_RUNTIME=process` forces the child process and MJPEG preview on
 Linux and Windows too. macOS has no embedded world yet.

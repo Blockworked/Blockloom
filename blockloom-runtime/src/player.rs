@@ -251,6 +251,15 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 }
 
 /// `--mode 3d` (or `--mode=3d`) picks the 3D pipeline; 2D is the default.
+/// `--frames-fd N`: started by the editor to draw into its Game view, over
+/// the socket it passed down as descriptor `N` (see `embed::remote`).
+#[cfg(target_os = "linux")]
+pub fn view_child(args: impl Iterator<Item = String>) -> Option<(i32, Mode)> {
+    let args: Vec<String> = args.collect();
+    let fd = flag(&args, "--frames-fd")?.parse().ok()?;
+    Some((fd, mode_from_args(&args)))
+}
+
 fn mode_from_args(args: &[String]) -> Mode {
     match flag(args, "--mode") {
         Some(value) => parse_mode(&value),

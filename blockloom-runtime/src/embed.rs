@@ -65,6 +65,9 @@ const SLOTS: usize = 3;
 #[cfg(target_os = "linux")]
 const VIEW: ManualTextureViewHandle = ManualTextureViewHandle(0xB10C);
 
+#[cfg(target_os = "linux")]
+#[path = "embed_remote.rs"]
+pub mod remote;
 #[cfg(target_os = "windows")]
 #[path = "embed_windows.rs"]
 mod windows;
@@ -157,6 +160,43 @@ pub fn run(embedded: Embedded) {
     add_surface(&mut app, frames.clone());
     app.set_runner(move |app| paced(app, &frames));
     app.run();
+}
+
+/// A world in its own process drawing into the editor's Game view: messages
+/// over stdin and stdout as for any child, frames over the socket `fd`.
+#[cfg(target_os = "linux")]
+pub fn run_child(fd: std::os::fd::RawFd, mode: Mode) {
+    use std::os::fd::FromRawFd;
+    // SAFETY: the editor handed this descriptor down for us alone.
+    let socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
+    let frames = match remote::connect(socket) {
+        Ok(frames) => frames,
+        Err(e) => {
+            eprintln!("blockloom-runtime: no frame link: {e}");
+            std::process::exit(1);
+        }
+    };
+    let (outgoing, sent) = std::sync::mpsc::channel::<blockloom_protocol::RuntimeMessage>();
+    std::thread::spawn(move || {
+        use std::io::Write;
+        for message in sent {
+            let line = blockloom_protocol::encode(&message);
+            let mut stdout = std::io::stdout().lock();
+            if stdout
+                .write_all(line.as_bytes())
+                .and_then(|_| stdout.flush())
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+    run(Embedded {
+        mode,
+        incoming: bridge::listen(),
+        outgoing,
+        frames,
+    });
 }
 
 /// Bevy's loop, one update per frame the view presents rather than on a timer
@@ -256,6 +296,12 @@ pub struct FrameExchange {
     hdr_live: AtomicBool,
     #[cfg(target_os = "windows")]
     sharing: AtomicBool,
+    /// In a child world: the editor's exchange, which the ring really lives in.
+    #[cfg(target_os = "linux")]
+    remote: std::sync::OnceLock<Arc<remote::Link>>,
+    /// In the editor: whoever mirrors what the view asks to a child world.
+    #[cfg(target_os = "linux")]
+    watch: Mutex<Option<(u64, remote::Watch)>>,
 }
 
 /// What the view shows the game at: physical pixels, and how many of them
@@ -314,7 +360,21 @@ impl FrameExchange {
             hdr_live: AtomicBool::new(false),
             #[cfg(target_os = "windows")]
             sharing: AtomicBool::new(false),
+            #[cfg(target_os = "linux")]
+            remote: std::sync::OnceLock::new(),
+            #[cfg(target_os = "linux")]
+            watch: Mutex::new(None),
         })
+    }
+
+    /// Tells a child world's mirror what the view just asked for.
+    #[cfg(target_os = "linux")]
+    fn notify(&self, event: remote::ViewEvent) {
+        if let Ok(watch) = self.watch.lock()
+            && let Some((_, watch)) = watch.as_ref()
+        {
+            watch(event);
+        }
     }
 
     /// The viewer made a Wayland surface under its window that a world may
@@ -355,6 +415,8 @@ impl FrameExchange {
         if let Ok(mut wanted) = self.wanted.lock() {
             *wanted = Viewport { size, scale };
         }
+        #[cfg(target_os = "linux")]
+        self.notify(remote::ViewEvent::Viewport(Viewport { size, scale }));
     }
 
     fn wanted(&self) -> Viewport {
@@ -377,6 +439,11 @@ impl FrameExchange {
         {
             offer.version += 1;
             offer.modifiers = modifiers;
+            #[cfg(target_os = "linux")]
+            self.notify(remote::ViewEvent::Offer(
+                offer.version,
+                offer.modifiers.clone(),
+            ));
         }
     }
 
@@ -390,6 +457,11 @@ impl FrameExchange {
         if let Ok(mut offer) = self.offer.lock() {
             offer.modifiers.retain(|&modifier| modifier != set.modifier);
             offer.version += 1;
+            #[cfg(target_os = "linux")]
+            self.notify(remote::ViewEvent::Offer(
+                offer.version,
+                offer.modifiers.clone(),
+            ));
         }
     }
 
@@ -407,6 +479,8 @@ impl FrameExchange {
             *count += 1;
         }
         self.shown.notify_all();
+        #[cfg(target_os = "linux")]
+        self.notify(remote::ViewEvent::Presented);
     }
 
     fn presented_count(&self) -> u64 {
@@ -498,6 +572,10 @@ impl FrameExchange {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[allow(dead_code)]
     fn install(&self, width: u32, height: u32, modifier: u64, images: Vec<SharedImage>) -> u64 {
+        #[cfg(target_os = "linux")]
+        if let Some(link) = self.remote.get() {
+            return link.install(width, height, modifier, images);
+        }
         let generation = {
             let Ok(mut ring) = self.ring.lock() else {
                 return 0;
@@ -527,6 +605,10 @@ impl FrameExchange {
     /// just let go gets the most time to finish being read.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn claim(&self, generation: u64) -> Option<usize> {
+        #[cfg(target_os = "linux")]
+        if let Some(link) = self.remote.get() {
+            return link.claim(generation);
+        }
         let mut ring = self.ring.lock().ok()?;
         if ring.set.as_ref()?.generation != generation {
             return None;
@@ -556,6 +638,10 @@ impl FrameExchange {
         index: usize,
         layout: Option<blockloom_protocol::InterfaceLayout>,
     ) {
+        #[cfg(target_os = "linux")]
+        if let Some(link) = self.remote.get() {
+            return link.finished(generation, index, layout);
+        }
         {
             let Ok(mut ring) = self.ring.lock() else {
                 return;
@@ -575,6 +661,10 @@ impl FrameExchange {
     }
 
     fn clear(&self) {
+        #[cfg(target_os = "linux")]
+        if let Some(link) = self.remote.get() {
+            return link.clear();
+        }
         if let Ok(mut ring) = self.ring.lock() {
             ring.set = None;
             ring.busy.clear();
@@ -595,6 +685,10 @@ impl FrameExchange {
     pub fn publish_shm(&self, width: u32, height: u32, pixels: Vec<u8>) {
         if pixels.len() != width as usize * height as usize * 4 {
             return;
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(link) = self.remote.get() {
+            return link.shm(width, height, pixels);
         }
         if let Ok(mut shm) = self.shm.lock() {
             shm.generation += 1;
@@ -1375,7 +1469,7 @@ mod dmabuf {
     /// (lavapipe without udmabuf) asks for an opaque fd, which it backs with
     /// a memfd the test can map all the same.
     fn handle() -> vk::ExternalMemoryHandleTypeFlags {
-        #[cfg(test)]
+        // Also outside tests, for a child world a test starts.
         if std::env::var_os("BLOCKLOOM_TEST_OPAQUE_FD").is_some() {
             return vk::ExternalMemoryHandleTypeFlags::OPAQUE_FD;
         }
@@ -4220,6 +4314,219 @@ mod tests {
         let mut red = blockloom_core::project::Project::starter("Embedded", mode);
         red.world.background = "#ff0000".to_string();
         red
+    }
+
+    /// A red world that covers itself in white on A and uncovers on B.
+    fn keyed_cover() -> blockloom_core::project::Project {
+        use blockloom_core::blocks::{Instruction, InstructionKind as K, Strand};
+        use blockloom_core::ui::{UiAnchor, UiProp};
+        use blockloom_core::value::Value;
+        let mut project = red_world(Mode::TwoD);
+        let show = vec![
+            Instruction::new(K::WhenKeyPressed { key: "a".into() }),
+            Instruction::new(K::ShowPanel {
+                element: Value::text("cover"),
+                title: Value::text(""),
+                modal: false,
+                anchor: UiAnchor::TopLeft,
+                x: Value::number(0.0),
+                y: Value::number(0.0),
+                width: Value::number(4000.0),
+                height: Value::number(4000.0),
+                parent: Value::text(""),
+            }),
+            Instruction::new(K::SetUiProp {
+                prop: UiProp::Background,
+                element: Value::text("cover"),
+                value: Value::text("#ffffff"),
+            }),
+        ];
+        let hide = vec![
+            Instruction::new(K::WhenKeyPressed { key: "b".into() }),
+            Instruction::new(K::HideElement {
+                element: Value::text("cover"),
+            }),
+        ];
+        let graph = &mut project.actors[0].graph;
+        graph.strands.push(Strand::with_instructions(0, 0, show));
+        graph.strands.push(Strand::with_instructions(0, 400, hide));
+        project
+    }
+
+    /// Plays the view against `frames`: presents every new frame, and times
+    /// key presses until the middle pixel shows them. Returns the frame
+    /// interval and each press's latency, in milliseconds.
+    fn time_presses(
+        frames: &FrameExchange,
+        send: &dyn Fn(EditorMessage),
+        presses: usize,
+    ) -> (f64, Vec<f64>) {
+        use blockloom_protocol::PreviewInput;
+        use std::time::Instant;
+        let started = Instant::now();
+        let mut last = None;
+        let mut shown = 0usize;
+        let mut intervals = Vec::new();
+        let mut since = Instant::now();
+        let mut latencies = Vec::new();
+        let mut pressed: Option<(Instant, bool)> = None;
+        let mut held: Option<&str> = None;
+        while latencies.len() < presses {
+            assert!(
+                started.elapsed() < Duration::from_secs(240),
+                "{shown} frames, {} presses timed, waiting on {pressed:?}, last {last:?}",
+                latencies.len()
+            );
+            let (Some(set), Some(frame)) = (frames.slots(), frames.latest()) else {
+                std::thread::sleep(Duration::from_millis(1));
+                continue;
+            };
+            if last == Some(frame) || set.generation != frame.0 {
+                std::thread::yield_now();
+                continue;
+            }
+            last = Some(frame);
+            let pixels = frame_pixels(&set.images[frame.1], SIZE.x as usize, SIZE.y as usize);
+            let middle = pixels[(SIZE.y / 2 * SIZE.x + SIZE.x / 2) as usize];
+            let white = middle.iter().all(|c| *c > 230);
+            shown += 1;
+            if shown > 30 {
+                intervals.push(since.elapsed().as_secs_f64() * 1000.0);
+            }
+            since = Instant::now();
+            match pressed {
+                Some((at, cover)) if white == cover => {
+                    latencies.push(at.elapsed().as_secs_f64() * 1000.0);
+                    pressed = None;
+                }
+                None if shown > 60 && shown % 10 == 0 => {
+                    let code = if white { "KeyB" } else { "KeyA" };
+                    send(EditorMessage::PreviewInput {
+                        input: PreviewInput::Key {
+                            code: code.into(),
+                            down: true,
+                        },
+                    });
+                    held = Some(code);
+                    pressed = Some((Instant::now(), !white));
+                }
+                _ => {}
+            }
+            // Let go once the press has shown, so the world can't miss it.
+            if let Some(code) = held.take_if(|_| pressed.is_none()) {
+                send(EditorMessage::PreviewInput {
+                    input: PreviewInput::Key {
+                        code: code.into(),
+                        down: false,
+                    },
+                });
+            }
+            frames.presented();
+        }
+        let interval = intervals.iter().sum::<f64>() / intervals.len().max(1) as f64;
+        (interval, latencies)
+    }
+
+    /// The same project drawn by a world in this process and by one in a
+    /// child over the frame socket, timed key press to frame.
+    #[test]
+    #[ignore = "needs a GPU and a built blockloom-runtime"]
+    fn a_child_world_draws_into_the_view_about_as_fast() {
+        use std::io::Write;
+        blockloom_core::init();
+        let report = |name: &str, (interval, latencies): (f64, Vec<f64>)| {
+            let mut sorted = latencies.clone();
+            sorted.sort_by(f64::total_cmp);
+            let median = sorted[sorted.len() / 2];
+            eprintln!(
+                "{name}: frame {interval:.1} ms, press to frame median {median:.1} ms, all {latencies:.1?}"
+            );
+            (median, interval)
+        };
+        let start = |send: &dyn Fn(EditorMessage)| {
+            send(EditorMessage::SceneView(game_camera()));
+            send(EditorMessage::Load {
+                project: Box::new(keyed_cover()),
+                dir: None,
+            });
+            send(EditorMessage::Start);
+        };
+
+        let inside = {
+            let (to_world, incoming) = std::sync::mpsc::channel();
+            let (outgoing, _reports) = std::sync::mpsc::channel();
+            let frames = FrameExchange::new(|| {});
+            let world_frames = frames.clone();
+            let world = std::thread::spawn(move || {
+                run(Embedded {
+                    mode: Mode::TwoD,
+                    incoming,
+                    outgoing,
+                    frames: world_frames,
+                })
+            });
+            let send = |message| {
+                let _ = to_world.send(message);
+            };
+            start(&send);
+            let timed = time_presses(&frames, &send, 16);
+            send(EditorMessage::Shutdown);
+            drop(to_world);
+            let _ = world.join();
+            report("in-process", timed)
+        };
+
+        let child = {
+            use std::os::fd::{AsRawFd, OwnedFd};
+            use std::os::unix::process::CommandExt;
+            let binary = std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("blockloom-runtime");
+            assert!(binary.exists(), "build blockloom-runtime first");
+            let frames = FrameExchange::new(|| {});
+            let (view, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+            remote::serve(frames.clone(), view).unwrap();
+            let theirs: OwnedFd = theirs.into();
+            let fd = theirs.as_raw_fd();
+            let mut command = std::process::Command::new(binary);
+            command
+                .args(["--mode", "2d", "--frames-fd", &fd.to_string()])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null());
+            // SAFETY: only fcntl between fork and exec.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            let mut process = command.spawn().unwrap();
+            drop(theirs);
+            let stdin = Mutex::new(process.stdin.take().unwrap());
+            let send = |message: EditorMessage| {
+                let line = blockloom_protocol::encode(&message);
+                let mut stdin = stdin.lock().unwrap();
+                let _ = stdin.write_all(line.as_bytes()).and_then(|_| stdin.flush());
+            };
+            start(&send);
+            let timed = time_presses(&frames, &send, 16);
+            send(EditorMessage::Shutdown);
+            drop(stdin);
+            let _ = process.wait();
+            report("child", timed)
+        };
+        // A child adds a pipe and a socket hop, not a frame.
+        let ((child, _), (inside, frame)) = (child, inside);
+        assert!(
+            child < inside + frame,
+            "child {child:.1} ms vs {inside:.1} ms at {frame:.1} ms a frame"
+        );
     }
 
     /// The dark room with a red emitter at the floor's middle, whose

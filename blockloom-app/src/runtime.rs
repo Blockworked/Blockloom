@@ -41,6 +41,13 @@ pub trait EmbeddedRuntime: Send + Sync {
         incoming: Receiver<EditorMessage>,
         outgoing: Sender<RuntimeMessage>,
     ) -> Result<Box<dyn Send>, String>;
+
+    /// Shows a child world's frames in the Game view: the child draws over
+    /// `socket`'s other end. `false` when the view can't.
+    #[cfg(target_os = "linux")]
+    fn serve_frames(&self, _socket: std::os::unix::net::UnixStream) -> bool {
+        false
+    }
 }
 
 enum Link {
@@ -59,6 +66,8 @@ pub(crate) struct RuntimeHandle {
     pub(crate) id: u64,
     /// Which dimension this process was started for.
     pub(crate) mode: Mode,
+    /// It draws into the Game view, whether in-process or as a child.
+    pub(crate) in_view: bool,
 }
 
 impl RuntimeHandle {
@@ -73,7 +82,7 @@ impl RuntimeHandle {
         project: Option<std::path::PathBuf>,
     ) -> Result<Self, String> {
         let id = NEXT_RUNTIME_ID.fetch_add(1, Ordering::Relaxed);
-        if let Some(host) = embedded.filter(|_| project.is_none()) {
+        if let Some(host) = embedded.as_ref().filter(|_| project.is_none()) {
             return Self::embed(id, mode, backend, host.as_ref());
         }
         let path = project.unwrap_or_else(runtime_path);
@@ -83,9 +92,17 @@ impl RuntimeHandle {
                 path.display()
             ));
         }
-        let mut child = Command::new(&path)
+        let mut command = Command::new(&path);
+        command
             .arg("--mode")
-            .arg(if mode.is_3d() { "3d" } else { "2d" })
+            .arg(if mode.is_3d() { "3d" } else { "2d" });
+        // A project runtime draws into the Game view over a socket, when the
+        // view can take it; otherwise it falls back to the preview stream.
+        #[cfg(target_os = "linux")]
+        let in_view = embedded.is_some_and(|host| frames_socket(&mut command, host.as_ref()));
+        #[cfg(not(target_os = "linux"))]
+        let in_view = false;
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // The runtime's own logs belong in the terminal, not in the editor.
@@ -116,6 +133,7 @@ impl RuntimeHandle {
             link: Link::Child { child, stdin },
             id,
             mode,
+            in_view,
         })
     }
 
@@ -146,23 +164,54 @@ impl RuntimeHandle {
             },
             id,
             mode,
+            in_view: true,
         })
     }
 
     /// Sends a message. `false` means the link is gone and the handle should
     /// be dropped.
     pub(crate) fn send(&mut self, message: &EditorMessage) -> bool {
+        // A world in the Game view has no sidecar to start or stop.
+        if self.in_view && matches!(message, EditorMessage::Preview { .. }) {
+            return true;
+        }
         match &mut self.link {
             Link::Child { stdin, .. } => {
                 let line = encode(message);
                 stdin.write_all(line.as_bytes()).is_ok() && stdin.flush().is_ok()
             }
-            // An embedded world always draws into the Game view, so there is
-            // no sidecar to start or stop.
-            Link::Embedded { .. } if matches!(message, EditorMessage::Preview { .. }) => true,
             Link::Embedded { incoming, .. } => incoming.send(message.clone()).is_ok(),
         }
     }
+}
+
+/// Makes a socket pair, hands the view one end and passes the child the
+/// other as `--frames-fd`.
+#[cfg(target_os = "linux")]
+fn frames_socket(command: &mut Command, host: &dyn EmbeddedRuntime) -> bool {
+    use std::os::fd::{AsRawFd, OwnedFd};
+    use std::os::unix::process::CommandExt;
+    let Ok((view, child)) = std::os::unix::net::UnixStream::pair() else {
+        return false;
+    };
+    if !host.serve_frames(view) {
+        return false;
+    }
+    let child: OwnedFd = child.into();
+    let fd = child.as_raw_fd();
+    command.arg("--frames-fd").arg(fd.to_string());
+    // SAFETY: only fcntl runs between fork and exec. The descriptor stays
+    // open in this process until the command is dropped after the spawn.
+    unsafe {
+        command.pre_exec(move || {
+            let _ = &child;
+            if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    true
 }
 
 impl Drop for RuntimeHandle {
@@ -555,6 +604,7 @@ mod script_status_tests {
             state.runtime = Some(RuntimeHandle {
                 id: 77,
                 mode: Mode::TwoD,
+                in_view: true,
                 link: Link::Embedded {
                     incoming,
                     world: None,
@@ -647,6 +697,7 @@ mod editor_phase4_tests {
             state.runtime = Some(RuntimeHandle {
                 id: 77,
                 mode: Mode::TwoD,
+                in_view: true,
                 link: Link::Embedded {
                     incoming,
                     world: None,

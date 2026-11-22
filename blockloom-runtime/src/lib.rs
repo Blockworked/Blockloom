@@ -205,6 +205,11 @@ pub fn run_process() {
             }
         }
         blockloom_core::init();
+        #[cfg(target_os = "linux")]
+        if let Some((fd, mode)) = player::view_child(std::env::args().skip(1)) {
+            embed::run_child(fd, mode);
+            return;
+        }
         let launch = Launch::from_args(std::env::args().skip(1));
         run_launch(launch);
     }

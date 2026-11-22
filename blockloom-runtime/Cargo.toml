@@ -109,6 +109,7 @@ web-sys = { version = "0.3", features = [
 # the raw Vulkan device under Bevy's wgpu, with the DRM modifier extension
 # `raw_vulkan_init` lets it turn on. Versions match Bevy's own.
 [target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 bevy = { workspace = true, features = ["raw_vulkan_init"] }
 ash = "0.38"
 
@@ -154,5 +155,3 @@ naga.workspace = true
 wat.workspace = true
 blockloom-voxel = { path = "../plugins/voxel" }
 
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-libc = "0.2"

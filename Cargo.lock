@@ -2517,6 +2517,7 @@ dependencies = [
  "blockstitch-core",
  "dirs 7.0.0",
  "image",
+ "libc",
  "prost",
  "serde",
  "serde_json",

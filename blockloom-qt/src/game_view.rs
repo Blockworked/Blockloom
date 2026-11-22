@@ -151,6 +151,11 @@ mod embedded {
                 .map_err(|e| format!("Couldn't start the game world: {e}"))?;
             Ok(Box::new(World(Some(thread))))
         }
+
+        #[cfg(target_os = "linux")]
+        fn serve_frames(&self, socket: std::os::unix::net::UnixStream) -> bool {
+            embed::remote::serve(FRAMES.clone(), socket).is_ok()
+        }
     }
 
     /// Waits for the world's thread when dropped.

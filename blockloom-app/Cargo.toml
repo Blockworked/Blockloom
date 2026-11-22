@@ -31,6 +31,10 @@ tonic = { version = "0.14", default-features = false, features = ["channel", "co
 tonic-prost = "0.14"
 prost = "0.14"
 
+# Hands a child world the socket its Game view frames go over.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile.workspace = true
 blockloom-plugin-host = { path = "../blockloom-plugin-host", features = ["test-fixtures"] }
