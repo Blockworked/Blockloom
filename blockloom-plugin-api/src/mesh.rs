@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 
 /// The most vertices one submitted mesh may hold.
 pub const MAX_VERTICES: usize = 262_144;
+/// The most images one texture array may stack.
+pub const MAX_TEXTURE_LAYERS: usize = 256;
 
 /// What a solid mesh collides as. A trimesh is exact and for fixed things; a
 /// convex hull or a box is cheaper and what a moving thing wants.
@@ -20,6 +22,23 @@ pub enum ColliderKind {
     ConvexHull,
     /// The mesh's axis-aligned bounding box.
     Aabb,
+}
+
+/// How a mesh's vertex alpha draws: opaque ignores it, cutout drops texels
+/// under a half, translucent blends what is behind.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeshBlend {
+    #[default]
+    Opaque,
+    Cutout,
+    Translucent,
+}
+
+impl MeshBlend {
+    pub fn is_opaque(&self) -> bool {
+        *self == MeshBlend::Opaque
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -55,6 +74,9 @@ pub struct MeshData {
     /// The shape of that collider; a trimesh unless the plugin says otherwise.
     #[serde(default)]
     pub collider_kind: ColliderKind,
+    /// How the surface treats alpha; opaque unless the plugin says otherwise.
+    #[serde(default, skip_serializing_if = "MeshBlend::is_opaque")]
+    pub blend: MeshBlend,
     /// x, y per vertex, into `texture` when one is set. Empty when untextured.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub uvs: Vec<f32>,
@@ -63,6 +85,13 @@ pub struct MeshData {
     /// surface's base color map; without it the vertex colors draw alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub texture: Option<String>,
+    /// Project asset paths stacked into one texture array; with it, `uvs`
+    /// tile (they may run past 1) and `layers` picks each vertex's image.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub texture_layers: Vec<String>,
+    /// The `texture_layers` index per vertex. Empty without an array.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<u32>,
     /// Compute triangle output or persistent compact quads for direct rendering.
     /// CPU arrays remain the collision mesh and the rendering fallback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -210,6 +239,28 @@ impl MeshData {
                 "mesh {name}: a texture path needs 1 to 256 characters"
             ));
         }
+        if self.texture_layers.is_empty() {
+            if !self.layers.is_empty() {
+                return Err(format!("mesh {name}: layers need texture_layers"));
+            }
+        } else if self.texture.is_some()
+            || self.texture_layers.len() > MAX_TEXTURE_LAYERS
+            || self
+                .texture_layers
+                .iter()
+                .any(|t| t.is_empty() || t.len() > 256)
+            || self.uvs.len() != count * 2
+            || self.layers.len() != count
+            || self
+                .layers
+                .iter()
+                .any(|&l| l as usize >= self.texture_layers.len())
+        {
+            return Err(format!(
+                "mesh {name}: a texture array needs uvs, one layer per vertex below \
+                 its {MAX_TEXTURE_LAYERS} images, and no single texture"
+            ));
+        }
         if !self.indices.len().is_multiple_of(3) {
             return Err(format!("mesh {name}: indices are not a multiple of 3"));
         }
@@ -250,6 +301,9 @@ mod tests {
             transition_ms: 0,
             collider: false,
             collider_kind: ColliderKind::Trimesh,
+            blend: Default::default(),
+            texture_layers: Vec::new(),
+            layers: Vec::new(),
             uvs: Vec::new(),
             texture: None,
             gpu: None,
@@ -265,6 +319,23 @@ mod tests {
         assert!(mesh.check().is_ok());
         mesh.uvs.pop();
         assert!(mesh.check().is_err());
+    }
+
+    #[test]
+    fn texture_arrays_need_a_layer_per_vertex_inside_the_stack() {
+        let mut mesh = triangle();
+        mesh.uvs = vec![0.0, 0.0, 3.0, 0.0, 0.0, 2.0];
+        mesh.texture_layers = vec!["a.png".into(), "b.png".into()];
+        mesh.layers = vec![0, 1, 1];
+        assert_eq!(mesh.check(), Ok(()));
+        mesh.layers[2] = 2;
+        assert!(mesh.check().is_err());
+        mesh.layers[2] = 0;
+        mesh.texture = Some("c.png".into());
+        assert!(mesh.check().is_err());
+        mesh.texture = None;
+        mesh.texture_layers.clear();
+        assert!(mesh.check().is_err(), "layers without an array");
     }
 
     #[test]

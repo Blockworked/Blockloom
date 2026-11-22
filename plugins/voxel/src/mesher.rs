@@ -23,6 +23,62 @@ pub struct Group {
     pub uvs: Vec<f32>,
     /// Project asset path of that texture, if any.
     pub texture: Option<String>,
+    /// How the group draws: solid, alpha-tested or blended.
+    pub layer: crate::registry::Layer,
+    /// Vertex alpha for a translucent group; 1 otherwise.
+    pub alpha: Option<f32>,
+    /// The texture array layer per vertex, when `texture` is `ARRAY`.
+    pub layers: Vec<u32>,
+}
+
+/// The texture key of a group whose cube faces read the block set's texture
+/// array: their uvs tile across merged faces and `layers` picks the image.
+pub(crate) const ARRAY: &str = "\u{1}layers";
+
+/// How faces are lit and which neighbours hide them.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Shading<'a> {
+    /// The light around the region and the time of day; full light without.
+    pub light: Option<(&'a crate::light::LightField, f32)>,
+    /// Which blocks are see-through; without, every block hides a face.
+    pub rules: Option<&'a crate::light::LightRules>,
+    /// The block set's textures, sorted, when cube faces use a texture array.
+    pub array: Option<&'a [String]>,
+}
+
+impl Shading<'_> {
+    fn level(&self, cell: [i32; 3]) -> u8 {
+        self.light
+            .map_or(crate::light::MAX, |(field, day)| field.level(cell, day))
+    }
+
+    /// The color a face takes in the light of `cell`.
+    fn lit(&self, color: [f32; 3], cell: [i32; 3]) -> [f32; 3] {
+        let b = crate::light::brightness(self.level(cell));
+        color.map(|c| c * b)
+    }
+
+    /// Lit by the brightest cell beside `cell`, for a block that fills it.
+    fn lit_around(&self, color: [f32; 3], cell: [i32; 3]) -> [f32; 3] {
+        let level = [
+            [1, 0, 0],
+            [-1, 0, 0],
+            [0, 1, 0],
+            [0, -1, 0],
+            [0, 0, 1],
+            [0, 0, -1],
+        ]
+        .iter()
+        .map(|d| self.level([cell[0] + d[0], cell[1] + d[1], cell[2] + d[2]]))
+        .max()
+        .unwrap_or(crate::light::MAX);
+        color.map(|c| c * crate::light::brightness(level))
+    }
+
+    /// Whether neighbour `n` hides the face of block `m` it touches.
+    fn hides(&self, m: crate::grid::Block, n: crate::grid::Block) -> bool {
+        n != 0 && (n == m || self.rules.is_none_or(|r| !r.is_clear(n)))
+    }
 }
 
 /// A rectangle of one material on one plane, in cells.
@@ -39,6 +95,16 @@ impl Group {
     #[cfg(test)]
     pub fn triangles(&self) -> usize {
         self.indices.len() / 3
+    }
+
+    /// A cube face reading layer `layer` of the texture array, its uvs one
+    /// unit a cell so the image repeats across a merged face.
+    fn push_layer(&mut self, quad: &Quad, voxel: f32, layer: u32) {
+        self.push(quad, voxel);
+        let [w, h] = quad.size.map(|s| s as f32);
+        let at = self.uvs.len() - 8;
+        self.uvs[at..].copy_from_slice(&[0.0, 0.0, w, 0.0, w, h, 0.0, h]);
+        self.layers.extend([layer; 4]);
     }
 
     fn push(&mut self, quad: &Quad, voxel: f32) {
@@ -59,11 +125,12 @@ impl Group {
     /// seen from the side `normal` points to. Positions are already scaled.
     pub(crate) fn push_poly(&mut self, points: &[[f32; 3]], normal: [f32; 3], color: [f32; 3]) {
         let base = self.positions.len() as u32 / 3;
+        let alpha = self.alpha.unwrap_or(1.0);
         for p in points {
             self.positions.extend(p);
             self.normals.extend(normal);
             let [r, g, b] = color;
-            self.colors.extend([r, g, b, 1.0]);
+            self.colors.extend([r, g, b, alpha]);
         }
         if self.texture.is_some() {
             // Planar uvs across the polygon, projected along the face
@@ -119,6 +186,7 @@ impl Group {
         let base = self.positions.len() as u32 / 3;
         let mut normal = [0.0; 3];
         normal[axis] = sign as f32;
+        let alpha = self.alpha.unwrap_or(1.0);
         for (pu, pv) in [
             (lo[0], lo[1]),
             (hi[0], lo[1]),
@@ -132,7 +200,7 @@ impl Group {
             self.positions.extend(p);
             self.normals.extend(normal);
             let [r, g, b] = color;
-            self.colors.extend([r, g, b, 1.0]);
+            self.colors.extend([r, g, b, alpha]);
         }
         // One uv per corner when the group is textured; merged quads span
         // 0..1 per quad so a tiled texture repeats per face.
@@ -174,7 +242,7 @@ pub(crate) fn mesh_region(
     voxel: f32,
 ) -> BTreeMap<Option<crate::grid::Block>, Group> {
     // Without a registry no face is textured, so the texture key is empty.
-    mesh_region_with(grid, palette, None, base, extent, voxel)
+    mesh_region_with(grid, palette, None, Shading::default(), base, extent, voxel)
         .into_iter()
         .map(|((glow, _), group)| (glow, group))
         .collect()
@@ -187,6 +255,7 @@ pub(crate) fn mesh_region_with(
     grid: &Grid,
     palette: &Palette,
     registry: Option<&crate::registry::Registry>,
+    shading: Shading,
     base: [i32; 3],
     extent: [i32; 3],
     voxel: f32,
@@ -214,23 +283,33 @@ pub(crate) fn mesh_region_with(
             }
         }
     }
-    let mut groups = mesh_cubes_with(palette, registry, base, extent, voxel, |cell| {
+    let mut groups = mesh_cubes_with(palette, registry, shading, base, extent, voxel, |cell| {
         let at = [0, 1, 2].map(|a| (cell[a] - base[a] + 1) as usize);
         cells[(at[2] * width[1] + at[1]) * width[0] + at[0]]
     });
-    mesh_shapes_textured(
+    mesh_shapes_inner(
         grid,
         palette,
         registry,
+        shading,
         base,
         extent,
         voxel,
         false,
-        &mut groups,
+        &mut TupleGroups::Textured(&mut groups),
     );
     // Custom mesh models draw over their cell's cube faces.
     if let Some(reg) = registry {
-        emit_custom_models(grid, palette, reg, base, extent, voxel, &mut groups);
+        emit_custom_models(
+            grid,
+            palette,
+            reg,
+            shading,
+            base,
+            extent,
+            voxel,
+            &mut groups,
+        );
     }
     groups
 }
@@ -252,11 +331,18 @@ pub(crate) fn mesh_cubes(
     material_at: impl Fn([i32; 3]) -> crate::grid::Block,
 ) -> BTreeMap<Option<crate::grid::Block>, Group> {
     let mut groups: BTreeMap<Option<crate::grid::Block>, Group> = BTreeMap::new();
-    cube_quads(palette, base, extent, material_at, |quad, material| {
-        let look = palette.get(material).unwrap();
-        let key = (look.emission > 0.0).then_some(material);
-        groups.entry(key).or_default().push(&quad, voxel);
-    });
+    cube_quads(
+        palette,
+        Shading::default(),
+        base,
+        extent,
+        material_at,
+        |quad, material| {
+            let look = palette.get(material).unwrap();
+            let key = (look.emission > 0.0).then_some(material);
+            groups.entry(key).or_default().push(&quad, voxel);
+        },
+    );
     groups
 }
 
@@ -264,30 +350,75 @@ pub(crate) fn mesh_cubes(
 pub(crate) fn mesh_cubes_with(
     palette: &Palette,
     registry: Option<&crate::registry::Registry>,
+    shading: Shading,
     base: [i32; 3],
     extent: [i32; 3],
     voxel: f32,
     material_at: impl Fn([i32; 3]) -> crate::grid::Block,
 ) -> BTreeMap<(Option<crate::grid::Block>, Option<String>), Group> {
     let mut groups: BTreeMap<(Option<crate::grid::Block>, Option<String>), Group> = BTreeMap::new();
-    cube_quads(palette, base, extent, material_at, |quad, material| {
-        let look = palette.get(material).unwrap();
-        let key = (look.emission > 0.0).then_some(material);
-        let texture = registry
-            .and_then(|reg| reg.get(material))
-            .and_then(|def| def.texture_face(face_name(quad.axis, quad.sign)))
-            .map(str::to_string);
-        let group = groups.entry((key, texture.clone())).or_default();
-        if group.texture.is_none() {
-            group.texture = texture;
-        }
-        group.push(&quad, voxel);
-    });
+    cube_quads(
+        palette,
+        shading,
+        base,
+        extent,
+        material_at,
+        |quad, material| {
+            let def = registry.and_then(|reg| reg.get(material));
+            let texture = def.and_then(|def| def.texture_face(face_name(quad.axis, quad.sign)));
+            let layer = texture.and_then(|t| {
+                let index = shading
+                    .array?
+                    .binary_search_by(|l| l.as_str().cmp(t))
+                    .ok()?;
+                Some(index as u32)
+            });
+            match layer {
+                Some(layer) => group_for(&mut groups, palette, def, material, Some(ARRAY.into()))
+                    .push_layer(&quad, voxel, layer),
+                None => group_for(
+                    &mut groups,
+                    palette,
+                    def,
+                    material,
+                    texture.map(str::to_string),
+                )
+                .push(&quad, voxel),
+            }
+        },
+    );
     groups
+}
+
+/// The group a block's faces go in: glowing and see-through blocks get one
+/// of their own, since a mesh has one emission and one blend.
+fn group_for<'g>(
+    groups: &'g mut BTreeMap<(Option<crate::grid::Block>, Option<String>), Group>,
+    palette: &Palette,
+    def: Option<&crate::registry::BlockDef>,
+    material: crate::grid::Block,
+    texture: Option<String>,
+) -> &'g mut Group {
+    use crate::registry::Layer;
+    let glows = palette
+        .get(material)
+        .is_some_and(|look| look.emission > 0.0);
+    let layer = def.map_or(Layer::Opaque, |d| d.layer);
+    let key = (glows || layer != Layer::Opaque).then_some(material);
+    let group = groups.entry((key, texture.clone())).or_default();
+    if group.texture.is_none() {
+        group.texture = texture;
+    }
+    group.layer = layer;
+    if layer == Layer::Translucent {
+        group.alpha = def.map(|d| d.opacity);
+    }
+    group
 }
 
 pub(crate) fn cube_quads(
     palette: &Palette,
+    shading: Shading,
     base: [i32; 3],
     extent: [i32; 3],
     material_at: impl Fn([i32; 3]) -> crate::grid::Block,
@@ -298,7 +429,9 @@ pub(crate) fn cube_quads(
         for sign in [1, -1] {
             let n = extent[u] as usize;
             let rows = extent[v] as usize;
-            let mut mask = vec![0 as crate::grid::Block; n * rows];
+            // Material in the low 16 bits, the face's light above, so faces
+            // merge only where both match.
+            let mut mask = vec![0u32; n * rows];
             for slice in 0..extent[axis] {
                 mask.fill(0);
                 for j in 0..extent[v] {
@@ -314,26 +447,28 @@ pub(crate) fn cube_quads(
                         }
                         let mut next = cell;
                         next[axis] += sign;
-                        if material_at(next) == 0 {
-                            mask[j as usize * n + i as usize] = material;
+                        if !shading.hides(material, material_at(next)) {
+                            let level = u32::from(shading.level(next));
+                            mask[j as usize * n + i as usize] = u32::from(material) | level << 16;
                         }
                     }
                 }
                 for j in 0..rows {
                     let mut i = 0;
                     while i < n {
-                        let material = mask[j * n + i];
-                        if material == 0 {
+                        let key = mask[j * n + i];
+                        if key == 0 {
                             i += 1;
                             continue;
                         }
+                        let material = (key & 0xffff) as crate::grid::Block;
+                        let level = (key >> 16) as u8;
                         let mut w = 1;
-                        while i + w < n && mask[j * n + i + w] == material {
+                        while i + w < n && mask[j * n + i + w] == key {
                             w += 1;
                         }
                         let mut h = 1;
-                        while j + h < rows && (i..i + w).all(|k| mask[(j + h) * n + k] == material)
-                        {
+                        while j + h < rows && (i..i + w).all(|k| mask[(j + h) * n + k] == key) {
                             h += 1;
                         }
                         for row in j..j + h {
@@ -347,7 +482,7 @@ pub(crate) fn cube_quads(
                                     plane: slice + i32::from(sign > 0),
                                     at: [i as i32, j as i32],
                                     size: [w as i32, h as i32],
-                                    color: look.color,
+                                    color: look.color.map(|c| c * crate::light::brightness(level)),
                                 },
                                 material,
                             );
@@ -373,6 +508,7 @@ pub(crate) fn mesh_shapes(
         grid,
         palette,
         None,
+        Shading::default(),
         base,
         extent,
         voxel,
@@ -403,6 +539,7 @@ fn mesh_shapes_inner(
     grid: &Grid,
     palette: &Palette,
     registry: Option<&crate::registry::Registry>,
+    shading: Shading,
     base: [i32; 3],
     extent: [i32; 3],
     voxel: f32,
@@ -418,6 +555,7 @@ fn mesh_shapes_inner(
             continue;
         };
         let glow = (look.emission > 0.0).then_some(id);
+        let color = shading.lit(look.color, cell);
         let at = [0, 1, 2].map(|a| (cell[a] - base[a]) as f32);
         for face in shape.faces() {
             if let Some(e) = face.edge
@@ -436,18 +574,18 @@ fn mesh_shapes_inner(
                     groups
                         .entry(glow)
                         .or_default()
-                        .push_poly(&points, face.normal, look.color);
+                        .push_poly(&points, face.normal, color);
                 }
                 TupleGroups::Textured(groups) => {
-                    let texture = registry
-                        .and_then(|reg| reg.get(id))
+                    let def = registry.and_then(|reg| reg.get(id));
+                    let texture = def
                         .and_then(|def| def.texture_face(face_for_normal(face.normal)))
                         .map(str::to_string);
-                    let group = groups.entry((glow, texture.clone())).or_default();
-                    if group.texture.is_none() {
-                        group.texture = texture;
-                    }
-                    group.push_poly(&points, face.normal, look.color);
+                    group_for(groups, palette, def, id, texture).push_poly(
+                        &points,
+                        face.normal,
+                        color,
+                    );
                 }
             }
         }
@@ -455,6 +593,7 @@ fn mesh_shapes_inner(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn mesh_shapes_textured(
     grid: &Grid,
     palette: &Palette,
@@ -469,6 +608,7 @@ pub(crate) fn mesh_shapes_textured(
         grid,
         palette,
         registry,
+        Shading::default(),
         base,
         extent,
         voxel,
@@ -480,10 +620,12 @@ pub(crate) fn mesh_shapes_textured(
 /// Custom mesh models from the registry draw over their cell's cube faces.
 /// Shaped cells keep their shape path above; only whole cubes with a
 /// `mesh` model land here.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_custom_models(
     grid: &Grid,
     palette: &Palette,
     registry: &crate::registry::Registry,
+    shading: Shading,
     base: [i32; 3],
     extent: [i32; 3],
     voxel: f32,
@@ -527,12 +669,11 @@ pub(crate) fn emit_custom_models(
                 };
                 // The cube faces stay underneath (they hide inside the custom
                 // mesh when it fills the cell); custom tris draw over them.
-                let key = ((emission > 0.0).then_some(id), texture.clone());
+                let _ = emission;
+                let color = shading.lit_around(color, cell);
                 let at = [x as f32, y as f32, z as f32];
-                let group = groups.entry(key).or_default();
-                if group.texture.is_none() {
-                    group.texture = texture;
-                }
+                let group = group_for(groups, palette, registry.get(id), id, texture);
+                let alpha = group.alpha.unwrap_or(1.0);
                 let textured = group.texture.is_some();
                 let base_index = group.positions.len() as u32 / 3;
                 for (vi, (p, n)) in positions.iter().zip(normals.iter()).enumerate() {
@@ -542,7 +683,7 @@ pub(crate) fn emit_custom_models(
                         (at[2] + p[2]) * voxel,
                     ]);
                     group.normals.extend(*n);
-                    group.colors.extend([color[0], color[1], color[2], 1.0]);
+                    group.colors.extend([color[0], color[1], color[2], alpha]);
                     if textured {
                         if let Some(uv) = uvs.get(vi) {
                             group.uvs.extend(*uv);
@@ -580,13 +721,21 @@ mod tests {
         let palette = palette();
         for base in [[0; 3], [8; 3], [16; 3]] {
             let extent = [0, 1, 2].map(|a| (grid.size()[a] - base[a]).min(16));
-            let mut reference = mesh_cubes_with(&palette, None, base, extent, 0.7, |cell| {
-                if grid.is_full(cell) {
-                    grid.get(cell)
-                } else {
-                    0
-                }
-            });
+            let mut reference = mesh_cubes_with(
+                &palette,
+                None,
+                Shading::default(),
+                base,
+                extent,
+                0.7,
+                |cell| {
+                    if grid.is_full(cell) {
+                        grid.get(cell)
+                    } else {
+                        0
+                    }
+                },
+            );
             mesh_shapes_textured(
                 &grid,
                 &palette,
@@ -598,7 +747,7 @@ mod tests {
                 &mut reference,
             );
             assert_eq!(
-                mesh_region_with(&grid, &palette, None, base, extent, 0.7),
+                mesh_region_with(&grid, &palette, None, Shading::default(), base, extent, 0.7),
                 reference
             );
         }
@@ -782,6 +931,72 @@ mod tests {
         assert!(mesh_chunk(&grid, &palette(), [5, 5, 5], 1.0).is_empty());
     }
 
+    #[test]
+    fn see_through_blocks_get_their_own_layered_groups_and_show_what_is_behind() {
+        let mut grid = Grid::new([16, 16, 16]);
+        grid.set([4, 4, 4], STONE);
+        grid.set([5, 4, 4], 9);
+        grid.set([6, 4, 4], 9);
+        let reg = crate::registry::Registry::parse(&[
+            r##"{"name":"glass","id":9,"color":"#ffffff","layer":"translucent"}"##.to_string(),
+        ])
+        .unwrap();
+        let rules = crate::light::LightRules::new(&reg, &textured_palette());
+        let shading = Shading {
+            light: None,
+            rules: Some(&rules),
+            array: None,
+        };
+        let groups = mesh_region_with(
+            &grid,
+            &textured_palette(),
+            Some(&reg),
+            shading,
+            [0; 3],
+            [16; 3],
+            1.0,
+        );
+        let glass = &groups[&(Some(9), None)];
+        assert_eq!(glass.layer, crate::registry::Layer::Translucent);
+        assert!(glass.colors.chunks(4).all(|c| (c[3] - 0.6).abs() < 1e-6));
+        // Two glass cells make one box, less the side the stone covers.
+        assert_eq!(glass.indices.len() / 6, 5);
+        // The stone face under the glass is drawn, so stone keeps all six.
+        assert_eq!(groups[&(None, None)].indices.len() / 6, 6);
+    }
+
+    #[test]
+    fn array_faces_merge_tile_and_name_their_layer() {
+        let mut grid = Grid::new([16, 16, 16]);
+        for x in 2..6 {
+            grid.set([x, 4, 4], 8);
+        }
+        let reg = textured_registry();
+        let layers = reg.texture_layers();
+        assert_eq!(layers, ["bottom.png", "side.png", "top.png"]);
+        let shading = Shading {
+            array: Some(&layers),
+            ..Shading::default()
+        };
+        let groups = mesh_region_with(
+            &grid,
+            &textured_palette(),
+            Some(&reg),
+            shading,
+            [0; 3],
+            [16; 3],
+            1.0,
+        );
+        assert_eq!(groups.len(), 1);
+        let group = &groups[&(None, Some(ARRAY.to_string()))];
+        // A 4x1x1 bar: six merged faces, the long ones tiling four times.
+        assert_eq!(group.indices.len() / 6, 6);
+        assert_eq!(group.layers.len(), group.positions.len() / 3);
+        assert_eq!(group.uvs.iter().cloned().fold(0.0, f32::max), 4.0);
+        let top = group.normals.chunks(3).position(|n| n[1] == 1.0).unwrap();
+        assert_eq!(group.layers[top], 2);
+    }
+
     fn textured_registry() -> crate::registry::Registry {
         crate::registry::Registry::parse(&[
             r##"{"name":"sod","id":8,"textures":{"top":"top.png","side":"side.png","bottom":"bottom.png"}}"##
@@ -813,6 +1028,7 @@ mod tests {
             &grid,
             &textured_palette(),
             Some(&reg),
+            Shading::default(),
             [0, 0, 0],
             [16, 16, 16],
             1.0,
@@ -843,6 +1059,7 @@ mod tests {
             &grid,
             &textured_palette(),
             Some(&reg),
+            Shading::default(),
             [0, 0, 0],
             [16, 16, 16],
             1.0,
@@ -865,6 +1082,7 @@ mod tests {
             &grid,
             &textured_palette(),
             Some(&reg),
+            Shading::default(),
             [0, 0, 0],
             [16, 16, 16],
             1.0,

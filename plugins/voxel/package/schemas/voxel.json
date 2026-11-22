@@ -177,6 +177,26 @@
           "description": "Chunk pages meshed per tick per worker; generation stays budgeted across ticks so it never blocks a frame."
         },
         {
+          "name": "lighting",
+          "type": "bool",
+          "default": false,
+          "description": "Shade cube faces by flood-filled block light and sky light."
+        },
+        {
+          "name": "texture_arrays",
+          "type": "bool",
+          "default": false,
+          "description": "Draw textured cube faces from one texture array per block set: one mesh per chunk layer, and textures repeat across merged faces."
+        },
+        {
+          "name": "daylight",
+          "type": "number",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 1.0,
+          "description": "How bright the sky is, 0 at night to 1 at noon; block light is unaffected."
+        },
+        {
           "name": "render_distance",
           "type": "int",
           "min": 32,
@@ -429,6 +449,26 @@
           "max": 8,
           "default": 4,
           "description": "Chunk pages meshed per tick per worker; generation stays budgeted across ticks so it never blocks a frame."
+        },
+        {
+          "name": "lighting",
+          "type": "bool",
+          "default": false,
+          "description": "Shade cube faces by flood-filled block light and sky light."
+        },
+        {
+          "name": "texture_arrays",
+          "type": "bool",
+          "default": false,
+          "description": "Draw textured cube faces from one texture array per block set: one mesh per chunk layer, and textures repeat across merged faces."
+        },
+        {
+          "name": "daylight",
+          "type": "number",
+          "min": 0.0,
+          "max": 1.0,
+          "default": 1.0,
+          "description": "How bright the sky is, 0 at night to 1 at noon; block light is unaffected."
         },
         {
           "name": "render_distance",

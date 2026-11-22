@@ -128,7 +128,7 @@ asks the world to act, in order. A plugin never touches the world itself.
 | `broadcast` | `message` (fires the message hats) |
 | `error` | `message` (reported, the run carries on) |
 | `event` | `name`, `actor?`, `args` (starts the plugin's hat blocks) |
-| `mesh` | `name`, `positions`, `normals`, `colors`, `indices`, `origin`, `emission`, `roughness`, `collider`, `collider_kind`, `gpu?`, `body?` |
+| `mesh` | `name`, `positions`, `normals`, `colors`, `indices`, `origin`, `emission`, `roughness`, `collider`, `collider_kind`, `blend?` (`opaque`, `cutout`, `translucent`), `uvs?`, `texture?`, `texture_layers?` with `layers?` (one array index per vertex), `gpu?`, `body?` |
 | `remove_mesh` | `name` |
 | `instances` | `name`, `mesh`, `positions`, `yaw?`, `scales?` (many copies of one of your meshes, drawn in one batch) |
 | `remove_instances` | `name` |

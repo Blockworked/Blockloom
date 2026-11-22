@@ -49,6 +49,10 @@ pub struct BlockDef {
     pub state: Vec<(String, String)>,
     pub tags: Vec<String>,
     pub layer: Layer,
+    /// Block light it gives off, 0 to 15; `None` glows 15 when emissive.
+    pub light: Option<u8>,
+    /// How much a translucent block covers what is behind it, 0 to 1.
+    pub opacity: f32,
 }
 
 /// How a block draws: solid, alpha-tested or blended (used by M3 rendering).
@@ -180,6 +184,8 @@ impl Registry {
                 state: Vec::new(),
                 tags: Vec::new(),
                 layer: Layer::Opaque,
+                light: None,
+                opacity: 1.0,
             })
             .collect()
     }
@@ -278,6 +284,16 @@ impl Registry {
             .and_then(|def| self.types.get(&def.type_name))
     }
 
+    /// Every face texture the set names, sorted: one texture array's layers.
+    pub fn texture_layers(&self) -> Vec<String> {
+        let set: std::collections::BTreeSet<&String> = self
+            .by_id
+            .values()
+            .flat_map(|d| d.textures.values())
+            .collect();
+        set.into_iter().cloned().collect()
+    }
+
     pub fn ids(&self) -> Vec<crate::grid::Block> {
         self.by_id.keys().copied().collect()
     }
@@ -336,6 +352,18 @@ fn parse_look(v: &Value, def: &mut BlockDef) -> Result<(), String> {
     if v.get("model").is_some_and(|m| !m.is_null()) {
         def.model = parse_model(v)?;
     }
+    if let Some(light) = v.get("light").filter(|l| !l.is_null()) {
+        match light.as_u64() {
+            Some(l) if l <= 15 => def.light = Some(l as u8),
+            _ => return Err("light is a whole number from 0 to 15".into()),
+        }
+    }
+    if let Some(opacity) = v.get("opacity").filter(|o| !o.is_null()) {
+        match opacity.as_f64() {
+            Some(o) if (0.0..=1.0).contains(&o) => def.opacity = o as f32,
+            _ => return Err("opacity is 0 to 1".into()),
+        }
+    }
     Ok(())
 }
 
@@ -388,6 +416,12 @@ fn parse_one(line: &str) -> Result<(Vec<BlockDef>, Option<BlockType>), String> {
         state: Vec::new(),
         tags,
         layer,
+        light: None,
+        opacity: if layer == Layer::Translucent {
+            0.6
+        } else {
+            1.0
+        },
     };
     parse_look(&v, &mut base)?;
     let Some(props) = v.get("properties").filter(|p| !p.is_null()) else {

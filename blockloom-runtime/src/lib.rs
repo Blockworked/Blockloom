@@ -83,6 +83,7 @@ mod performance;
 mod physics_debug;
 mod physics_install;
 pub mod player;
+mod plugin_arrays;
 #[cfg(feature = "plugins")]
 mod plugin_compute;
 #[cfg(feature = "plugins")]
@@ -387,6 +388,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     #[cfg(feature = "plugins")]
     plugin_lod::register(app);
     plugin_quads::register(app);
+    plugin_arrays::register(app);
     passes::register(app);
     hdr::register(app);
     luminance::register(app);

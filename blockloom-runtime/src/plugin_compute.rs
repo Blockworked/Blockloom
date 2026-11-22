@@ -410,6 +410,9 @@ mod tests {
                 transition_ms: 0,
                 collider: false,
                 collider_kind: ColliderKind::Trimesh,
+                blend: Default::default(),
+                texture_layers: Vec::new(),
+                layers: Vec::new(),
                 uvs: Vec::new(),
                 texture: None,
                 gpu: Some(GpuVertices {

@@ -1164,6 +1164,11 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   (flat arrays, so any tier builds one) or `{"effect": "remove_mesh", name}`.
   The host checks a mesh (`MeshData::check`: array lengths agree, indices in
   range, finite, at most `MAX_VERTICES`) and reports a bad one as an error.
+  `blend` (opaque, cutout as `AlphaMode::Mask(0.5)`, translucent as `Blend`)
+  picks the alpha mode, and `texture_layers` plus a `layers` index per vertex
+  draw through `plugin_arrays.rs` (an `ArrayMaterial`: the layer rides
+  `UV_1`, the array is filled once every source image settles, at the
+  largest one's size, a missing one white; its shader has run on no GPU here).
   `plugins::apply` queues a `MeshOp` on `engine.plugins.meshes` (a 2D game
   reports that only 3D can show one) and `plugin_meshes::sync` (Update, 3D)
   carries them out: one entity per (plugin, name) with `Mesh3d`, a standard
@@ -1256,7 +1261,17 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   they make) through `read-text-asset`/`write-text-asset`, which only touch
   files under `assets/` (not scenes) and reload the world. A preview whose
   modules read a file through `assets.read` starts again once that file
-  changes (`services::AssetReads`). QML test: `tst_VoxelBlockTypes.qml`. Saved edits are the `world` resource's
+  changes (`services::AssetReads`). QML test: `tst_VoxelBlockTypes.qml`. With
+  `lighting` on, `light.rs` flood-fills block light (a definition's `light`,
+  else 15 for a glowing palette entry) and sky light 0 to 15 over each chunk
+  plus a 16-cell margin, so a face's shade is exact; a face takes the light of
+  the cell it faces, `daylight` dims only the sky, and an edit remeshes the
+  neighbouring chunks and every chunk below them. Cutout and translucent
+  blocks let light and hidden faces through and mesh as their own groups with
+  `MeshData.blend` (translucent vertex alpha is the definition's `opacity`,
+  0.6 by default); GPU meshing stays opaque only. `texture_arrays` draws
+  textured cube faces from one array per block set (`Registry::texture_layers`,
+  sorted paths), uvs tiling across merged faces. Saved edits are the `world` resource's
   `edits` lines (`set X Y Z material`, `fill X1 Y1 Z1 X2 Y2 Z2 material`,
   `sphere X Y Z radius material`), applied in order over the generated terrain
   at `world.start` (a bad line is reported by number and skipped), so the scene

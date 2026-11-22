@@ -14,7 +14,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude as rp;
-use blockloom_plugin_api::mesh::{ColliderKind, MeshData};
+use blockloom_plugin_api::mesh::{ColliderKind, MeshBlend, MeshData};
 use blockloom_protocol::RuntimeMessage;
 use std::collections::{HashMap, HashSet};
 
@@ -101,8 +101,10 @@ pub struct PluginMeshes {
     /// What each mesh draws with, so a set of copies can share it.
     assets: HashMap<(String, String), (Handle<Mesh>, Handle<StandardMaterial>)>,
     instances: HashMap<(String, String), Vec<Entity>>,
-    materials: HashMap<([u32; 4], Option<String>), Handle<StandardMaterial>>,
+    materials: HashMap<([u32; 4], Option<String>, MeshBlend), Handle<StandardMaterial>>,
     textures: HashMap<String, Handle<Image>>,
+    arrays:
+        HashMap<([u32; 4], Vec<String>, MeshBlend), Handle<crate::plugin_arrays::ArrayMaterial>>,
     quads: HashMap<
         (String, String),
         (
@@ -145,6 +147,11 @@ fn bevy_mesh(data: &MeshData) -> Mesh {
         mesh = mesh
             .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, data.uvs.as_chunks::<2>().0.to_vec());
     }
+    // A texture array's layer rides the second uv set.
+    if !data.layers.is_empty() {
+        let layers: Vec<[f32; 2]> = data.layers.iter().map(|&l| [l as f32, 0.0]).collect();
+        mesh = mesh.with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, layers);
+    }
     mesh
 }
 
@@ -182,6 +189,14 @@ fn raster_mesh(data: &MeshData) -> Mesh {
         mesh = mesh.with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     }
     mesh
+}
+
+fn alpha_mode(blend: MeshBlend) -> AlphaMode {
+    match blend {
+        MeshBlend::Opaque => AlphaMode::Opaque,
+        MeshBlend::Cutout => AlphaMode::Mask(0.5),
+        MeshBlend::Translucent => AlphaMode::Blend,
+    }
 }
 
 fn collider(data: &MeshData) -> Option<rp::Collider> {
@@ -227,6 +242,9 @@ pub fn sync(
     link: Option<Res<ComputeLink>>,
     mut quad_materials: Option<ResMut<Assets<crate::plugin_quads::QuadMaterial>>>,
     mut buffers: Option<ResMut<Assets<bevy::render::storage::ShaderBuffer>>>,
+    mut arrays: Option<ResMut<crate::plugin_arrays::TextureArrays>>,
+    mut array_materials: Option<ResMut<Assets<crate::plugin_arrays::ArrayMaterial>>>,
+    mut array_images: Option<ResMut<Assets<Image>>>,
 ) {
     if engine.plugins.meshes.is_empty() {
         return;
@@ -284,6 +302,7 @@ pub fn sync(
                         emission[2].to_bits(),
                     ],
                     mesh.texture.clone(),
+                    mesh.blend,
                 );
                 // A textured surface loads its project asset once and shares
                 // the handle; a missing file keeps the vertex colors alone.
@@ -297,6 +316,7 @@ pub fn sync(
                             })
                     })
                 });
+                let bits = key.0;
                 let material = state
                     .materials
                     .entry(key)
@@ -306,6 +326,7 @@ pub fn sync(
                             base_color_texture: texture_handle.clone(),
                             perceptual_roughness: mesh.roughness.clamp(0.05, 1.0),
                             emissive: LinearRgba::rgb(emission[0], emission[1], emission[2]),
+                            alpha_mode: alpha_mode(mesh.blend),
                             ..default()
                         })
                     })
@@ -323,6 +344,7 @@ pub fn sync(
                     .filter(|_| {
                         mesh.texture.is_none()
                             && mesh.uvs.is_empty()
+                            && mesh.blend.is_opaque()
                             && link
                                 .as_ref()
                                 .is_none_or(|link| link.available() != Some(false))
@@ -369,6 +391,41 @@ pub fn sync(
                     MeshMaterial3d(material),
                     Transform::from_translation(Vec3::from(mesh.origin)),
                 ));
+                let array = (!mesh.texture_layers.is_empty())
+                    .then_some(())
+                    .and(arrays.as_mut())
+                    .zip(array_materials.as_mut())
+                    .zip(array_images.as_mut())
+                    .map(|((arrays, materials), pool)| {
+                        let key = (bits, mesh.texture_layers.clone(), mesh.blend);
+                        state
+                            .arrays
+                            .entry(key)
+                            .or_insert_with(|| {
+                                let array =
+                                    arrays.array(&mesh.texture_layers, images.as_deref(), pool);
+                                materials.add(crate::plugin_arrays::ArrayMaterial {
+                                    base: StandardMaterial {
+                                        base_color: Color::WHITE,
+                                        perceptual_roughness: mesh.roughness.clamp(0.05, 1.0),
+                                        emissive: LinearRgba::rgb(
+                                            emission[0],
+                                            emission[1],
+                                            emission[2],
+                                        ),
+                                        alpha_mode: alpha_mode(mesh.blend),
+                                        ..default()
+                                    },
+                                    extension: crate::plugin_arrays::ArraySurface { array },
+                                })
+                            })
+                            .clone()
+                    });
+                if let Some(material) = array {
+                    entity
+                        .remove::<MeshMaterial3d<StandardMaterial>>()
+                        .insert(MeshMaterial3d(material));
+                }
                 if let Some((_, material, bounds)) = quad {
                     entity
                         .remove::<MeshMaterial3d<StandardMaterial>>()
@@ -531,6 +588,7 @@ pub fn sync(
                 state.hidden.clear();
                 state.assets.clear();
                 state.materials.clear();
+                state.arrays.clear();
                 state.quads.clear();
             }
         }
@@ -570,6 +628,9 @@ mod tests {
             transition_ms: 0,
             collider,
             collider_kind: ColliderKind::Trimesh,
+            blend: Default::default(),
+            texture_layers: Vec::new(),
+            layers: Vec::new(),
             gpu: None,
             uvs: Vec::new(),
             texture: None,
@@ -796,6 +857,59 @@ mod tests {
         assert_eq!(*mass, rp::ColliderMassProperties::Mass(2500.0));
         assert_eq!(velocity.linear, Vec3::new(2.0, 0.0, 0.0));
         assert_eq!(pose.translation, Vec3::new(3.0, 4.0, 5.0));
+    }
+
+    #[test]
+    fn blend_modes_get_their_own_alpha_materials() {
+        let mut app = app();
+        let mut glass = cube("glass", [0.0; 3], false);
+        glass.blend = MeshBlend::Translucent;
+        let mut leaves = cube("leaves", [0.0; 3], false);
+        leaves.blend = MeshBlend::Cutout;
+        push(
+            &mut app,
+            vec![put(cube("stone", [0.0; 3], false)), put(glass), put(leaves)],
+        );
+        let mut modes: Vec<_> = app
+            .world()
+            .resource::<Assets<StandardMaterial>>()
+            .iter()
+            .map(|(_, m)| format!("{:?}", m.alpha_mode))
+            .collect();
+        modes.sort();
+        assert_eq!(modes, ["Blend", "Mask(0.5)", "Opaque"]);
+    }
+
+    #[test]
+    fn texture_array_meshes_draw_with_one_shared_array_material() {
+        let mut app = app();
+        app.init_resource::<crate::plugin_arrays::TextureArrays>()
+            .init_resource::<Assets<crate::plugin_arrays::ArrayMaterial>>()
+            .init_resource::<Assets<Image>>();
+        let layered = |name: &str| {
+            let mut mesh = cube(name, [0.0; 3], false);
+            mesh.uvs = [0.0, 0.0, 4.0, 0.0, 4.0, 1.0, 0.0, 1.0].to_vec();
+            mesh.texture_layers = vec!["a.png".into(), "b.png".into()];
+            mesh.layers = vec![1; 4];
+            mesh
+        };
+        push(&mut app, vec![put(layered("one")), put(layered("two"))]);
+        assert_eq!(
+            count::<With<MeshMaterial3d<crate::plugin_arrays::ArrayMaterial>>>(&mut app),
+            2
+        );
+        assert_eq!(count::<With<MeshMaterial3d<StandardMaterial>>>(&mut app), 0);
+        let world = app.world();
+        assert_eq!(
+            world
+                .resource::<Assets<crate::plugin_arrays::ArrayMaterial>>()
+                .len(),
+            1
+        );
+        let image = world.resource::<Assets<Image>>().iter().next().unwrap().1;
+        assert_eq!(image.texture_descriptor.size.depth_or_array_layers, 2);
+        let mesh = world.resource::<Assets<Mesh>>().iter().next().unwrap().1;
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_UV_1).is_some());
     }
 
     #[test]

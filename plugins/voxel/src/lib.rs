@@ -18,6 +18,7 @@ const MAX_BLOCK_LINES: usize = 4096;
 mod fracture;
 mod gpu_mesh;
 mod grid;
+mod light;
 mod lod;
 mod lod_mesh;
 mod lod_publish;
@@ -33,7 +34,7 @@ mod smooth;
 mod terrain;
 mod worldgen;
 
-use blockloom_plugin_api::mesh::{ColliderKind, MeshData};
+use blockloom_plugin_api::mesh::{ColliderKind, MeshBlend, MeshData};
 use blockloom_plugin_sdk::{Error, Host, Plugin, Value, export_plugin, json};
 
 use grid::{Grid, SECTION, Shape};
@@ -110,6 +111,13 @@ struct Settings {
     /// across ticks so it never blocks a frame.
     #[serde(default = "default_chunk_workers")]
     chunk_workers: usize,
+    /// Shade cube faces by flood-filled block and sky light.
+    lighting: bool,
+    /// Draw textured cube faces from one texture array per block set, so a
+    /// chunk is one mesh per layer rather than one per texture.
+    texture_arrays: bool,
+    /// How bright the sky is, 0 (night) to 1; block light is unaffected.
+    daylight: f64,
 }
 
 fn default_render_distance() -> i32 {
@@ -165,6 +173,9 @@ impl Default for Settings {
             distant_chunks: default_distant_chunks(),
             pregen_distant: false,
             chunk_workers: default_chunk_workers(),
+            lighting: false,
+            texture_arrays: false,
+            daylight: 1.0,
         }
     }
 }
@@ -1045,10 +1056,36 @@ impl World {
     /// Meshes every dirty section and says what the game should now draw.
     /// Nearest pages first, at most `pages_per_tick` per call. Portable
     /// infinite cube worlds process one 8-cell mesh tile per call.
+    /// An edit changes light up to 15 cells away, and the sky's shadow all
+    /// the way down, so lit worlds remesh the neighbours and every chunk below them.
+    fn light_reach(&self, dirty: Vec<[i32; 3]>) -> Vec<[i32; 3]> {
+        let size = self.grid.size();
+        let chunks = size.map(|s| (s + SECTION - 1) / SECTION);
+        let bounded = self.settings.preset != "infinite";
+        let mut out = BTreeSet::new();
+        for c in dirty {
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    for y in 0..=c[1] + 1 {
+                        let n = [c[0] + dx, y, c[2] + dz];
+                        if bounded && (0..3).any(|a| n[a] < 0 || n[a] >= chunks[a]) {
+                            continue;
+                        }
+                        out.insert(n);
+                    }
+                }
+            }
+        }
+        out.into_iter().collect()
+    }
+
     fn flush(&mut self) -> Vec<Value> {
         self.invalidate_lod_changes();
         let mut effects = Vec::new();
-        let dirty = self.grid.take_dirty();
+        let mut dirty = self.grid.take_dirty();
+        if self.settings.lighting {
+            dirty = self.light_reach(dirty);
+        }
         if self
             .partial_mesh
             .as_ref()
@@ -1089,7 +1126,34 @@ impl World {
             };
             work.truncate(budget);
         }
+        let rules = self
+            .settings
+            .lighting
+            .then(|| light::LightRules::new(&self.registry, &self.palette));
+        let daylight = self.settings.daylight.clamp(0.0, 1.0) as f32;
+        // Past the array's size, faces keep one mesh per texture.
+        let array = self
+            .settings
+            .texture_arrays
+            .then(|| self.registry.texture_layers())
+            .filter(|l| !l.is_empty() && l.len() <= blockloom_plugin_api::mesh::MAX_TEXTURE_LAYERS);
         for chunk in work {
+            let field = rules
+                .as_ref()
+                .filter(|_| self.surface == Surface::Cubes)
+                .map(|rules| {
+                    light::LightField::compute(
+                        &self.grid,
+                        rules,
+                        chunk.map(|c| c * SECTION),
+                        [SECTION; 3],
+                    )
+                });
+            let shading = mesher::Shading {
+                light: field.as_ref().map(|f| (f, daylight)),
+                rules: rules.as_ref(),
+                array: array.as_deref(),
+            };
             let sliced = cfg!(target_arch = "wasm32")
                 && self.settings.preset == "infinite"
                 && self.surface == Surface::Cubes;
@@ -1155,6 +1219,7 @@ impl World {
                                 &self.grid,
                                 &self.palette,
                                 Some(&self.registry),
+                                shading,
                                 base,
                                 extent,
                                 self.voxel,
@@ -1176,20 +1241,29 @@ impl World {
                                 chunk_name(base.map(|c| c / tile_width), glow, texture.as_deref());
                             let emission = glow
                                 .and_then(|m| self.palette.get(m))
+                                .filter(|m| m.emission > 0.0)
                                 .map(|m| m.color.map(|c| c * m.emission));
-                            let gpu = if texture.is_none() && group.uvs.is_empty() {
-                                gpu_mesh::build(
-                                    self,
-                                    chunk,
-                                    base,
-                                    extent,
-                                    glow,
-                                    &group,
-                                    &mut effects,
-                                )
-                            } else {
-                                None
+                            let blend = match group.layer {
+                                registry::Layer::Opaque => MeshBlend::Opaque,
+                                registry::Layer::Cutout => MeshBlend::Cutout,
+                                registry::Layer::Translucent => MeshBlend::Translucent,
                             };
+                            let arrayed = texture.as_deref() == Some(mesher::ARRAY);
+                            // GPU paths draw opaque surfaces only.
+                            let gpu =
+                                if texture.is_none() && group.uvs.is_empty() && blend.is_opaque() {
+                                    gpu_mesh::build(
+                                        self,
+                                        chunk,
+                                        base,
+                                        extent,
+                                        glow,
+                                        &group,
+                                        &mut effects,
+                                    )
+                                } else {
+                                    None
+                                };
                             let mesh = MeshData {
                                 name: name.clone(),
                                 positions: group.positions,
@@ -1202,8 +1276,15 @@ impl World {
                                 transition_ms: 0,
                                 collider: self.solid,
                                 collider_kind: ColliderKind::Trimesh,
+                                blend,
+                                texture_layers: if arrayed {
+                                    array.clone().unwrap_or_default()
+                                } else {
+                                    Vec::new()
+                                },
+                                layers: group.layers,
                                 uvs: group.uvs,
-                                texture,
+                                texture: texture.filter(|_| !arrayed),
                                 gpu,
                                 body: None,
                             };
@@ -1280,8 +1361,11 @@ fn serde_value(mesh: &MeshData) -> Value {
         "transition_ms": mesh.transition_ms,
         "collider": mesh.collider,
         "collider_kind": mesh.collider_kind,
+        "blend": mesh.blend,
         "uvs": mesh.uvs,
         "texture": mesh.texture,
+        "texture_layers": mesh.texture_layers,
+        "layers": mesh.layers,
         "gpu": mesh.gpu,
         "body": mesh.body,
     })
@@ -2060,6 +2144,9 @@ impl Plugin for Voxel {
                         transition_ms: 0,
                         collider: false,
                         collider_kind: ColliderKind::Trimesh,
+                        blend: Default::default(),
+                        texture_layers: Vec::new(),
+                        layers: Vec::new(),
                         gpu: None,
                         uvs: Vec::new(),
                         texture: None,
@@ -2264,5 +2351,55 @@ mod collision_safety_tests {
             world.collision_region_ready([-10.0; 3], [-2.0; 3]),
             "outside the finite world is real empty space"
         );
+    }
+}
+
+#[cfg(test)]
+mod lighting_tests {
+    use super::*;
+
+    fn floor_top_brightness(lighting: bool) -> (f64, f64) {
+        let mut world = World::new(&Settings {
+            preset: "empty".into(),
+            size: [32.0, 32.0, 32.0],
+            lighting,
+            daylight: 0.0,
+            blocks: vec![r##"{"name":"lamp","id":40,"color":"#ffffff","light":14}"##.into()],
+            ..Settings::default()
+        })
+        .unwrap();
+        world.flush();
+        let stone = world.registry.id_of("stone").unwrap();
+        for x in 0..32 {
+            for z in 0..32 {
+                world.grid.set([x, 0, z], stone);
+            }
+        }
+        world.grid.set([4, 1, 4], 40);
+        let (mut lo, mut hi) = (f64::MAX, 0.0f64);
+        for effect in world.flush() {
+            if effect["effect"] != "mesh" {
+                continue;
+            }
+            let positions = effect["positions"].as_array().unwrap();
+            let colors = effect["colors"].as_array().unwrap();
+            for v in 0..positions.len() / 3 {
+                let normal_up = effect["normals"][v * 3 + 1].as_f64() == Some(1.0);
+                if positions[v * 3 + 1].as_f64() == Some(1.0) && normal_up {
+                    let red = colors[v * 4].as_f64().unwrap();
+                    lo = lo.min(red);
+                    hi = hi.max(red);
+                }
+            }
+        }
+        (lo, hi)
+    }
+
+    #[test]
+    fn a_lamp_lights_the_floor_at_night_and_off_means_flat() {
+        let (lo, hi) = floor_top_brightness(true);
+        assert!(hi > lo * 10.0, "{lo} {hi}");
+        let (lo, hi) = floor_top_brightness(false);
+        assert_eq!(lo, hi);
     }
 }
