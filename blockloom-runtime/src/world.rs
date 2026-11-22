@@ -914,14 +914,14 @@ static LAST_REBUILD_US: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomic
 
 /// Times one rebuild, however it returns.
 struct RebuildTimer {
-    started: std::time::Instant,
+    started: web_time::Instant,
     actors: usize,
 }
 
 impl RebuildTimer {
     fn start(actors: usize) -> Self {
         Self {
-            started: std::time::Instant::now(),
+            started: web_time::Instant::now(),
             actors,
         }
     }
@@ -1422,7 +1422,7 @@ pub fn step_scripts(
                     continue;
                 };
                 for entry in scripts {
-                    let started = std::time::Instant::now();
+                    let started = web_time::Instant::now();
                     if fresh.contains(&(actor.clone(), entry.path.clone())) {
                         entry.script.start(actor, &mut asked);
                     }
@@ -1547,7 +1547,7 @@ pub fn step_scripts_frame_ui(
                     continue;
                 };
                 for entry in scripts {
-                    let started = std::time::Instant::now();
+                    let started = web_time::Instant::now();
                     if !paused {
                         entry.script.frame(actor, &mut asked, dt);
                     }

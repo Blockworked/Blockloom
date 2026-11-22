@@ -137,6 +137,8 @@ html, body { margin: 0; height: 100%; background: #1b212c; overflow: hidden; }
 <script type="application/octet-stream" id="blockloom-data">{{DATA}}</script>
 <script type="module">
 const problem = (message) => {
+  // The player shows a panic itself; the trap after it only says "unreachable".
+  if (document.querySelector("[data-blockloom-error]")) return;
   const box = document.getElementById("problem");
   box.textContent = "Blockloom: " + message;
   box.style.display = "block";

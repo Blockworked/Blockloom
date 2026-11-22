@@ -52,9 +52,7 @@ pub fn start_game(
     // A bare wasm trap says nothing: forward panics to the devtools console
     // with their message, the way a native run prints them to stderr.
     #[cfg(target_arch = "wasm32")]
-    std::panic::set_hook(Box::new(|info| {
-        console_error(&format!("blockloom: panic: {info}"));
-    }));
+    show_panics();
     // Before the pack is read: a saved document names Blockloom's own
     // reporter blocks, which have to be registered to evaluate.
     blockloom_core::init();
@@ -114,6 +112,9 @@ pub fn start_game(
             })
             .set(crate::asset_plugin()),
     );
+    // Bevy's panic handler replaced ours while the plugins were added.
+    #[cfg(target_arch = "wasm32")]
+    show_panics();
     crate::add_world(&mut app, mode, launch.into_engine());
     app.run();
     Ok(())
@@ -251,6 +252,16 @@ pub(crate) fn want_pointer_lock(wanted: bool) {
 
 /// Pins a fatal message onto the page. Does nothing where there is no
 /// document (a headless smoke test), so the caller still returns the error.
+/// Puts a panic's message on the page as well as in the console, since the
+/// trap that follows only reads "unreachable".
+#[cfg(target_arch = "wasm32")]
+fn show_panics() {
+    std::panic::set_hook(Box::new(|info| {
+        console_error(&format!("blockloom: panic: {info}"));
+        show_error(&format!("the game stopped: {info}"));
+    }));
+}
+
 pub fn show_error(message: &str) {
     let _ = overlay(message);
 }
@@ -267,6 +278,8 @@ fn overlay(message: &str) -> Option<()> {
              border:1px solid #a33;border-radius:8px;z-index:2147483647;",
         )
         .ok()?;
+    // The page's own error box steps aside for this one.
+    let _ = element.set_attribute("data-blockloom-error", "");
     element.set_text_content(Some(&format!("Blockloom: {message}")));
     body.append_child(&element).ok()?;
     Some(())
