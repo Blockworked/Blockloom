@@ -128,6 +128,11 @@ pub enum SceneComponent {
     Environment {
         environment: crate::linked::AssetLink,
     },
+    /// The `.blockui` screens drawn over the scene. Only carried while
+    /// there are some.
+    Screens {
+        screens: Vec<crate::ui_layers::UiLayer>,
+    },
 }
 
 impl SceneComponent {
@@ -174,6 +179,7 @@ impl SceneComponent {
             SceneComponent::Post2d { .. } => "Post2d",
             SceneComponent::Camera2d { .. } => "Camera2d",
             SceneComponent::Environment { .. } => "Environment",
+            SceneComponent::Screens { .. } => "Screens",
         }
     }
 }
@@ -265,6 +271,11 @@ impl SceneComponents {
                 environment: environment.clone(),
             });
         }
+        if !world.screens.is_empty() {
+            list.push(SceneComponent::Screens {
+                screens: world.screens.clone(),
+            });
+        }
         Self(list)
     }
 
@@ -343,6 +354,7 @@ impl SceneComponents {
                 SceneComponent::Environment { environment } => {
                     world.environment = Some(environment.clone());
                 }
+                SceneComponent::Screens { screens } => world.screens.clone_from(screens),
             }
         }
     }

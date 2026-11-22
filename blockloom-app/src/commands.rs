@@ -55,6 +55,7 @@ pub(crate) mod plugins;
 pub(crate) mod prefabs;
 pub(crate) mod problems;
 pub(crate) mod registry;
+pub(crate) mod screens;
 
 type Guard<'a> = MutexGuard<'a, AppState>;
 

@@ -25,6 +25,10 @@ pub struct GameSettings {
     /// The output signal, peak brightness and paper white.
     #[schema(label = "Display")]
     pub display: DisplayOutput,
+    /// `.blockui` screens drawn over every scene, above the scene's own.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(skip)]
+    pub screens: Vec<crate::ui_layers::UiLayer>,
 }
 
 impl GameSettings {

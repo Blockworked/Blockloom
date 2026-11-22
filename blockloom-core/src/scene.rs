@@ -1428,6 +1428,11 @@ pub struct World {
     pub legacy_quality: Option<crate::quality::Settings>,
     #[serde(default)]
     pub interface: crate::ui::UiDocument,
+    /// Authored `.blockui` screens drawn over this scene, after its own
+    /// interface.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schema(skip)]
+    pub screens: Vec<crate::ui_layers::UiLayer>,
     #[serde(default)]
     pub mode: Mode,
     #[serde(default = "default_background")]
@@ -1561,6 +1566,7 @@ impl Default for World {
         Self {
             legacy_quality: None,
             interface: crate::ui::UiDocument::default(),
+            screens: Vec::new(),
             mode: Mode::TwoD,
             background: default_background(),
             gravity: default_gravity_2d(),

@@ -379,6 +379,33 @@ impl Backend {
             "interface_overrides" => {
                 to_json(commands::interface_overrides(state, arg(&args, "id")?)?)
             }
+            "create_screen" => to_json(commands::screens::create_screen(
+                state,
+                app,
+                arg::<Option<String>>(&args, "path")?,
+                arg::<Option<String>>(&args, "name")?,
+                arg::<Option<bool>>(&args, "fromInterface")?.unwrap_or(false),
+            )?),
+            "read_screen" => to_json(commands::screens::read_screen(state, arg(&args, "path")?)?),
+            "write_screen" => to_json(commands::screens::write_screen(
+                state,
+                app,
+                arg(&args, "path")?,
+                arg(&args, "screen")?,
+            )?),
+            "add_screen_layer" => to_json(commands::screens::add_screen_layer(
+                state,
+                app,
+                arg(&args, "path")?,
+                arg::<Option<String>>(&args, "scope")?,
+                arg::<Option<bool>>(&args, "open")?,
+            )?),
+            "remove_screen_layer" => to_json(commands::screens::remove_screen_layer(
+                state,
+                app,
+                arg(&args, "path")?,
+                arg::<Option<String>>(&args, "scope")?,
+            )?),
             "set_interface" => to_json(commands::set_interface(
                 state,
                 app,

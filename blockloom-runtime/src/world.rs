@@ -422,19 +422,20 @@ pub fn pump_editor(
                 engine.speech.clear();
                 engine.pending_scene = None;
                 engine.veil.reset();
-                let document = match engine.project_dir.as_deref() {
-                    Some(dir) => engine.project.world.interface.with_stylesheets(dir),
-                    None => Ok(engine.project.world.interface.clone()),
-                };
-                match document {
-                    Ok(document) => manager.load(&document),
-                    Err(message) => {
-                        bridge::send(&RuntimeMessage::Error {
-                            actor: String::new(),
-                            message,
-                        });
-                        manager.load(&engine.project.world.interface);
-                    }
+                let composed = blockloom_core::ui_layers::scene_interface(
+                    engine.project_dir.as_deref(),
+                    &engine.project.world,
+                    &engine.project.settings,
+                );
+                manager.load(&composed.document);
+                for id in &composed.closed {
+                    manager.hide(id, false);
+                }
+                for message in composed.errors {
+                    bridge::send(&RuntimeMessage::Error {
+                        actor: String::new(),
+                        message,
+                    });
                 }
                 engine.rebuild = true;
                 engine.paused = false;

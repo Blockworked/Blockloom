@@ -9,7 +9,7 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub(crate) struct Problem {
-    /// `plugins`, `scripts`, `imports` or `assets`.
+    /// `plugins`, `scripts`, `imports`, `assets` or `screens`.
     pub source: &'static str,
     /// `error` stops Play or Build, `warning` doesn't.
     pub severity: &'static str,
@@ -111,6 +111,23 @@ pub(crate) fn problems(state: &SharedState) -> Result<Vec<Problem>, String> {
                 Problem::new("assets", "warning", format!("{}: {warning}", report.path))
                     .at(&report.path, None),
             );
+        }
+    }
+    // Each scene's screens, composed the way the world will.
+    for scene in &project.scenes {
+        let composed = blockloom_core::ui_layers::scene_interface(
+            Some(&open.dir),
+            &scene.world,
+            &project.settings,
+        );
+        for message in composed.errors {
+            let path = message.split(": ").next().unwrap_or_default().to_string();
+            let problem = Problem::new("screens", "warning", format!("{}: {message}", scene.name));
+            out.push(if blockloom_core::ui_layers::is_screen(&path) {
+                problem.at(&path, None)
+            } else {
+                problem
+            });
         }
     }
     out.sort_by_key(|p| p.severity != "error");

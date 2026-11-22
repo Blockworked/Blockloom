@@ -1099,6 +1099,99 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         }],
     },
     CommandSpec {
+        name: "create-screen",
+        cmd: "create_screen",
+        aliases: &["create_screen"],
+        summary: "Write a new .blockui screen (default assets/ui/<name>.blockui) and answer its path. fromInterface=true moves the open scene's own interface into it and draws the file there instead.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: false,
+            },
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "fromInterface",
+                ty: "bool",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "read-screen",
+        cmd: "read_screen",
+        aliases: &["read_screen"],
+        summary: "Read a .blockui screen's node tree.",
+        args: &[ArgSpec {
+            name: "path",
+            ty: "asset path",
+            required: true,
+        }],
+    },
+    CommandSpec {
+        name: "write-screen",
+        cmd: "write_screen",
+        aliases: &["write_screen"],
+        summary: "Replace a .blockui screen's node tree; every scene drawing it redraws.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+            ArgSpec {
+                name: "screen",
+                ty: "object",
+                required: true,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "add-screen-layer",
+        cmd: "add_screen_layer",
+        aliases: &["add_screen_layer"],
+        summary: "Draw a .blockui screen over the open scene (scope=scene) or every scene (scope=game). open=false starts it hidden.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+            ArgSpec {
+                name: "scope",
+                ty: "scene|game",
+                required: false,
+            },
+            ArgSpec {
+                name: "open",
+                ty: "bool",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "remove-screen-layer",
+        cmd: "remove_screen_layer",
+        aliases: &["remove_screen_layer"],
+        summary: "Stop drawing a .blockui screen over the open scene or every scene; the file stays.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: true,
+            },
+            ArgSpec {
+                name: "scope",
+                ty: "scene|game",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
         name: "set-interface",
         cmd: "set_interface",
         aliases: &["set_interface"],

@@ -95,6 +95,7 @@ pub mod terrain;
 pub mod tilemap;
 pub mod trash;
 pub mod ui;
+pub mod ui_layers;
 pub mod ui_tree;
 pub mod value;
 pub mod vfs;

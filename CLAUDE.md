@@ -2655,6 +2655,21 @@ the runtime draws them. The gates are the round trip in `ui_tree_tests.rs`
 lays both out. Immediate-mode `show` blocks are to be deprecated once
 authored screens work.
 
+A `.blockui` file is one `UiScreen` (`blockloom-core/src/ui_layers.rs`). A
+scene lists the files it draws in `World.screens` (a `Screens` scene
+component, saved only when there are some) and the game in
+`GameSettings.screens`; each is a `UiLayer { screen, open }`.
+`ui_layers::scene_interface` is what the world draws at every rebuild: the
+scene's own interface, then its screens, then the game's, each file once,
+lowered and merged (a widget id another layer took, or a style, component or
+animation of the same name that differs, skips that layer with an error; the
+others still draw). A closed layer's roots start hidden. The files aren't in
+the document, so `write-screen` marks the world stale to redraw it.
+Commands: `create-screen` (`fromInterface` moves the scene's interface into
+the file), `read-screen`, `write-screen`, `add-screen-layer`,
+`remove-screen-layer` (`commands/screens.rs`); the Problems panel lists
+layers that don't compose.
+
 ### Frontend (`blockloom-qt/qml/`)
 
 `Start.qml` is the entry point: it adds the Lucide icons blockstitch doesn't
