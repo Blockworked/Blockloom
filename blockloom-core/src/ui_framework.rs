@@ -404,6 +404,9 @@ pub struct UiDocument {
     pub version: u32,
     pub widgets: Vec<UiWidget>,
     pub theme: UiTheme,
+    /// Colors laid over `theme`'s built-in ones, from a `.blockstyle`.
+    #[serde(skip_serializing_if = "UiTokens::is_empty")]
+    pub tokens: UiTokens,
     pub styles: BTreeMap<String, UiStyles>,
     pub stylesheets: Vec<String>,
     pub scale: UiScale,
@@ -417,6 +420,92 @@ pub struct UiDocument {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub animations: BTreeMap<String, UiAnimation>,
 }
+
+/// A theme's colors, each `#RRGGBB` or `#RRGGBBAA`. Unset ones keep the
+/// built-in theme's.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Schema)]
+#[serde(default)]
+pub struct UiTokens {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub panel: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub button: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_focused: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Slider and bar fills, an on toggle and the caret.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accent: Option<String>,
+    /// Slider and bar tracks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub toggle_off: Option<String>,
+}
+
+impl UiTokens {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    fn slots(&mut self) -> [(&'static str, &mut Option<String>); 8] {
+        [
+            ("panel", &mut self.panel),
+            ("button", &mut self.button),
+            ("input", &mut self.input),
+            ("input_focused", &mut self.input_focused),
+            ("text", &mut self.text),
+            ("accent", &mut self.accent),
+            ("track", &mut self.track),
+            ("toggle_off", &mut self.toggle_off),
+        ]
+    }
+
+    /// Takes every color `over` sets.
+    pub fn layer(&mut self, mut over: UiTokens) {
+        for ((_, mine), (_, theirs)) in self.slots().into_iter().zip(over.slots()) {
+            if theirs.is_some() {
+                *mine = theirs.take();
+            }
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        let mut copy = self.clone();
+        for (name, value) in copy.slots() {
+            if let Some(hex) = value
+                && !is_hex_color(hex)
+            {
+                return Err(format!(
+                    "The theme color {name} isn't #RRGGBB or #RRGGBBAA: {hex}"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn is_hex_color(text: &str) -> bool {
+    text.strip_prefix('#')
+        .is_some_and(|hex| matches!(hex.len(), 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// What a `.blockstyle` file holds: a theme to start from, colors over it,
+/// and classes widgets pick by name.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiStyleFile {
+    pub version: u32,
+    pub base: UiTheme,
+    pub tokens: UiTokens,
+    pub classes: BTreeMap<String, UiStyles>,
+}
+
+pub const STYLE_EXTENSION: &str = "blockstyle";
+pub const STYLE_VERSION: u32 = 1;
 
 /// A named handle on a prefab: one property of one widget inside it, or a
 /// container widget other widgets can be placed into.
@@ -444,6 +533,7 @@ impl Default for UiDocument {
             version: UI_SCHEMA_VERSION,
             widgets: vec![],
             theme: UiTheme::default(),
+            tokens: UiTokens::default(),
             styles: BTreeMap::new(),
             stylesheets: vec![],
             scale: UiScale::default(),

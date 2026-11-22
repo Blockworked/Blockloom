@@ -105,8 +105,16 @@ pub fn scene_interface(dir: Option<&Path>, world: &World, settings: &GameSetting
             ..Composed::default()
         };
     };
+    // The game's theme goes under each document's own stylesheets.
+    let themed = |doc: &UiDocument| -> UiDocument {
+        let mut doc = doc.clone();
+        if !settings.style.is_empty() && !doc.stylesheets.contains(&settings.style) {
+            doc.stylesheets.insert(0, settings.style.clone());
+        }
+        doc
+    };
     let mut out = Composed::default();
-    out.document = match world.interface.with_stylesheets(dir) {
+    out.document = match themed(&world.interface).with_stylesheets(dir) {
         Ok(document) => document,
         Err(message) => {
             out.errors.push(message);
@@ -118,7 +126,7 @@ pub fn scene_interface(dir: Option<&Path>, world: &World, settings: &GameSetting
         .map(|layer| {
             let document = read(dir, &layer.screen)
                 .and_then(|screen| screen.lower())
-                .and_then(|doc| doc.with_stylesheets(dir))
+                .and_then(|doc| themed(&doc).with_stylesheets(dir))
                 .map_err(|e| format!("{}: {e}", layer.screen));
             (layer, document)
         })
@@ -181,6 +189,7 @@ fn merge(base: &mut UiDocument, layer: UiDocument, adopt: bool) -> Result<Vec<St
         .collect();
     if adopt {
         base.theme = layer.theme;
+        base.tokens = layer.tokens;
         base.scale = layer.scale;
         base.reference_size = layer.reference_size;
         base.safe_area = layer.safe_area;
@@ -313,6 +322,71 @@ mod tests {
         assert_eq!(composed.errors.len(), 2, "{:?}", composed.errors);
         assert!(composed.errors[0].contains("missing.blockui"));
         assert!(composed.errors[1].contains("already taken"));
+    }
+
+    #[test]
+    fn the_games_theme_sits_under_each_screens_own() {
+        use crate::ui::{UiStyleFile, UiStyles, UiTheme, UiTokens};
+        let dir = Scratch::new("theme");
+        let style = |base, panel: &str, class: &str| UiStyleFile {
+            version: crate::ui::STYLE_VERSION,
+            base,
+            tokens: UiTokens {
+                panel: Some(panel.into()),
+                ..UiTokens::default()
+            },
+            classes: [(class.to_string(), UiStyles::default())].into(),
+        };
+        let put = |path: &str, file: &UiStyleFile| {
+            let full = dir.path().join(path);
+            std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+            std::fs::write(full, serde_json::to_string(file).unwrap()).unwrap();
+        };
+        put(
+            "assets/ui/game.blockstyle",
+            &style(UiTheme::Light, "#112233", "title"),
+        );
+        put(
+            "assets/ui/hud.blockstyle",
+            &style(UiTheme::HighContrast, "#445566", "big"),
+        );
+        let mut hud = menu("hud");
+        hud.stylesheets = vec!["assets/ui/hud.blockstyle".into()];
+        write(dir.path(), "assets/ui/hud.blockui", &hud).unwrap();
+
+        let mut world = World::default();
+        world.interface = menu("own").lower().unwrap();
+        let settings = GameSettings {
+            style: "assets/ui/game.blockstyle".into(),
+            ..GameSettings::default()
+        };
+        let own = scene_interface(Some(dir.path()), &world, &settings);
+        assert!(own.errors.is_empty(), "{:?}", own.errors);
+        assert_eq!(own.document.theme, UiTheme::Light);
+        assert_eq!(own.document.tokens.panel.as_deref(), Some("#112233"));
+        assert!(own.document.styles.contains_key("title"));
+
+        // A scene with nothing of its own takes its first screen's look,
+        // the screen's own sheet over the game's.
+        let mut bare = World::default();
+        bare.screens.push(UiLayer::new("assets/ui/hud.blockui"));
+        let drawn = scene_interface(Some(dir.path()), &bare, &settings);
+        assert!(drawn.errors.is_empty(), "{:?}", drawn.errors);
+        assert_eq!(drawn.document.theme, UiTheme::HighContrast);
+        assert_eq!(drawn.document.tokens.panel.as_deref(), Some("#445566"));
+        assert!(drawn.document.styles.contains_key("big"));
+        assert!(drawn.document.styles.contains_key("title"));
+
+        // A bad color is refused with the file's name.
+        let mut bad = style(UiTheme::Dark, "red", "x");
+        bad.tokens.text = None;
+        put("assets/ui/game.blockstyle", &bad);
+        let refused = scene_interface(Some(dir.path()), &world, &settings);
+        assert!(
+            refused.errors[0].contains("game.blockstyle"),
+            "{:?}",
+            refused.errors
+        );
     }
 
     #[test]

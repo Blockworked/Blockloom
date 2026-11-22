@@ -155,6 +155,7 @@ impl UiNode {
 /// tested in.
 #[derive(Resource, Default)]
 pub struct UiManager {
+    palette: Palette,
     order: Vec<String>,
     nodes: HashMap<String, UiNode>,
     /// The text input holding the keyboard, if any. While one does, game
@@ -184,6 +185,7 @@ impl UiManager {
     pub fn load(&mut self, document: &UiDocument) {
         self.clear();
         self.document = document.clone();
+        self.palette = Palette::new(document.theme, document.tokens.clone());
         self.set_theme(document.theme);
         for widget in &document.widgets {
             self.show_widget(widget.clone());
@@ -376,6 +378,10 @@ impl UiManager {
 
     pub fn theme(&self) -> UiTheme {
         self.theme
+    }
+
+    pub fn palette(&self) -> &Palette {
+        &self.palette
     }
 
     pub fn set_theme(&mut self, theme: UiTheme) {
@@ -1148,6 +1154,71 @@ pub fn background_for(theme: UiTheme, kind: UiKind, focused: bool) -> Color {
     }
 }
 
+/// The built-in themes, with a document's own colors over the theme it was
+/// loaded with. A `set theme` to another theme gets that one's built-ins.
+#[derive(Debug, Clone, Default)]
+pub struct Palette {
+    base: UiTheme,
+    tokens: blockloom_core::ui::UiTokens,
+}
+
+impl Palette {
+    pub fn new(base: UiTheme, tokens: blockloom_core::ui::UiTokens) -> Self {
+        Self { base, tokens }
+    }
+
+    fn pick(
+        &self,
+        theme: UiTheme,
+        token: impl Fn(&blockloom_core::ui::UiTokens) -> &Option<String>,
+    ) -> Option<Color> {
+        (theme == self.base)
+            .then(|| {
+                token(&self.tokens)
+                    .as_deref()
+                    .map(crate::world::parse_color)
+            })
+            .flatten()
+    }
+
+    pub fn background(&self, theme: UiTheme, kind: UiKind, focused: bool) -> Color {
+        let token = match kind {
+            UiKind::Panel | UiKind::List | UiKind::ListView | UiKind::Tooltip => {
+                self.pick(theme, |t| &t.panel)
+            }
+            UiKind::Button | UiKind::Toggle => self.pick(theme, |t| &t.button),
+            UiKind::Input if focused => self.pick(theme, |t| &t.input_focused),
+            UiKind::Input => self.pick(theme, |t| &t.input),
+            _ => None,
+        };
+        token.unwrap_or_else(|| background_for(theme, kind, focused))
+    }
+
+    pub fn text(&self, theme: UiTheme) -> Color {
+        self.pick(theme, |t| &t.text)
+            .unwrap_or_else(|| text_color(theme))
+    }
+
+    pub fn track(&self, theme: UiTheme) -> Color {
+        self.pick(theme, |t| &t.track)
+            .unwrap_or_else(|| track_background(theme))
+    }
+
+    pub fn accent(&self, theme: UiTheme) -> Color {
+        self.pick(theme, |t| &t.accent)
+            .unwrap_or_else(|| accent(theme))
+    }
+
+    pub fn toggle(&self, theme: UiTheme, on: bool) -> Color {
+        if on {
+            self.accent(theme)
+        } else {
+            self.pick(theme, |t| &t.toggle_off)
+                .unwrap_or_else(|| toggle_color(theme, false))
+        }
+    }
+}
+
 pub fn text_color(theme: UiTheme) -> Color {
     match theme {
         UiTheme::Dark => Color::srgb(0.93, 0.95, 0.98),
@@ -1499,6 +1570,36 @@ mod tests {
         manager.hide("", true);
         assert_eq!(manager.focus(), None);
         assert!(!manager.get("name").unwrap().visible);
+    }
+
+    #[test]
+    fn a_documents_colors_reach_its_own_theme_only() {
+        let mut manager = UiManager::default();
+        let document = UiDocument {
+            theme: UiTheme::Light,
+            tokens: blockloom_core::ui::UiTokens {
+                panel: Some("#ff0000".into()),
+                accent: Some("#00ff00".into()),
+                ..Default::default()
+            },
+            ..UiDocument::default()
+        };
+        manager.load(&document);
+        let palette = manager.palette();
+        assert_eq!(
+            palette.background(UiTheme::Light, UiKind::Panel, false),
+            crate::world::parse_color("#ff0000")
+        );
+        assert_eq!(
+            palette.toggle(UiTheme::Light, true),
+            crate::world::parse_color("#00ff00")
+        );
+        // What it leaves unset, and every other theme, stay built in.
+        assert_eq!(palette.text(UiTheme::Light), text_color(UiTheme::Light));
+        assert_eq!(
+            palette.background(UiTheme::Dark, UiKind::Panel, false),
+            background_for(UiTheme::Dark, UiKind::Panel, false)
+        );
     }
 
     #[test]

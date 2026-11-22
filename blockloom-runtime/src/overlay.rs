@@ -340,6 +340,7 @@ pub fn draw_ui(
     let dir = document.dir.clone();
     let focused = manager.focus().unwrap_or_default().to_string();
     let theme = manager.theme();
+    let palette = manager.palette().clone();
     let mut screen = roots.iter().next();
     let mut pending = manager.take_pending();
     // Draw parents first so deferred children keep their authored sibling order.
@@ -400,6 +401,7 @@ pub fn draw_ui(
             node,
             id == focused,
             theme,
+            &palette,
         );
         commands.entity(under).add_child(entity);
         manager.attach(&id, entity);
@@ -456,9 +458,7 @@ pub fn draw_ui(
                 .background
                 .as_ref()
                 .map(|hex| world::parse_color(hex))
-                .unwrap_or_else(|| {
-                    crate::ui::background_for(local_theme, element.kind, id == focused)
-                }),
+                .unwrap_or_else(|| palette.background(local_theme, element.kind, id == focused)),
             fade,
         );
         if element.transition > 0. {
@@ -582,7 +582,7 @@ pub fn draw_ui(
                                             .text_color
                                             .as_ref()
                                             .map(|c| world::parse_color(c))
-                                            .unwrap_or_else(|| crate::ui::text_color(local_theme))
+                                            .unwrap_or_else(|| palette.text(local_theme))
                                     }),
                                 fade,
                             )),
@@ -595,7 +595,7 @@ pub fn draw_ui(
             *color = TextColor(faded(
                 match &paint.text_color {
                     Some(hex) => world::parse_color(hex),
-                    None => crate::ui::text_color(local_theme),
+                    None => palette.text(local_theme),
                 },
                 fade,
             ));
@@ -620,7 +620,10 @@ pub fn draw_ui(
         let on = element.value.as_bool();
         for (owner, mut lamp) in &mut lamps {
             if owner.0 == id {
-                *lamp = BackgroundColor(faded(toggle_lamp_color(local_theme, &paint, on), fade));
+                *lamp = BackgroundColor(faded(
+                    toggle_lamp_color(&palette, local_theme, &paint, on),
+                    fade,
+                ));
             }
         }
     }
@@ -666,35 +669,40 @@ fn slider_fraction(node: &crate::ui::UiNode) -> f32 {
 /// track. A bar's fill follows its `text_color` style, defaulting to the
 /// theme's accent - so a project can paint health, stamina and boss bars
 /// without new properties. A style set after spawn only takes on a rebuild.
-fn bar_track_color(theme: UiTheme, paint: &UiPaint) -> Color {
+fn bar_track_color(palette: &crate::ui::Palette, theme: UiTheme, paint: &UiPaint) -> Color {
     paint
         .background
         .as_ref()
         .map(|hex| world::parse_color(hex))
-        .unwrap_or_else(|| crate::ui::track_background(theme))
+        .unwrap_or_else(|| palette.track(theme))
 }
 
 /// A bar's fill. See [`bar_track_color`].
-fn bar_fill_color(theme: UiTheme, paint: &UiPaint) -> Color {
+fn bar_fill_color(palette: &crate::ui::Palette, theme: UiTheme, paint: &UiPaint) -> Color {
     paint
         .text_color
         .as_ref()
         .map(|hex| world::parse_color(hex))
-        .unwrap_or_else(|| crate::ui::accent(theme))
+        .unwrap_or_else(|| palette.accent(theme))
 }
 
 /// A toggle's lamp when on follows its `border_color` style, so the lamp can
 /// be tinted while the caption keeps its own text color. Falls back to the
 /// theme's toggle color.
-fn toggle_lamp_color(theme: UiTheme, paint: &UiPaint, on: bool) -> Color {
+fn toggle_lamp_color(
+    palette: &crate::ui::Palette,
+    theme: UiTheme,
+    paint: &UiPaint,
+    on: bool,
+) -> Color {
     if !on {
-        return crate::ui::toggle_color(theme, false);
+        return palette.toggle(theme, false);
     }
     paint
         .border_color
         .as_ref()
         .map(|hex| world::parse_color(hex))
-        .unwrap_or_else(|| crate::ui::toggle_color(theme, true))
+        .unwrap_or_else(|| palette.toggle(theme, true))
 }
 
 fn spawn_element(
@@ -704,6 +712,7 @@ fn spawn_element(
     node: &crate::ui::UiNode,
     focused: bool,
     theme: blockloom_core::ui::UiTheme,
+    palette: &crate::ui::Palette,
 ) -> Entity {
     let id = node.spec.id.clone();
     let parented = !node.parent.is_empty();
@@ -711,7 +720,7 @@ fn spawn_element(
     let mut entity = commands.spawn((
         Name::new(format!("ui: {id}")),
         base,
-        BackgroundColor(crate::ui::background_for(theme, node.kind, focused)),
+        BackgroundColor(palette.background(theme, node.kind, focused)),
         UiTransform::default(),
     ));
     if node.kind.scrollable() {
@@ -739,8 +748,8 @@ fn spawn_element(
         UiKind::Slider | UiKind::Progress | UiKind::Scrollbar => {
             let value = id.clone();
             let local = node.theme.unwrap_or(theme);
-            let track = bar_track_color(local, &node.styles.normal);
-            let fill = bar_fill_color(local, &node.styles.normal);
+            let track = bar_track_color(palette, local, &node.styles.normal);
+            let fill = bar_fill_color(palette, local, &node.styles.normal);
             entity.with_children(|parent| {
                 parent
                     .spawn((
@@ -772,7 +781,7 @@ fn spawn_element(
         }
         UiKind::RadialProgress => {
             let local = node.theme.unwrap_or(theme);
-            let fill = bar_fill_color(local, &node.styles.normal);
+            let fill = bar_fill_color(palette, local, &node.styles.normal);
             entity.with_children(|parent| {
                 for i in 0..64 {
                     let angle = i as f32 * std::f32::consts::TAU / 64.;
@@ -805,7 +814,7 @@ fn spawn_element(
             let lamp = id.clone();
             let caption = id.clone();
             let local = node.theme.unwrap_or(theme);
-            let lit = toggle_lamp_color(local, &node.styles.normal, node.value.as_bool());
+            let lit = toggle_lamp_color(palette, local, &node.styles.normal, node.value.as_bool());
             entity.with_children(|parent| {
                 parent.spawn((
                     UiToggleLamp(lamp),
@@ -821,7 +830,7 @@ fn spawn_element(
                     UiElementText(caption),
                     Text::new(crate::ui::text_of(node)),
                     TextFont::from_font_size(FontSize::Px(crate::ui::text_size())),
-                    TextColor(crate::ui::text_color(theme)),
+                    TextColor(palette.text(theme)),
                 ));
             });
         }
@@ -836,7 +845,7 @@ fn spawn_element(
                     UiElementText(caption),
                     Text::new(words),
                     TextFont::from_font_size(FontSize::Px(crate::ui::text_size())),
-                    TextColor(crate::ui::text_color(theme)),
+                    TextColor(palette.text(theme)),
                 ));
             });
         }

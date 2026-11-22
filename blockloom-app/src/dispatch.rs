@@ -386,6 +386,12 @@ impl Backend {
                 arg::<Option<String>>(&args, "name")?,
                 arg::<Option<bool>>(&args, "fromInterface")?.unwrap_or(false),
             )?),
+            "create_style" => to_json(commands::screens::create_style(
+                state,
+                arg::<Option<String>>(&args, "path")?,
+                arg::<Option<String>>(&args, "name")?,
+                arg::<Option<blockloom_core::ui::UiTheme>>(&args, "base")?,
+            )?),
             "read_screen" => to_json(commands::screens::read_screen(state, arg(&args, "path")?)?),
             "write_screen" => to_json(commands::screens::write_screen(
                 state,

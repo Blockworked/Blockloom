@@ -1122,6 +1122,29 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        name: "create-style",
+        cmd: "create_style",
+        aliases: &["create_style"],
+        summary: "Write a starter .blockstyle theme (default assets/ui/<name>.blockstyle) over a built-in theme and answer its path. A screen lists it in its stylesheets, or set-property target=settings path=style makes it the game's theme.",
+        args: &[
+            ArgSpec {
+                name: "path",
+                ty: "asset path",
+                required: false,
+            },
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "base",
+                ty: "Dark|Light|HighContrast",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
         name: "read-screen",
         cmd: "read_screen",
         aliases: &["read_screen"],

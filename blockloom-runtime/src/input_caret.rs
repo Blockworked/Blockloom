@@ -93,7 +93,7 @@ pub fn draw_input_caret(
         }
         let blink_on = (((now - last.1) / BLINK) as u64).is_multiple_of(2);
         let scale = 1.0 / text_node.inverse_scale_factor().max(f32::EPSILON);
-        let accent = crate::ui::accent(manager.theme()).with_alpha(0.45);
+        let accent = manager.palette().accent(manager.theme()).with_alpha(0.45);
         let (inset, shrink) = (parent_node.border(), parent_node.inverse_scale_factor());
         for (rect, color) in marks_of(
             block,

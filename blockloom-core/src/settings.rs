@@ -25,6 +25,11 @@ pub struct GameSettings {
     /// The output signal, peak brightness and paper white.
     #[schema(label = "Display")]
     pub display: DisplayOutput,
+    /// A `.blockstyle` every interface starts from; a screen's own
+    /// stylesheets still win.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    #[schema(label = "Interface theme", asset)]
+    pub style: String,
     /// `.blockui` screens drawn over every scene, above the scene's own.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[schema(skip)]

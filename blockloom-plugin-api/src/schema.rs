@@ -566,7 +566,11 @@ pub fn fill_field_defaults(fields: &mut [FieldSchema], default: &Value) {
                 FieldType::Map { .. } => Some(json!({})),
                 FieldType::List { .. } => Some(json!([])),
                 FieldType::Bool => Some(json!(false)),
-                FieldType::Text { .. } => Some(json!("")),
+                FieldType::Text { .. } | FieldType::Asset { .. } | FieldType::Actor => {
+                    Some(json!(""))
+                }
+                // A struct skipped as empty reads back as its own defaults.
+                FieldType::Struct { .. } => Some(json!({})),
                 _ => None,
             };
         }

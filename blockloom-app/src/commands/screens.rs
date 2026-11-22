@@ -5,6 +5,7 @@ use super::{auto_save, emit, lock, project_dir, push_undo, reindex, runtime_stal
 use crate::AppHandle;
 use crate::state::{AppState, SharedState};
 use blockloom_core::assets;
+use blockloom_core::ui::{STYLE_EXTENSION, STYLE_VERSION, UiStyleFile, UiTheme};
 use blockloom_core::ui_layers::{self as layers, UiLayer};
 use blockloom_core::ui_tree::UiScreen;
 use std::path::Path;
@@ -18,6 +19,11 @@ fn checked_path(path: &str) -> Result<String, String> {
 }
 
 fn new_screen_path(dir: &Path, name: &str) -> String {
+    free_path(dir, name, layers::EXTENSION)
+}
+
+/// An unused `assets/ui/<name>.<ext>`.
+fn free_path(dir: &Path, name: &str, ext: &str) -> String {
     let stem: String = name
         .chars()
         .map(|c| {
@@ -34,8 +40,8 @@ fn new_screen_path(dir: &Path, name: &str) -> String {
     };
     (1..)
         .map(|n| match n {
-            1 => format!("assets/ui/{stem}.{}", layers::EXTENSION),
-            n => format!("assets/ui/{stem} {n}.{}", layers::EXTENSION),
+            1 => format!("assets/ui/{stem}.{ext}"),
+            n => format!("assets/ui/{stem} {n}.{ext}"),
         })
         .find(|path| !dir.join(path).exists())
         .expect("an unused name always exists")
@@ -175,4 +181,43 @@ pub(crate) fn remove_screen_layer(
     sync_runtime(&mut s);
     emit(app, &mut s);
     Ok(())
+}
+
+/// `create-style`: writes a starter `.blockstyle` over a built-in theme and
+/// answers its path. Nothing uses it until a screen lists it or it becomes
+/// the game's theme (`set-property target=settings path=style`).
+pub(crate) fn create_style(
+    state: &SharedState,
+    path: Option<String>,
+    name: Option<String>,
+    base: Option<UiTheme>,
+) -> Result<String, String> {
+    let s = lock(state)?;
+    let dir = project_dir(&s)?;
+    let path = match path.filter(|p| !p.trim().is_empty()) {
+        Some(path) => {
+            let path = assets::normalize(&path).ok_or("That isn't a path in this project")?;
+            if !path.ends_with(&format!(".{STYLE_EXTENSION}")) {
+                return Err(format!("A theme's file ends in .{STYLE_EXTENSION}"));
+            }
+            path
+        }
+        None => free_path(&dir, name.as_deref().unwrap_or("Theme"), STYLE_EXTENSION),
+    };
+    let full = assets::resolve(&dir, &path).ok_or("That isn't a path in this project")?;
+    if full.exists() {
+        return Err(format!("{path} already exists"));
+    }
+    let file = UiStyleFile {
+        version: STYLE_VERSION,
+        base: base.unwrap_or_default(),
+        ..UiStyleFile::default()
+    };
+    if let Some(parent) = full.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
+    blockloom_core::files::write_atomic(&full, json)?;
+    reindex(&dir);
+    Ok(path)
 }

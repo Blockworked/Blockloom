@@ -2670,6 +2670,16 @@ the file), `read-screen`, `write-screen`, `add-screen-layer`,
 `remove-screen-layer` (`commands/screens.rs`); the Problems panel lists
 layers that don't compose.
 
+A `.blockstyle` (`UiStyleFile`: `base` theme, `tokens`, `classes`) is a
+theme. Listed in a document's `stylesheets`, it sets the theme, lays its
+`UiTokens` (panel, button, input, input_focused, text, accent, track,
+toggle_off colors) under the document's own and adds its classes;
+`GameSettings.style` names one every interface starts from (Project Settings
+> Game, or `set-property target=settings path=style`). The runtime draws
+those colors through `ui::Palette` (`UiManager::palette`), which falls back
+to the built-in theme's for anything unset and for any other theme a `set
+theme` switches to. `create-style` writes a starter one.
+
 ### Frontend (`blockloom-qt/qml/`)
 
 `Start.qml` is the entry point: it adds the Lucide icons blockstitch doesn't

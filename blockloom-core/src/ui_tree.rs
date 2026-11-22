@@ -6,7 +6,7 @@
 
 use crate::ui::{
     UiAction, UiAlign, UiAnchor, UiAnimation, UiBinding, UiDocument, UiElement, UiExport, UiFx,
-    UiKind, UiLayout, UiLength, UiScale, UiStyles, UiTheme, UiVariant, UiWidget,
+    UiKind, UiLayout, UiLength, UiScale, UiStyles, UiTheme, UiTokens, UiVariant, UiWidget,
 };
 use crate::value::Evaluated;
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,8 @@ pub struct UiScreen {
     pub version: u32,
     pub nodes: Vec<UiNode>,
     pub theme: UiTheme,
+    #[serde(skip_serializing_if = "UiTokens::is_empty")]
+    pub tokens: UiTokens,
     /// Named classes a node's `class` picks from.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub classes: BTreeMap<String, UiStyles>,
@@ -44,6 +46,7 @@ impl Default for UiScreen {
             version: UI_TREE_VERSION,
             nodes: Vec::new(),
             theme: doc.theme,
+            tokens: UiTokens::default(),
             classes: BTreeMap::new(),
             stylesheets: Vec::new(),
             scale: doc.scale,
@@ -663,6 +666,7 @@ impl UiScreen {
             version: UI_TREE_VERSION,
             nodes: tree(&doc.widgets),
             theme: doc.theme,
+            tokens: doc.tokens.clone(),
             classes: doc.styles.clone(),
             stylesheets: doc.stylesheets.clone(),
             scale: doc.scale,
@@ -702,6 +706,7 @@ impl UiScreen {
             version: crate::ui::UI_SCHEMA_VERSION,
             widgets,
             theme: self.theme,
+            tokens: self.tokens.clone(),
             styles: self.classes.clone(),
             stylesheets: self.stylesheets.clone(),
             scale: self.scale,

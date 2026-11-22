@@ -504,6 +504,7 @@ impl UiDocument {
                 self.version
             ));
         }
+        self.tokens.validate()?;
         if self
             .reference_size
             .iter()
@@ -614,16 +615,37 @@ impl UiDocument {
     pub fn with_stylesheets(&self, dir: &std::path::Path) -> Result<Self, String> {
         let mut result = self.clone();
         let mut styles = BTreeMap::new();
+        let mut tokens = UiTokens::default();
         for path in &self.stylesheets {
             let full = crate::assets::resolve(dir, path)
                 .ok_or_else(|| format!("Invalid stylesheet path: {path}"))?;
             let text = crate::vfs::read_to_string(&full).map_err(|e| format!("{path}: {e}"))?;
-            let sheet: BTreeMap<String, UiStyles> =
-                serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
-            styles.extend(sheet);
+            let is_theme = path
+                .rsplit_once('.')
+                .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case(STYLE_EXTENSION));
+            if is_theme {
+                let file: UiStyleFile =
+                    serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+                if file.version > STYLE_VERSION {
+                    return Err(format!(
+                        "{path} was saved by a newer Blockloom (style format {})",
+                        file.version
+                    ));
+                }
+                file.tokens.validate().map_err(|e| format!("{path}: {e}"))?;
+                result.theme = file.base;
+                tokens.layer(file.tokens);
+                styles.extend(file.classes);
+            } else {
+                let sheet: BTreeMap<String, UiStyles> =
+                    serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+                styles.extend(sheet);
+            }
         }
         styles.extend(self.styles.clone());
+        tokens.layer(self.tokens.clone());
         result.styles = styles;
+        result.tokens = tokens;
         Ok(result)
     }
     /// Prefix every local reference so the same prefab can appear twice.
