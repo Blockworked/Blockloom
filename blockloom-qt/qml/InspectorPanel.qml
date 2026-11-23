@@ -1908,17 +1908,18 @@ Rectangle {
             readonly property var link: c.prefab || ({})
             readonly property string path: link.source ? link.source.path : ""
             readonly property var overrides: link.overrides || []
+            readonly property bool member: !!link.instance
             spacing: 6
             InspectorRow { label: "Prefab"; Layout.fillWidth: true
                 Text { Layout.fillWidth: true; elide: Text.ElideMiddle; color: Theme.text; font.pixelSize: 12; text: pf.path || "missing" } }
             Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
-                text: pf.overrides.length ? "This copy sets " + pf.overrides.length + (pf.overrides.length === 1 ? " property" : " properties") + " itself. The rest follows the prefab." : "Everything but its place and name follows the prefab." }
+                text: (pf.member ? "Part of a prefab instance; Apply writes the whole instance. " : "") + (pf.overrides.length ? "This copy sets " + pf.overrides.length + (pf.overrides.length === 1 ? " property" : " properties") + " itself. The rest follows the prefab." : "Everything but its place and name follows the prefab.") }
             Repeater {
                 model: pf.overrides
                 delegate: RowLayout {
                     required property var modelData
                     Layout.fillWidth: true; spacing: 6
-                    Text { Layout.fillWidth: true; elide: Text.ElideRight; color: Theme.text; font.pixelSize: 12; text: modelData }
+                    Text { Layout.fillWidth: true; elide: Text.ElideRight; color: Theme.text; font.pixelSize: 12; text: modelData.startsWith("removed:") ? "Deleted part " + modelData.slice(8) : modelData }
                     StitchButton { text: "Revert"; implicitHeight: 26; font.pixelSize: 11
                         onClicked: root.app.invoke("revert_prefab", { actorId: root.actor.id, path: modelData }) }
                 }

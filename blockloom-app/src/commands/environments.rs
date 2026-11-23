@@ -125,6 +125,7 @@ fn link_to(index: &ResourceIndex, path: &str) -> AssetLink {
     AssetLink {
         source: ResourceRef::to(index, path),
         overrides: Vec::new(),
+        ..Default::default()
     }
 }
 

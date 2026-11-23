@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 pub const EXTENSION: &str = "blockprefab";
-const FORMAT: u32 = 1;
+const FORMAT: u32 = 2;
 
 /// What an instance knows about its prefab.
 pub type PrefabLink = crate::linked::AssetLink;
@@ -29,13 +29,29 @@ struct PrefabFile {
     #[serde(rename = "type", default)]
     kind: String,
     actor: Actor,
+    /// Actors hanging off the root (by `Parent`, ids local to the file).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    children: Vec<Actor>,
+}
+
+/// Nested prefabs deeper than this are refused, which also stops a cycle.
+const MAX_NESTING: usize = 16;
+
+/// One actor of a prefab as read: its member id (empty for the root, and
+/// `nested/child` for a child a nested prefab brought), the member it
+/// hangs off and its state.
+#[derive(Debug, Clone)]
+pub struct Member {
+    pub id: String,
+    pub parent: Option<String>,
+    pub actor: Actor,
 }
 
 pub fn is_prefab(path: &str) -> bool {
     path.to_lowercase().ends_with(&format!(".{EXTENSION}"))
 }
 
-pub fn read(dir: &Path, relative: &str) -> Result<Actor, String> {
+fn read_file(dir: &Path, relative: &str) -> Result<PrefabFile, String> {
     let full = crate::assets::resolve(dir, relative)
         .ok_or_else(|| format!("\"{relative}\" isn't a path in this project"))?;
     let text = crate::vfs::read_to_string(&full).map_err(|e| format!("{relative}: {e}"))?;
@@ -46,26 +62,191 @@ pub fn read(dir: &Path, relative: &str) -> Result<Actor, String> {
             file.format
         ));
     }
-    Ok(file.actor)
+    Ok(file)
+}
+
+/// The prefab's root actor.
+pub fn read(dir: &Path, relative: &str) -> Result<Actor, String> {
+    Ok(read_members(dir, relative)?.swap_remove(0).actor)
+}
+
+/// Every actor of the prefab, root first, nested prefabs expanded.
+pub fn read_members(dir: &Path, relative: &str) -> Result<Vec<Member>, String> {
+    members_at(dir, relative, &mut Vec::new())
+}
+
+fn members_at(dir: &Path, relative: &str, open: &mut Vec<String>) -> Result<Vec<Member>, String> {
+    if open.iter().any(|p| p == relative) {
+        return Err(format!("{relative} contains itself"));
+    }
+    if open.len() >= MAX_NESTING {
+        return Err(format!(
+            "{relative}: prefabs nest more than {MAX_NESTING} deep"
+        ));
+    }
+    open.push(relative.to_string());
+    let file = read_file(dir, relative)?;
+    let root_id = file.actor.id.clone();
+    let rename = |id: &str| {
+        if id == root_id {
+            String::new()
+        } else {
+            id.to_string()
+        }
+    };
+    let mut out = Vec::new();
+    let mut root = file.actor;
+    root.components.remove("Parent");
+    out.push(Member {
+        id: String::new(),
+        parent: None,
+        actor: root,
+    });
+    for child in file.children {
+        let id = rename(&child.id);
+        let parent = child.components.parent().map(rename);
+        out.push(Member {
+            id,
+            parent,
+            actor: child,
+        });
+    }
+    // A member that is itself an instance brings its prefab's actors.
+    let mut expanded = Vec::new();
+    for member in out {
+        let Some(nested) = link(&member.actor).filter(|l| l.member.is_empty()).cloned() else {
+            expanded.push(member);
+            continue;
+        };
+        let inner = members_at(dir, &nested.source.path, open)?;
+        let mut head = rebuild(&member.actor, &inner[0].actor)?;
+        // The nested root stands where this file put it.
+        head.components.set_placement(member.actor.placement());
+        let at = member.id.clone();
+        expanded.push(Member {
+            id: at.clone(),
+            parent: member.parent,
+            actor: head,
+        });
+        for child in inner.into_iter().skip(1) {
+            let parent = child.parent.map(|parent| {
+                if parent.is_empty() {
+                    at.clone()
+                } else {
+                    format!("{at}/{parent}")
+                }
+            });
+            expanded.push(Member {
+                id: format!("{at}/{}", child.id),
+                parent,
+                actor: child.actor,
+            });
+        }
+    }
+    open.pop();
+    Ok(expanded)
 }
 
 /// Writes `actor` as the prefab at `relative`, without its own link.
 pub fn write(dir: &Path, relative: &str, actor: &Actor) -> Result<(), String> {
+    write_members(dir, relative, actor, &[])
+}
+
+/// Writes a prefab of `root` and `children`. Children name their parents by
+/// ids in the same file; a child keeps a link only when it nests a prefab.
+pub fn write_members(
+    dir: &Path,
+    relative: &str,
+    root: &Actor,
+    children: &[Actor],
+) -> Result<(), String> {
     let full = crate::assets::resolve(dir, relative)
         .ok_or_else(|| format!("\"{relative}\" isn't a path in this project"))?;
-    let mut actor = actor.clone();
+    let mut actor = root.clone();
     actor
         .components
         .0
         .retain(|c| !matches!(c, ActorComponent::Prefab { .. }));
+    actor.components.remove("Parent");
+    let children: Vec<Actor> = children
+        .iter()
+        .map(|child| {
+            let mut child = child.clone();
+            child.components.0.retain(|c| match c {
+                ActorComponent::Prefab { prefab } => {
+                    prefab.member.is_empty() && prefab.instance.is_empty()
+                }
+                _ => true,
+            });
+            child
+        })
+        .collect();
     let file = PrefabFile {
-        format: FORMAT,
+        // Single-actor prefabs keep the first format, which older editors read.
+        format: if children.is_empty() { 1 } else { FORMAT },
         kind: "prefab".into(),
         actor,
+        children,
     };
     let mut text = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
     text.push('\n');
     crate::files::write_atomic(&full, text)
+}
+
+/// Members of a prefab as new scene actors: fresh ids, `Parent` mapped onto
+/// them, and each linked to `source`. The root comes first.
+pub fn instantiate(
+    members: &[Member],
+    source: &crate::resources::ResourceRef,
+    mut new_id: impl FnMut() -> String,
+) -> Vec<Actor> {
+    let ids: BTreeMap<&str, String> = members.iter().map(|m| (m.id.as_str(), new_id())).collect();
+    let root = ids[""].clone();
+    members
+        .iter()
+        .map(|member| {
+            let mut actor = member.actor.clone();
+            actor
+                .components
+                .0
+                .retain(|c| !matches!(c, ActorComponent::Prefab { .. }));
+            actor.id = ids[member.id.as_str()].clone();
+            actor.refresh_physics_ids();
+            match member.parent.as_deref().and_then(|p| ids.get(p)) {
+                Some(id) if !member.id.is_empty() => actor.components.set_parent(id),
+                _ => actor.components.set_parent(""),
+            }
+            actor.components.0.push(ActorComponent::Prefab {
+                prefab: PrefabLink {
+                    source: source.clone(),
+                    member: member.id.clone(),
+                    instance: if member.id.is_empty() {
+                        String::new()
+                    } else {
+                        root.clone()
+                    },
+                    ..Default::default()
+                },
+            });
+            actor
+        })
+        .collect()
+}
+
+/// The paths `actor` sets differently from `source`, as overrides.
+pub fn differences(actor: &Actor, source: &Actor) -> Vec<String> {
+    let (mine, _) = fields(actor);
+    let (theirs, _) = fields(source);
+    let keys: std::collections::BTreeSet<&String> = mine.keys().chain(theirs.keys()).collect();
+    keys.into_iter()
+        .filter(|key| !own(key) && mine.get(*key) != theirs.get(*key))
+        .cloned()
+        .collect()
+}
+
+/// An override entry recording that an instance deleted one of its members.
+pub fn removed_entry(member: &str) -> String {
+    format!("removed:{member}")
 }
 
 /// The link on `actor`, if it is an instance.
@@ -321,6 +502,30 @@ mod tests {
         look(&mut instance, "#FF0000");
         mark(&before, &instance, &prefab, &mut overrides);
         assert!(overrides.is_empty());
+    }
+
+    #[test]
+    fn a_prefab_that_nests_itself_is_refused() {
+        let dir = std::env::temp_dir().join(format!("blockloom-prefab-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        let project = Project::starter("P", Mode::TwoD);
+        let root = project.active_scene().actors[0].clone();
+        let mut child = root.clone();
+        child.id = "child".into();
+        child.components.set_parent(&root.id);
+        child.components.0.push(ActorComponent::Prefab {
+            prefab: PrefabLink {
+                source: crate::resources::ResourceRef {
+                    id: String::new(),
+                    path: "assets/a.blockprefab".into(),
+                },
+                ..Default::default()
+            },
+        });
+        write_members(&dir, "assets/a.blockprefab", &root, &[child]).unwrap();
+        let error = read_members(&dir, "assets/a.blockprefab").unwrap_err();
+        assert!(error.contains("contains itself"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

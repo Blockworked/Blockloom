@@ -371,9 +371,20 @@ being one. `prefab::rebuild` is the prefab plus the instance's overrides,
 which `apply-prefab` (instance into file, then every instance), `revert-
 prefab` and `open_project` (a file edited outside the editor) use. The
 inspector draws the link as a card with Apply and per-override Revert, the
-actor list has Make prefab and the tray Place in scene. One actor per
-prefab so far: children, nested prefabs and a prefab editing mode are not
-done.
+actor list has Make prefab and the tray Place in scene.
+
+A prefab carries the actors hanging off its root (`children` in the file,
+format 2; a single-actor prefab is still written as format 1). Each scene
+actor of an instance links to the file: the root with an empty `member`, the
+others with their `member` id and the root's id as `instance`, and each keeps
+its own overrides. A child that is itself an instance is nested by
+reference: the file keeps its link and overrides, and `prefab::read_members`
+expands it (members `nested/child`, at most 16 deep, a cycle refused).
+`sync_instance` adds members a file gained and removes ones it lost; an
+instance that deleted a member records `removed:<member>` on its root so a
+sync leaves it out until reverted. Apply works from any actor of an
+instance and also takes in actors hung off it since; Unpack unlinks the
+whole instance. No prefab editing mode yet.
 
 ### Material and environment assets
 

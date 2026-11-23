@@ -140,6 +140,7 @@ fn link_actor(actor: &mut Actor, material: SurfaceMaterial, index: &ResourceInde
         source: Some(AssetLink {
             source: ResourceRef::to(index, path),
             overrides: Vec::new(),
+            ..Default::default()
         }),
     });
 }

@@ -19,6 +19,14 @@ pub struct AssetLink {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schema(skip)]
     pub overrides: Vec<String>,
+    /// A prefab member's id in the file; empty for the root.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[schema(skip)]
+    pub member: String,
+    /// The instance root's actor id, on a prefab member other than the root.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[schema(skip)]
+    pub instance: String,
 }
 
 const DEPTH: usize = 2;

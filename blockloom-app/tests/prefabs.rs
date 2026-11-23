@@ -144,3 +144,176 @@ fn instances_follow_their_prefab_but_keep_overrides() {
     run("close_project", json!({}));
     let _ = std::fs::remove_dir_all(&data);
 }
+
+fn actors(state: &Value) -> &Vec<Value> {
+    state["project"]["actors"].as_array().unwrap()
+}
+
+fn link(state: &Value, id: &str) -> Value {
+    actor(state, id)["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["component"] == "Prefab")
+        .map(|c| c["prefab"].clone())
+        .unwrap_or(Value::Null)
+}
+
+fn parent(state: &Value, id: &str) -> String {
+    actor(state, id)["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["component"] == "Parent")
+        .and_then(|c| c["parent"].as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// The instance members of `root`, keyed by member id.
+fn members(state: &Value, root: &str) -> std::collections::BTreeMap<String, String> {
+    actors(state)
+        .iter()
+        .filter_map(|a| {
+            let id = a["id"].as_str()?.to_string();
+            let l = link(state, &id);
+            if id == root {
+                return Some((String::new(), id));
+            }
+            (l["instance"] == root).then(|| (l["member"].as_str().unwrap().to_string(), id))
+        })
+        .collect()
+}
+
+#[test]
+fn a_prefab_carries_its_children_and_nests_another() {
+    let data = std::env::temp_dir().join(format!("blockloom-prefab-{}", uuid::Uuid::new_v4()));
+    let projects = data.join("projects");
+    std::fs::create_dir_all(&projects).unwrap();
+    unsafe {
+        std::env::set_var("BLOCKLOOM_DATA_DIR", &data);
+    }
+    let backend = Backend::start(AppHandle::new(|_| {}));
+    let run = |command: &str, args: Value| {
+        backend
+            .dispatch(command, args.clone())
+            .unwrap_or_else(|e| panic!("{command} {args}: {e}"))
+    };
+    let text = |v: Value| v.as_str().unwrap().to_string();
+    run(
+        "create_project",
+        json!({"name": "Nest", "location": projects}),
+    );
+    let dir = projects.join("Nest");
+    let car = text(run("add_actor", json!({"shape": "Rect", "name": "Car"})));
+    let wheel = text(run("add_actor", json!({"shape": "Rect", "name": "Wheel"})));
+    run("move_actor", json!({"actorId": wheel, "parent": car}));
+    let path = text(run("create_prefab", json!({"actorId": car})));
+    let file: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(&path)).unwrap()).unwrap();
+    assert_eq!(file["children"].as_array().unwrap().len(), 1, "{file}");
+
+    // A placed copy brings its wheel, hung off the copy.
+    let copy = text(run(
+        "instantiate_prefab",
+        json!({"path": path, "position": [300, 0, 0]}),
+    ));
+    let state = run("get_state", json!({}));
+    let copy_members = members(&state, &copy);
+    assert_eq!(copy_members.len(), 2, "{copy_members:?}");
+    let copy_wheel = copy_members[&wheel].clone();
+    assert_eq!(parent(&state, &copy_wheel), copy);
+
+    // Recolor the copy's wheel and apply from it: the first car's wheel follows.
+    run(
+        "set_property",
+        json!({"target": format!("actor:{copy_wheel}/Look"), "path": "visual.color", "value": "#ABCDEF"}),
+    );
+    run("apply_prefab", json!({"actorId": copy_wheel}));
+    let state = run("get_state", json!({}));
+    assert_eq!(color(&state, &wheel), "#ABCDEF");
+
+    // A child hung off the copy becomes a member everywhere on apply.
+    let light = text(run("add_actor", json!({"shape": "Rect", "name": "Light"})));
+    run("move_actor", json!({"actorId": light, "parent": copy}));
+    run("apply_prefab", json!({"actorId": copy}));
+    let state = run("get_state", json!({}));
+    let first = members(&state, &car);
+    assert_eq!(first.len(), 3, "{first:?}");
+    assert_eq!(parent(&state, &first[&light]), car);
+
+    // Deleting a member is the instance's own: a later sync leaves it out.
+    run("remove_actor", json!({"actorId": first[&light]}));
+    run(
+        "set_property",
+        json!({"target": format!("actor:{copy}/Look"), "path": "visual.color", "value": "#111111"}),
+    );
+    run("apply_prefab", json!({"actorId": copy}));
+    let state = run("get_state", json!({}));
+    assert_eq!(
+        members(&state, &car).len(),
+        2,
+        "the deleted light stays deleted"
+    );
+    assert_eq!(color(&state, &car), "#111111");
+    run("revert_prefab", json!({"actorId": car}));
+    let state = run("get_state", json!({}));
+    assert_eq!(
+        members(&state, &car).len(),
+        3,
+        "reverting all brings it back"
+    );
+
+    // A garage holding a car nests the car prefab by reference.
+    let garage = text(run("add_actor", json!({"shape": "Rect", "name": "Garage"})));
+    run("move_actor", json!({"actorId": copy, "parent": garage}));
+    let garage_path = text(run("create_prefab", json!({"actorId": garage})));
+    let file: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(&garage_path)).unwrap()).unwrap();
+    let kids = file["children"].as_array().unwrap();
+    assert_eq!(
+        kids.len(),
+        1,
+        "only the nested car's root is written: {file}"
+    );
+    assert_eq!(
+        kids[0]["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["component"] == "Prefab")
+            .unwrap()["prefab"]["source"]["path"],
+        path
+    );
+    let second = text(run(
+        "instantiate_prefab",
+        json!({"path": garage_path, "position": [0, 500, 0]}),
+    ));
+    let state = run("get_state", json!({}));
+    let inside = members(&state, &second);
+    assert_eq!(inside.len(), 4, "garage, car, wheel, light: {inside:?}");
+
+    // Changing the car prefab reaches the car inside the placed garage.
+    run(
+        "set_property",
+        json!({"target": format!("actor:{car}/Look"), "path": "visual.color", "value": "#222222"}),
+    );
+    run("apply_prefab", json!({"actorId": car}));
+    let state = run("get_state", json!({}));
+    let nested_car = inside
+        .iter()
+        .find(|(m, _)| !m.is_empty() && !m.contains('/'))
+        .unwrap()
+        .1;
+    assert_eq!(color(&state, nested_car), "#222222");
+
+    // Reopening keeps every instance whole.
+    run("save_project", json!({}));
+    run("close_project", json!({}));
+    run("open_project", json!({"path": dir}));
+    let state = run("get_state", json!({}));
+    assert_eq!(members(&state, &second).len(), 4);
+    assert_eq!(members(&state, &car).len(), 3);
+    run("close_project", json!({}));
+    let _ = std::fs::remove_dir_all(&data);
+}
