@@ -35,12 +35,12 @@ TestCase {
             if (done) done({});
         }
     }
-    Component { id: factory; Editor.PluginPanelDialog { app: backend } }
+    Component { id: factory; Editor.PluginPanelView { app: backend; panel: test.panel } }
     function init() { test.calls = []; }
 
     function test_aPanelReadsItsResourceFromTheProject() {
         const d = createTemporaryObject(factory, test);
-        compare(d.panels.length, 1);
+        compare(d.panel.plugin, "com.example.lab");
         compare(d.resourceType({ resource: "Settings" }).displayName, "Settings");
         compare(d.resourcePayload({ resource: "Settings" }).level, 4);
     }

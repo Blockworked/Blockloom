@@ -33,30 +33,93 @@ Item {
         property bool bottomOpen: true
         property real bottomHeight: 180
         property int bottomTab: 0
+        // The panel shown in each region, and where the user moved panels to
+        // ({panel id: "left" | "right" | "bottom"}, as JSON).
+        property string leftPanel: "actors"
+        property string rightPanel: "inspector"
+        property string bottomPanel: "assets"
+        property string layout: "{}"
+    }
+
+    // Every dockable panel: the editor's own and one per plugin panel.
+    readonly property var builtinPanels: [
+        { id: "actors", title: "Actors", iconName: "user", edge: "left" },
+        { id: "inspector", title: "Inspector", iconName: "sliders-horizontal", edge: "right" },
+        { id: "assets", title: "Assets", iconName: "folder", edge: "bottom" },
+        { id: "runLog", title: "Run log", iconName: "scroll", edge: "bottom" },
+        { id: "problems", title: "Problems", iconName: "triangle-alert", edge: "bottom" }
+    ]
+    readonly property var pluginPanels: appState.plugins && appState.plugins.panels ? appState.plugins.panels : []
+    function pluginPanelId(p) { return "plugin:" + p.plugin + "/" + p.panel.name; }
+    readonly property var panelDefs: builtinPanels.concat(pluginPanels.map(p =>
+        ({ id: root.pluginPanelId(p), title: p.panel.title, iconName: "plug-zap", edge: "bottom" })))
+    readonly property var placed: { try { return JSON.parse(panels.layout || "{}"); } catch (e) { return {}; } }
+    function edgeOf(id) {
+        const def = root.panelDefs.find(d => d.id === id);
+        return root.placed[id] || (def ? def.edge : "bottom");
+    }
+    function idsAt(edge) { return root.panelDefs.filter(d => root.edgeOf(d.id) === edge).map(d => d.id); }
+    function tabOf(id) {
+        const def = root.panelDefs.find(d => d.id === id) || { title: id, iconName: "square" };
+        const badge = id === "problems" && problems.problems.length ? String(problems.problems.length) : "";
+        return { title: def.title, iconName: def.iconName, badge: badge };
+    }
+    function regionOpen(edge) { return edge === "left" ? panels.leftOpen : edge === "right" ? panels.rightOpen : panels.bottomOpen; }
+    function setOpen(edge, open) {
+        if (edge === "left") panels.leftOpen = open;
+        else if (edge === "right") panels.rightOpen = open;
+        else panels.bottomOpen = open;
+    }
+    function currentAt(edge) { return edge === "left" ? panels.leftPanel : edge === "right" ? panels.rightPanel : panels.bottomPanel; }
+    function setCurrent(edge, id) {
+        if (edge === "left") panels.leftPanel = id;
+        else if (edge === "right") panels.rightPanel = id;
+        else panels.bottomPanel = id;
+    }
+    function showPanel(id) { const edge = root.edgeOf(id); root.setCurrent(edge, id); root.setOpen(edge, true); }
+    function togglePanel(id) {
+        const edge = root.edgeOf(id);
+        if (root.regionOpen(edge) && root.currentAt(edge) === id) root.setOpen(edge, false);
+        else root.showPanel(id);
+    }
+    function panelShown(id) { const edge = root.edgeOf(id); return root.regionOpen(edge) && root.currentAt(edge) === id; }
+    // Moves a panel to another region and shows it there.
+    function movePanel(id, edge) {
+        const next = Object.assign({}, root.placed);
+        next[id] = edge;
+        panels.layout = JSON.stringify(next);
+        root.showPanel(id);
+    }
+    function panelItem(id) {
+        const own = { actors: actorsPanel, inspector: inspector, assets: assetsPanel, runLog: runLogPanel, problems: problems };
+        if (own[id]) return own[id];
+        for (let i = 0; i < pluginPanelItems.count; ++i) {
+            const item = pluginPanelItems.objectAt(i);
+            if (item && root.pluginPanelId(item.panel) === id) return item;
+        }
+        return null;
     }
 
     EditorActions { id: actions; app: root.app; page: root }
-    readonly property var bottomTabs: ["editor.assets", "editor.runLog", "editor.problems"]
-    function toggleBottom(index) {
-        if (panels.bottomOpen && panels.bottomTab === index) panels.bottomOpen = false;
-        else { panels.bottomTab = index; panels.bottomOpen = true; }
-    }
+    // Actions that show or fold one panel, wherever it docks.
+    readonly property var panelActions: ({ "editor.assets": "assets", "editor.runLog": "runLog", "editor.problems": "problems" })
     // The window's own actions, which EditorActions hands back here.
     function editorAction(id) {
         const views = ["editor.showCode", "editor.showGame", "editor.showInterface", "editor.showDevices"];
-        const dialogs = { "editor.build": "build", "editor.plugins": "plugins", "editor.pluginPanels": "pluginPanels",
+        const dialogs = { "editor.build": "build", "editor.plugins": "plugins",
                           "editor.pluginEditors": "pluginEditors", "editor.projectSettings": "projectSettings",
                           "editor.appSettings": "appSettings", "editor.import": "import", "editor.export": "export" };
-        if (id === "editor.palette" || id === "editor.shortcuts") palette.open();
+        if (id === "editor.palette") palette.open();
+        else if (id === "editor.shortcuts") keymapDialog.open();
         else if (views.indexOf(id) >= 0) panels.tab = views.indexOf(id);
         else if (id === "editor.split") { panels.split = !panels.split; if (panels.split && panels.tab > 1) panels.tab = 0; }
-        else if (root.bottomTabs.indexOf(id) >= 0) root.toggleBottom(root.bottomTabs.indexOf(id));
+        else if (root.panelActions[id]) root.togglePanel(root.panelActions[id]);
+        else if (id === "editor.pluginPanels" && root.pluginPanels.length) root.showPanel(root.pluginPanelId(root.pluginPanels[0]));
         else if (dialogs[id]) topBar.openDialog(dialogs[id]);
     }
     function actionChecked(id) {
         if (id === "editor.split") return panels.split;
-        const i = root.bottomTabs.indexOf(id);
-        return i >= 0 && panels.bottomOpen && panels.bottomTab === i;
+        return !!root.panelActions[id] && root.panelShown(root.panelActions[id]);
     }
     // The keymap's shortcuts, one per bound action.
     Instantiator {
@@ -69,12 +132,13 @@ Item {
         }
     }
     CommandPalette { id: palette; actions: actions }
+    KeymapDialog { id: keymapDialog; actions: actions }
 
     Connections {
         target: root.app
-        function onInspectedLightingChanged() { if (root.app.inspectedLighting) panels.rightOpen = true; }
-        function onInspectedSceneChanged() { if (root.app.inspectedScene) panels.rightOpen = true; }
-        function onInspectSceneChanged() { if (root.app.inspectScene) panels.rightOpen = true; }
+        function onInspectedLightingChanged() { if (root.app.inspectedLighting) root.showPanel("inspector"); }
+        function onInspectedSceneChanged() { if (root.app.inspectedScene) root.showPanel("inspector"); }
+        function onInspectSceneChanged() { if (root.app.inspectScene) root.showPanel("inspector"); }
     }
     readonly property bool running: appState.running === true
     // Play shows the game it started.
@@ -146,18 +210,16 @@ Item {
         }
         RowLayout {
             Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
-            DockRegion {
+            PanelDock {
+                page: root
                 objectName: "dock-left"
                 visible: panels.tab !== 2
                 edge: "left"
                 Layout.fillHeight: true
                 Layout.preferredWidth: implicitWidth
-                tabs: [{ title: "Actors", iconName: "user" }]
-                hideSingleTab: true
                 open: panels.leftOpen; size: panels.leftWidth; minSize: 180; maxSize: 420
                 onOpenRequested: open => panels.leftOpen = open
                 onResizeRequested: w => panels.leftWidth = w
-                ActorList { app: root.app; docked: true; onOpenRequested: open => panels.leftOpen = open }
             }
             ColumnLayout {
                 Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
@@ -334,40 +396,45 @@ Item {
                     DevicesPanel { app: root.app }
                 }
             }
-            DockRegion {
+            PanelDock {
+                page: root
                 objectName: "dock-right"
                 visible: panels.tab !== 2
                 edge: "right"
                 Layout.fillHeight: true
                 Layout.preferredWidth: implicitWidth
-                tabs: [{ title: "Inspector", iconName: "sliders-horizontal" }]
-                hideSingleTab: true
                 open: panels.rightOpen; size: panels.rightWidth; minSize: 220; maxSize: 480
                 onOpenRequested: open => panels.rightOpen = open
                 onResizeRequested: w => panels.rightWidth = w
-                InspectorPanel { id: inspector; app: root.app; docked: true; onOpenRequested: open => panels.rightOpen = open }
             }
         }
-        DockRegion {
+        PanelDock {
+            page: root
             id: bottomDock
             objectName: "dock-bottom"
             edge: "bottom"
             Layout.fillWidth: true
             Layout.preferredHeight: implicitHeight
-            tabs: [
-                { title: "Assets", iconName: "folder" },
-                { title: "Run log", iconName: "scroll" },
-                { title: "Problems", iconName: "triangle-alert", badge: problems.problems.length ? String(problems.problems.length) : "" }
-            ]
-            currentIndex: panels.bottomTab
             open: panels.bottomOpen; size: panels.bottomHeight; minSize: 90; maxSize: 560
-            onTabRequested: i => panels.bottomTab = i
             onOpenRequested: open => panels.bottomOpen = open
             onResizeRequested: h => panels.bottomHeight = h
-            AssetTray { app: root.app; docked: true }
-            RunLog { app: root.app; docked: true; onOpenScriptRequested: (path, line) => inspector.openScript(path, line) }
-            ProblemsPanel { id: problems; app: root.app; onOpenScriptRequested: (path, line) => inspector.openScript(path, line) }
         }
+    }
+
+    // Each panel exists once; the region it docks in borrows it (DockedPanels).
+    Item {
+        id: pool
+        visible: false
+        ActorList { id: actorsPanel; app: root.app; docked: true; onOpenRequested: open => root.setOpen(root.edgeOf("actors"), open) }
+        InspectorPanel { id: inspector; app: root.app; docked: true; onOpenRequested: open => root.setOpen(root.edgeOf("inspector"), open) }
+        AssetTray { id: assetsPanel; app: root.app; docked: true }
+        RunLog { id: runLogPanel; app: root.app; docked: true; onOpenScriptRequested: (path, line) => inspector.openScript(path, line) }
+        ProblemsPanel { id: problems; app: root.app; onOpenScriptRequested: (path, line) => inspector.openScript(path, line) }
+    }
+    Instantiator {
+        id: pluginPanelItems
+        model: root.pluginPanels
+        delegate: PluginPanelView { required property var modelData; parent: pool; app: root.app; panel: modelData }
     }
 
     StitchDialog {

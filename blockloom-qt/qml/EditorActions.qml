@@ -14,12 +14,22 @@ QtObject {
     // The shell's command registry and the keymap, fetched once.
     property var specs: []
     property var keymap: ({})
-    Component.onCompleted: app.invoke("editor_commands", {}, r => {
-        root.specs = r.commands || [];
+    Component.onCompleted: app.invoke("editor_commands", {}, r => root.load(r), () => {})
+    function load(r) {
+        if (r.commands) root.specs = r.commands;
         const keys = {};
         for (const b of r.keymap || []) keys[b.action] = b.keys;
         root.keymap = keys;
-    }, () => {})
+        const defaults = {};
+        for (const b of r.defaults || []) defaults[b.action] = b.keys;
+        root.defaultKeys = defaults;
+    }
+    property var defaultKeys: ({})
+    // Rebinds an action for this user (`keys` null puts the default back).
+    function rebind(id, keys, done, failed) {
+        root.app.invoke("set_keybinding", keys === null ? { action: id } : { action: id, keys: keys },
+            r => { root.load(r); if (done) done(); }, e => { if (failed) failed(String(e)); });
+    }
     function keys(id) { return root.keymap[id] || []; }
     function keyText(id) { const k = root.keys(id); return k.length ? k[0] : ""; }
 
@@ -45,7 +55,7 @@ QtObject {
         "undo": { label: "Undo", icon: "undo-2" },
         "redo": { label: "Redo", icon: "redo-2" },
         "editor.palette": { label: "Command palette…", icon: "search" },
-        "editor.shortcuts": { label: "Keyboard shortcuts", icon: "keyboard" },
+        "editor.shortcuts": { label: "Keyboard shortcuts…", icon: "keyboard" },
         "editor.showCode": { label: "Code", icon: "blocks" },
         "editor.showGame": { label: "Game", icon: "gamepad-2" },
         "editor.showInterface": { label: "Interface", icon: "layout-grid" },
@@ -60,7 +70,7 @@ QtObject {
         "step_project": { label: "Advance one tick", icon: "step-forward" },
         "close_runtime": { label: "Close the game window", icon: "monitor-x" },
         "editor.plugins": { label: "Plugin manager…", icon: "plug-zap" },
-        "editor.pluginPanels": { label: "Plugin panels…", icon: "panel-left" },
+        "editor.pluginPanels": { label: "Show plugin panels", icon: "panel-left" },
         "editor.pluginEditors": { label: "Plugin editors…", icon: "app-window" }
     })
 
@@ -128,6 +138,7 @@ QtObject {
     function runEntry(entry) {
         if (!entry.command) { root.run(entry.id); return; }
         root.report(entry.id, {}, answer => {
+            if (entry.id === "reset_keymap") { root.load(answer); return; }
             if (answer === null || answer === undefined || (typeof answer === "object" && Object.keys(answer).length === 0)) return;
             const text = typeof answer === "string" ? answer : JSON.stringify(answer);
             root.app.invoke("push_log", { kind: "info", text: entry.label + ": " + (text.length > 2000 ? text.slice(0, 2000) + "…" : text) });

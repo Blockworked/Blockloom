@@ -12,6 +12,14 @@ Rectangle {
     required property var actions
     // The menu bar's menus by title.
     property var menus: ({})
+    property var menuButtons: ({})
+    // The menu bar menu that is open, so hovering another title switches to it.
+    property string openMenu: ""
+    function showMenu(title) {
+        for (const t in root.menus) if (t !== title && root.menus[t].visible) root.menus[t].close();
+        const menu = root.menus[title], button = root.menuButtons[title];
+        if (menu && button && !menu.visible) menu.popup(button, 0, button.height);
+    }
     readonly property var appState: app.appState
     implicitHeight: 52
     color: Theme.panel
@@ -20,7 +28,7 @@ Rectangle {
     // A command that fails has nowhere else to say so - the run log is where
     // the user is already looking for what went wrong.
     function openDialog(name) {
-        const dialogs = { build: buildDialog, plugins: pluginManager, pluginPanels: pluginPanels, pluginEditors: pluginEditors,
+        const dialogs = { build: buildDialog, plugins: pluginManager, pluginEditors: pluginEditors,
                           projectSettings: settingsDialog, appSettings: appSettings, import: importFile };
         if (name === "export") exportProject();
         else if (dialogs[name]) dialogs[name].open();
@@ -66,13 +74,19 @@ Rectangle {
                     objectName: "menu-" + menuHolder.modelData.title
                     flat: true; implicitHeight: 30; font.pixelSize: 13
                     text: menuHolder.modelData.title
-                    onClicked: menu.popup(menuButton, 0, menuButton.height)
+                    onClicked: menu.visible ? menu.close() : root.showMenu(menuHolder.modelData.title)
+                    Component.onCompleted: root.menuButtons[menuHolder.modelData.title] = menuButton
+                    HoverHandler {
+                        onHoveredChanged: if (hovered && root.openMenu !== "" && root.openMenu !== menuHolder.modelData.title) root.showMenu(menuHolder.modelData.title)
+                    }
                 }
                 StitchMenu {
                     id: menu
                     objectName: "menu-popup-" + menuHolder.modelData.title
                     width: 300
                     Component.onCompleted: root.menus[menuHolder.modelData.title] = menu
+                    onAboutToShow: root.openMenu = menuHolder.modelData.title
+                    onAboutToHide: if (root.openMenu === menuHolder.modelData.title) root.openMenu = ""
                     Repeater {
                         model: menuHolder.entries
                         delegate: StitchMenuItem {
@@ -431,7 +445,6 @@ Rectangle {
     }
     BuildDialog { id: buildDialog; app: root.app }
     PluginManagerDialog { id: pluginManager; app: root.app; onSettingsRequested: plugin => settingsDialog.showPage("plugin:" + plugin) }
-    PluginPanelDialog { id: pluginPanels; app: root.app }
     PluginEditorsDialog { id: pluginEditors; app: root.app }
     ProjectSettingsDialog { id: settingsDialog; app: root.app }
     AppSettingsDialog { id: appSettings; app: root.app }

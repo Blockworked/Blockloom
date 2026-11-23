@@ -636,6 +636,10 @@ impl Backend {
             )?),
             "type_registry" => commands::registry::type_registry(state),
             "editor_commands" => Ok(crate::keymap::editor_commands()),
+            "set_keybinding" => {
+                crate::keymap::set_keybinding(&arg::<String>(&args, "action")?, arg(&args, "keys")?)
+            }
+            "reset_keymap" => crate::keymap::reset_keymap(),
             "problems" => to_json(commands::problems::problems(state)?),
             "set_property" => to_json(commands::registry::set_property(
                 state,

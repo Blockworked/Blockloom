@@ -1139,14 +1139,14 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   wrong type, or draws a field twice; the form draws ungrouped fields first,
   then each group under a foldable heading, and hides a row while its
   `visible_when` fails (the value stays in the record).
-- **Plugin panels** (`PluginPanelDialog.qml`, `Contributions::panels`): a
+- **Plugin panels** (`PluginPanelView.qml`, `Contributions::panels`): a
   package's `panels` list a name, title and items - `text`, `resource` (a
   `PluginRecordForm` over one of its resources, written through
   `set_plugin_resource`) and `command` (a form over the command's arguments and
   a button that runs `plugin_call`). `check_definition` refuses an unknown
   resource or command. The snapshot's `plugins.panels` carries each panel with
-  its owner and the commands its buttons run; the top bar shows a panel button
-  while any exist. QML test: `tests/qml/tst_PluginPanels.qml`.
+  its owner and the commands its buttons run; each panel is a dock tab
+  (bottom by default) like the built-in panels. QML test: `tests/qml/tst_PluginPanels.qml`.
 - **Plugin scene tools** (`ToolSchema`, `Contributions::tools`): a package's
   `tools` name a `cast` module op, a `reach`, a `command`, that command's `args`
   (`$hit.cell.0` reads the cast's answer, `$option.name` an option, anything
@@ -3625,10 +3625,12 @@ bodies. Canvas edits inside a reporter's branch name a `@reporter-branch:`
 strand and go through blockstitch's `edit_reporter_branch`
 (`commands::reporter_branch_edit`).
 
-The editor page (`EditorPage.qml`) is a shell of three blockstitch
-`DockRegion`s: actors on the left, the inspector on the right, and Assets,
-Run log and Problems as tabs along the bottom (a panel in one takes
-`docked: true`, and the region folds and resizes it). Code and Game sit
+The editor page (`EditorPage.qml`) is a shell of three `PanelDock`s
+(blockstitch `DockRegion`s): actors on the left, the inspector on the right,
+and Assets, Run log, Problems and every plugin panel as tabs along the bottom.
+Each panel lives once in a hidden pool and is parented into the region its
+id is placed in; a region's move button sends the current panel to another
+edge, and the layout is kept in QML `Settings`. Code and Game sit
 side by side when `split` is on. Everything the window can do is an id in
 `EditorActions.qml`: a dispatch command (`undo`) or the window's own
 (`editor.*`, carried out by `EditorPage.editorAction`). The top bar's menu
@@ -3636,8 +3638,12 @@ bar, `CommandPalette.qml` (Ctrl+Shift+P, which also lists every shell
 command that takes no arguments) and the window's shortcuts are all built
 from it, and the keys come from `blockloom-app/src/keymap.rs` through
 `editor-commands`, so a new binding goes in `KEYMAP` and a new menu entry in
-`EditorActions.menus`. The top bar keeps only the project's identity, the
-menus and the run controls; plugin menu items join the Plugins menu.
+`EditorActions.menus`. A user's own bindings override `KEYMAP` in
+`<data dir>/blockloom/keymap.json` (`set-keybinding`, `reset-keymap`, the
+Keyboard shortcuts dialog `KeymapDialog.qml`; a key another action holds is
+refused). The top bar keeps only the project's identity, the menus and the
+run controls, and with one menu open hovering another switches to it; plugin
+menu items join the Plugins menu.
 `ProblemsPanel.qml` reads `problems` (`commands/problems.rs`: plugin
 preflight and audit, script build and load errors, stale imports, asset
 warnings). `ProjectSettingsDialog.qml` is a page tree: the project's own

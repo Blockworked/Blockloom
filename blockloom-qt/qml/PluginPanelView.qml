@@ -3,28 +3,22 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import com.blockworked.Blockstitch 1.0
 
-// The panels installed plugins declare: text, a form for one of the plugin's
-// resources, and buttons that run its commands. The editor draws all of it
-// from the schema, so a plugin brings no UI code.
-StitchDialog {
+// One panel an installed plugin declares, as a dock tab: text, a form for
+// one of the plugin's resources, and buttons that run its commands. The
+// editor draws all of it from the schema, so a plugin brings no UI code.
+Item {
     id: root
     required property var app
-    property int current: 0
+    // An entry of the snapshot's `plugins.panels`: {plugin, pluginName, panel, commands}.
+    property var panel: null
     property string message: ""
     property string error: ""
     // Arguments typed for each command button, by "<panel>/<index>".
     property var drafts: ({})
     readonly property var plugins: app.appState && app.appState.plugins ? app.appState.plugins : null
-    readonly property var panels: plugins && plugins.panels ? plugins.panels : []
-    readonly property var panel: panels.length > 0 ? panels[Math.min(current, panels.length - 1)] : null
     readonly property var actorOptions: app.appState && app.appState.project
-        ? [{ value: "", label: "nothing" }].concat(app.appState.project.actors.map(a => ({ value: a.id, label: a.name })))
+        ? [{ value: "", label: "nothing" }].concat((app.appState.project.actors || []).map(a => ({ value: a.id, label: a.name })))
         : []
-    title: panel ? panel.panel.title : "Plugin panels"
-    standardButtons: Dialog.NoButton
-    width: Math.min(parent ? parent.width - 80 : 560, 560)
-    height: Math.min(parent ? parent.height - 80 : 640, 640)
-    onOpened: { message = ""; error = ""; }
 
     function typeNamed(name) { return plugins && plugins.types ? plugins.types.find(t => t.name === name) || null : null; }
     function resourceType(item) { return typeNamed(panel.plugin + "/" + item.resource); }
@@ -57,13 +51,7 @@ StitchDialog {
     }
 
     ColumnLayout {
-        anchors.fill: parent; spacing: 8
-        ChoiceField {
-            visible: root.panels.length > 1
-            options: root.panels.map((p, i) => ({ value: i, label: p.panel.title + "  (" + p.pluginName + ")" }))
-            value: root.current
-            onChosen: v => root.current = v
-        }
+        anchors.fill: parent; anchors.margins: 8; spacing: 8
         ScrollView {
             Layout.fillWidth: true; Layout.fillHeight: true; clip: true
             contentWidth: availableWidth
@@ -115,6 +103,5 @@ StitchDialog {
         }
         Text { visible: root.message !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12; text: root.message }
         Text { visible: root.error !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.danger; font.pixelSize: 12; text: root.error }
-        RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } StitchButton { text: "Close"; onClicked: root.close() } }
     }
 }

@@ -28,10 +28,31 @@ Item {
                         { name: "add-actor", cmd: "add_actor", summary: "Add an actor.", args: [{ name: "name", ty: "text", required: true }] }
                      ], keymap: [{ action: "save_project", keys: ["Ctrl+S"] }, { action: "editor.palette", keys: ["Ctrl+Shift+P"] }] });
             else if (command === "problems" && done) done(problems);
+            else if (command === "set_keybinding" && done)
+                done({ keymap: [{ action: "save_project", keys: ["Ctrl+S"] }, { action: args.action, keys: args.keys || [] }],
+                       defaults: [{ action: "save_project", keys: ["Ctrl+S"] }] });
             else if (done) done({});
         }
         function toFileUrl(p) { return "file://" + p; }
         function fromFileUrl(p) { return String(p); }
+    }
+    // A page with five panels, for PanelDock: where each docks is `layout`.
+    QtObject {
+        id: dockPage
+        property var layout: ({ a: "left", b: "left", c: "bottom" })
+        property var current: ({ left: "a", bottom: "c", right: "" })
+        property var items: ({})
+        function idsAt(edge) { return Object.keys(layout).filter(id => layout[id] === edge); }
+        function tabOf(id) { return { title: id, iconName: "square" }; }
+        function currentAt(edge) { return current[edge]; }
+        function setCurrent(edge, id) { const next = Object.assign({}, current); next[edge] = id; current = next; }
+        function movePanel(id, edge) { const next = Object.assign({}, layout); next[id] = edge; layout = next; setCurrent(edge, id); }
+        function panelItem(id) { return items[id] || null; }
+    }
+    Item { id: panelPool; visible: false
+        Rectangle { id: panelA; objectName: "panel-a" }
+        Rectangle { id: panelB; objectName: "panel-b" }
+        Rectangle { id: panelC; objectName: "panel-c" }
     }
     QtObject {
         id: shellPage
@@ -125,6 +146,55 @@ Item {
             compare(plugins.itemAt(plugins.count - 1).text, "Voxel: Regenerate", "a plugin's own menu item joins the Plugins menu");
             compare(item("File", "save_project").shortcutText, "Ctrl+S");
             verify(item("View", "editor.split").iconName === "check", "a checked action shows a tick");
+        }
+
+        function test_aRebindReloadsTheKeymap() {
+            const actions = makeActions();
+            actions.rebind("undo", ["Ctrl+U"]);
+            compare(backend.calls[backend.calls.length - 1].command, "set_keybinding");
+            compare(actions.keyText("undo"), "Ctrl+U");
+            compare(actions.defaultKeys["save_project"][0], "Ctrl+S");
+            actions.rebind("undo", null);
+            verify(!("keys" in backend.calls[backend.calls.length - 1].args), "no keys puts the default back");
+        }
+
+        function test_menusSwitchOnHover() {
+            const actions = makeActions();
+            const bar = createTemporaryObject(topBarComponent, scene, { actions: actions });
+            bar.showMenu("File");
+            tryCompare(bar, "openMenu", "File");
+            bar.showMenu("Edit");
+            tryCompare(bar, "openMenu", "Edit");
+            tryVerify(() => !bar.menus["File"].visible, 2000, "the first menu closes");
+            bar.menus["Edit"].close();
+            tryCompare(bar, "openMenu", "");
+        }
+
+        Component {
+            id: dockComponent
+            Row {
+                property alias leftRegion: leftDock
+                property alias bottomRegion: bottomDock
+                Editor.PanelDock { id: leftDock; page: dockPage; edge: "left"; width: 200; height: 300; size: 200 }
+                Editor.PanelDock { id: bottomDock; page: dockPage; edge: "bottom"; width: 400; height: 200; size: 200 }
+            }
+        }
+        function test_aPanelMovesBetweenRegions() {
+            dockPage.items = { a: panelA, b: panelB, c: panelC };
+            const docks = createTemporaryObject(dockComponent, scene);
+            compare(docks.leftRegion.tabs.length, 2);
+            tryVerify(() => isInside(panelA, docks.leftRegion));
+            dockPage.movePanel("a", "bottom");
+            compare(docks.leftRegion.tabs.length, 1);
+            compare(docks.bottomRegion.tabs.length, 2);
+            tryVerify(() => isInside(panelA, docks.bottomRegion), 2000, "the panel moved into the bottom region");
+            compare(docks.bottomRegion.currentIndex, docks.bottomRegion.ids.indexOf("a"));
+            dockPage.layout = { a: "left", b: "left", c: "bottom" };
+            dockPage.current = { left: "a", bottom: "c", right: "" };
+        }
+        function isInside(item, ancestor) {
+            for (let p = item.parent; p; p = p.parent) if (p === ancestor) return true;
+            return false;
         }
 
         function test_problemsAreListed() {

@@ -1874,7 +1874,32 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "editor-commands",
         cmd: "editor_commands",
         aliases: &["editor_commands", "keymap"],
-        summary: "List every command with the editor's default keymap, which the menu bar and command palette are built from.",
+        summary: "List every command with the editor's keymap (the user's rebindings over the defaults), which the menu bar and command palette are built from.",
+        args: &[],
+    },
+    CommandSpec {
+        name: "set-keybinding",
+        cmd: "set_keybinding",
+        aliases: &["set_keybinding", "bind-key"],
+        summary: "Bind an action (a command or an editor.* action) to keys for this user: keys=[] unbinds it, no keys puts the default back. A key another action holds is refused.",
+        args: &[
+            ArgSpec {
+                name: "action",
+                ty: "string",
+                required: true,
+            },
+            ArgSpec {
+                name: "keys",
+                ty: "[key sequences]",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
+        name: "reset-keymap",
+        cmd: "reset_keymap",
+        aliases: &["reset_keymap"],
+        summary: "Forget this user's key rebindings and use the defaults again.",
         args: &[],
     },
     // ── Components ────────────────────────────────────────────────────────
