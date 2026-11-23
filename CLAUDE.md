@@ -2550,7 +2550,9 @@ and its EXR, sky and ambient on escaped rays, realtime path tracing, the
 denoiser's grain, a spot's cone). They run on lavapipe too, which has ray
 queries but no dma-bufs: `BLOCKLOOM_TEST_OPAQUE_FD=1
 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json`, and
-`BLOCKLOOM_TEST_DUMP=<dir>` saves the frames some of them read as PNGs.
+`BLOCKLOOM_TEST_DUMP=<dir>` saves the frames some of them read as PNGs, and
+`BLOCKLOOM_TEST_DEADLINE=<secs>` (default 20) gives a slow software device longer
+to settle. `docs/gpu-test-triage.md` lists which fail on lavapipe and why.
 
 ### Volumetric clouds
 

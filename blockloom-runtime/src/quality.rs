@@ -154,6 +154,8 @@ fn configure_ui_camera(
             Has<IsDefaultUiCamera>,
             Has<bevy::camera::Hdr>,
             Has<crate::hdr::HdrEncode2d>,
+            Has<crate::hdr::HdrEncode3d>,
+            Has<Camera3d>,
         ),
         (With<NativeUiCamera>, Without<WorldCamera>),
     >,
@@ -191,9 +193,21 @@ fn configure_ui_camera(
     } else if hdr && !(world_enc2 || world_enc3) {
         frame.apply(&mut commands.entity(world_entity), world_is_3d);
     }
-    if let Ok((entity, mut camera, mut overlay_target, ui, overlay_hdr, overlay_enc)) =
-        overlays.single_mut()
+    // Bevy caches a view's depth texture per render target and per core
+    // pipeline, so an overlay of the world's own kind would share the world's
+    // (scaled, multisampled) depth. The overlay is always the other kind.
+    for (entity, .., overlay_is_3d) in &overlays {
+        if overlay_is_3d == world_is_3d {
+            commands.entity(entity).despawn();
+        }
+    }
+    let overlay = overlays
+        .single_mut()
+        .ok()
+        .filter(|(.., overlay_is_3d)| *overlay_is_3d != world_is_3d);
+    if let Some((entity, mut camera, mut overlay_target, ui, overlay_hdr, enc2, enc3, _)) = overlay
     {
+        let overlay_enc = enc2 || enc3;
         if camera.is_active != native {
             camera.is_active = native;
         }
@@ -218,13 +232,13 @@ fn configure_ui_camera(
                 commands.entity(entity).insert(bevy::camera::Hdr);
             }
             if !overlay_enc && let Some(encode) = frame.encode() {
-                commands
-                    .entity(entity)
-                    .insert(crate::hdr::HdrEncode2d::from(encode));
+                insert_encode(&mut commands.entity(entity), !world_is_3d, encode);
             }
         } else {
             if overlay_enc {
-                commands.entity(entity).remove::<crate::hdr::HdrEncode2d>();
+                commands
+                    .entity(entity)
+                    .remove::<(crate::hdr::HdrEncode2d, crate::hdr::HdrEncode3d)>();
             }
             if overlay_hdr && !hdr {
                 commands.entity(entity).remove::<bevy::camera::Hdr>();
@@ -233,7 +247,6 @@ fn configure_ui_camera(
     } else if native {
         let mut overlay = commands.spawn((
             NativeUiCamera,
-            Camera2d,
             Camera {
                 order: world_camera.order.saturating_add(1),
                 clear_color: ClearColorConfig::Custom(Color::NONE),
@@ -249,12 +262,25 @@ fn configure_ui_camera(
             Msaa::Off,
             bevy::core_pipeline::tonemapping::Tonemapping::None,
         ));
+        if world_is_3d {
+            overlay.insert(Camera2d);
+        } else {
+            overlay.insert(Camera3d::default());
+        }
         if hdr {
             overlay.insert(bevy::camera::Hdr);
             if let Some(encode) = frame.encode() {
-                overlay.insert(crate::hdr::HdrEncode2d::from(encode));
+                insert_encode(&mut overlay, !world_is_3d, encode);
             }
         }
+    }
+}
+
+fn insert_encode(overlay: &mut EntityCommands, is_3d: bool, encode: crate::hdr::HdrPass) {
+    if is_3d {
+        overlay.insert(crate::hdr::HdrEncode3d::from(encode));
+    } else {
+        overlay.insert(crate::hdr::HdrEncode2d::from(encode));
     }
 }
 
@@ -1064,7 +1090,12 @@ mod tests {
             assert!(app.world().get::<IsDefaultUiCamera>(overlay).is_some());
             assert!(app.world().get::<IsDefaultUiCamera>(world).is_none());
             assert!(app.world().get::<bevy::camera::Hdr>(overlay).is_some());
-            assert!(app.world().get::<HdrEncode2d>(overlay).is_some());
+            // The overlay is the other core pipeline from the world's.
+            if three_d {
+                assert!(app.world().get::<HdrEncode2d>(overlay).is_some());
+            } else {
+                assert!(app.world().get::<HdrEncode3d>(overlay).is_some());
+            }
             assert!(app.world().get::<HdrEncode2d>(world).is_none());
             assert!(app.world().get::<HdrEncode3d>(world).is_none());
 
@@ -1072,6 +1103,7 @@ mod tests {
             app.update();
             assert!(app.world().get::<Camera>(overlay).unwrap().is_active);
             assert!(app.world().get::<HdrEncode2d>(overlay).is_none());
+            assert!(app.world().get::<HdrEncode3d>(overlay).is_none());
             app.world_mut().get_mut::<Camera>(world).unwrap().viewport =
                 Some(bevy::camera::Viewport::default());
             app.update();

@@ -2310,6 +2310,7 @@ mod tests {
             assert!(errors.is_empty(), "{errors:?}");
             let set = set.expect("scaled UI produced no frame");
             let pixels = frame_pixels(&set.images[index], SIZE.x as usize, SIZE.y as usize);
+            dump(&format!("scaled-ui-{mode:?}"), &pixels);
             let white = pixels[(40 * SIZE.x + 31) as usize];
             assert!(white.iter().all(|c| *c > 230), "{mode:?}: stripe {white:?}");
             let [r, g, b] = pixels[(40 * SIZE.x + 85) as usize];
@@ -5021,6 +5022,16 @@ mod tests {
     /// Runs a project until a frame's middle pixel passes `done`, or for
     /// `settle` frames and then the next one, answering the ring it arrived
     /// in, which slot, and any errors the world sent.
+    /// How long a test world may take to settle. Software Vulkan (lavapipe)
+    /// is far slower than a GPU, so `BLOCKLOOM_TEST_DEADLINE` (seconds) lifts it.
+    fn test_deadline() -> Duration {
+        let secs = std::env::var("BLOCKLOOM_TEST_DEADLINE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(20);
+        Duration::from_secs(secs)
+    }
+
     fn run_world(
         project: blockloom_core::project::Project,
         offer: impl FnOnce(&FrameExchange),
@@ -5103,7 +5114,7 @@ mod tests {
         let mut seen = None;
         let mut frames_seen = 0;
         let mut last_frame = None;
-        while started.elapsed() < Duration::from_secs(20) {
+        while started.elapsed() < test_deadline() {
             if exchange.slots().is_some() {
                 starting = None;
             }
