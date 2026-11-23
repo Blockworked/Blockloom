@@ -117,6 +117,8 @@ cargo build --workspace
 cargo fmt --all --check
 just test
 just qml-test               # Qt Quick interaction/layout tests (no build needed)
+xvfb-run -a just smoke      # end-to-end flows through the shell: edit, Play, Build, run the player
+xvfb-run -a just corpus     # play each corpus project to a fixed tick, held to tests/corpus/
 ```
 
 See [patches/README.md](patches/README.md) for patch preparation and maintenance.

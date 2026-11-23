@@ -2180,6 +2180,59 @@ mod tests_2d {
     }
 
     #[test]
+    fn a_2d_world_anchored_joint_holds_its_body_where_it_stands() {
+        use blockloom_core::physics::joints::{ConstraintKind, ConstraintSpec};
+        let mut p = project();
+        let plank = add(&mut p, "Plank", [200.0, 100.0]);
+        body(&mut p, &plank, RigidbodySpec::default(), vec![circle()]);
+        let library = p.physics.materials.clone();
+        p.active_scene_mut()
+            .add_constraint(
+                &plank,
+                ConstraintSpec::of(ConstraintKind::Fixed, Mode::TwoD),
+                &library,
+            )
+            .unwrap();
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(TransformPlugin);
+        app.init_resource::<Assets<Mesh>>();
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f32(1.0 / 60.0),
+        ));
+        app.insert_resource(Time::<Fixed>::from_hz(60.0));
+        app.init_resource::<PhysicsLayers>();
+        app.add_plugins(
+            rp::RapierPhysicsPlugin::<crate::dim2::OneWayHooks>::pixels_per_meter(
+                crate::dim2::PIXELS_PER_METER,
+            )
+            .in_fixed_schedule(),
+        );
+        let mut ids = HashMap::new();
+        for actor in &p.actors {
+            let entity = app
+                .world_mut()
+                .spawn(crate::world::transform_for(actor))
+                .id();
+            ids.insert(actor.id.clone(), entity);
+        }
+        let mut commands = app.world_mut().commands();
+        install(&mut commands, &p, &ids);
+        app.world_mut().flush();
+        run(&mut app, 60);
+        let at = app
+            .world()
+            .get::<Transform>(ids[&plank])
+            .unwrap()
+            .translation;
+        // Anchors are pixels: a joint read as metres pulls it towards the origin.
+        assert!(
+            (at.truncate() - Vec2::new(200.0, 100.0)).length() < 2.0,
+            "the weld moved it: {at}"
+        );
+    }
+
+    #[test]
     fn a_2d_landing_is_one_enter_with_a_payload_and_an_ordered_stay() {
         use blockloom_core::physics::ContactPhase;
         let mut p = project();

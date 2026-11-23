@@ -45,6 +45,9 @@ pub enum SimStep {
 /// Resources, physics and the fixed-step simulation. The engine moves in
 /// because every simulation system reaches it as a `NonSend`.
 pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
+    if let Some(recorder) = crate::record::Recorder::from_env() {
+        app.insert_resource(recorder);
+    }
     app.insert_resource(Dimension(mode))
         .init_resource::<PendingEffects>()
         .init_resource::<world::NavMesh>()
@@ -179,6 +182,7 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
             dim3::record_poses,
             dim2::track_contacts.run_if(crate::is_2d),
             dim3::track_contacts.run_if(crate::is_3d),
+            crate::record::record,
         )
             .chain(),
     )

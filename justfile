@@ -357,6 +357,18 @@ test: prepare-patched-deps
 qml-test *args:
     {{if os() == "windows" { "python" } else { "python3" }}} scripts/run-bash.py scripts/test-qml.sh {{args}}
 
+# End-to-end flows through the shell: create, edit, undo, Play, Build, run the player.
+# Needs a display (xvfb-run works) and a built shell and runtime.
+smoke *args:
+    cargo build -p blockloom-app --bin blockloom-shell -p blockloom-runtime --bin blockloom-runtime
+    {{if os() == "windows" { "python" } else { "python3" }}} scripts/smoke.py {{args}}
+
+# The playable corpus: each project built, played to a fixed tick and compared
+# with tests/corpus/ (`--bless` writes new snapshots, `--project NAME=FOLDER` adds one).
+corpus *args:
+    cargo build -p blockloom-app --bin blockloom-shell -p blockloom-runtime --bin blockloom-runtime
+    {{if os() == "windows" { "python" } else { "python3" }}} scripts/corpus.py {{args}}
+
 # An MCP server standing on `blockloom-shell`: every backend command becomes
 # an MCP tool, so an agent can drive a project the way a user does. Builds the
 # workspace first so the shell is current, then wires an MCP client to it.

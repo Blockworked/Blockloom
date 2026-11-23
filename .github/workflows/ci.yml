@@ -91,6 +91,34 @@ jobs:
           VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
         run: cargo test -p blockloom-plugin-gpu --features engine -- --include-ignored
 
+  # End to end through the shell on lavapipe under Xvfb: the smoke flows
+  # (create, edit, undo, Play, Build, run the player) and the playable corpus
+  # (each project played to a fixed tick and held to tests/corpus/).
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - name: Install Bevy's system libraries and Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev \
+            mesa-vulkan-drivers libvulkan1 xvfb
+      - run: bash scripts/prepare-patched-deps.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e
+      - run: cargo build -p blockloom-app --bin blockloom-shell -p blockloom-runtime --bin blockloom-runtime
+      - name: Smoke flows
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+        run: xvfb-run -a python3 scripts/smoke.py
+      - name: Playable corpus
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+        run: xvfb-run -a python3 scripts/corpus.py
+
   # The browser player (Phase 8): the runtime has to keep building for wasm,
   # and a script has to keep compiling to a wasm module. The headless smoke
   # run (`just web-smoke`) needs a WebGPU browser and stays manual.

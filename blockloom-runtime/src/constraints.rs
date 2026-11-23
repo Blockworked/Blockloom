@@ -395,7 +395,6 @@ pub mod d3 {
 
 pub mod d2 {
     use super::*;
-    use crate::dim2::PIXELS_PER_METER as PPM;
     use bevy_rapier2d::prelude as rp;
     use blockloom_core::physics::joints::JointAxis;
 
@@ -410,8 +409,10 @@ pub mod d2 {
         }
     }
 
+    // bevy_rapier2d's pixels_per_meter only sets the length unit: joint
+    // anchors and limits stay in document pixels, like positions.
     fn vec_of(v: [f32; 3]) -> Vec2 {
-        Vec2::new(v[0], v[1]) / PPM
+        Vec2::new(v[0], v[1])
     }
 
     fn rot_of(q: Quat) -> f32 {
@@ -419,7 +420,7 @@ pub mod d2 {
     }
 
     fn len_of(v: f32) -> f32 {
-        v / PPM
+        v
     }
 
     /// Placement positions are document pixels.

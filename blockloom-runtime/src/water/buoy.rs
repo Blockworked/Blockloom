@@ -360,9 +360,8 @@ float_bodies!(
     |v: &bevy_rapier2d::prelude::Velocity| v.linear.extend(0.0),
     |v: &bevy_rapier2d::prelude::Velocity| Vec3::Z * v.angular,
     |c: Vec2| c.extend(0.0),
-    |c: &bevy_rapier2d::prelude::Collider| {
-        c.raw.compute_local_aabb().half_extents().extend(0.0) * crate::dim2::PIXELS_PER_METER
-    },
+    // Rapier's 2D length unit only tunes tolerances: shapes are in pixels already.
+    |c: &bevy_rapier2d::prelude::Collider| c.raw.compute_local_aabb().half_extents().extend(0.0),
     |impulse: &mut bevy_rapier2d::prelude::ExternalImpulse,
      velocity: &mut bevy_rapier2d::prelude::Velocity,
      result: &Float,

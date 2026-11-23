@@ -99,6 +99,7 @@ mod probes;
 mod quality;
 mod queries;
 mod ray_tracing;
+mod record;
 mod screenfx;
 mod script;
 #[cfg(all(
