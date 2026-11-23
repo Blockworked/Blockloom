@@ -634,7 +634,7 @@ mod tests {
         project.multiplayer.enabled = true;
         project
             .plugin_resources
-            .push(PluginRecord::new(ID, "world", 1, settings.clone()));
+            .push(PluginRecord::new(ID, "world", 1, settings));
         let mut app = headless_with(project, Mode::ThreeD, None);
         app.update();
         let world = blockloom_plugin_host::world::WorldPlugins::with_modules(vec![Preloaded {
@@ -662,29 +662,31 @@ mod tests {
         let status = crate::lan::status(app.world().non_send::<Engine>());
         assert!(status.open, "{status:?}");
         let invite = Invite::decode(status.invite.as_ref().unwrap()).unwrap();
-        let mut guest =
+        // The guest view hosts its own copy of the plugin, as a local build would.
+        let client =
             LanClient::connect(invite.clone(), invite.build, ClientOptions::default()).unwrap();
-        let copy = voxel();
-        copy.call_json(
-            "world.start",
-            &json!({"resources":[{"type_id":"world","payload":settings}]}),
-        )
+        let copy = blockloom_plugin_host::world::WorldPlugins::with_modules(vec![Preloaded {
+            id: ID.to_string(),
+            module: CodeModule::Native(voxel()),
+            hooks: vec![],
+            blocks: vec![],
+        }])
         .unwrap();
-        let mut held = None;
-        let mut follow = |app: &mut App, guest: &mut LanClient, cell: [i32; 3]| {
+        let project = app.world().non_send::<Engine>().project.clone();
+        let mut view = crate::lan::guest::test_app(
+            client,
+            Some(crate::lan::guest::GuestPlugins::hosting(copy, &project)),
+        );
+        let guest_get = |view: &mut App, at: &serde_json::Value| {
+            view.world_mut()
+                .non_send_mut::<crate::lan::guest::GuestPlugins>()
+                .query(ID, "get", at)
+        };
+        let follow = |app: &mut App, view: &mut App, cell: [i32; 3]| {
             let end = std::time::Instant::now() + Duration::from_secs(8);
             loop {
                 app.update();
-                guest.poll().unwrap();
-                if let Some(state) = guest.state() {
-                    for (plugin, args) in
-                        crate::lan::sync_apply_calls(held.as_ref(), &state.regions)
-                    {
-                        assert_eq!(plugin, ID);
-                        copy.call_json("sync.apply", &args).unwrap();
-                    }
-                    held = Some(state.regions.clone());
-                }
+                view.update();
                 let at = json!({"x":cell[0],"y":cell[1],"z":cell[2]});
                 let host = crate::plugins::query_for_test(
                     app.world().non_send::<Engine>(),
@@ -692,11 +694,8 @@ mod tests {
                     "get",
                     &at,
                 );
-                let mine = copy.call_json("get", &at).unwrap();
-                if held.is_some()
-                    && host["material"] == mine["material"]
-                    && host["shape"] == mine["shape"]
-                {
+                let mine = guest_get(view, &at);
+                if host["material"] == mine["material"] && host["shape"] == mine["shape"] {
                     return;
                 }
                 assert!(
@@ -706,15 +705,30 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(1));
             }
         };
-        // The carved sphere reaches the guest's copy.
-        follow(&mut app, &mut guest, [30, 12, 30]);
-        // So does an edit made while the guest watches.
+        // The carved sphere reaches the guest's copy, which draws its chunks.
+        follow(&mut app, &mut view, [30, 12, 30]);
+        let names = |view: &App| -> Vec<String> {
+            view.world()
+                .non_send::<crate::lan::guest::GuestPlugins>()
+                .mesh_names()
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        };
+        assert!(names(&view).iter().any(|n| n.starts_with("chunk/")));
+        // So does an edit made while the guest watches, glowing faces included.
         edit(
             &app,
             "fill",
             json!({"x1":0,"y1":22,"z1":0,"x2":63,"y2":22,"z2":63,"material":"glow"}),
         );
-        follow(&mut app, &mut guest, [63, 22, 63]);
+        follow(&mut app, &mut view, [63, 22, 63]);
+        let end = std::time::Instant::now() + Duration::from_secs(2);
+        while !names(&view).iter().any(|n| n.contains("glow")) {
+            assert!(std::time::Instant::now() < end, "no glow mesh drawn");
+            app.update();
+            view.update();
+        }
         for x in (0..64).step_by(3) {
             for y in 0..24 {
                 for z in (0..64).step_by(3) {
@@ -727,7 +741,7 @@ mod tests {
                     );
                     assert_eq!(
                         host["material"],
-                        copy.call_json("get", &at).unwrap()["material"],
+                        guest_get(&mut view, &at)["material"],
                         "{at}"
                     );
                 }

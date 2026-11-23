@@ -46,11 +46,25 @@ target/release/blockloom-runtime --join "$LAN_INVITE" --trusted-build "$CONTENT_
 ```
 
 Supply the content hash through a trusted channel. It is the invite's final
-hex field. This viewer does not execute game code or load remotely supplied
-assets. It draws rectangles/circles in 2D and cuboids/spheres/capsules/planes in
-3D using a fixed spectator camera. Asset-backed looks are explicitly refused.
-It is a diagnostic spectator view, without the host's camera, UI, lighting,
-material graphs, animation or other presentation effects.
+hex field. This viewer does not execute game code from the network or load
+remotely supplied assets. It draws rectangles/circles in 2D and
+cuboids/spheres/capsules/planes in 3D using a fixed spectator camera; an actor
+with any other look is left out (logged once). It is a diagnostic spectator
+view, without the host's camera, UI, lighting, material graphs, animation or
+other presentation effects.
+
+To see plugin worlds (voxels), give the guest a local build of the same game:
+run the build's own player with `--join`, or pass `--game <build folder>`.
+The view then opens that build's shipped plugins (an engine-tier plugin such as
+voxel is linked into the build's player), starts them as a preview with the
+pack's records, hands them the host's synced regions through `sync.apply` and
+draws the meshes they answer, framing the camera on the first world. Plugin
+code only ever comes from the local build; the host sends data, which the
+plugin checks (voxel refuses a world whose settings differ from its own).
+
+```bash
+"Pond Game (Linux x64)/Pond Game" --join "$LAN_INVITE" --trusted-build "$CONTENT_HASH"
+```
 
 The text inspector accepts all look types and reports replicated actor poses:
 
@@ -96,8 +110,9 @@ each frame carries as many as fit, the guest acknowledges that partial state,
 and the next frame continues from it. The voxel plugin sends only edited
 sections, so a guest's copy generates the rest from the same settings
 (`sync_apply_calls` turns held regions into its `sync.apply` calls). The
-spectator viewer does not run plugins yet, so it draws no voxels;
-`blockloom-lan` reports region counts.
+spectator view does this with a local build (above); `blockloom-lan` reports
+region counts. The guest runs no hooks, so a streamed world shows what its
+start and the synced sections mesh, and textures load from the local build.
 
 Limits: 16 guests, 1024 actors, 16384 regions of at most 384 KiB, 1 MiB per complete frame, 256-byte identifiers,
 32 KiB per actor's appearance, finite pose/velocity fields. The transport also

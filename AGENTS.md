@@ -1280,7 +1280,10 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   streamed world's generated cells, shapes, densities); a regenerate, load or
   restore starts a new generation. A guest's own copy, started from the same
   settings, takes them with `sync.apply` (`apply_section`), regenerating
-  first for a new generation, and stops its own block ticks.
+  first for a new generation, and stops its own block ticks. The LAN guest
+  view (`lan/guest.rs`, `GuestPlugins`) hosts a local build's plugins (`--game`,
+  or the build's own player; `BlockloomModule::link` links engine-tier code
+  without a world) and draws what `sync.apply` answers.
   `tests/sync.rs` holds a copy to the host cell for cell. Cutout and translucent
   blocks let light and hidden faces through and mesh as their own groups with
   `MeshData.blend` (translucent vertex alpha is the definition's `opacity`,

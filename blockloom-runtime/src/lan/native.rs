@@ -275,8 +275,7 @@ fn capture(
 
 /// What a guest's own copy of each plugin applies, as `sync.apply` args per
 /// plugin: the records that differ from `old` (all of them without one),
-/// with the plugin's world identity always first. Only tests drive a guest copy so far.
-#[cfg_attr(not(test), allow(dead_code))]
+/// with the plugin's world identity always first.
 pub fn sync_apply_calls(
     old: Option<&BTreeMap<String, Region>>,
     regions: &BTreeMap<String, Region>,

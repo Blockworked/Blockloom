@@ -23,6 +23,15 @@ pub fn add_engine_module(module: impl BlockloomModule) {
     }
 }
 
+/// Links the queued modules' plugin code without building them.
+pub(crate) fn link_engine_modules() {
+    if let Ok(modules) = ENGINE_MODULES.lock() {
+        for module in modules.iter() {
+            module.link();
+        }
+    }
+}
+
 /// Builds the queued modules into `app`, after the built-in ones.
 pub(crate) fn build_engine_modules(app: &mut bevy::prelude::App) {
     let Ok(modules) = ENGINE_MODULES.lock() else {

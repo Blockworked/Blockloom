@@ -125,7 +125,7 @@ impl PluginMeshes {
     }
 }
 
-fn bevy_mesh(data: &MeshData) -> Mesh {
+pub(crate) fn bevy_mesh(data: &MeshData) -> Mesh {
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -191,7 +191,7 @@ fn raster_mesh(data: &MeshData) -> Mesh {
     mesh
 }
 
-fn alpha_mode(blend: MeshBlend) -> AlphaMode {
+pub(crate) fn alpha_mode(blend: MeshBlend) -> AlphaMode {
     match blend {
         MeshBlend::Opaque => AlphaMode::Opaque,
         MeshBlend::Cutout => AlphaMode::Mask(0.5),

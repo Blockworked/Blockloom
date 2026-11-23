@@ -1,4 +1,5 @@
-//! A primitive spectator view; no VM, physics, scripts or plugins run here.
+//! A primitive spectator view; no VM, physics or scripts run here. With a
+//! local copy of the game, its plugins rebuild what the host syncs (voxels).
 use bevy::prelude::*;
 use blockloom_core::scene::Visual;
 use blockloom_net::game::{Invite, LanClient};
@@ -11,27 +12,95 @@ struct View {
     epoch: Option<u64>,
     dimension: u8,
     camera: Option<Entity>,
+    light: Option<Entity>,
+    skipped: std::collections::BTreeSet<String>,
 }
 #[derive(serde::Deserialize)]
 struct Appearance {
     visual: Option<Visual>,
 }
 
-pub fn run(invite: &str, trusted: &str) -> Result<(), String> {
+/// The local game's plugins, hosted only to apply the host's synced regions.
+/// Nothing executable arrives over the network: the code is the local build's.
+#[cfg(feature = "plugins")]
+pub(crate) struct GuestPlugins {
+    world: blockloom_plugin_host::world::WorldPlugins,
+    pending: Vec<blockloom_plugin_host::world::Outcome>,
+    applied: Option<BTreeMap<String, blockloom_net::game::Region>>,
+    meshes: BTreeMap<(String, String), Entity>,
+    bounds: Option<(Vec3, Vec3)>,
+    framed: bool,
+}
+
+#[cfg(feature = "plugins")]
+impl GuestPlugins {
+    /// Opens the plugins of the game at `path` (a build folder, its `game/`
+    /// or the pack) and starts them as a preview, which writes no saves.
+    pub(crate) fn open(path: &std::path::Path) -> Result<Self, String> {
+        use blockloom_plugin_api::data::DATA_DIR;
+        use blockloom_plugin_host::services::HostServices;
+        use blockloom_plugin_host::storage::PackStore;
+        let file = crate::player::locate_pack(path)
+            .ok_or_else(|| format!("{} doesn't hold a Blockloom game", path.display()))?;
+        let pack = blockloom_core::pack::GamePack::read(&file)?;
+        let dir = file.parent().unwrap_or(std::path::Path::new("."));
+        crate::api::link_engine_modules();
+        let loadout =
+            crate::plugins::shipped_loadout(dir, &pack.plugins).map_err(|e| e.join("; "))?;
+        let host = HostServices::new(env!("CARGO_PKG_VERSION"))
+            .with_project_store(std::sync::Arc::new(PackStore::open(dir.join(DATA_DIR))))
+            .with_assets(dir.to_path_buf());
+        Ok(Self::hosting(
+            blockloom_plugin_host::world::WorldPlugins::load_with(&loadout, &host),
+            &pack.project,
+        ))
+    }
+
+    pub(crate) fn hosting(
+        mut world: blockloom_plugin_host::world::WorldPlugins,
+        project: &blockloom_core::project::Project,
+    ) -> Self {
+        let pending = world.start(&|plugin| crate::plugins::records_of(project, plugin, true));
+        GuestPlugins {
+            world,
+            pending,
+            applied: None,
+            meshes: BTreeMap::new(),
+            bounds: None,
+            framed: false,
+        }
+    }
+}
+
+pub fn run(invite: &str, trusted: &str, game: Option<&std::path::Path>) -> Result<(), String> {
+    #[cfg(feature = "plugins")]
+    let plugins = game.map(GuestPlugins::open).transpose()?;
+    #[cfg(not(feature = "plugins"))]
+    if game.is_some() {
+        return Err("This runtime was built without plugin support".into());
+    }
     let invite = Invite::decode(invite)?;
     let trusted: Fingerprint = trusted
         .parse()
         .map_err(|e: blockloom_net::NetError| e.to_string())?;
     let client = LanClient::connect(invite, trusted.0, ClientOptions::default())?;
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Blockloom LAN spectator".into(),
-            ..Default::default()
-        }),
-        ..Default::default()
-    }));
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Blockloom LAN spectator".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .set(crate::asset_plugin()),
+    );
     app.insert_non_send(client).init_resource::<View>();
+    #[cfg(feature = "plugins")]
+    if let Some(plugins) = plugins {
+        app.insert_non_send(plugins);
+    }
     app.add_systems(Update, receive);
     app.run();
     Ok(())
@@ -46,13 +115,13 @@ fn supported(visual: Option<&Visual>, dimension: u8) -> Result<(), String> {
         Some(Visual::Sphere{radius,..}) if dimension==1=>vec![*radius],
         Some(Visual::Capsule{radius,height,..}) if dimension==1=>vec![*radius,*height],
         Some(Visual::Plane{size,..}) if dimension==1=>size.to_vec(),
-        _=>return Err("The spectator viewer supports primitive looks only; use blockloom-lan for other replicas".into()),
+        _=>return Err("the spectator view draws primitive looks only; use blockloom-lan for other replicas".into()),
     };
     if lengths
         .iter()
         .any(|n| !n.is_finite() || *n <= 0. || *n > 1e6)
     {
-        return Err("Invalid primitive size".into());
+        return Err("invalid primitive size".into());
     }
     Ok(())
 }
@@ -64,6 +133,8 @@ fn receive(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut colors: ResMut<Assets<ColorMaterial>>,
     mut exit: MessageWriter<AppExit>,
+    #[cfg(feature = "plugins")] mut guest: Option<NonSendMut<GuestPlugins>>,
+    #[cfg(feature = "plugins")] assets: Option<Res<AssetServer>>,
 ) {
     let changed = match client.poll() {
         Ok(v) => v,
@@ -89,10 +160,13 @@ fn receive(
                 return;
             }
         };
+        let mut appearance = appearance;
+        // A look this view can't draw leaves that actor out, not the world.
         if let Err(e) = supported(appearance.visual.as_ref(), state.dimension) {
-            error!("{e}");
-            exit.write(AppExit::error());
-            return;
+            if view.skipped.insert(a.id.clone()) {
+                warn!("{}: {e}", a.id);
+            }
+            appearance.visual = None;
         }
         appearances.insert(a.id.clone(), appearance);
     }
@@ -100,8 +174,11 @@ fn receive(
         for (_, (entity, _)) in std::mem::take(&mut view.actors) {
             commands.entity(entity).despawn();
         }
-        if let Some(camera) = view.camera.take() {
-            commands.entity(camera).despawn();
+        for entity in [view.camera.take(), view.light.take()]
+            .into_iter()
+            .flatten()
+        {
+            commands.entity(entity).despawn();
         }
         view.camera = Some(if state.dimension == 0 {
             commands.spawn(Camera2d).id()
@@ -113,8 +190,36 @@ fn receive(
                 ))
                 .id()
         });
+        if state.dimension == 1 {
+            view.light = Some(
+                commands
+                    .spawn((
+                        DirectionalLight::default(),
+                        Transform::from_xyz(0.3, 1., 0.5).looking_at(Vec3::ZERO, Vec3::Y),
+                    ))
+                    .id(),
+            );
+        }
         view.epoch = Some(state.epoch);
         view.dimension = state.dimension;
+        #[cfg(feature = "plugins")]
+        if let Some(guest) = guest.as_mut() {
+            guest.applied = None;
+            guest.framed = false;
+        }
+    }
+    #[cfg(feature = "plugins")]
+    if let Some(guest) = guest.as_mut() {
+        sync_plugins(
+            guest,
+            &state.regions,
+            state.dimension,
+            view.camera,
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            assets.as_deref(),
+        );
     }
     let removed: Vec<_> = view
         .actors
@@ -201,6 +306,163 @@ fn receive(
     }
 }
 
+/// Whether `regions` moved on from what the guest's plugins last applied.
+#[cfg(feature = "plugins")]
+fn regions_moved(
+    old: Option<&BTreeMap<String, blockloom_net::game::Region>>,
+    new: &BTreeMap<String, blockloom_net::game::Region>,
+) -> bool {
+    old.is_none_or(|old| {
+        old.len() != new.len()
+            || old
+                .iter()
+                .zip(new)
+                .any(|((a, x), (b, y))| a != b || x.revision != y.revision)
+    })
+}
+
+/// Hands newly synced regions to the local plugins and draws what they answer.
+#[cfg(feature = "plugins")]
+#[allow(clippy::too_many_arguments)]
+fn sync_plugins(
+    guest: &mut GuestPlugins,
+    regions: &BTreeMap<String, blockloom_net::game::Region>,
+    dimension: u8,
+    camera: Option<Entity>,
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    assets: Option<&AssetServer>,
+) {
+    use blockloom_plugin_host::world::{Effect, Outcome};
+    let mut out = std::mem::take(&mut guest.pending);
+    if regions_moved(guest.applied.as_ref(), regions) {
+        for (plugin, args) in super::sync_apply_calls(guest.applied.as_ref(), regions) {
+            out.extend(guest.world.act(&plugin, "sync.apply", &args));
+        }
+        guest.applied = Some(regions.clone());
+    }
+    out.extend(guest.world.drain());
+    for outcome in out {
+        let (plugin, effect) = match outcome {
+            Outcome::Effect { plugin, effect } => (plugin, effect),
+            Outcome::Error { plugin, message } => {
+                warn!("{plugin}: {message}");
+                continue;
+            }
+            Outcome::Log { plugin, text, .. } => {
+                info!("{plugin}: {text}");
+                continue;
+            }
+        };
+        match effect {
+            // Plugin meshes are 3D only, as in the game.
+            Effect::Mesh(mesh) if dimension == 1 => {
+                if let Err(e) = mesh.check() {
+                    warn!("{plugin}: {e}");
+                    continue;
+                }
+                let key = (plugin, mesh.name.clone());
+                if let Some(old) = guest.meshes.remove(&key) {
+                    commands.entity(old).despawn();
+                }
+                let origin = Vec3::from_array(mesh.origin);
+                for p in mesh.positions.as_chunks::<3>().0 {
+                    let p = origin + Vec3::from_array(*p);
+                    let (lo, hi) = guest.bounds.get_or_insert((p, p));
+                    *lo = lo.min(p);
+                    *hi = hi.max(p);
+                }
+                let emission = mesh.emission.unwrap_or([0.; 3]);
+                let material = materials.add(StandardMaterial {
+                    base_color: Color::WHITE,
+                    base_color_texture: mesh
+                        .texture
+                        .clone()
+                        .zip(assets)
+                        .map(|(path, server)| server.load::<Image>(path)),
+                    perceptual_roughness: mesh.roughness.clamp(0.05, 1.),
+                    emissive: LinearRgba::rgb(emission[0], emission[1], emission[2]),
+                    alpha_mode: crate::plugin_meshes::alpha_mode(mesh.blend),
+                    ..Default::default()
+                });
+                let entity = commands
+                    .spawn((
+                        Mesh3d(meshes.add(crate::plugin_meshes::bevy_mesh(&mesh))),
+                        MeshMaterial3d(material),
+                        Transform::from_translation(origin),
+                    ))
+                    .id();
+                guest.meshes.insert(key, entity);
+            }
+            Effect::RemoveMesh { name } => {
+                if let Some(old) = guest.meshes.remove(&(plugin, name)) {
+                    commands.entity(old).despawn();
+                }
+            }
+            Effect::MeshVisibility { name, visible } => {
+                if let Some(entity) = guest.meshes.get(&(plugin, name)) {
+                    commands.entity(*entity).insert(if visible {
+                        Visibility::Inherited
+                    } else {
+                        Visibility::Hidden
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    // The fixed camera can't know where a world is, so it frames the first one.
+    if let (false, Some((lo, hi)), Some(camera), 1) =
+        (guest.framed, guest.bounds, camera, dimension)
+    {
+        let centre = (lo + hi) / 2.;
+        let reach = (hi - lo).length().max(1.);
+        commands.entity(camera).insert(
+            Transform::from_translation(centre + Vec3::new(0., 0.45, 0.8) * reach)
+                .looking_at(centre, Vec3::Y),
+        );
+        guest.framed = true;
+    }
+}
+
+/// A windowless guest view over `client`, for tests.
+#[cfg(test)]
+pub(crate) fn test_app(
+    client: LanClient,
+    #[cfg(feature = "plugins")] plugins: Option<GuestPlugins>,
+) -> App {
+    let mut app = App::new();
+    app.insert_non_send(client)
+        .init_resource::<View>()
+        .init_resource::<Assets<Mesh>>()
+        .init_resource::<Assets<StandardMaterial>>()
+        .init_resource::<Assets<ColorMaterial>>()
+        .init_resource::<Messages<AppExit>>()
+        .add_systems(Update, receive);
+    #[cfg(feature = "plugins")]
+    if let Some(plugins) = plugins {
+        app.insert_non_send(plugins);
+    }
+    app
+}
+
+#[cfg(all(test, feature = "plugins"))]
+impl GuestPlugins {
+    pub(crate) fn query(
+        &mut self,
+        plugin: &str,
+        op: &str,
+        args: &serde_json::Value,
+    ) -> serde_json::Value {
+        self.world.query(plugin, op, args).unwrap()
+    }
+
+    pub(crate) fn mesh_names(&self) -> Vec<&str> {
+        self.meshes.keys().map(|(_, name)| name.as_str()).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,14 +510,11 @@ mod tests {
             .unwrap();
             let client =
                 LanClient::connect(host.invite().clone(), build, ClientOptions::default()).unwrap();
-            let mut app = App::new();
-            app.insert_non_send(client)
-                .init_resource::<View>()
-                .init_resource::<Assets<Mesh>>()
-                .init_resource::<Assets<StandardMaterial>>()
-                .init_resource::<Assets<ColorMaterial>>()
-                .init_resource::<Messages<AppExit>>()
-                .add_systems(Update, receive);
+            let mut app = test_app(
+                client,
+                #[cfg(feature = "plugins")]
+                None,
+            );
             for phase in 0..3 {
                 if phase == 1 {
                     state.tick += 1;

@@ -899,6 +899,18 @@ impl WorldPlugins {
         answer.ok_or_else(|| format!("{plugin}/{op} could not answer"))
     }
 
+    /// Asks a module op whose answer may act, handing back its outcomes for
+    /// the caller to apply, as a LAN guest does with `sync.apply`.
+    pub fn act(&mut self, plugin: &str, op: &str, input: &Value) -> Vec<Outcome> {
+        if !self.modules.contains_key(plugin) {
+            return vec![Outcome::Error {
+                plugin: plugin.to_string(),
+                message: format!("{plugin} is not hosted here"),
+            }];
+        }
+        self.call(plugin, op, input, false)
+    }
+
     /// Drops every remembered read. The world calls this at the start of
     /// each frame, since what a module reports may move with it.
     pub fn forget_reads(&mut self) {

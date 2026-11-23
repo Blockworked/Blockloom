@@ -348,8 +348,17 @@ fn event_arg(value: &Value) -> String {
 /// A plugin's share of the project: its records on actors and its resources.
 #[cfg(feature = "plugins")]
 fn records_for(engine: &Engine, plugin: &str, preview: bool) -> Value {
-    let records: Vec<Value> = engine
-        .project
+    records_of(&engine.project, plugin, preview)
+}
+
+/// A plugin's part of `project`, as `world.start` takes it.
+#[cfg(feature = "plugins")]
+pub(crate) fn records_of(
+    project: &blockloom_core::project::Project,
+    plugin: &str,
+    preview: bool,
+) -> Value {
+    let records: Vec<Value> = project
         .actors
         .iter()
         .flat_map(|actor| {
@@ -368,8 +377,7 @@ fn records_for(engine: &Engine, plugin: &str, preview: bool) -> Value {
                 })
         })
         .collect();
-    let resources: Vec<Value> = engine
-        .project
+    let resources: Vec<Value> = project
         .plugin_resources
         .iter()
         .filter(|r| r.plugin == plugin)
@@ -381,7 +389,7 @@ fn records_for(engine: &Engine, plugin: &str, preview: bool) -> Value {
             })
         })
         .collect();
-    json!({"records": records, "resources": resources, "preview": preview, "mode":engine.project.active_scene().world.mode})
+    json!({"records": records, "resources": resources, "preview": preview, "mode":project.active_scene().world.mode})
 }
 
 /// What a built game's player hosts, from the plugins its pack records and

@@ -304,6 +304,10 @@ run live or paused), `SceneDocument` (the open scene's settings),
 `PendingEffects` and `say`. Keep run state in your own resources and reset it
 on `WorldRebuilt`, as the built-in wind module does.
 
+A module that hosts an SDK `Plugin` registers it with `link_plugin` from
+`link`, and calls `self.link()` from `build`. Hosts that run plugins without a
+world, such as the LAN guest view, call only `link`.
+
 After `plugin-install`, the Plugin Manager's Engine plugins section (or
 `build-project-runtime`) builds the project's runtime into
 `.blockloom/runtime/bin/`; Play refuses until it is built and again whenever a

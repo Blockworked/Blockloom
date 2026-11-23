@@ -196,7 +196,14 @@ pub fn run_process() {
                         .position(|a| a == "--trusted-build")
                         .and_then(|i| args.get(i + 1))
                         .ok_or("--trusted-build needs the trusted content hash")?;
-                    lan::guest::run(invite, trusted)
+                    // Plugins come only from a local copy of the game.
+                    let game = args
+                        .iter()
+                        .position(|a| a == "--game")
+                        .and_then(|i| args.get(i + 1))
+                        .map(std::path::PathBuf::from)
+                        .or_else(blockloom_core::pack::beside_exe);
+                    lan::guest::run(invite, trusted, game.as_deref())
                 })();
                 if let Err(error) = result {
                     eprintln!("{error}");

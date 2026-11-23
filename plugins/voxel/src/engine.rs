@@ -14,6 +14,10 @@ impl BlockloomModule for VoxelModule {
     }
 
     fn build(&self, _app: &mut App) {
+        self.link();
+    }
+
+    fn link(&self) {
         blockloom_engine::link_plugin(ID, crate::blockloom_plugin_entry_v1);
     }
 }

@@ -13,6 +13,9 @@ pub trait BlockloomModule: Send + Sync + 'static {
     fn name(&self) -> &'static str;
     /// Adds its resources and systems.
     fn build(&self, app: &mut App);
+    /// Registers linked plugin code without building a world, for hosts
+    /// such as the LAN guest view that run plugins but not the game.
+    fn link(&self) {}
 }
 
 /// The modules a world was built with, in order.

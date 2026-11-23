@@ -194,7 +194,7 @@ impl Launch {
 
 /// A pack from what someone pointed at: the file itself, the `game/` folder
 /// holding it, or the build folder holding that.
-fn locate_pack(path: &Path) -> Option<PathBuf> {
+pub(crate) fn locate_pack(path: &Path) -> Option<PathBuf> {
     if path.is_file() {
         return Some(path.to_path_buf());
     }
