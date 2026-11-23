@@ -122,7 +122,7 @@ A 2D world starts it with its own defaults.
 | Field | Type | Default | About |
 |---|---|---|---|
 | `rigidbody` | record |  |  |
-| `rigidbody.id` | JSON | `a91c7344238445029e78d4c090d8e961` |  |
+| `rigidbody.id` | JSON |  |  |
 | `rigidbody.body_type` | one of `Dynamic`, `Kinematic`, `Static` | `Dynamic` |  |
 | `rigidbody.simulated` | switch | `true` | 2D only: a body that is not simulated is left out of the world with its colliders. |
 | `rigidbody.mass` | one of `Explicit`, `Density` |  |  |
@@ -153,7 +153,7 @@ An actor may carry more than one. Made by its own command rather than from defau
 | Field | Type | Default | About |
 |---|---|---|---|
 | `collider` | record |  |  |
-| `collider.id` | JSON | `060f2eafe9af40a5a880aaa841363a8a` |  |
+| `collider.id` | JSON |  |  |
 | `collider.name` | text |  |  |
 | `collider.enabled` | switch | `true` |  |
 | `collider.geometry` | one of `Shape`, `FromLook` |  |  |
@@ -203,7 +203,7 @@ An actor may carry more than one. A 2D world starts it with its own defaults.
 | Field | Type | Default | About |
 |---|---|---|---|
 | `constraint` | record |  |  |
-| `constraint.id` | JSON | `626acdba8a3c4633ac8b08b5ef38c9bd` |  |
+| `constraint.id` | JSON |  |  |
 | `constraint.name` | text |  | What blocks and scripts call it; unique on its actor. Empty is addressed by its place (`1`, `2`, ...). |
 | `constraint.enabled` | switch | `true` |  |
 | `constraint.kind` | one of `Fixed`, `Hinge`, `Ball`, `Slider`, `Spring`, `Distance`, `Wheel`, `Configurable` | `Fixed` |  |
@@ -243,7 +243,7 @@ A 2D world starts it with its own defaults.
 | Field | Type | Default | About |
 |---|---|---|---|
 | `controller` | record |  |  |
-| `controller.id` | JSON | `d423740f2f0a4c4b90b134a5c85ebf45` |  |
+| `controller.id` | JSON |  |  |
 | `controller.enabled` | switch | `true` |  |
 | `controller.center` | x y z | `[0.0,0.0,0.0]` | Where the capsule's centre stands, from the actor's origin. |
 | `controller.radius` | number | `0.5` |  |
@@ -268,7 +268,7 @@ A 2D world starts it with its own defaults.
 | Field | Type | Default | About |
 |---|---|---|---|
 | `motor` | record |  |  |
-| `motor.id` | JSON | `ab2ebe0cf04c4635aabe3239908c1ba7` |  |
+| `motor.id` | JSON |  |  |
 | `motor.enabled` | switch | `true` |  |
 | `motor.owner` | one of `Player`, `Ai`, `Script` | `Player` |  |
 | `motor.player` | whole number from 0 | `0` | Which local player's actions drive it (0 is the first), when owned by the player. |

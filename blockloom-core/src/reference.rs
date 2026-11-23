@@ -263,7 +263,8 @@ fn options_list(options: &[String]) -> String {
 }
 
 fn default(f: &FieldSchema) -> String {
-    let Some(value) = &f.default else {
+    // Ids are minted fresh per default, as `registry::to_json` blanks them.
+    let Some(value) = f.default.as_ref().filter(|_| f.name != "id") else {
         return String::new();
     };
     let text = match value {
