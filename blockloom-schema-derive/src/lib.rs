@@ -9,8 +9,8 @@
 //!
 //! Field hints go in `#[schema(...)]`: `label = ".."`, `unit = ".."`,
 //! `group = ".."`, `min = n`, `max = n`, `step = n`, `slider`, `multiline`,
-//! `advanced`, `color`, `text`, `asset = "image"`, `actor`, `opaque`, `skip`,
-//! and `show_if = "field"`, `show_if = "field=value"` or
+//! `advanced`, `only_2d`, `only_3d`, `color`, `text`, `asset = "image"`,
+//! `actor`, `opaque`, `skip`, and `show_if = "field"`, `show_if = "field=value"` or
 //! `hide_if = "field=value"`. A doc comment becomes the description. A
 //! `String` named `color` or `*_color` is a color unless marked `text`.
 
@@ -143,6 +143,7 @@ struct Hints {
     slider: bool,
     multiline: bool,
     advanced: bool,
+    dimension: String,
     color: bool,
     text: bool,
     asset: Option<String>,
@@ -197,6 +198,8 @@ fn hints_of(attrs: &[Attribute]) -> syn::Result<Hints> {
                 "slider" => out.slider = true,
                 "multiline" => out.multiline = true,
                 "advanced" => out.advanced = true,
+                "only_2d" => out.dimension = "2d".into(),
+                "only_3d" => out.dimension = "3d".into(),
                 "color" => out.color = true,
                 "text" => out.text = true,
                 "actor" => out.actor = true,
@@ -430,6 +433,7 @@ fn field_code(
     let unit = hints.unit;
     let group = hints.group;
     let advanced = hints.advanced;
+    let dimension = hints.dimension;
     // What serde fills in for a missing field. The container's own default,
     // when it has one, replaces this later (`fill_field_defaults`).
     let default = match (&serde.default, serde.custom || hints.opaque) {
@@ -462,6 +466,7 @@ fn field_code(
                 visible_when: #visible_when,
                 group: #group.to_string(),
                 advanced: #advanced,
+                dimension: #dimension.to_string(),
             };
             fields.push(#api::FieldSchema {
                 name: #key.to_string(),

@@ -143,6 +143,9 @@ pub struct FieldUi {
     /// Folded away with the other advanced fields until asked for.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub advanced: bool,
+    /// `2d` or `3d`: a field only that dimension's registry lists.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub dimension: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -745,6 +748,9 @@ fn check_ui(
             && !(step.is_finite() && step > 0.0)
         {
             return Err(format!("{at}: step must be above zero"));
+        }
+        if !ui.dimension.is_empty() {
+            return Err(format!("{at}: dimension is for built-in types only"));
         }
         if let Some(condition) = &ui.visible_when {
             if !condition.all.is_empty()

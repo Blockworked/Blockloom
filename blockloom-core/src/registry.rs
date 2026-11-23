@@ -5,6 +5,8 @@
 //! and defaults; `set_property` checks a write against it.
 
 use crate::components::ActorComponent;
+use crate::physics::controller::CharacterControllerSpec;
+use crate::physics::motor::CharacterMotorSpec;
 use crate::scene::{Mode, World};
 use crate::settings::GameSettings;
 use blockloom_plugin_api::schema::{FieldSchema, FieldType, Schema, fill_field_defaults};
@@ -154,6 +156,11 @@ pub fn default_component(name: &str, mode: Mode) -> Option<ActorComponent> {
         "PlayerCamera" if !three => tag(json!({"player_camera": {
             "look": false, "collision": false, "smoothing": 0.15, "dead_zone": [48, 32], "look_ahead": 64
         }})),
+        // Each dimension's own sizes: metres in 3D, pixels in 2D.
+        "CharacterController" => tag(json!({"controller":
+            serde_json::to_value(CharacterControllerSpec::for_mode(mode)).ok()?})),
+        "CharacterMotor" => tag(json!({"motor":
+            serde_json::to_value(CharacterMotorSpec::for_mode(mode)).ok()?})),
         "Camera" => tag(json!({"camera": {
             "view": "ThirdPerson", "offset": [0, 0.6, 0], "distance": 6, "pitch": 15, "fov": 75
         }})),
@@ -181,7 +188,7 @@ pub fn default_component(name: &str, mode: Mode) -> Option<ActorComponent> {
 
 /// The fields of component `name` beside its tag, straight from the
 /// derive.
-fn component_fields(name: &str) -> Vec<FieldSchema> {
+pub(crate) fn component_fields(name: &str) -> Vec<FieldSchema> {
     match ActorComponent::field_type() {
         FieldType::Enum { variants, .. } => variants
             .into_iter()
@@ -202,6 +209,7 @@ pub fn component_types(mode: Mode) -> Vec<ComponentType> {
                 .unwrap_or(Value::Null);
             let mut fields = component_fields(name);
             fill_field_defaults(&mut fields, &default);
+            for_mode(&mut fields, mode);
             ComponentType {
                 name: name.to_string(),
                 label: label(name).to_string(),
@@ -213,6 +221,40 @@ pub fn component_types(mode: Mode) -> Vec<ComponentType> {
             }
         })
         .collect()
+}
+
+/// Drops fields marked for the other dimension (`only_2d`/`only_3d`), at
+/// any depth, and the marks themselves.
+fn for_mode(fields: &mut Vec<FieldSchema>, mode: Mode) {
+    let other = if mode == Mode::TwoD { "3d" } else { "2d" };
+    fields.retain(|f| f.ui.as_ref().is_none_or(|ui| ui.dimension != other));
+    for field in fields.iter_mut() {
+        if let Some(ui) = field.ui.as_mut() {
+            ui.dimension.clear();
+            if *ui == Default::default() {
+                field.ui = None;
+            }
+        }
+        type_for_mode(&mut field.ty, mode);
+    }
+}
+
+fn type_for_mode(ty: &mut FieldType, mode: Mode) {
+    match ty {
+        FieldType::Struct { fields } => for_mode(fields, mode),
+        FieldType::List { item: inner, .. }
+        | FieldType::Map { value: inner }
+        | FieldType::Optional { inner } => type_for_mode(inner, mode),
+        FieldType::Enum { variants, .. } => {
+            for v in variants {
+                for_mode(&mut v.fields, mode);
+                if let Some(inner) = v.inner.as_mut() {
+                    type_for_mode(inner, mode);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// A scene's world settings (sky, fog, post, quality, ...) with defaults

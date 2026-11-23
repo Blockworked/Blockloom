@@ -3,7 +3,7 @@
 
 use crate::registry::{self, ComponentType};
 use crate::scene::Mode;
-use blockloom_plugin_api::schema::{Condition, FieldSchema, FieldType};
+use blockloom_plugin_api::schema::{Condition, FieldSchema, FieldType, fill_field_defaults};
 use serde_json::Value;
 use std::fmt::Write;
 
@@ -92,7 +92,10 @@ fn component(out: &mut String, c: &ComponentType, flat: Option<&ComponentType>) 
     if !notes.is_empty() {
         let _ = writeln!(out, "{}\n", notes.join(" "));
     }
-    table(out, &c.fields);
+    // Both dimensions' fields, each marked; the registry drops the other one's.
+    let mut fields = registry::component_fields(&c.name);
+    fill_field_defaults(&mut fields, &c.default);
+    table(out, &fields);
 }
 
 fn settings_page(title: &str, intro: &str, fields: &[FieldSchema]) -> String {
@@ -191,6 +194,11 @@ fn row(path: &str, f: &FieldSchema) -> [String; 4] {
         }
         if let Some(c) = &ui.visible_when {
             about.push(format!("Used when {}.", condition(c)));
+        }
+        match ui.dimension.as_str() {
+            "2d" => about.push("2D only.".into()),
+            "3d" => about.push("3D only.".into()),
+            _ => {}
         }
         if ui.advanced {
             about.push("Advanced.".into());

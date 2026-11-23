@@ -136,46 +136,70 @@ impl MotorProperty {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 #[serde(default)]
 pub struct CharacterMotorSpec {
+    #[schema(skip)]
     pub id: ComponentId,
     pub enabled: bool,
+    #[schema(label = "Driven by")]
     pub owner: MotorOwner,
     /// Which local player's actions drive it (0 is the first), when owned
     /// by the player.
+    #[schema(min = 0, max = 7, show_if = "owner = Player")]
     pub player: u8,
+    #[schema(label = "Move space", only_3d)]
     pub space: MoveSpace,
-    /// 2D only: move across the whole plane with no up, gravity or jump.
+    /// Move across the whole plane with no up, gravity or jump.
+    #[schema(only_2d)]
     pub top_down: bool,
+    #[schema(min = 0)]
     pub walk_speed: f32,
+    #[schema(min = 0)]
     pub sprint_speed: f32,
+    #[schema(min = 0)]
     pub crouch_speed: f32,
     /// Speeding up on the ground, units a second squared.
+    #[schema(label = "Acceleration", min = 0)]
     pub ground_acceleration: f32,
     /// Slowing down on the ground when nothing is asked.
+    #[schema(label = "Braking", min = 0)]
     pub ground_braking: f32,
+    #[schema(min = 0)]
     pub air_acceleration: f32,
     /// How much of the steering the air keeps (0 none, 1 all of it).
+    #[schema(min = 0, max = 1)]
     pub air_control: f32,
     /// Turn the actor towards where it moves, degrees a second (0 = never).
+    #[schema(unit = "°/s", min = 0, only_3d)]
     pub turn_speed: f32,
     /// Scale a diagonal intent back to unit length.
     pub normalize_input: bool,
+    #[schema(min = 0)]
     pub gravity_scale: f32,
     /// The fastest it falls, along up.
+    #[schema(label = "Terminal speed", min = 0.001)]
     pub terminal_fall_speed: f32,
     /// After a move that leaves the ground, reach down this far to stay on it.
+    #[schema(label = "Ground snap", min = 0)]
     pub ground_snap_distance: f32,
     /// Slide down slopes past the controller's limit.
     pub slide_on_steep: bool,
+    #[schema(min = 0, show_if = "slide_on_steep")]
     pub slide_speed: f32,
+    #[schema(min = 0)]
     pub jump_height: f32,
+    #[schema(min = 0)]
     pub max_jumps: u32,
     /// Letting go of jump while rising scales the rise by this (1 = no cut).
+    #[schema(min = 0, max = 1)]
     pub jump_cut: f32,
+    #[schema(unit = "s", min = 0)]
     pub coyote_time: f32,
+    #[schema(unit = "s", min = 0)]
     pub jump_buffer: f32,
     /// The controller's height while crouching (0 = cannot crouch).
+    #[schema(min = 0)]
     pub crouch_height: f32,
     /// How fast knockback and impulses fade, units a second squared.
+    #[schema(label = "Knockback drag", min = 0)]
     pub external_drag: f32,
 }
 

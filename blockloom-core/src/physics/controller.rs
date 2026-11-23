@@ -65,28 +65,36 @@ pub const DEFAULT_MIN_MOVE: f32 = 0.001;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct CharacterControllerSpec {
     #[serde(default)]
+    #[schema(skip)]
     pub id: ComponentId,
     #[serde(default = "yes")]
     pub enabled: bool,
     /// Where the capsule's centre stands, from the actor's origin.
     #[serde(default)]
+    #[schema(label = "Centre")]
     pub center: [f32; 3],
     #[serde(default = "default_radius")]
+    #[schema(min = 0.001)]
     pub radius: f32,
     /// Total height, caps included. At least twice the radius.
     #[serde(default = "default_height")]
+    #[schema(min = 0)]
     pub height: f32,
     /// Steepest walkable slope, degrees from flat.
     #[serde(default = "default_slope")]
+    #[schema(unit = "°", min = 0, max = 90)]
     pub slope_limit: f32,
     /// Tallest step it walks onto.
     #[serde(default = "default_step")]
+    #[schema(min = 0)]
     pub step_offset: f32,
     /// The gap kept between the capsule and what it touches.
     #[serde(default = "default_skin")]
+    #[schema(min = 0.0001)]
     pub skin_width: f32,
     /// A move shorter than this does not move.
     #[serde(default = "default_min_move")]
+    #[schema(label = "Minimum move", min = 0)]
     pub min_move_distance: f32,
     /// Whether other bodies and controllers collide with this capsule.
     #[serde(default = "yes")]
@@ -96,11 +104,14 @@ pub struct CharacterControllerSpec {
     pub overlap_recovery: bool,
     /// Layer slot, 1 to 32, that the capsule lives on and sweeps as.
     #[serde(default = "default_layer")]
+    #[schema(min = 1, max = 32)]
     pub layer: u8,
     #[serde(default, skip_serializing_if = "LayerOverrides::is_empty")]
+    #[schema(advanced)]
     pub layer_overrides: LayerOverrides,
     /// The direction that is up (3D profile: +Y). In 2D the z is ignored.
     #[serde(default = "up_axis")]
+    #[schema(advanced)]
     pub up: [f32; 3],
 }
 

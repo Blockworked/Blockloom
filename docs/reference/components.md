@@ -122,29 +122,27 @@ A 2D world starts it with its own defaults.
 | Field | Type | Default | About |
 |---|---|---|---|
 | `rigidbody` | record |  |  |
-| `rigidbody.id` | JSON |  |  |
 | `rigidbody.body_type` | one of `Dynamic`, `Kinematic`, `Static` | `Dynamic` |  |
-| `rigidbody.simulated` | switch | `true` | 2D only: a body that is not simulated is left out of the world with its colliders. |
+| `rigidbody.simulated` | switch | `true` | 2D only. A body that is not simulated is left out of the world with its colliders. |
 | `rigidbody.mass` | one of `Explicit`, `Density` |  |  |
 | `rigidbody.mass (Explicit).mass` | number | `1.0` |  |
 | `rigidbody.mass (Density).density` | number |  |  |
 | `rigidbody.center_of_mass` | x y z or none | `null` | Local centre of mass; `None` computes it from the colliders. |
 | `rigidbody.inertia` | x y z or none | `null` | Principal inertia (3D) or the scalar moment (2D, first element); `None` computes it from the colliders. |
-| `rigidbody.linear_damping` | number | `0.0` |  |
-| `rigidbody.angular_damping` | number | `0.05000000074505806` |  |
+| `rigidbody.linear_damping` | number from 0 | `0.0` | **Drag** |
+| `rigidbody.angular_damping` | number from 0 | `0.05000000074505806` | **Angular drag** |
 | `rigidbody.use_gravity` | switch | `true` | Whether the world's gravity applies at all (Unity's Use Gravity). |
-| `rigidbody.gravity_scale` | number | `1.0` | Blockloom's multiplier on top of `use_gravity`. |
-| `rigidbody.interpolation` | one of `None`, `Interpolate`, `Extrapolate` | `None` |  |
-| `rigidbody.collision_detection` | one of `Discrete`, `Continuous`, `ContinuousDynamic`, `ContinuousSpeculative` | `Discrete` |  |
+| `rigidbody.gravity_scale` | number | `1.0` | **Gravity ×** Used when `use_gravity` is set. Blockloom's multiplier on top of `use_gravity`. |
+| `rigidbody.interpolation` | one of `None`, `Interpolate`, `Extrapolate` | `None` | **Interpolate** |
+| `rigidbody.collision_detection` | one of `Discrete`, `Continuous`, `ContinuousDynamic`, `ContinuousSpeculative` | `Discrete` | **Detection** 3D only. |
 | `rigidbody.constraints` | record |  |  |
 | `rigidbody.constraints.freeze_position` | list of switch | `[false,false,false]` |  |
 | `rigidbody.constraints.freeze_rotation` | list of switch | `[false,false,false]` |  |
-| `rigidbody.max_linear_velocity` | number | `10000.0` | Metres per second. |
-| `rigidbody.max_angular_velocity` | number | `7.0` | Radians per second. |
-| `rigidbody.sleep_threshold` | number | `0.004999999888241291` | Mass-normalised kinetic energy below which the body may sleep. |
-| `rigidbody.solver_iterations` | whole number from 0 or none | `null` | Extra solver iterations for this body; `None` uses the world's. |
-| `rigidbody.max_depenetration_velocity` | number | `10.0` | Metres per second a penetrating contact may push this body out at. |
-| `rigidbody.legacy_character_control` | switch | `false` | A migrated `Body` that had its character-control switch on: the runtime keeps the old kinematic controller on this body until it is converted to a CharacterController. |
+| `rigidbody.max_linear_velocity` | number from 0.01 | `10000.0` | **Max speed** Advanced. Metres per second. |
+| `rigidbody.max_angular_velocity` | number from 0.01 | `7.0` | **Max spin** 3D only. Advanced. Radians per second. |
+| `rigidbody.sleep_threshold` | number from 0 | `0.004999999888241291` | **Sleep below** Advanced. Mass-normalised kinetic energy below which the body may sleep. |
+| `rigidbody.solver_iterations` | whole number from 0 or none | `null` | **Solver passes** Advanced. Extra solver iterations for this body; `None` uses the world's. |
+| `rigidbody.max_depenetration_velocity` | number from 0 (m/s) | `10.0` | **Push-out** Advanced. Metres per second a penetrating contact may push this body out at. |
 
 ## Collider
 
@@ -243,23 +241,22 @@ A 2D world starts it with its own defaults.
 | Field | Type | Default | About |
 |---|---|---|---|
 | `controller` | record |  |  |
-| `controller.id` | JSON |  |  |
 | `controller.enabled` | switch | `true` |  |
-| `controller.center` | x y z | `[0.0,0.0,0.0]` | Where the capsule's centre stands, from the actor's origin. |
-| `controller.radius` | number | `0.5` |  |
-| `controller.height` | number | `2.0` | Total height, caps included. At least twice the radius. |
-| `controller.slope_limit` | number | `45.0` | Steepest walkable slope, degrees from flat. |
-| `controller.step_offset` | number | `0.30000001192092896` | Tallest step it walks onto. |
-| `controller.skin_width` | number | `0.07999999821186066` | The gap kept between the capsule and what it touches. |
-| `controller.min_move_distance` | number | `0.0010000000474974513` | A move shorter than this does not move. |
+| `controller.center` | x y z | `[0.0,0.0,0.0]` | **Centre** Where the capsule's centre stands, from the actor's origin. |
+| `controller.radius` | number from 0.001 | `0.5` |  |
+| `controller.height` | number from 0 | `2.0` | Total height, caps included. At least twice the radius. |
+| `controller.slope_limit` | number 0 to 90 (°) | `45.0` | Steepest walkable slope, degrees from flat. |
+| `controller.step_offset` | number from 0 | `0.30000001192092896` | Tallest step it walks onto. |
+| `controller.skin_width` | number from 0.0001 | `0.07999999821186066` | The gap kept between the capsule and what it touches. |
+| `controller.min_move_distance` | number from 0 | `0.0010000000474974513` | **Minimum move** A move shorter than this does not move. |
 | `controller.detect_collisions` | switch | `true` | Whether other bodies and controllers collide with this capsule. |
 | `controller.overlap_recovery` | switch | `true` | Push the capsule out of whatever it overlaps before it moves. |
-| `controller.layer` | whole number from 0 | `1` | Layer slot, 1 to 32, that the capsule lives on and sweeps as. |
-| `controller.layer_overrides` | record |  |  |
+| `controller.layer` | whole number 1 to 32 | `1` | Layer slot, 1 to 32, that the capsule lives on and sweeps as. |
+| `controller.layer_overrides` | record |  | Advanced. |
 | `controller.layer_overrides.include` | whole number from 0 | `0` |  |
 | `controller.layer_overrides.exclude` | whole number from 0 | `0` |  |
 | `controller.layer_overrides.priority` | whole number | `0` | Higher wins when two overrides disagree on a pair. |
-| `controller.up` | x y z | `[0.0,1.0,0.0]` | The direction that is up (3D profile: +Y). In 2D the z is ignored. |
+| `controller.up` | x y z | `[0.0,1.0,0.0]` | Advanced. The direction that is up (3D profile: +Y). In 2D the z is ignored. |
 
 ## CharacterMotor
 
@@ -268,33 +265,32 @@ A 2D world starts it with its own defaults.
 | Field | Type | Default | About |
 |---|---|---|---|
 | `motor` | record |  |  |
-| `motor.id` | JSON |  |  |
 | `motor.enabled` | switch | `true` |  |
-| `motor.owner` | one of `Player`, `Ai`, `Script` | `Player` |  |
-| `motor.player` | whole number from 0 | `0` | Which local player's actions drive it (0 is the first), when owned by the player. |
-| `motor.space` | one of `World`, `Actor`, `Camera` | `Camera` |  |
-| `motor.top_down` | switch | `false` | 2D only: move across the whole plane with no up, gravity or jump. |
-| `motor.walk_speed` | number | `5.0` |  |
-| `motor.sprint_speed` | number | `8.0` |  |
-| `motor.crouch_speed` | number | `2.5` |  |
-| `motor.ground_acceleration` | number | `50.0` | Speeding up on the ground, units a second squared. |
-| `motor.ground_braking` | number | `60.0` | Slowing down on the ground when nothing is asked. |
-| `motor.air_acceleration` | number | `15.0` |  |
-| `motor.air_control` | number | `1.0` | How much of the steering the air keeps (0 none, 1 all of it). |
-| `motor.turn_speed` | number | `720.0` | Turn the actor towards where it moves, degrees a second (0 = never). |
+| `motor.owner` | one of `Player`, `Ai`, `Script` | `Player` | **Driven by** |
+| `motor.player` | whole number 0 to 7 | `0` | Used when `owner` is `Player`. Which local player's actions drive it (0 is the first), when owned by the player. |
+| `motor.space` | one of `World`, `Actor`, `Camera` | `Camera` | **Move space** 3D only. |
+| `motor.top_down` | switch | `false` | 2D only. Move across the whole plane with no up, gravity or jump. |
+| `motor.walk_speed` | number from 0 | `5.0` |  |
+| `motor.sprint_speed` | number from 0 | `8.0` |  |
+| `motor.crouch_speed` | number from 0 | `2.5` |  |
+| `motor.ground_acceleration` | number from 0 | `50.0` | **Acceleration** Speeding up on the ground, units a second squared. |
+| `motor.ground_braking` | number from 0 | `60.0` | **Braking** Slowing down on the ground when nothing is asked. |
+| `motor.air_acceleration` | number from 0 | `15.0` |  |
+| `motor.air_control` | number 0 to 1 | `1.0` | How much of the steering the air keeps (0 none, 1 all of it). |
+| `motor.turn_speed` | number from 0 (°/s) | `720.0` | 3D only. Turn the actor towards where it moves, degrees a second (0 = never). |
 | `motor.normalize_input` | switch | `true` | Scale a diagonal intent back to unit length. |
-| `motor.gravity_scale` | number | `1.0` |  |
-| `motor.terminal_fall_speed` | number | `50.0` | The fastest it falls, along up. |
-| `motor.ground_snap_distance` | number | `0.30000001192092896` | After a move that leaves the ground, reach down this far to stay on it. |
+| `motor.gravity_scale` | number from 0 | `1.0` |  |
+| `motor.terminal_fall_speed` | number from 0.001 | `50.0` | **Terminal speed** The fastest it falls, along up. |
+| `motor.ground_snap_distance` | number from 0 | `0.30000001192092896` | **Ground snap** After a move that leaves the ground, reach down this far to stay on it. |
 | `motor.slide_on_steep` | switch | `false` | Slide down slopes past the controller's limit. |
-| `motor.slide_speed` | number | `6.0` |  |
-| `motor.jump_height` | number | `1.2000000476837158` |  |
+| `motor.slide_speed` | number from 0 | `6.0` | Used when `slide_on_steep` is set. |
+| `motor.jump_height` | number from 0 | `1.2000000476837158` |  |
 | `motor.max_jumps` | whole number from 0 | `1` |  |
-| `motor.jump_cut` | number | `0.5` | Letting go of jump while rising scales the rise by this (1 = no cut). |
-| `motor.coyote_time` | number | `0.10000000149011612` |  |
-| `motor.jump_buffer` | number | `0.10000000149011612` |  |
-| `motor.crouch_height` | number | `1.0` | The controller's height while crouching (0 = cannot crouch). |
-| `motor.external_drag` | number | `20.0` | How fast knockback and impulses fade, units a second squared. |
+| `motor.jump_cut` | number 0 to 1 | `0.5` | Letting go of jump while rising scales the rise by this (1 = no cut). |
+| `motor.coyote_time` | number from 0 (s) | `0.10000000149011612` |  |
+| `motor.jump_buffer` | number from 0 (s) | `0.10000000149011612` |  |
+| `motor.crouch_height` | number from 0 | `1.0` | The controller's height while crouching (0 = cannot crouch). |
+| `motor.external_drag` | number from 0 | `20.0` | **Knockback drag** How fast knockback and impulses fade, units a second squared. |
 
 ## PlayerCamera
 
@@ -304,26 +300,26 @@ A 2D world starts it with its own defaults.
 |---|---|---|---|
 | `player_camera` | record |  |  |
 | `player_camera.enabled` | switch | `true` |  |
-| `player_camera.player` | whole number from 0 | `0` | Which local player's Look actions turn it (0 is the first). |
-| `player_camera.look` | switch | `true` | Look input turns the view (3D). Off keeps the Camera component's fixed framing. |
-| `player_camera.sensitivity` | number | `0.11999999731779099` | Degrees a mouse count turns the view. |
-| `player_camera.stick_speed` | number | `180.0` | Degrees a second at full stick deflection. |
-| `player_camera.invert_y` | switch | `false` |  |
-| `player_camera.min_pitch` | number | `-80.0` |  |
-| `player_camera.max_pitch` | number | `80.0` |  |
-| `player_camera.turn_body` | switch | `false` | Turn the body to face where the camera looks (first person). |
-| `player_camera.smoothing` | number | `0.0` | Seconds the camera takes to catch up (0 follows exactly). |
-| `player_camera.collision` | switch | `true` | Third person: pull in so walls never sit between camera and target. |
-| `player_camera.collision_radius` | number | `0.25` | Radius of the swept ball that keeps the lens off a wall. |
-| `player_camera.min_distance` | number | `0.6000000238418579` | Closest the camera is pulled to the target. |
-| `player_camera.zoom` | switch | `false` | Scroll or triggers change the distance within these limits. |
-| `player_camera.zoom_min` | number | `2.0` |  |
-| `player_camera.zoom_max` | number | `12.0` |  |
-| `player_camera.zoom_speed` | number | `1.0` |  |
-| `player_camera.dead_zone` | list of number | `[0.0,0.0]` | Side and top-down views: how far the target walks before the camera follows, each side of the centre. |
-| `player_camera.look_ahead` | number | `0.0` | How far ahead of a moving target the camera looks. |
-| `player_camera.look_ahead_smoothing` | number | `0.25` | Seconds the look-ahead takes to build or fade. |
-| `player_camera.eye_follows_stance` | switch | `true` | A first-person eye drops and rises with a crouch. |
+| `player_camera.player` | whole number 0 to 7 | `0` | Which local player's Look actions turn it (0 is the first). |
+| `player_camera.look` | switch | `true` | **Look input** 3D only. Look input turns the view. Off keeps the Camera component's fixed framing. |
+| `player_camera.sensitivity` | number from 0 | `0.11999999731779099` | Used when `look` is set. 3D only. Degrees a mouse count turns the view. |
+| `player_camera.stick_speed` | number from 0 (°/s) | `180.0` | Used when `look` is set. 3D only. Degrees a second at full stick deflection. |
+| `player_camera.invert_y` | switch | `false` | **Invert Y** Used when `look` is set. 3D only. |
+| `player_camera.min_pitch` | number -89 to 89 (°) | `-80.0` | Used when `look` is set. 3D only. |
+| `player_camera.max_pitch` | number -89 to 89 (°) | `80.0` | Used when `look` is set. 3D only. |
+| `player_camera.turn_body` | switch | `false` | Used when `look` is set. 3D only. Turn the body to face where the camera looks (first person). |
+| `player_camera.smoothing` | number from 0 (s) | `0.0` | Seconds the camera takes to catch up (0 follows exactly). |
+| `player_camera.collision` | switch | `true` | **Avoid walls** 3D only. Third person: pull in so walls never sit between camera and target. |
+| `player_camera.collision_radius` | number from 0 | `0.25` | **Lens radius** Used when `collision` is set. 3D only. Radius of the swept ball that keeps the lens off a wall. |
+| `player_camera.min_distance` | number from 0 | `0.6000000238418579` | **Closest** Used when `collision` is set. 3D only. Closest the camera is pulled to the target. |
+| `player_camera.zoom` | switch | `false` | **Scroll zoom** 3D only. Scroll or triggers change the distance within these limits. |
+| `player_camera.zoom_min` | number from 0.1 | `2.0` | Used when `zoom` is set. 3D only. |
+| `player_camera.zoom_max` | number from 0.1 | `12.0` | Used when `zoom` is set. 3D only. |
+| `player_camera.zoom_speed` | number from 0 | `1.0` | Used when `zoom` is set. 3D only. |
+| `player_camera.dead_zone` | list of number | `[0.0,0.0]` | 2D only. Side and top-down views: how far the target walks before the camera follows, each side of the centre. |
+| `player_camera.look_ahead` | number from 0 | `0.0` | 2D only. How far ahead of a moving target the camera looks. |
+| `player_camera.look_ahead_smoothing` | number from 0 (s) | `0.25` | 2D only. Seconds the look-ahead takes to build or fade. |
+| `player_camera.eye_follows_stance` | switch | `true` | **Eye follows crouch** 3D only. A first-person eye drops and rises with a crouch. |
 
 ## Joint
 

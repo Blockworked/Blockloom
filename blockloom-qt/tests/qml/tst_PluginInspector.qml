@@ -50,25 +50,25 @@ TestCase {
     function test_aFormHasARowPerField() {
         const form = createTemporaryObject(formFactory, test, { type: healthType, payload: { hp: 40 } });
         verify(form !== null);
-        verify(findChild(form, "plugin-row-hp") !== null);
-        verify(findChild(form, "plugin-row-bar_color") !== null);
-        verify(findChild(form, "plugin-row-tags") !== null);
+        verify(findChild(form, "property-row-hp") !== null);
+        verify(findChild(form, "property-row-bar_color") !== null);
+        verify(findChild(form, "property-row-tags") !== null);
     }
     function test_anAbsentValueReadsAsTheDefault() {
         const form = createTemporaryObject(formFactory, test, { type: healthType, payload: { hp: 40 } });
-        compare(form.valueOf(healthType.fields[0]), 40);
-        compare(form.valueOf(healthType.fields[1]), "#44CC55");
+        compare(form.valueOf(form.fields[0]), 40);
+        compare(form.valueOf(form.fields[1]), "#44CC55");
     }
     function test_anEditKeepsKeysTheSchemaDoesNotName() {
         const form = createTemporaryObject(formFactory, test, { type: healthType, payload: { hp: 40, from_the_future: true } });
-        const next = form.with_(healthType.fields[0], 55);
+        const next = form.withField(form.fields[0], 55);
         compare(next.hp, 55);
         compare(next.from_the_future, true);
         compare(form.payload.hp, 40);
     }
     function test_labelsReadAsWords() {
         const form = createTemporaryObject(formFactory, test, { type: healthType, payload: {} });
-        compare(form.labelOf("bar_color"), "Bar color");
+        compare(form.labelOf({ name: "bar_color" }), "Bar color");
     }
     function test_numbersStayInsideTheirBounds() {
         const e = createTemporaryObject(editorFactory, test, { ty: { type: "int", min: 0, max: 10 }, value: 3 });
@@ -97,6 +97,14 @@ TestCase {
         choiceApp.appState = { plugins: { choices: { p: { blocks: ["air", "oak_stairs[facing=east]"] } } } };
         compare(e.choices(ty).map(c => c.value), ["air", "oak_stairs[facing=east]"]);
         compare(e.choices({ type: "choice", options: ["x"] })[0].value, "x");
+    }
+    function test_aRecordFormListsASourcedChoiceFromThePlugin() {
+        const ty = { name: "p/T", fields: [{ name: "block", type: "choice", options: ["air"], source: "blocks" }], defaults: { block: "air" }, plugin: "p" };
+        choiceApp.appState = { plugins: { choices: { p: { blocks: ["air", "dirt"] } } } };
+        const form = createTemporaryObject(formFactory, test, { type: ty, payload: {}, app: choiceApp });
+        compare(form.choices(form.fields[0]).join(","), "air,dirt");
+        choiceApp.appState = { plugins: {} };
+        compare(form.choices(form.fields[0]).join(","), "air");
     }
     function test_soundAssetsUseTheTraysAudioKind() {
         const e = createTemporaryObject(editorFactory, test, { ty: { type: "asset", kind: "sound" }, value: "" });
@@ -141,15 +149,15 @@ TestCase {
     }
     function test_aCollapsedGroupStartsFoldedAndOpensOnClick() {
         const form = createTemporaryObject(formFactory, test, { type: laidOut, payload: { mode: "b" } });
-        verify(findChild(form, "plugin-row-power") !== null);
-        verify(findChild(form, "plugin-row-note") === null);
-        form.flip(form.sections[2]);
+        verify(findChild(form, "property-row-power") !== null);
+        verify(findChild(form, "property-row-note") === null);
+        form.flip(form.sections[2].label);
         verify(form.isOpen(form.sections[2]));
-        verify(findChild(form, "plugin-row-note") !== null);
+        verify(findChild(form, "property-row-note") !== null);
     }
     function test_visibleWhenReadsAnotherField() {
         const form = createTemporaryObject(formFactory, test, { type: laidOut, payload: { on: false } });
-        const f = name => laidOut.fields.find(x => x.name === name);
+        const f = name => form.fields.find(x => x.name === name);
         verify(!form.shown(f("power")));
         verify(!form.shown(f("note")));
         verify(!form.shown(f("extra")));

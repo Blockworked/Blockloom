@@ -16,40 +16,60 @@ use serde::{Deserialize, Serialize};
 pub struct PlayerCameraSpec {
     pub enabled: bool,
     /// Which local player's Look actions turn it (0 is the first).
+    #[schema(min = 0, max = 7)]
     pub player: u8,
-    /// Look input turns the view (3D). Off keeps the Camera component's
+    /// Look input turns the view. Off keeps the Camera component's
     /// fixed framing.
+    #[schema(label = "Look input", only_3d)]
     pub look: bool,
     /// Degrees a mouse count turns the view.
+    #[schema(min = 0, show_if = "look", only_3d)]
     pub sensitivity: f32,
     /// Degrees a second at full stick deflection.
+    #[schema(unit = "°/s", min = 0, show_if = "look", only_3d)]
     pub stick_speed: f32,
+    #[schema(label = "Invert Y", show_if = "look", only_3d)]
     pub invert_y: bool,
+    #[schema(unit = "°", min = -89, max = 89, show_if = "look", only_3d)]
     pub min_pitch: f32,
+    #[schema(unit = "°", min = -89, max = 89, show_if = "look", only_3d)]
     pub max_pitch: f32,
     /// Turn the body to face where the camera looks (first person).
+    #[schema(show_if = "look", only_3d)]
     pub turn_body: bool,
     /// Seconds the camera takes to catch up (0 follows exactly).
+    #[schema(unit = "s", min = 0)]
     pub smoothing: f32,
     /// Third person: pull in so walls never sit between camera and target.
+    #[schema(label = "Avoid walls", only_3d)]
     pub collision: bool,
     /// Radius of the swept ball that keeps the lens off a wall.
+    #[schema(label = "Lens radius", min = 0, show_if = "collision", only_3d)]
     pub collision_radius: f32,
     /// Closest the camera is pulled to the target.
+    #[schema(label = "Closest", min = 0, show_if = "collision", only_3d)]
     pub min_distance: f32,
     /// Scroll or triggers change the distance within these limits.
+    #[schema(label = "Scroll zoom", only_3d)]
     pub zoom: bool,
+    #[schema(min = 0.1, show_if = "zoom", only_3d)]
     pub zoom_min: f32,
+    #[schema(min = 0.1, show_if = "zoom", only_3d)]
     pub zoom_max: f32,
+    #[schema(min = 0, show_if = "zoom", only_3d)]
     pub zoom_speed: f32,
     /// Side and top-down views: how far the target walks before the camera
     /// follows, each side of the centre.
+    #[schema(only_2d)]
     pub dead_zone: [f32; 2],
     /// How far ahead of a moving target the camera looks.
+    #[schema(min = 0, only_2d)]
     pub look_ahead: f32,
     /// Seconds the look-ahead takes to build or fade.
+    #[schema(unit = "s", min = 0, only_2d)]
     pub look_ahead_smoothing: f32,
     /// A first-person eye drops and rises with a crouch.
+    #[schema(label = "Eye follows crouch", only_3d)]
     pub eye_follows_stance: bool,
 }
 

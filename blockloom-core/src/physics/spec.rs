@@ -82,12 +82,14 @@ impl Constraints {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
 pub struct RigidbodySpec {
     #[serde(default)]
+    #[schema(skip)]
     pub id: ComponentId,
     #[serde(default)]
     pub body_type: BodyType,
-    /// 2D only: a body that is not simulated is left out of the world with its
+    /// A body that is not simulated is left out of the world with its
     /// colliders.
     #[serde(default = "yes")]
+    #[schema(only_2d)]
     pub simulated: bool,
     #[serde(default)]
     pub mass: MassSource,
@@ -99,40 +101,51 @@ pub struct RigidbodySpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inertia: Option<[f32; 3]>,
     #[serde(default)]
+    #[schema(label = "Drag", min = 0)]
     pub linear_damping: f32,
     #[serde(default = "default_angular_damping")]
+    #[schema(label = "Angular drag", min = 0)]
     pub angular_damping: f32,
     /// Whether the world's gravity applies at all (Unity's Use Gravity).
     #[serde(default = "yes")]
     pub use_gravity: bool,
     /// Blockloom's multiplier on top of `use_gravity`.
     #[serde(default = "one")]
+    #[schema(label = "Gravity ×", show_if = "use_gravity")]
     pub gravity_scale: f32,
     #[serde(default)]
+    #[schema(label = "Interpolate")]
     pub interpolation: Interpolation,
     #[serde(default)]
+    #[schema(label = "Detection", only_3d)]
     pub collision_detection: CollisionDetection,
     #[serde(default)]
     pub constraints: Constraints,
     /// Metres per second.
     #[serde(default = "default_max_linear")]
+    #[schema(label = "Max speed", min = 0.01, advanced)]
     pub max_linear_velocity: f32,
     /// Radians per second.
     #[serde(default = "default_max_angular")]
+    #[schema(label = "Max spin", min = 0.01, only_3d, advanced)]
     pub max_angular_velocity: f32,
     /// Mass-normalised kinetic energy below which the body may sleep.
     #[serde(default = "default_sleep")]
+    #[schema(label = "Sleep below", min = 0, advanced)]
     pub sleep_threshold: f32,
     /// Extra solver iterations for this body; `None` uses the world's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(label = "Solver passes", advanced)]
     pub solver_iterations: Option<u32>,
     /// Metres per second a penetrating contact may push this body out at.
     #[serde(default = "default_depenetration")]
+    #[schema(label = "Push-out", unit = "m/s", min = 0, advanced)]
     pub max_depenetration_velocity: f32,
     /// A migrated `Body` that had its character-control switch on: the runtime
     /// keeps the old kinematic controller on this body until it is converted to a
     /// CharacterController.
     #[serde(default, skip_serializing_if = "is_false")]
+    #[schema(skip)]
     pub legacy_character_control: bool,
 }
 

@@ -2,6 +2,8 @@ import QtQuick
 import QtQuick.Controls
 import QtTest
 import "../../qml" as Editor
+import "fixtures/Registry3d.js" as Registry3d
+import "fixtures/Registry2d.js" as Registry2d
 
 TestCase {
     id: test
@@ -18,16 +20,22 @@ TestCase {
         property var appState: ({ project: { physics: { layers: { names: ["Ground", "Player"] } } } })
         function invoke(command, args, done, failed) { test.calls.push({ command: command, args: args }); if (done) done(test.results[command] !== undefined ? test.results[command] : {}); }
     }
-    Component { id: bodyFactory; Editor.RigidbodyForm { app: stubApp; actorId: "a1" } }
+    Component { id: bodyFactory; Editor.RigidbodyForm { app: stubApp; actorId: "a1"; fields: test.fieldsOf("Rigidbody", is3d) } }
     Component { id: colliderFactory; Editor.ColliderForm { app: stubApp } }
-    Component { id: motorFactory; Editor.CharacterMotorForm { app: stubApp; actorId: "a1" } }
-    Component { id: cameraFactory; Editor.PlayerCameraForm { app: stubApp; actorId: "a1" } }
+    Component { id: motorFactory; Editor.CharacterMotorForm { app: stubApp; actorId: "a1"; fields: test.fieldsOf("CharacterMotor", is3d) } }
+    Component { id: cameraFactory; Editor.PlayerCameraForm { app: stubApp; actorId: "a1"; fields: test.fieldsOf("PlayerCamera", is3d) } }
     Component { id: setupFactory; Editor.PlayerSetupCard { app: stubApp; actorId: "a1" } }
     Component { id: upgradeFactory; Editor.PhysicsUpgradeCard { app: stubApp; actorId: "a1" } }
     Component { id: constraintFactory; Editor.ConstraintForm { app: stubApp; actorId: "a1" } }
-    Component { id: controllerFactory; Editor.CharacterControllerForm { app: stubApp; actorId: "a1" } }
+    Component { id: controllerFactory; Editor.CharacterControllerForm { app: stubApp; actorId: "a1"; fields: test.fieldsOf("CharacterController", is3d) } }
 
     function init() { calls = []; results = ({}); }
+    // A component's record fields from the registry fixture of a dimension.
+    function fieldsOf(name, is3d) {
+        const reg = is3d === false ? Registry2d.registry : Registry3d.registry;
+        const c = reg.components.find(t => t.name === name);
+        return c.fields.find(f => f.type === "struct").fields;
+    }
     function last() { return calls[calls.length - 1]; }
 
     function test_aBlankRigidbodyShowsUnityDefaults() {
@@ -138,8 +146,9 @@ TestCase {
         compare(three.m.space, "Camera");
         const two = createTemporaryObject(motorFactory, test, { component: { motor: {} }, is3d: false });
         compare(two.m.walk_speed, 240);
-        compare(two.m.space, "World");
-        compare(two.m.turn_speed, 0);
+        // Move space and turning are 3D only, so 2D's registry has no such fields.
+        verify(!two.fields.some(f => f.name === "space" || f.name === "turn_speed"));
+        verify(two.fields.some(f => f.name === "top_down"));
     }
     function test_aMotorEditSendsTheWholeNextSpec() {
         const form = createTemporaryObject(motorFactory, test, { component: { motor: { id: "mm", jump_height: 2 } } });
@@ -156,7 +165,7 @@ TestCase {
         compare(three.p.look, true);
         compare(three.p.collision, true);
         const two = createTemporaryObject(cameraFactory, test, { component: { player_camera: {} }, is3d: false });
-        compare(two.p.look, false);
+        verify(!two.fields.some(f => f.name === "look"));
         compare(two.p.dead_zone.length, 2);
     }
     function test_aPlayerCameraEditSendsTheWholeNextSpec() {

@@ -825,7 +825,8 @@ plugin ones plus `struct`, `map`, `optional`, `enum` (internally tagged or
 external) and `opaque` (a type with no `Schema`, picked by autoref
 specialization in `schema::__private`). `#[schema(...)]` adds drawing hints:
 `label`, `unit`, `min`/`max`/`step`, `slider`, `multiline`, `color`, `asset`,
-`actor`, `group`, `advanced`, `opaque`, `skip`, and `show_if`/`hide_if`
+`actor`, `group`, `advanced`, `only_2d`/`only_3d` (the other dimension's
+registry leaves the field out), `opaque`, `skip`, and `show_if`/`hide_if`
 (`kind = Spot`, `kind != Rect`, `kind in [Point, Spot]`, joined with `&&`; a
 field starting with `/` reads from the top of the component). A field's
 default is the container's `Default` where it has one, else its serde
@@ -851,10 +852,14 @@ The editor fetches the registry once per project and dimension (`Main.qml`'s
 `typeRegistry`, `componentFields`, `worldField`) and draws schema-built cards
 with blockstitch's `PropertyForm`/`PropertyEditor` through `RegistryForm.qml`,
 which supplies the editor's color swatch, asset box and actor picker. The
-Light and Emitter cards and the Fog settings are drawn this way, and the
-add-component menu asks `add_component`, so their defaults are Rust's only.
-`blockloom-qt/tests/qml/fixtures/Registry3d.js` is the registry the QML tests
-(`tst_RegistryCards.qml`) read; `BLESS=1 cargo test -p blockloom-core --test
+Light and Emitter cards, the Fog settings, the CharacterController,
+CharacterMotor and PlayerCamera cards, most of the Rigidbody card (body type,
+mass, centre, inertia and freezes stay hand-drawn) and every plugin record
+(`PluginRecordForm.qml`) are drawn this way, and the add-component menu asks
+`add_component`, so their defaults are Rust's only. Collider and Constraint
+cards are still hand-written. `blockloom-qt/tests/qml/fixtures/Registry3d.js`
+and `Registry2d.js` are the registries the QML tests (`tst_RegistryCards.qml`,
+`tst_PhysicsInspector.qml`) read; `BLESS=1 cargo test -p blockloom-core --test
 registry_fixture` regenerates it after a schema change. A new hint or
 condition form is taught to `PropertyForm.qml` (blockstitch) and `typeSchema`
 in `mcp/src/plugins.ts`. `docs/reference/` (components, world, settings) is
@@ -1106,13 +1111,15 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   update, remove, sync, undo the last change, clean the cache). A "Settings"
   section edits each plugin resource in place. It has QML tests
   (`tests/qml/tst_Plugins.qml`).
-- **Schema-generated inspectors** (`PluginRecordForm.qml`, `PluginValueEditor.qml`):
+- **Schema-generated inspectors** (`PluginRecordForm.qml` over `RegistryForm`, and
+  `PluginValueEditor.qml` for scene tool options):
   `plugin_list` and the state snapshot's `plugins.types` list every component
   and resource type (`name`, `displayName`, `kind`, `version`, `fields`,
   `defaults`), built by `types_json` from the installed schemas. A form has a
-  row per field and a `PluginValueEditor` per value (`bool`, `int`, `number`,
-  `text`, `color`, `vec3`, `choice`, `asset`, `actor`, and `list` of any of
-  those, recursively), clamped to the schema's bounds. An edit reports the whole
+  row per field drawn by blockstitch's `PropertyEditor` (`bool`, `int`,
+  `number`, `text`, `color`, `vec3`, `choice`, `asset`, `actor`, and `list` of
+  any of those, recursively), clamped to the schema's bounds; a sourced
+  `choice` lists `plugins.choices` (`RegistryForm.choices`). An edit reports the whole
   next payload with any key the schema doesn't name kept, so an older plugin
   never trims a newer document. `InspectorPanel.qml` draws a `Plugin` component
   as that form (`pluginCard`), says so when the plugin is missing or the record
@@ -1120,7 +1127,8 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   Add component (`plugin:<name>` -> `add_plugin_component`). Editing goes
   through `set_plugin_component`/`set_plugin_resource`, so validation and undo
   are the backend's. QML tests: `tests/qml/tst_PluginInspector.qml`. A new
-  `FieldType` must be taught to `PluginValueEditor.qml` (and `src/plugins.ts`).
+  `FieldType` must be taught to blockstitch's `PropertyEditor.qml`,
+  `PluginValueEditor.qml` and `src/plugins.ts`.
   Drawing hints are declarative and never touch a payload: a field's `ui`
   (`label`, `widget` of `slider` for a bounded int/number or `multiline` for
   text, `unit`, `step`, `visible_when` of `{field, equals | not_equals}` or

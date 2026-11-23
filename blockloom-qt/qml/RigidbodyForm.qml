@@ -3,7 +3,7 @@ import QtQuick.Layouts
 import com.blockworked.Blockstitch 1.0
 
 // The Rigidbody component: motion, mass and integration, independent of any
-// shape. Every edit sends the whole next spec to `set_rigidbody`, so the
+// shape, mostly drawn from the type registry. Every edit sends the whole next spec to `set_rigidbody`, so the
 // backend validates it and an undo step covers it.
 ColumnLayout {
     id: root
@@ -14,15 +14,19 @@ ColumnLayout {
     property bool is3d: true
     spacing: 6
 
-    readonly property var defaults: ({
-        body_type: "Dynamic", simulated: true, mass: { mode: "Explicit", mass: 1 },
-        linear_damping: 0, angular_damping: 0.05, use_gravity: true, gravity_scale: 1,
-        interpolation: "None", collision_detection: "Discrete",
-        constraints: { freeze_position: [false, false, false], freeze_rotation: [false, false, false] },
-        max_linear_velocity: 10000, max_angular_velocity: 7, sleep_threshold: 0.005,
-        solver_iterations: null, max_depenetration_velocity: 10
-    })
-    readonly property var r: Object.assign({}, defaults, component.rigidbody || {})
+    // The rigidbody record's fields, from the registry of this dimension.
+    property var fields: []
+    readonly property var defaults: {
+        const out = {};
+        for (const f of fields) if (f.default !== undefined) out[f.name] = f.default;
+        return out;
+    }
+    // Drawn by hand below: per-dimension body types, the mass switch, the
+    // optional centre and inertia and the freeze switches.
+    readonly property var ownRows: ["body_type", "mass", "center_of_mass", "inertia", "constraints"]
+    readonly property var r: Object.assign({ mass: { mode: "Explicit", mass: 1 },
+        constraints: { freeze_position: [false, false, false], freeze_rotation: [false, false, false] } },
+        defaults, component.rigidbody || {})
     readonly property bool density: r.mass.mode === "Density"
     readonly property var axes: is3d ? ["X", "Y", "Z"] : ["X", "Y"]
 
@@ -49,18 +53,10 @@ ColumnLayout {
     readonly property var typeOptions: is3d
         ? [{ value: "Dynamic", label: "Dynamic" }, { value: "Kinematic", label: "Kinematic" }]
         : [{ value: "Dynamic", label: "Dynamic" }, { value: "Kinematic", label: "Kinematic" }, { value: "Static", label: "Static" }]
-    readonly property var detectionOptions: [
-        { value: "Discrete", label: "Discrete" }, { value: "Continuous", label: "Continuous" },
-        { value: "ContinuousDynamic", label: "Continuous Dynamic" }, { value: "ContinuousSpeculative", label: "Continuous Speculative" }]
-    readonly property var interpolationOptions: [
-        { value: "None", label: "None" }, { value: "Interpolate", label: "Interpolate" }, { value: "Extrapolate", label: "Extrapolate" }]
     readonly property var massOptions: [{ value: "Explicit", label: "Mass" }, { value: "Density", label: "Density" }]
 
     InspectorRow { label: "Body type"; Layout.fillWidth: true
         ChoiceField { objectName: "body-type"; options: root.typeOptions; value: root.r.body_type; onChosen: v => root.write({ body_type: v }) } }
-    InspectorRow { label: "Simulated"; visible: !root.is3d; Layout.fillWidth: true
-        SwitchField { value: root.r.simulated; onToggled: on => root.write({ simulated: on }) } Item { Layout.fillWidth: true } }
-
     InspectorRow { label: "Mass from"; Layout.fillWidth: true
         ChoiceField { objectName: "mass-mode"; options: root.massOptions; value: root.r.mass.mode
             onChosen: v => root.write({ mass: v === "Density" ? { mode: "Density", density: 1 } : { mode: "Explicit", mass: 1 } }) } }
@@ -86,19 +82,6 @@ ColumnLayout {
         }
         Item { visible: !root.r.inertia; Layout.fillWidth: true }
     }
-
-    InspectorRow { label: "Drag"; Layout.fillWidth: true
-        NumberField { objectName: "linear-damping"; value: root.r.linear_damping; onCommitted: n => root.write({ linear_damping: Math.max(0, n) }) } }
-    InspectorRow { label: "Angular drag"; Layout.fillWidth: true
-        NumberField { objectName: "angular-damping"; value: root.r.angular_damping; fallback: 0.05; onCommitted: n => root.write({ angular_damping: Math.max(0, n) }) } }
-    InspectorRow { label: "Use gravity"; Layout.fillWidth: true
-        SwitchField { value: root.r.use_gravity; onToggled: on => root.write({ use_gravity: on }) } Item { Layout.fillWidth: true } }
-    InspectorRow { label: "Gravity ×"; visible: root.r.use_gravity; Layout.fillWidth: true
-        NumberField { objectName: "gravity-scale"; value: root.r.gravity_scale; fallback: 1; onCommitted: n => root.write({ gravity_scale: n }) } }
-    InspectorRow { label: "Interpolate"; Layout.fillWidth: true
-        ChoiceField { objectName: "interpolation"; options: root.interpolationOptions; value: root.r.interpolation; onChosen: v => root.write({ interpolation: v }) } }
-    InspectorRow { label: "Detection"; visible: root.is3d; Layout.fillWidth: true
-        ChoiceField { objectName: "collision-detection"; options: root.detectionOptions; value: root.r.collision_detection; onChosen: v => root.write({ collision_detection: v }) } }
 
     InspectorRow { label: "Freeze position"; Layout.fillWidth: true
         Repeater {
@@ -126,17 +109,13 @@ ColumnLayout {
         Item { Layout.fillWidth: true }
     }
 
-    InspectorRow { label: "Max speed"; Layout.fillWidth: true
-        NumberField { objectName: "max-linear"; value: root.r.max_linear_velocity; fallback: 10000; onCommitted: n => root.write({ max_linear_velocity: Math.max(0.01, n) }) } }
-    InspectorRow { label: "Max spin"; visible: root.is3d; Layout.fillWidth: true
-        NumberField { objectName: "max-angular"; value: root.r.max_angular_velocity; fallback: 7; onCommitted: n => root.write({ max_angular_velocity: Math.max(0.01, n) }) } }
-    InspectorRow { label: "Sleep below"; Layout.fillWidth: true
-        NumberField { objectName: "sleep-threshold"; value: root.r.sleep_threshold; fallback: 0.005; onCommitted: n => root.write({ sleep_threshold: Math.max(0, n) }) } }
-    InspectorRow { label: "Solver passes"; Layout.fillWidth: true
-        NumberField { objectName: "solver-iterations"; value: root.r.solver_iterations; allowEmpty: true; fallback: 1; placeholderText: "world default"
-            onCommitted: n => root.write({ solver_iterations: n === null ? null : Math.max(1, Math.round(n)) }) } }
-    InspectorRow { label: "Push-out m/s"; Layout.fillWidth: true
-        NumberField { objectName: "max-depenetration"; value: root.r.max_depenetration_velocity; fallback: 10; onCommitted: n => root.write({ max_depenetration_velocity: Math.max(0, n) }) } }
+    RegistryForm {
+        objectName: "rigidbody-form"
+        app: root.app
+        fields: root.fields.filter(f => root.ownRows.indexOf(f.name) < 0)
+        value: root.r
+        onChanged: next => root.write(next)
+    }
     Text { visible: root.r.legacy_character_control === true; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 11
         text: "Migrated from a Body with character control on; it keeps the old kinematic controller." }
 }

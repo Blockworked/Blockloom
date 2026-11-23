@@ -916,6 +916,7 @@ Rectangle {
         RigidbodyForm {
             readonly property var c: parent.c
             app: root.app; actorId: root.actor ? root.actor.id : ""; component: c; is3d: root.is3d
+            fields: root.registryStruct("Rigidbody")
         }
     }
     Component {
@@ -923,6 +924,7 @@ Rectangle {
         CharacterControllerForm {
             readonly property var c: parent.c
             app: root.app; actorId: root.actor ? root.actor.id : ""; component: c; is3d: root.is3d
+            fields: root.registryStruct("CharacterController")
         }
     }
     Component {
@@ -930,6 +932,7 @@ Rectangle {
         PlayerCameraForm {
             readonly property var c: parent.c
             app: root.app; actorId: root.actor ? root.actor.id : ""; component: c; is3d: root.is3d
+            fields: root.registryStruct("PlayerCamera")
         }
     }
     Component {
@@ -937,6 +940,7 @@ Rectangle {
         CharacterMotorForm {
             readonly property var c: parent.c
             app: root.app; actorId: root.actor ? root.actor.id : ""; component: c; is3d: root.is3d
+            fields: root.registryStruct("CharacterMotor")
         }
     }
     Component {

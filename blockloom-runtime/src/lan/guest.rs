@@ -107,15 +107,18 @@ pub fn run(invite: &str, trusted: &str, game: Option<&std::path::Path>) -> Resul
 }
 
 fn supported(visual: Option<&Visual>, dimension: u8) -> Result<(), String> {
-    let lengths:Vec<f32>=match visual {
-        None=>vec![],
-        Some(Visual::Rect{size,..}) if dimension==0=>size.to_vec(),
-        Some(Visual::Circle{radius,..}) if dimension==0=>vec![*radius],
-        Some(Visual::Cuboid{size,..}) if dimension==1=>size.to_vec(),
-        Some(Visual::Sphere{radius,..}) if dimension==1=>vec![*radius],
-        Some(Visual::Capsule{radius,height,..}) if dimension==1=>vec![*radius,*height],
-        Some(Visual::Plane{size,..}) if dimension==1=>size.to_vec(),
-        _=>return Err("the spectator view draws primitive looks only; use blockloom-lan for other replicas".into()),
+    let lengths: Vec<f32> = match visual {
+        None => vec![],
+        Some(Visual::Rect { size, .. }) if dimension == 0 => size.to_vec(),
+        Some(Visual::Circle { radius, .. }) if dimension == 0 => vec![*radius],
+        Some(Visual::Cuboid { size, .. }) if dimension == 1 => size.to_vec(),
+        Some(Visual::Sphere { radius, .. }) if dimension == 1 => vec![*radius],
+        Some(Visual::Capsule { radius, height, .. }) if dimension == 1 => vec![*radius, *height],
+        Some(Visual::Plane { size, .. }) if dimension == 1 => size.to_vec(),
+        _ => return Err(
+            "the spectator view draws primitive looks only; use blockloom-lan for other replicas"
+                .into(),
+        ),
     };
     if lengths
         .iter()
