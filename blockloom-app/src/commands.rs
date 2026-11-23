@@ -1440,16 +1440,12 @@ pub(crate) fn set_background(
     app: &AppHandle,
     color: String,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
     let color = normalize_block_color(&color).ok_or("Choose a valid color")?;
-    if let Some(project) = s.project_mut() {
-        project.world.background = color;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.background = color;
+        Ok(world)
+    })
 }
 
 pub(crate) fn set_gravity(
@@ -1457,15 +1453,11 @@ pub(crate) fn set_gravity(
     app: &AppHandle,
     gravity: [f32; 3],
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
-    if let Some(project) = s.project_mut() {
-        project.world.gravity = gravity;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.gravity = gravity;
+        Ok(world)
+    })
 }
 
 pub(crate) fn set_fixed_rate(
@@ -1473,15 +1465,11 @@ pub(crate) fn set_fixed_rate(
     app: &AppHandle,
     fixed_rate: f32,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
-    if let Some(project) = s.project_mut() {
-        project.world.fixed_rate = fixed_rate.clamp(1.0, 1000.0);
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.fixed_rate = fixed_rate.clamp(1.0, 1000.0);
+        Ok(world)
+    })
 }
 
 fn validate_navigation(navigation: &NavSettings) -> Result<(), String> {
@@ -1507,15 +1495,11 @@ pub(crate) fn set_navigation(
     navigation: NavSettings,
 ) -> Result<(), String> {
     validate_navigation(&navigation)?;
-    let mut s = lock(state)?;
-    push_undo(&mut s);
-    if let Some(project) = s.project_mut() {
-        project.world.navigation = navigation;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.navigation = navigation;
+        Ok(world)
+    })
 }
 
 pub(crate) fn set_camera(
@@ -1523,15 +1507,11 @@ pub(crate) fn set_camera(
     app: &AppHandle,
     camera: Camera,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
-    if let Some(project) = s.project_mut() {
-        project.world.camera = camera;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.camera = camera;
+        Ok(world)
+    })
 }
 
 pub(crate) fn read_lighting_asset(state: &SharedState, path: String) -> Result<Lighting, String> {
@@ -1622,45 +1602,37 @@ pub(crate) fn set_lighting(
     app: &AppHandle,
     lighting: Lighting,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
     let sanitized = sanitize_lighting(lighting.clone())?;
-    if let Some(project) = s.project_mut() {
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
         // A sky path here is the old spelling of an HDRI sky.
         if !lighting.sky.trim().is_empty() {
-            let sky = &mut project.world.sky;
+            let sky = &mut world.sky;
             sky.kind = SkyKind::Hdri;
             sky.hdri.path = lighting.sky.clone();
             sky.hdri.brightness = lighting.sky_brightness;
             sky.normalize();
         }
-        project.world.lighting = sanitized;
+        world.lighting = sanitized;
         // Editing inline settings detaches them from the shared asset.
-        project.world.lighting.asset.clear();
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+        world.lighting.asset.clear();
+        Ok(world)
+    })
 }
 
 /// Sets the 3D sky: its kind, the sun's position, each kind's settings and
 /// what it lights. Edited on the scene's Sky component.
 pub(crate) fn set_sky(state: &SharedState, app: &AppHandle, sky: Sky) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
     let mut sky = sky;
     sky.normalize();
     for (name, color) in sky.colors_mut() {
         *color = normalize_block_color(color).ok_or(format!("Choose a valid {name} color"))?;
     }
-    if let Some(project) = s.project_mut() {
-        project.world.sky = sky;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.sky = sky;
+        Ok(world)
+    })
 }
 
 /// Sets the air: height fog, volumetric fog and aerial perspective. What
@@ -1684,17 +1656,13 @@ pub(crate) fn set_clouds(
     app: &AppHandle,
     clouds: blockloom_core::clouds::Clouds,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
     let mut clouds = clouds;
     clouds.normalize();
-    if let Some(project) = s.project_mut() {
-        project.world.clouds = clouds;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.clouds = clouds;
+        Ok(world)
+    })
 }
 
 pub(crate) fn set_lighting_2d(
@@ -1702,17 +1670,13 @@ pub(crate) fn set_lighting_2d(
     app: &AppHandle,
     lighting: blockloom_core::light2d::Lighting2d,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
     let mut lighting = lighting;
     lighting.normalize();
-    if let Some(project) = s.project_mut() {
-        project.world.lighting2d = lighting;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.lighting2d = lighting;
+        Ok(world)
+    })
 }
 
 pub(crate) fn set_post_2d(
@@ -1720,17 +1684,13 @@ pub(crate) fn set_post_2d(
     app: &AppHandle,
     post: blockloom_core::post2d::Post2d,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
     let mut post = post;
     post.normalize();
-    if let Some(project) = s.project_mut() {
-        project.world.post2d = post;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.post2d = post;
+        Ok(world)
+    })
 }
 
 pub(crate) fn set_camera_2d(
@@ -1738,17 +1698,13 @@ pub(crate) fn set_camera_2d(
     app: &AppHandle,
     camera: blockloom_core::camera2d::Camera2dSettings,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
     let mut camera = camera;
     camera.normalize();
-    if let Some(project) = s.project_mut() {
-        project.world.camera2d = camera;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.camera2d = camera;
+        Ok(world)
+    })
 }
 
 pub(crate) fn set_cloud_layers(
@@ -1756,17 +1712,13 @@ pub(crate) fn set_cloud_layers(
     app: &AppHandle,
     layers: Vec<blockloom_core::cloud_layers::CloudLayer>,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
     let mut layers = layers;
     blockloom_core::cloud_layers::normalize(&mut layers);
-    if let Some(project) = s.project_mut() {
-        project.world.cloud_layers = layers;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.cloud_layers = layers;
+        Ok(world)
+    })
 }
 
 /// Paints a stroke into a cloud layer's coverage file and points the layer
@@ -1853,35 +1805,27 @@ pub(crate) fn set_lightning(
     app: &AppHandle,
     lightning: Lightning,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
     let mut lightning = lightning;
     lightning.normalize();
     lightning.color = normalize_block_color(&lightning.color)
         .ok_or("Choose a valid lightning color".to_string())?;
-    if let Some(project) = s.project_mut() {
-        project.world.lightning = lightning;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.lightning = lightning;
+        Ok(world)
+    })
 }
 
 /// Sets the wind: direction, speed, gusts, the profile near the ground, the
 /// storm dial and how the clouds ride it.
 pub(crate) fn set_wind(state: &SharedState, app: &AppHandle, wind: Wind) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
     let mut wind = wind;
     wind.normalize();
-    if let Some(project) = s.project_mut() {
-        project.world.wind = wind;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.wind = wind;
+        Ok(world)
+    })
 }
 
 /// Sets the time-of-day and weather director: the 24h clock, its curve
@@ -1892,17 +1836,13 @@ pub(crate) fn set_director(
     app: &AppHandle,
     director: blockloom_core::director::Director,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
     let mut director = director;
     director.normalize();
-    if let Some(project) = s.project_mut() {
-        project.world.director = director;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.director = director;
+        Ok(world)
+    })
 }
 
 /// Replaces the director with one of its keyframe presets
@@ -2110,17 +2050,13 @@ pub(crate) fn set_vfx(
     app: &AppHandle,
     vfx: blockloom_core::vfx::VfxSettings,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
     let mut vfx = vfx;
     vfx.normalize();
-    if let Some(project) = s.project_mut() {
-        project.world.vfx = vfx;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.vfx = vfx;
+        Ok(world)
+    })
 }
 
 /// Saves the shared rendering budgets and frame-time feedback settings.
@@ -2130,15 +2066,11 @@ pub(crate) fn set_quality(
     mut quality: blockloom_core::quality::Settings,
 ) -> Result<(), String> {
     quality.normalize();
-    let mut s = lock(state)?;
-    push_undo(&mut s);
-    if let Some(project) = s.project_mut() {
-        project.settings.quality = quality;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_settings_with(state, app, |settings| {
+        let mut settings = settings.clone();
+        settings.quality = quality;
+        Ok(settings)
+    })
 }
 
 /// Sets the post-process on the world camera: the whole chain from exposure
@@ -2149,17 +2081,13 @@ pub(crate) fn set_post_process(
     app: &AppHandle,
     post: PostProcess,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
     let mut post = post;
     post.normalize();
-    if let Some(project) = s.project_mut() {
-        project.world.post = post;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.post = post;
+        Ok(world)
+    })
 }
 
 /// Sets the output signal, peak brightness and paper white. Takes effect
@@ -2169,17 +2097,13 @@ pub(crate) fn set_display_output(
     app: &AppHandle,
     display: DisplayOutput,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
     let mut display = display;
     display.normalize();
-    if let Some(project) = s.project_mut() {
-        project.settings.display = display;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_settings_with(state, app, |settings| {
+        let mut settings = settings.clone();
+        settings.display = display;
+        Ok(settings)
+    })
 }
 
 /// Sets the saved mix: one gain per bus, in linear 0-2. What the project
@@ -2190,19 +2114,15 @@ pub(crate) fn set_sound_mixer(
     app: &AppHandle,
     mixer: SoundMixer,
 ) -> Result<(), String> {
-    let mut s = lock(state)?;
-    push_undo(&mut s);
-    if let Some(project) = s.project_mut() {
-        project.settings.sound = SoundMixer {
+    registry::write_settings_with(state, app, |settings| {
+        let mut settings = settings.clone();
+        settings.sound = SoundMixer {
             master_volume: blockloom_core::sound::clamp_gain(mixer.master_volume),
             music_volume: blockloom_core::sound::clamp_gain(mixer.music_volume),
             sfx_volume: blockloom_core::sound::clamp_gain(mixer.sfx_volume),
         };
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+        Ok(settings)
+    })
 }
 
 /// Sets the saved soundscape: weather loops, ducking and the underwater
@@ -2213,15 +2133,11 @@ pub(crate) fn set_soundscape(
     mut soundscape: blockloom_core::soundscape::Soundscape,
 ) -> Result<(), String> {
     soundscape.normalize();
-    let mut s = lock(state)?;
-    push_undo(&mut s);
-    if let Some(project) = s.project_mut() {
-        project.world.soundscape = soundscape;
-    }
-    auto_save(&mut s);
-    sync_runtime(&mut s);
-    emit(app, &mut s);
-    Ok(())
+    registry::write_world(state, app, None, |world| {
+        let mut world = world.clone();
+        world.soundscape = soundscape;
+        Ok(world)
+    })
 }
 
 // ─── Actors ────────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ use crate::state::SharedState;
 use blockloom_core::components::ActorComponent;
 use blockloom_core::registry;
 use blockloom_core::scene::{Mode, World};
+use blockloom_core::settings::GameSettings;
 use serde_json::{Value, json};
 
 /// `type-registry`: every built-in component kind and world setting with its
@@ -83,12 +84,31 @@ fn write_settings(
     path: &str,
     value: Value,
 ) -> Result<(), String> {
+    settings_edit(state, app, Some(path), |current| {
+        registry::set_settings_property(current, path, value)
+    })
+}
+
+/// Runs `edit` on the project's game settings as one undo step.
+pub(crate) fn write_settings_with(
+    state: &SharedState,
+    app: &AppHandle,
+    edit: impl FnOnce(&GameSettings) -> Result<GameSettings, String>,
+) -> Result<(), String> {
+    settings_edit(state, app, None, edit)
+}
+
+fn settings_edit(
+    state: &SharedState,
+    app: &AppHandle,
+    session: Option<&str>,
+    edit: impl FnOnce(&GameSettings) -> Result<GameSettings, String>,
+) -> Result<(), String> {
     let mut s = lock(state)?;
-    let current = &s.project().ok_or("No project is open")?.settings;
-    let next = registry::set_settings_property(current, path, value)?;
+    let next = edit(&s.project().ok_or("No project is open")?.settings)?;
     push_undo_for(
         &mut s,
-        Some(EditSession::Comment {
+        session.map(|path| EditSession::Comment {
             comment_id: format!("settings:{path}"),
         }),
     );

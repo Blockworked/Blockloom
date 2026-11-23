@@ -843,8 +843,10 @@ target=world|settings|actor:<id>/<Component> path=... value=...` (a built-in com
 through `set_actor_component`, a plugin one through `set_plugin_component`, a
 world setting through `write_world`, a game setting through `write_settings`, coalesced per path into one undo step)
 and `add-component` (registry defaults; Script and Collider keep their own
-commands). The `set_*` setters stay, and `set_fog` is a wrapper over
-`write_world`. MCP gets a `blockloom://types` resource, and `src/plugins.ts`'s
+commands). The typed `set_*` setters for a world or game setting
+(`set_sky`, `set_fog`, `set_quality`, ...) stay as wrappers: each normalizes its
+value and writes through `write_world` or `write_settings_with`, the same undo,
+save and sync path `set-property` takes. MCP gets a `blockloom://types` resource, and `src/plugins.ts`'s
 `typeSchema` turns any registry or plugin field into zod
 (`integration.test.ts` checks every default fits).
 
