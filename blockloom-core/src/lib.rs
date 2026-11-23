@@ -76,6 +76,7 @@ pub mod probe;
 pub mod process;
 pub mod project;
 pub mod quality;
+pub mod reference;
 pub mod registry;
 pub mod resources;
 pub mod rig2d;

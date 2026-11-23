@@ -857,7 +857,9 @@ add-component menu asks `add_component`, so their defaults are Rust's only.
 (`tst_RegistryCards.qml`) read; `BLESS=1 cargo test -p blockloom-core --test
 registry_fixture` regenerates it after a schema change. A new hint or
 condition form is taught to `PropertyForm.qml` (blockstitch) and `typeSchema`
-in `mcp/src/plugins.ts`.
+in `mcp/src/plugins.ts`. `docs/reference/` (components, world, settings) is
+generated from the registry by `blockloom-core/src/reference.rs`; rerun
+`BLESS=1 cargo test -p blockloom-core --test reference_docs` after a schema change.
 
 ### Actors that come and go
 
