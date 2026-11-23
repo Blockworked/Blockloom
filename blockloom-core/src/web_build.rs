@@ -200,6 +200,8 @@ try {
     document.getElementById("cover").remove();
     const canvas = document.getElementById("blockloom-canvas");
     canvas.focus();
+    // A project runtime adds its engine plugins first.
+    if (player.register_engine_modules) player.register_engine_modules();
     player.start_game(pack, "#blockloom-canvas", game, scripts);
   }, { once: true });
   window.blockloom = player;

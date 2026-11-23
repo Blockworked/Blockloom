@@ -1594,7 +1594,14 @@ deviations of the first implementation: `docs/plugin-adr-0001.md`.
   snapshot's `plugins.engine`). A desktop build for this machine ships the
   built project runtime as its player (`BuildRequest::engine_player`; an
   adapter package ships only its manifest and schemas, its crate being linked
-  in); other targets are refused for now. The
+  in). A web or Android build compiles the same generated crate's `lib.rs`
+  for that target (`project_runtime::build_for`, `--no-default-features
+  --features portable`, which is the runtime's `plugins` plus `embedder`; the
+  engine has no default features so plugin crates don't unify desktop in):
+  wasm-bindgen output whose `register_engine_modules` the page calls before
+  `start_game`, or a `.so` whose `android_main` adds the modules first. It
+  lands in `.blockloom/runtime/bin/<triple>/`, stamped like the desktop one,
+  and needs the engine source tree (an install's kit links desktop only). The
   engine is a source tree (`BLOCKLOOM_ENGINE_SOURCE`, else the one the editor
   was built from) or, in an install, the engine kit beside the editor
   (`engine/`, `BLOCKLOOM_ENGINE_KIT`), written by `engine-kit out=...`

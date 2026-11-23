@@ -28,6 +28,15 @@ macro_rules! export_module {
     };
 }
 
+#[cfg(target_arch = "wasm32")]
+pub use blockloom_runtime::wasm_bindgen;
+
+#[cfg(target_os = "android")]
+pub use blockloom_runtime::android::AndroidApp;
+/// A project runtime's `android_main` body, after adding its modules.
+#[cfg(target_os = "android")]
+pub use blockloom_runtime::android::android_entry;
+
 /// Starts the world process with these modules added: a project runtime's
 /// whole `main`.
 pub fn run(modules: impl FnOnce()) {

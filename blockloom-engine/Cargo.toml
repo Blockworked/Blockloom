@@ -6,10 +6,19 @@ license.workspace = true
 description = "The API an engine-tier plugin is written against: Bevy, Blockloom's core and the module contract."
 
 [dependencies]
-blockloom-runtime = { path = "../blockloom-runtime" }
+blockloom-runtime = { path = "../blockloom-runtime", default-features = false }
 # Re-exported so an engine plugin can also host a `Plugin` (SDK) module in-process.
 blockloom-plugin-sdk = { path = "../blockloom-plugin-sdk" }
 blockloom-plugin-api = { path = "../blockloom-plugin-api" }
+
+[features]
+# Nothing by default: plugin crates name the engine plainly, so a default set
+# would unify into every player. The project runtime picks one of these.
+default = []
+# The desktop player's whole feature set.
+desktop = ["blockloom-runtime/default"]
+# The web and Android players' set, with the project runtime's own entry.
+portable = ["blockloom-runtime/plugins", "blockloom-runtime/embedder"]
 
 [dev-dependencies]
 # The template's derives look for `bevy` in the crate compiling them.

@@ -35,8 +35,18 @@ const OWN_LIB: &str = "libblockloom_runtime.so";
 /// module's `main`, which boots the game; winit picks the app handle up from
 /// there. The generated `android_main` is unmangled, which is the symbol the
 /// activity loads.
+#[cfg(not(feature = "embedder"))]
 #[bevy::prelude::bevy_main]
 fn main() {
+    crate::run_android();
+}
+
+pub use bevy_android::android_activity::AndroidApp;
+
+/// The same entry for a project runtime's own `android_main`, which adds its
+/// engine plugins first.
+pub fn android_entry(app: bevy_android::android_activity::AndroidApp) {
+    let _ = bevy_android::ANDROID_APP.set(app);
     crate::run_android();
 }
 

@@ -24,7 +24,7 @@
 
 mod ai;
 #[cfg(target_os = "android")]
-mod android;
+pub mod android;
 mod anim2d;
 pub mod api;
 mod atmosphere;
@@ -134,6 +134,9 @@ mod water;
 mod weather2d;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
+/// For a project runtime's own wasm exports.
+#[cfg(target_arch = "wasm32")]
+pub use wasm_bindgen;
 mod world;
 
 use bevy::asset::{AssetPlugin, UnapprovedPathMode};

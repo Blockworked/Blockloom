@@ -149,6 +149,9 @@ plugins = ["dep:blockloom-plugin-host", "dep:blockloom-plugin-gpu"]
 # DLLs beside the player at run time; otherwise the probe reports unavailable
 # and the TAA plus spatial fallback carries on. Never on web.
 dlss = ["bevy/dlss"]
+# Built into a project runtime that brings its own Android entry (and so
+# its engine plugins): leaves out this crate's `android_main`.
+embedder = []
 
 [dev-dependencies]
 naga.workspace = true

@@ -3250,13 +3250,34 @@ pub(crate) fn prepare_build_game(
     if params.device.is_some() && !target.is_android() {
         return Err("Deploying to a device requires an Android target".to_string());
     }
-    let engine_player = project_runtime_for(&s)?;
-    if engine_player.is_some() && !build::is_host(target) {
-        return Err(format!(
-            "This project's engine plugins are linked into a runtime for this computer only, so it can't be built for {} yet",
-            target.label
-        ));
-    }
+    let engine_player = if build::is_host(target) {
+        project_runtime_for(&s)?
+    } else if let Some(open) = s.open.as_ref()
+        && !crate::project_runtime::engine_crates(&open.plugins)?.is_empty()
+    {
+        if !target.is_web() && !target.is_android() {
+            return Err(format!(
+                "This project's engine plugins build for this computer, the web and Android, so it can't be built for {} yet",
+                target.label
+            ));
+        }
+        let ledger = blockloom_plugin_host::trust::TrustLedger::read(
+            &blockloom_plugin_host::trust::default_path(),
+        );
+        if let Some(c) = crate::project_runtime::engine_crates(&open.plugins)?
+            .iter()
+            .find(|c| crate::project_runtime::needs_trust(c, &ledger))
+        {
+            return Err(format!(
+                "Trust {} in the Plugin Manager before its engine crate is compiled",
+                c.plugin
+            ));
+        }
+        // An empty path: built for the target in `run_build_game`, the long step.
+        Some(PathBuf::new())
+    } else {
+        None
+    };
     auto_save(&mut s);
     Ok(BuildRequest {
         project,
@@ -3289,9 +3310,32 @@ pub(crate) fn run_build_game(
         ..
     } = params;
     blockloom_core::build_control::step("Checking build requirements")?;
-    let player = if let Some(player) = engine_player {
+    let player = if let Some(player) = engine_player.as_ref().filter(|p| !p.as_os_str().is_empty())
+    {
         // The project's runtime is the stock player with its plugins linked in.
-        player
+        player.clone()
+    } else if engine_player.is_some() {
+        // Cross-built here, as the stock Android runtime is.
+        if target.is_android() {
+            android::resolve_signing(&project.android, store_pass.as_deref(), key_pass.as_deref())?;
+        }
+        blockloom_core::build_control::step("Compiling the project runtime")?;
+        let crates = {
+            let s = lock(state)?;
+            let open = s.open.as_ref().ok_or("No project is open")?;
+            crate::project_runtime::engine_crates(&open.plugins)?
+        };
+        let env = if target.is_android() {
+            android::ndk_cargo_env(&android::load(), target.triple).ok_or_else(|| {
+                format!(
+                    "No NDK linker for {}. Run android-install-sdk first.",
+                    target.triple
+                )
+            })?
+        } else {
+            Vec::new()
+        };
+        crate::project_runtime::build_for(&dir, &crates, target.triple, &env)?
     } else if target.is_android() {
         // Fail fast on a release row with no password, before the long NDK
         // cross-build below: the build would refuse it anyway.

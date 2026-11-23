@@ -448,12 +448,9 @@ impl PluginManifest {
                     }
                 }
             }
-            // Compiled into the project's own runtime on the machine that
-            // plays it.
-            Tier::Adapter if loads_native_libraries(triple) => TargetSupport::Native,
-            Tier::Adapter => TargetSupport::Unsupported {
-                reason: "an engine adapter is compiled into a custom player".to_string(),
-            },
+            // Compiled into the project's own runtime, which builds for the
+            // desktop, the web and Android alike.
+            Tier::Adapter => TargetSupport::Native,
         }
     }
 
