@@ -38,7 +38,8 @@ class PackageTests(unittest.TestCase):
             entry = packaging.archive(directory, archive)
             self.assertEqual(entry["unpacked_size"], 7)
             hub_download.verify_file(archive, entry["sha256"], entry["size"])
-            hub_download.extract(archive, root / "out", "zip", entry["unpacked_size"])
+            with zipfile.ZipFile(archive) as data:
+                data.extractall(root / "out")
             self.assertEqual((root / "out/players/web.wasm").read_bytes(), b"wasm")
             with zipfile.ZipFile(archive) as data:
                 self.assertEqual(data.namelist(), ["editor", "players/web.wasm"])

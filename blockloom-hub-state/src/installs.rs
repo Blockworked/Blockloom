@@ -1,13 +1,13 @@
-//! Reading the editors the Hub has installed. Writing them stays in
-//! `scripts/hub.py`.
+//! Reading the editors the Hub has installed. Installing them is in
+//! `manage`.
 
 use crate::{Error, Hub, Result, read_json};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 pub const MANIFEST: &str = "blockloom-installation.json";
-const ANDROID_TARGETS: [&str; 2] = ["aarch64-linux-android", "x86_64-linux-android"];
-const OPTIONAL_TOOLS: [&str; 3] = ["java", "android-sdk", "android-ndk"];
+pub const ANDROID_TARGETS: [&str; 2] = ["aarch64-linux-android", "x86_64-linux-android"];
+pub const OPTIONAL_TOOLS: [&str; 3] = ["java", "android-sdk", "android-ndk"];
 
 /// Spelled the way `blockloom_core::build` spells it.
 pub fn host_target() -> &'static str {
@@ -31,7 +31,7 @@ pub fn host_target() -> &'static str {
     }
 }
 
-fn exe(name: &str) -> String {
+pub fn exe(name: &str) -> String {
     if cfg!(windows) {
         format!("{name}.exe")
     } else {
@@ -60,7 +60,7 @@ fn is_regular(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
 }
 
-fn validate_tools(directory: &Path, tools: &Value) -> Result<()> {
+pub fn validate_tools(directory: &Path, tools: &Value) -> Result<()> {
     let tools = tools
         .as_object()
         .ok_or_else(|| Error::new("Installation tools must be an object"))?;

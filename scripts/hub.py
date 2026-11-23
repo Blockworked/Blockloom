@@ -1,36 +1,25 @@
 #!/usr/bin/env python3
-"""Blockloom Hub's installation service and initial CLI."""
+"""Blockloom Hub commands from a checkout, plus the helpers packaging uses.
 
-import argparse
-from contextlib import contextmanager
-import hashlib
+The Hub itself is Rust: `blockloom-hub --hubctl <command>` (or the
+`blockloom-hubctl` binary) installs, downloads and builds editors and manages
+projects. This script only forwards to it.
+"""
+
 import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
-import time
-import tomllib
-import uuid
-import hub_download
-import hub_github
-import hub_tools
 
-from hub_install import MANIFEST, editor_name, promote, stage, validate_payload
-from replace import host_target, just_exe
-from hub_process import Cancelled, bundle_rust, checkpoint, process_token, run
+from hub_install import MANIFEST
+from replace import host_target
 
 
 ANDROID_TARGETS = ("aarch64-linux-android", "x86_64-linux-android")
 OPTIONAL_TOOLS = ("java", "android-sdk", "android-ndk")
-# What the Rust state tool owns: projects, who holds them, snapshots and
-# starting or reusing editors. Everything else here installs editors.
-STATE_COMMANDS = ("projects", "installations", "remember", "forget", "relocate", "bind", "backups",
-                  "backup-project", "restore-backup", "focus", "open", "new-project",
-                  "default-installation", "installation-usage")
 
 
 def tool_path(directory, name):
@@ -38,6 +27,7 @@ def tool_path(directory, name):
 
 
 def validate_tools(directory, tools):
+    """The same checks the Hub makes of an installation's bundled tools."""
     if not isinstance(tools, dict):
         raise ValueError("Installation tools must be an object")
     rust = tools.get("rust", {})
@@ -49,50 +39,9 @@ def validate_tools(directory, tools):
             raise ValueError(f"Bundled Rust toolchain is missing {binary}")
     if not (tool_path(directory, "rust") / "lib" / "rustlib" / host_target() / "lib").is_dir():
         raise ValueError("Bundled Rust toolchain is missing host standard libraries")
-    for name in OPTIONAL_TOOLS:
-        if name in tools:
-            metadata = tools[name]
-            if not isinstance(metadata, dict) or not metadata.get("version"):
-                raise ValueError(f"Component must declare its pinned version: {name}")
-            root = tool_path(directory, name)
-            if not root.is_dir():
-                raise ValueError(f"Bundle is missing selected component: {name}")
-            if name == "java" and not (root / "bin" / ("java" + suffix)).is_file():
-                raise ValueError("Bundled Java is missing its executable")
-            if name == "android-sdk" and not (root / "platform-tools" / ("adb" + suffix)).is_file():
-                raise ValueError("Bundled Android SDK is missing platform-tools")
-            if name == "android-ndk" and not (root / "source.properties").is_file():
-                raise ValueError("Bundled Android NDK is missing its revision metadata")
     for target in tools.get("android-rust-targets", []):
         if target not in ANDROID_TARGETS or not (tool_path(directory, "rust") / "lib" / "rustlib" / target / "lib").is_dir():
             raise ValueError(f"Bundle is missing Android Rust target: {target}")
-
-
-def hub_root():
-    if override := os.environ.get("BLOCKLOOM_HUB_DIR"):
-        return Path(override).expanduser().resolve()
-    if sys.platform == "win32":
-        return Path(os.environ["LOCALAPPDATA"]) / "Blockloom" / "Hub"
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "Blockloom" / "Hub"
-    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "blockloom-hub"
-
-
-def hubctl_command():
-    """The Rust tool that answers questions about projects and editors.
-
-    The Hub window sets BLOCKLOOM_HUBCTL to its own executable; a checkout
-    falls back to the built `blockloom-hubctl`.
-    """
-    if explicit := os.environ.get("BLOCKLOOM_HUBCTL"):
-        return [explicit, *os.environ.get("BLOCKLOOM_HUBCTL_ARGS", "").split()]
-    suffix = ".exe" if os.name == "nt" else ""
-    target = Path(__file__).resolve().parent.parent / "target"
-    for profile in ("release", "debug"):
-        candidate = target / profile / ("blockloom-hubctl" + suffix)
-        if candidate.is_file():
-            return [str(candidate)]
-    raise ValueError("The Hub state tool is missing. Build it with: cargo build --release -p blockloom-hub-state")
 
 
 def read_json(path):
@@ -116,585 +65,26 @@ def write_json(path, value):
         Path(temporary).unlink(missing_ok=True)
 
 
-class Hub:
-    def __init__(self, root=None, data_dir=None):
-        self.root = Path(root or hub_root()).resolve()
-        self.data_dir = Path(data_dir) if data_dir else None
-
-    def ctl(self, command, *arguments):
-        """Ask the state tool and return its JSON answer."""
-        env = {**os.environ, "BLOCKLOOM_HUB_DIR": str(self.root)}
-        if self.data_dir:
-            env["BLOCKLOOM_DATA_DIR"] = str(self.data_dir)
-        done = subprocess.run([*hubctl_command(), command, *map(str, arguments)],
-                              env=env, capture_output=True, text=True, encoding="utf-8")
-        if done.returncode != 0:
-            message = done.stderr.strip().splitlines()[-1] if done.stderr.strip() else "state tool failed"
-            raise ValueError(message.removeprefix("hub: "))
-        return json.loads(done.stdout)
-
-    @staticmethod
-    def _operation_is_stale(lock):
-        """Whether the process that made `lock` is gone (or never said who it was)."""
-        try:
-            owner = read_json(lock / "owner.json")
-            return process_token(owner["pid"]) is None
-        except (OSError, ValueError, KeyError, TypeError):
-            # No owner file: an older Hub's lock, or one still being made.
-            try:
-                return time.time() - lock.stat().st_mtime > 60
-            except OSError:
-                return True
-
-    @contextmanager
-    def mutation(self):
-        self.root.mkdir(parents=True, exist_ok=True)
-        lock = self.root / ".operation-lock"
-        for attempt in range(2):
-            try:
-                lock.mkdir()
-                break
-            except FileExistsError:
-                if attempt == 0 and self._operation_is_stale(lock):
-                    shutil.rmtree(lock, ignore_errors=True)
-                    continue
-                raise ValueError("Another Hub operation is running. Wait for it to finish, then try again.") from None
-        try:
-            write_json(lock / "owner.json", {"pid": os.getpid()})
-            yield
-        finally:
-            shutil.rmtree(lock, ignore_errors=True)
-
-    def slot(self, identity):
-        if not re.fullmatch(r"(?:release-[0-9A-Za-z.+-]+|dev-[0-9a-f]{16})", identity):
-            raise ValueError("Invalid installation ID")
-        return self.root / "installations" / identity
-
-    def installation(self, identity, ready=False):
-        directory = self.slot(identity)
-        if directory.is_symlink():
-            raise ValueError("Installation directory cannot be a symlink")
-        result = read_json(directory / MANIFEST)
-        if result.get("id") != identity or result.get("target") != host_target():
-            raise ValueError(f"Invalid installation manifest: {directory}")
-        if result.get("kind") not in ("release", "dev"):
-            raise ValueError("Unknown installation kind")
-        if ready:
-            if result.get("status") != "ready":
-                raise ValueError("Build this developer installation first")
-            validate_payload(directory)
-            validate_tools(directory, result.get("tools", {}))
-        return result
-
-    def tool_cache_dir(self):
-        return hub_tools.cache_dir(self.root)
-
-    def cache_installations(self):
-        """Manifests for garbage collection; skip corrupt slots instead of failing."""
-        directory = self.root / "installations"
-        if not directory.exists():
-            return []
-        entries = []
-        for path in sorted(directory.iterdir()):
-            if not path.is_dir() or path.name.startswith("."):
-                continue
-            try:
-                entries.append(self.installation(path.name))
-            except (OSError, ValueError, KeyError):
-                continue
-        return entries
-
-    def tool_cache(self):
-        return hub_tools.summary(self.root, self.cache_installations())
-
-    def prune_tools(self):
-        with self.mutation():
-            removed = hub_tools.collect_garbage(self.root, self.cache_installations())
-            return {"removed": removed, **hub_tools.summary(self.root, self.cache_installations())}
-
-    def uninstall(self, identity):
-        with self.mutation():
-            manifest = self.installation(identity)
-            self.require_installation_idle(identity)
-            bound = self.ctl("installation-usage", identity)["bound"]
-            if bound:
-                names = ", ".join(sorted(set(bound)))
-                raise ValueError(f"Installation {identity} is used by projects: {names}. "
-                                 "Assign those projects another editor first")
-            checkpoint()
-            shutil.rmtree(self.slot(identity))
-            candidate = self.candidate_path(identity)
-            if candidate.exists():
-                shutil.rmtree(candidate)
-            hub_tools.collect_garbage(self.root, self.cache_installations())
-            return {"id": identity, "kind": manifest.get("kind"), "version": manifest.get("version")}
-
-    def add_tools(self, identity, components=(), android_rust_targets=False):
-        """Download missing optional tools into an existing installation.
-
-        Editor binaries are untouched; only tools/ grows and the manifest's
-        tools entry is extended. Uses the tool cache like install-dev does.
-        """
-        for name in components:
-            if name not in OPTIONAL_TOOLS:
-                raise ValueError(f"Unknown component: {name}")
-        with self.mutation():
-            manifest = self.installation(identity, ready=True)
-            self.require_installation_idle(identity)
-            directory = self.slot(identity)
-            tools = dict(manifest.get("tools", {}))
-            missing = [name for name in components
-                       if name in OPTIONAL_TOOLS and name not in tools]
-            rust_dir = tool_path(directory, "rust")
-            absent_targets = [target for target in ANDROID_TARGETS
-                              if not (rust_dir / "lib" / "rustlib" / target / "lib").is_dir()]
-            have_targets = set(tools.get("android-rust-targets", [])) == set(ANDROID_TARGETS)
-            if not missing and not (android_rust_targets and (absent_targets or not have_targets)):
-                return {**manifest, "added": []}
-            if manifest.get("kind") == "dev" and manifest.get("repo"):
-                try:
-                    versions = (manifest.get("android_versions")
-                                or hub_download.android_versions(Path(manifest["repo"])))
-                except OSError:
-                    versions = hub_download.default_android_versions()
-            else:
-                versions = (manifest.get("android_versions")
-                            or hub_download.default_android_versions())
-            added = []
-            with tempfile.TemporaryDirectory(prefix=".add-tools-", dir=self.root) as temporary:
-                temporary = Path(temporary)
-                cache = self.tool_cache_dir()
-                if missing:
-                    print(f"Downloading optional tools: {', '.join(missing)}...",
-                          file=sys.stderr, flush=True)
-                    selected = hub_download.install_android_tools(
-                        directory, versions, missing, temporary, cache)
-                    tools.update(selected)
-                    added.extend(missing)
-                if android_rust_targets and (absent_targets or not have_targets):
-                    channel = tools.get("rust", {}).get("channel")
-                    print(f"Downloading Android Rust targets: {', '.join(ANDROID_TARGETS)}...",
-                          file=sys.stderr, flush=True)
-                    hub_download.install_rust_targets(rust_dir, channel, ANDROID_TARGETS,
-                                                      temporary, cache)
-                    tools["android-rust-targets"] = list(ANDROID_TARGETS)
-                    added.append("android-rust-targets")
-            manifest["tools"] = tools
-            validate_payload(directory)
-            validate_tools(directory, tools)
-            checkpoint()
-            write_json(directory / MANIFEST, manifest)
-            hub_tools.store_installation(cache, directory, tools, checkpoint)
-            hub_tools.collect_garbage(self.root, self.cache_installations())
-            print("Modules added.", file=sys.stderr, flush=True)
-            return {**manifest, "added": added}
-
-    # Approximate download sizes in MiB; exact sizes are only known on download.
-    MODULE_SIZES = {"java": 200, "android-sdk": 250, "android-ndk": 1000, "android-rust-targets": 60}
-
-    def modules(self, identity=None):
-        """The optional modules, with pinned versions and about how big each is.
-
-        `defaults` says which are ticked for a release install (none) and for a
-        development install (all), so the UI can show the rule.
-        """
-        versions = hub_download.default_android_versions()
-        if identity:
-            manifest = self.installation(identity)
-            if manifest.get("kind") == "dev" and manifest.get("repo"):
-                try:
-                    versions = hub_download.android_versions(Path(manifest["repo"]))
-                except (OSError, ValueError):
-                    pass
-            versions = manifest.get("android_versions") or versions
-        platform = versions["PLATFORM"].replace("android-", "API ")
-        rows = [
-            {"id": "java", "label": "Java " + versions["JDK_MAJOR"], "tools": ["java"]},
-            {"id": "android-sdk", "label": f"Android SDK ({platform}, build tools {versions['BUILD_TOOLS']})",
-             "tools": ["android-sdk"]},
-            {"id": "android-ndk", "label": "Android NDK " + versions["NDK_MAJOR"], "tools": ["android-ndk"]},
-            {"id": "android-rust-targets", "label": "Android Rust targets (ARM64 and x86-64)",
-             "tools": ["android-rust-targets"]},
-        ]
-        for row in rows:
-            row["approx_mib"] = self.MODULE_SIZES[row["id"]]
-        return {"modules": rows, "defaults": {"release": [], "dev": [r["id"] for r in rows]},
-                "android_build_tools": [r["id"] for r in rows]}
-
-    def add_dev(self, repo):
-        repo = Path(repo).expanduser().resolve(strict=True)
-        cargo = tomllib.loads((repo / "Cargo.toml").read_text(encoding="utf-8"))
-        if "blockloom-qt" not in cargo.get("workspace", {}).get("members", []) or not (repo / "justfile").is_file():
-            raise ValueError("Select a Blockloom repository containing its workspace and justfile")
-        key = os.path.normcase(str(repo))
-        identity = "dev-" + hashlib.sha256(key.encode()).hexdigest()[:16]
-        with self.mutation():
-            directory = self.slot(identity)
-            if directory.exists():
-                return self.installation(identity)
-            result = {"id": identity, "kind": "dev", "repo": str(repo),
-                      "name": repo.name, "version": cargo["workspace"]["package"]["version"],
-                      "target": host_target(), "status": "unbuilt"}
-            write_json(directory / MANIFEST, result)
-            return result
-
-    def install(self, bundle, components=(), android_rust_targets=False):
-        bundle = Path(bundle).expanduser().resolve(strict=True)
-        manifest = read_json(bundle / MANIFEST)
-        version = manifest.get("version", "")
-        # Require canonical SemVer core numbers and path-safe prerelease names.
-        number = r"(?:0|[1-9][0-9]*)"
-        if not isinstance(version, str) or not re.fullmatch(rf"{number}\.{number}\.{number}(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?", version):
-            raise ValueError("Release version must be canonical SemVer without build metadata")
-        if "-" in version:
-            for part in version.split("-", 1)[1].split("."):
-                if part.isdigit() and len(part) > 1 and part.startswith("0"):
-                    raise ValueError("Numeric SemVer prerelease identifiers cannot start with zero")
-        if manifest.get("kind") != "release" or manifest.get("target") != host_target():
-            raise ValueError("Bundle must be a release for this host target")
-        identity = "release-" + version
-        available = manifest.get("tools", {})
-        if not isinstance(available, dict):
-            raise ValueError("Installation tools must be an object")
-        selected = {"rust": available.get("rust", {})}
-        for name in components:
-            if name not in OPTIONAL_TOOLS or name not in available:
-                raise ValueError(f"Component unavailable in this bundle: {name}")
-            selected[name] = available[name]
-        if android_rust_targets:
-            targets = available.get("android-rust-targets", [])
-            if set(targets) != set(ANDROID_TARGETS):
-                raise ValueError("Bundle must include both supported Android Rust targets")
-            selected["android-rust-targets"] = list(ANDROID_TARGETS)
-        validate_tools(bundle, selected)
-        excluded = [f"tools/{name}" for name in OPTIONAL_TOOLS if name not in selected]
-        if not android_rust_targets:
-            excluded.extend(f"tools/rust/lib/rustlib/{target}" for target in ANDROID_TARGETS)
-        result = {"id": identity, "kind": "release", "version": version,
-                  "target": host_target(), "status": "ready", "tools": selected}
-        with self.mutation():
-            stage(bundle, self.slot(identity), result, excluded=excluded, checkpoint=checkpoint)
-            # Share this bundle's tool versions with future editors, then
-            # drop cached versions no installed editor references anymore.
-            hub_tools.store_installation(self.tool_cache_dir(), self.slot(identity),
-                                         selected, checkpoint)
-            hub_tools.collect_garbage(self.root, self.cache_installations())
-        return result
-
-    def release_settings(self, source=None, url=None, repo=None):
-        path = self.root / "catalog.json"
-        config = read_json(path) if path.exists() else {}
-        config = {"source": "github-cli", "repo": hub_github.DEFAULT_REPO, "url": "", **config}
-        if source is not None:
-            if source not in ("https", "github-cli"):
-                raise ValueError("Invalid release source")
-            config.update(source=source, repo=hub_github.repository(repo or config["repo"]), url=url or "")
-            if config["source"] == "https" and config["url"]:
-                hub_download.secure_url(config["url"])
-            with self.mutation():
-                write_json(path, config)
-        return config
-
-    def check_releases(self, url=None):
-        config_path = self.root / "catalog.json"
-        config = self.release_settings()
-        if config["source"] == "github-cli" and not url:
-            entries = hub_github.catalog(config["repo"], host_target())
-            for entry in entries:
-                entry["installed"] = self.slot("release-" + entry["version"]).exists()
-            return {**config, "releases": entries}
-        url = url or os.environ.get("BLOCKLOOM_HUB_CATALOG_URL") or config.get("url")
-        if not url:
-            raise ValueError("Enter a release catalog URL to check for Blockloom versions")
-        entries = hub_download.catalog(url, host_target())
-        with self.mutation():
-            write_json(config_path, {**config, "source": "https", "url": url})
-        for entry in entries:
-            entry["installed"] = self.slot("release-" + entry["version"]).exists()
-        return {**config, "source": "https", "url": url, "releases": entries}
-
-    def download_release(self, version, components=(), android_rust_targets=False, sha256=None):
-        print(f"Stage: Checking releases for Blockloom {version}", file=sys.stderr, flush=True)
-        entries = self.check_releases()["releases"]
-        entry = next((item for item in entries if item["version"] == version), None)
-        if entry is None:
-            raise ValueError("Release is not available for this computer")
-        if entry["installed"]:
-            raise ValueError("This Blockloom version is already installed")
-        if sha256 and hub_download.digest(sha256) != hub_download.digest(entry["sha256"]):
-            raise ValueError("The release catalog changed. Check releases again before installing")
-        with tempfile.TemporaryDirectory(prefix=".download-", dir=self.root) as temporary:
-            temporary = Path(temporary)
-            archive = temporary / "release.archive"
-            print(f"Stage: Downloading Blockloom {version} ({entry['size'] / 1024**2:.0f} MiB)",
-                  file=sys.stderr, flush=True)
-            if github := entry.get("github"):
-                hub_github.asset(github["repo"], github["tag"], github["asset"], archive,
-                                 size=entry["size"])
-                print("Stage: Verifying the download", file=sys.stderr, flush=True)
-                hub_download.verify_file(archive, entry["sha256"], entry["size"])
-            else:
-                hub_download.download(entry["url"], archive, entry["sha256"], entry["size"])
-            print(f"Stage: Extracting Blockloom {version} ({entry['unpacked_size'] / 1024**2:.0f} MiB unpacked)",
-                  file=sys.stderr, flush=True)
-            output = temporary / "release"
-            hub_download.extract(archive, output, entry["format"], entry["unpacked_size"])
-            bundles = [output] if (output / MANIFEST).is_file() else [p for p in output.iterdir() if p.is_dir() and (p / MANIFEST).is_file()]
-            if len(bundles) != 1 or read_json(bundles[0] / MANIFEST).get("version") != version:
-                raise ValueError("Downloaded bundle does not match the selected release")
-            bundle_manifest = read_json(bundles[0] / MANIFEST)
-            # Release bundles ship Rust plus its Android targets; Java and the
-            # Android SDK/NDK are downloaded here like install-dev does, so
-            # the checkboxes stay usable on catalogs (such as 0.0.1) whose
-            # tools entry never listed them.
-            need = [name for name in components
-                    if name in OPTIONAL_TOOLS and name not in bundle_manifest.get("tools", {})]
-            if need:
-                versions = (entry.get("android_versions")
-                            or bundle_manifest.get("android_versions")
-                            or hub_download.default_android_versions())
-                print(f"Downloading optional tools: {', '.join(need)}...",
-                      file=sys.stderr, flush=True)
-                selected = hub_download.install_android_tools(
-                    bundles[0], versions, need, temporary, self.tool_cache_dir())
-                bundle_manifest = read_json(bundles[0] / MANIFEST)
-                tools = bundle_manifest.get("tools", {})
-                tools.update(selected)
-                bundle_manifest["tools"] = tools
-                write_json(bundles[0] / MANIFEST, bundle_manifest)
-            if android_rust_targets:
-                rust_dir = bundles[0] / "tools" / "rust"
-                channel = bundle_manifest.get("tools", {}).get("rust", {}).get("channel")
-                missing = [target for target in ANDROID_TARGETS
-                           if not (rust_dir / "lib" / "rustlib" / target / "lib").is_dir()]
-                if missing:
-                    print(f"Downloading Android Rust targets: {', '.join(missing)}...",
-                          file=sys.stderr, flush=True)
-                    hub_download.install_rust_targets(rust_dir, channel, missing,
-                                                      temporary, self.tool_cache_dir())
-                    bundle_manifest = read_json(bundles[0] / MANIFEST)
-                    tools = bundle_manifest.get("tools", {})
-                    tools["android-rust-targets"] = list(ANDROID_TARGETS)
-                    write_json(bundles[0] / MANIFEST, bundle_manifest)
-            print(f"Stage: Installing Blockloom {version}", file=sys.stderr, flush=True)
-            return self.install(bundles[0], components, android_rust_targets)
-
-    def rebuild(self, identity, jobs=None):
-        self.prepare_dev(identity, jobs)
-        return self.install_dev(identity, OPTIONAL_TOOLS, android_rust_targets=True)
-
-    def require_installation_idle(self, identity):
-        usage = self.ctl("installation-usage", identity)
-        if usage["running"]:
-            raise ValueError("Close editors using this installation before rebuilding it")
-        if usage["active"]:
-            raise ValueError("Close projects using this installation before rebuilding it")
-
-    def candidate_path(self, identity):
-        self.slot(identity)
-        return self.root / "pending" / identity
-
-    def prepare_dev(self, identity, jobs=None):
-        with self.mutation():
-            manifest = self.installation(identity)
-            if manifest["kind"] != "dev":
-                raise ValueError("Released installations cannot be rebuilt")
-            self.require_installation_idle(identity)
-            repo = Path(manifest["repo"])
-            version = tomllib.loads((repo / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
-            print("Stage: Preparing the build (step 1 of 3)", file=sys.stderr, flush=True)
-            manifest.update(version=version, status="ready")
-            manifest["build_id"] = uuid.uuid4().hex
-            # Isolate build staging from the registered slot until it succeeds.
-            with tempfile.TemporaryDirectory(prefix=".build-", dir=self.root) as temporary:
-                output = Path(temporary) / "installation"
-                env = {**os.environ, "BLOCKLOOM_INSTALL_DIR": str(output)}
-                print("Stage: Building the editor (step 2 of 3)", file=sys.stderr, flush=True)
-                command = [just_exe(), "replace"] + ([str(jobs)] if jobs else [])
-                run(command, cwd=repo, env=env, stdout=sys.stderr, stderr=sys.stderr,
-                    log_file=self.root / "logs" / f"{identity}-build.log")
-                checkpoint()
-                channel = tomllib.loads((repo / "rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
-                cache = self.tool_cache_dir()
-                key = hub_tools.rust_key(channel)
-                try:
-                    cached = hub_tools.reuse(cache, key, tool_path(output, "rust"), checkpoint)
-                except ValueError:
-                    shutil.rmtree(cache / key, ignore_errors=True)
-                    cached = False
-                if cached:
-                    print(f"Reusing cached Rust {channel} for the prepared editor...", file=sys.stderr)
-                else:
-                    print(f"Bundling Rust {channel} for the prepared editor...", file=sys.stderr)
-                    rustc = subprocess.check_output(["rustup", "which", "--toolchain", channel, "rustc"],
-                                                    cwd=repo, text=True).strip()
-                    bundle_rust(Path(rustc).parent.parent, tool_path(output, "rust"), channel, exclude_targets=ANDROID_TARGETS)
-                    hub_tools.store(cache, key, tool_path(output, "rust"), checkpoint)
-                manifest["tools"] = {"rust": {"channel": channel}}
-                validate_tools(output, manifest["tools"])
-                manifest.pop("sources", None)
-                manifest.pop("android_targets_available", None)
-                manifest["android_versions"] = hub_download.android_versions(repo)
-                checkpoint()
-                promote(output, self.candidate_path(identity), manifest, replace=True, checkpoint=checkpoint)
-                print("Build prepared. Choose installation options in the Hub.", file=sys.stderr)
-            return manifest
-
-    def dev_options(self, identity):
-        if self.installation(identity)["kind"] != "dev":
-            raise ValueError("Only developer installations have prepared builds")
-        manifest = read_json(self.candidate_path(identity) / MANIFEST)
-        if manifest.get("id") != identity or manifest.get("kind") != "dev":
-            raise ValueError("Invalid prepared development installation")
-        return manifest
-
-    def install_dev(self, identity, components=(), android_rust_targets=False, sources=None, build_id=None):
-        with self.mutation():
-            current = self.installation(identity)
-            if current["kind"] != "dev":
-                raise ValueError("Only developer installations can use a prepared build")
-            self.require_installation_idle(identity)
-            candidate = self.candidate_path(identity)
-            manifest = read_json(candidate / MANIFEST)
-            if manifest.get("id") != identity or manifest.get("kind") != "dev" or manifest.get("target") != host_target():
-                raise ValueError("Invalid prepared development installation")
-            if build_id is not None and manifest.get("build_id") != build_id:
-                raise ValueError("A newer development build was prepared. Reopen its installation options before installing")
-            if sources:
-                raise ValueError("Development tools are downloaded; local tool sources are not supported")
-            selected = {"rust": manifest["tools"]["rust"]}
-            for name in components:
-                if name not in OPTIONAL_TOOLS:
-                    raise ValueError(f"Unknown development tool: {name}")
-            if android_rust_targets:
-                selected["android-rust-targets"] = list(ANDROID_TARGETS)
-            excluded = [] if android_rust_targets else [f"tools/rust/lib/rustlib/{target}" for target in ANDROID_TARGETS]
-            # Build a final payload privately, keeping the prepared build for retry.
-            with tempfile.TemporaryDirectory(prefix=".configure-", dir=self.root) as temporary:
-                output = Path(temporary) / "installation"
-                print("Stage: Installing the editor (step 3 of 3)", file=sys.stderr)
-                stage(candidate, output, excluded=excluded, checkpoint=checkpoint)
-                cache = self.tool_cache_dir()
-                if components:
-                    versions = manifest.get("android_versions") or hub_download.android_versions(Path(manifest["repo"]))
-                    selected.update(hub_download.install_android_tools(output, versions, components, Path(temporary), cache))
-                if android_rust_targets:
-                    hub_download.install_rust_targets(tool_path(output, "rust"), selected["rust"]["channel"],
-                                                      ANDROID_TARGETS, Path(temporary), cache)
-                manifest.pop("sources", None)
-                manifest.pop("android_targets_available", None)
-                manifest["tools"] = selected
-                validate_tools(output, selected)
-                checkpoint()
-                print("Stage: Saving the installation", file=sys.stderr)
-                promote(output, self.slot(identity), manifest, replace=True, checkpoint=checkpoint)
-                hub_tools.store_installation(cache, self.slot(identity), selected, checkpoint)
-                hub_tools.collect_garbage(self.root, self.cache_installations())
-            print("Development installation ready.", file=sys.stderr)
-            return manifest
-
-
-def delegate(argv):
-    """Hand a project or editor command to the Rust state tool."""
-    done = subprocess.run([*hubctl_command(), *argv])
-    return done.returncode
+def hubctl_command():
+    """BLOCKLOOM_HUBCTL if set, else the checkout's built `blockloom-hubctl`."""
+    if explicit := os.environ.get("BLOCKLOOM_HUBCTL"):
+        return [explicit, *os.environ.get("BLOCKLOOM_HUBCTL_ARGS", "").split()]
+    suffix = ".exe" if os.name == "nt" else ""
+    target = Path(__file__).resolve().parent.parent / "target"
+    for profile in ("release", "debug"):
+        candidate = target / profile / ("blockloom-hubctl" + suffix)
+        if candidate.is_file():
+            return [str(candidate)]
+    raise ValueError("The Hub tool is missing. Build it with: cargo build --release -p blockloom-hub-state")
 
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    tail = argv[2:] if argv[:1] == ["--root"] else argv
-    if tail[:1] and tail[0] in STATE_COMMANDS:
-        try:
-            return delegate(argv)
-        except ValueError as error:
-            print(f"hub: {error}", file=sys.stderr)
-            return 1
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, help="Override the per-user Hub directory")
-    commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("tool-cache")
-    commands.add_parser("prune-tools")
-    commands.add_parser("uninstall").add_argument("installation")
-    tools_cmd = commands.add_parser("add-tools")
-    tools_cmd.add_argument("installation")
-    for component in OPTIONAL_TOOLS:
-        tools_cmd.add_argument("--" + component, action="store_true")
-    tools_cmd.add_argument("--android-rust-targets", action="store_true")
-    commands.add_parser("add-dev").add_argument("repo")
-    commands.add_parser("modules").add_argument("installation", nargs="?")
-    commands.add_parser("dev-options").add_argument("installation")
-    commands.add_parser("check-releases").add_argument("url", nargs="?")
-    settings = commands.add_parser("release-settings")
-    settings.add_argument("--source", choices=("https", "github-cli"))
-    settings.add_argument("--url")
-    settings.add_argument("--repo")
-    install = commands.add_parser("install")
-    install.add_argument("bundle")
-    for component in OPTIONAL_TOOLS:
-        install.add_argument("--" + component, action="store_true")
-    install.add_argument("--android-rust-targets", action="store_true")
-    remote = commands.add_parser("download-release")
-    remote.add_argument("version")
-    remote.add_argument("--sha256")
-    for component in OPTIONAL_TOOLS:
-        remote.add_argument("--" + component, action="store_true")
-    remote.add_argument("--android-rust-targets", action="store_true")
-    for name in ("rebuild", "prepare-dev"):
-        rebuild = commands.add_parser(name)
-        rebuild.add_argument("installation")
-        rebuild.add_argument("--jobs", type=int)
-    developer = commands.add_parser("install-dev")
-    developer.add_argument("installation")
-    for component in OPTIONAL_TOOLS:
-        developer.add_argument("--" + component, action="store_true")
-    developer.add_argument("--android-rust-targets", action="store_true")
-    developer.add_argument("--build-id")
-    args = parser.parse_args(argv)
-    if args.command in ("rebuild", "prepare-dev") and args.jobs is not None and args.jobs < 1:
-        parser.error("--jobs must be positive")
-    hub = Hub(root=args.root)
     try:
-        if args.command == "tool-cache":
-            result = hub.tool_cache()
-        elif args.command == "prune-tools":
-            result = hub.prune_tools()
-        elif args.command == "uninstall":
-            result = hub.uninstall(args.installation)
-        elif args.command == "add-tools":
-            components = [name for name in OPTIONAL_TOOLS if getattr(args, name.replace("-", "_"))]
-            result = hub.add_tools(args.installation, components, args.android_rust_targets)
-        elif args.command == "add-dev":
-            result = hub.add_dev(args.repo)
-        elif args.command == "modules":
-            result = hub.modules(args.installation)
-        elif args.command == "install":
-            components = [name for name in OPTIONAL_TOOLS if getattr(args, name.replace("-", "_"))]
-            result = hub.install(args.bundle, components, args.android_rust_targets)
-        elif args.command == "release-settings":
-            result = hub.release_settings(args.source, args.url, args.repo)
-        elif args.command == "check-releases":
-            result = hub.check_releases(args.url)
-        elif args.command == "download-release":
-            components = [name for name in OPTIONAL_TOOLS if getattr(args, name.replace("-", "_"))]
-            result = hub.download_release(args.version, components, args.android_rust_targets, args.sha256)
-        elif args.command == "rebuild":
-            result = hub.rebuild(args.installation, args.jobs)
-        elif args.command == "prepare-dev":
-            result = hub.prepare_dev(args.installation, args.jobs)
-        elif args.command == "dev-options":
-            result = hub.dev_options(args.installation)
-        elif args.command == "install-dev":
-            components = [name for name in OPTIONAL_TOOLS if getattr(args, name.replace("-", "_"))]
-            result = hub.install_dev(args.installation, components, args.android_rust_targets, build_id=args.build_id)
-        print(json.dumps(result, indent=2))
-        return 0
-    except (OSError, ValueError, KeyError, subprocess.CalledProcessError,
-            hub_download.zipfile.BadZipFile, hub_download.tarfile.TarError, hub_download.ET.ParseError) as error:
+        return subprocess.run([*hubctl_command(), *argv]).returncode
+    except ValueError as error:
         print(f"hub: {error}", file=sys.stderr)
         return 1
-    except Cancelled as error:
-        print(f"hub: {error}", file=sys.stderr)
-        return 130
 
 
 if __name__ == "__main__":

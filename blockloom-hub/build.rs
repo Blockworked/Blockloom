@@ -13,21 +13,7 @@ fn main() {
     .cpp_file("../qt-common/blockloom_application.cpp")
     .cpp_file("src/hub_service.h")
     .cpp_file("src/hub_service.cpp")
-    .qrc_resources(
-        QResources::new()
-            .resource(
-                QResource::new()
-                    .prefix("/hub-service")
-                    .file(QResourceFile::new("../scripts/hub.py").alias("hub.py"))
-                    .file(QResourceFile::new("../scripts/hub_install.py").alias("hub_install.py"))
-                    .file(QResourceFile::new("../scripts/hub_process.py").alias("hub_process.py"))
-                    .file(QResourceFile::new("../scripts/hub_download.py").alias("hub_download.py"))
-                    .file(QResourceFile::new("../scripts/hub_github.py").alias("hub_github.py"))
-                    .file(QResourceFile::new("../scripts/hub_tools.py").alias("hub_tools.py"))
-                    .file(QResourceFile::new("../scripts/replace.py").alias("replace.py")),
-            )
-            .resource(fonts()),
-    )
+    .qrc_resources(QResources::new().resource(fonts()))
     .qt_module("Quick")
     .qt_module("QuickControls2")
     .qt_module("QuickDialogs2")

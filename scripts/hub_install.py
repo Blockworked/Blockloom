@@ -1,4 +1,4 @@
-"""Portable installation staging shared by the Hub and replacement builds."""
+"""Portable installation staging for replacement builds and release packaging (the Hub stages in Rust)."""
 
 import json
 import os

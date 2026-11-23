@@ -2,17 +2,24 @@
 //!
 //! One implementation of the project list, who owns each project, binding a
 //! project to an editor, snapshots, and starting or reusing an editor. The
-//! Hub window and `scripts/hub.py` both reach it through [`cli::run`], so
-//! there is no second copy of these rules to drift. Installing, downloading
-//! and building editors stay in the Python service.
+//! Hub window reaches it through [`cli::run`] (`blockloom-hub --hubctl`), as
+//! does `scripts/hub.py`, which only forwards. Installing, downloading and
+//! building editors live here too (`manage`), so the Hub needs no Python.
 
 pub mod backup;
 pub mod cli;
 pub mod editors;
+pub mod fetch;
+pub mod github;
 pub mod installs;
+pub mod manage;
 pub mod oplock;
 pub mod process;
 pub mod projects;
+pub mod run;
+pub mod stage;
+pub mod toolchain;
+pub mod tools;
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -104,8 +111,10 @@ pub fn project_registry() -> PathBuf {
 }
 
 pub fn read_json(path: &Path) -> Result<Value> {
-    let text = std::fs::read_to_string(path)?;
-    let value: Value = serde_json::from_str(&text)?;
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| Error::new(format!("{e}: {}", path.display())))?;
+    let value: Value =
+        serde_json::from_str(&text).map_err(|e| Error::new(format!("{e}: {}", path.display())))?;
     if !value.is_object() {
         return Err(Error::new(format!(
             "Expected a JSON object: {}",

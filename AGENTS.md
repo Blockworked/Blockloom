@@ -3728,12 +3728,19 @@ sets busy. The editor/Hub file formats are pinned by
 `blockloom-core/tests/fixtures/hub-contract/`, read by both
 `blockloom-core/tests/hub_contract.rs` and `blockloom-hub-state/tests/contract.rs`.
 
-`blockloom-hub-state` (Qt-free) is the one implementation of the Hub's project
-and editor logic: the project list, who holds a project, binding, snapshots,
-focus, and starting or reusing editors. The Hub window runs it as
-`blockloom-hub --hubctl <command>`; `scripts/hub.py` (installing and building
-editors only) forwards project commands to it and asks it for installation
-guards (`BLOCKLOOM_HUBCTL`, else `target/*/blockloom-hubctl`). Open and New
+`blockloom-hub-state` (Qt-free) is the whole Hub service: the project list,
+who holds a project, binding, snapshots, focus, starting or reusing editors,
+and installing, downloading and building them (`manage.rs`: the operation
+lock, release and dev installs, `tools.rs` the shared tool cache,
+`fetch.rs` bounded HTTPS downloads that resume and retry plus safe zip/tar
+extraction, `toolchain.rs` Android Rust targets, Java and the Android SDK/NDK
+from their official sources, `github.rs` private catalogs through `gh`,
+`run.rs` cancellable builds and copies, `stage.rs` the one-rename swap into
+a slot). The Hub window runs it as `blockloom-hub --hubctl <command>`, so it
+needs no Python; `just hub` and `scripts/hub.py` forward to
+`blockloom-hubctl`, and the Python left beside it (`hub_install.py`,
+`hub_download.py`, `hub_process.py`) only serves `just replace` and release
+packaging. A cancel is the file named by `BLOCKLOOM_HUB_CANCEL_FILE`. Open and New
 project reuse an idle editor: the editor's `hub_poll` (every 1.5 s, GUI-only)
 publishes `<data dir>/blockloom/editors/<pid>.json`, the Hub drops
 `<pid>.request.json` beside it and waits for `<pid>.reply.json`, and a new

@@ -45,9 +45,8 @@ private:
     void finishSmoke(int projects, int installations);
     void appendLog(const QString &text);
     void finish(bool ok, const QString &error = {});
-    QString pythonPath() const;
     QProcessEnvironment serviceEnvironment() const;
-    QTemporaryDir m_scripts;
+    QTemporaryDir m_work;
     QProcess m_process;
     QProcess m_poll;
     QString m_pollCommand;

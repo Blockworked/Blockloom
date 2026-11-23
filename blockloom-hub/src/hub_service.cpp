@@ -31,14 +31,10 @@ HubService::HubService(QObject *parent) : QObject(parent)
         if (!mono.isEmpty()) QFontDatabase::addApplicationFont(mono);
         QTimer::singleShot(20000, this, [] { QCoreApplication::exit(2); });
     }
-    // Extract the embedded service so imports work without a source checkout.
-    for (const auto &name : {"hub.py", "hub_install.py", "hub_process.py", "hub_download.py", "hub_github.py", "hub_tools.py", "replace.py"}) {
-        if (!m_scripts.isValid() || !QFile::copy(QString(":/hub-service/") + name,
-                m_scripts.filePath(name))) {
-            m_setupError = "Could not prepare the Hub installation service.";
-            break;
-        }
-    }
+    // The cancel file lives here; every command is this executable's own
+    // `--hubctl` tool.
+    if (!m_work.isValid())
+        m_setupError = "Could not prepare the Hub's working folder.";
     connect(&m_poll, qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
         this, [this](int code, QProcess::ExitStatus status) {
             const QString output = QString::fromUtf8(m_poll.readAllStandardOutput());
@@ -56,7 +52,7 @@ HubService::HubService(QObject *parent) : QObject(parent)
     });
     connect(&m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
         if (error == QProcess::FailedToStart)
-            finish(false, "Could not start Python 3.11+. Set BLOCKLOOM_HUB_PYTHON to its executable.\n" + m_process.errorString());
+            finish(false, "Could not start the Hub's command tool.\n" + m_process.errorString());
     });
     connect(&m_process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
         this, [this](int code, QProcess::ExitStatus status) {
@@ -68,18 +64,6 @@ HubService::HubService(QObject *parent) : QObject(parent)
                 finish(false, "Operation cancelled.");
             else finish(code == 0 && status == QProcess::NormalExit);
         });
-}
-
-namespace {
-// What the Rust state tool answers; every other command is the installer.
-bool isStateCommand(const QString &command)
-{
-    static const QStringList commands {
-        "projects", "installations", "remember", "forget", "relocate", "bind", "backups",
-        "backup-project", "restore-backup", "focus", "open", "new-project"
-    };
-    return commands.contains(command);
-}
 }
 
 QString HubService::localPath(const QUrl &url) const
@@ -111,7 +95,7 @@ bool HubService::showFolder(const QString &path) const
 void HubService::cancel()
 {
     if (!canCancel() || m_cancelRequested) return;
-    QFile request(m_scripts.filePath("cancel"));
+    QFile request(m_work.filePath("cancel"));
     if (!request.open(QIODevice::WriteOnly)) {
         appendLog("Could not request cancellation.\n");
         return;
@@ -278,7 +262,7 @@ void HubService::run(const QString &command, const QStringList &arguments)
 {
     if (m_busy) return;
     m_command = command;
-    QFile::remove(m_scripts.filePath("cancel"));
+    QFile::remove(m_work.filePath("cancel"));
     m_cancelRequested = false;
     emit cancellingChanged();
     m_output.clear();
@@ -292,45 +276,15 @@ void HubService::run(const QString &command, const QStringList &arguments)
         return;
     }
     m_process.setProcessEnvironment(serviceEnvironment());
-    if (isStateCommand(command)) {
-        QStringList args {"--hubctl", command};
-        args.append(arguments);
-        m_process.start(QCoreApplication::applicationFilePath(), args);
-        return;
-    }
-    QStringList args {"-B", m_scripts.filePath("hub.py"), command};
+    QStringList args {"--hubctl", command};
     args.append(arguments);
-    m_process.start(pythonPath(), args);
-}
-
-QString HubService::pythonPath() const
-{
-    QString python = qEnvironmentVariable("BLOCKLOOM_HUB_PYTHON");
-    if (!python.isEmpty()) return python;
-    const QString bundled = QDir(QCoreApplication::applicationDirPath()).filePath(
-#ifdef Q_OS_WIN
-        "python/python.exe"
-#else
-        "python/bin/python3"
-#endif
-    );
-    if (QFile::exists(bundled)) return bundled;
-#ifdef Q_OS_WIN
-    return "python";
-#else
-    return "python3";
-#endif
+    m_process.start(QCoreApplication::applicationFilePath(), args);
 }
 
 QProcessEnvironment HubService::serviceEnvironment() const
 {
     auto environment = QProcessEnvironment::systemEnvironment();
-    environment.insert("PYTHONUTF8", "1");
-    environment.insert("PYTHONUNBUFFERED", "1");
-    environment.insert("BLOCKLOOM_HUB_CANCEL_FILE", m_scripts.filePath("cancel"));
-    // The installer service asks the same tool the window uses.
-    environment.insert("BLOCKLOOM_HUBCTL", QCoreApplication::applicationFilePath());
-    environment.insert("BLOCKLOOM_HUBCTL_ARGS", "--hubctl");
+    environment.insert("BLOCKLOOM_HUB_CANCEL_FILE", m_work.filePath("cancel"));
     return environment;
 }
 
@@ -339,9 +293,5 @@ void HubService::poll(const QString &command)
     if (m_poll.state() != QProcess::NotRunning || !m_setupError.isEmpty()) return;
     m_pollCommand = command;
     m_poll.setProcessEnvironment(serviceEnvironment());
-    if (isStateCommand(command)) {
-        m_poll.start(QCoreApplication::applicationFilePath(), {"--hubctl", command});
-        return;
-    }
-    m_poll.start(pythonPath(), {"-B", m_scripts.filePath("hub.py"), command});
+    m_poll.start(QCoreApplication::applicationFilePath(), {"--hubctl", command});
 }

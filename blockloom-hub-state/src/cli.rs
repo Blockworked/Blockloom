@@ -1,4 +1,5 @@
-//! The command line the Hub window and `scripts/hub.py` call.
+//! The command line the Hub window and `scripts/hub.py` call: projects and
+//! editors, and installing, downloading and building editors.
 //!
 //! JSON on stdout, progress and errors on stderr (`hub: <message>`), exit 1
 //! for an error and 130 for a cancellation, as the Python service did.
@@ -23,7 +24,40 @@ pub const COMMANDS: &[&str] = &[
     "new-project",
     "default-installation",
     "installation-usage",
+    "tool-cache",
+    "prune-tools",
+    "uninstall",
+    "add-tools",
+    "add-dev",
+    "modules",
+    "dev-options",
+    "check-releases",
+    "release-settings",
+    "install",
+    "download-release",
+    "rebuild",
+    "prepare-dev",
+    "install-dev",
 ];
+
+/// The `--java`, `--android-sdk` and `--android-ndk` flags given.
+fn components(args: &Args) -> Vec<String> {
+    crate::installs::OPTIONAL_TOOLS
+        .iter()
+        .filter(|name| args.has(name))
+        .map(|name| name.to_string())
+        .collect()
+}
+
+fn jobs(args: &Args) -> Result<Option<u32>> {
+    match args.value("jobs") {
+        None => Ok(None),
+        Some(text) => match text.parse::<u32>() {
+            Ok(n) if n > 0 => Ok(Some(n)),
+            _ => Err(Error::new("--jobs must be positive")),
+        },
+    }
+}
 
 struct Args {
     positional: Vec<String>,
@@ -73,7 +107,21 @@ impl Args {
 
 /// Runs one command against `hub`.
 pub fn dispatch(hub: &Hub, command: &str, raw: &[String]) -> Result<Value> {
-    let args = Args::parse(raw, &["installation", "location", "mode", "sample"])?;
+    let args = Args::parse(
+        raw,
+        &[
+            "installation",
+            "location",
+            "mode",
+            "sample",
+            "source",
+            "url",
+            "repo",
+            "sha256",
+            "jobs",
+            "build-id",
+        ],
+    )?;
     let project = |i| -> Result<PathBuf> { Ok(PathBuf::from(args.at(i, "project")?)) };
     Ok(match command {
         "projects" => json!(hub.projects()?),
@@ -100,6 +148,40 @@ pub fn dispatch(hub: &Hub, command: &str, raw: &[String]) -> Result<Value> {
         )?,
         "default-installation" => json!({"installation": hub.default_installation()?}),
         "installation-usage" => hub.installation_usage(args.at(0, "installation")?)?,
+        "tool-cache" => hub.tool_cache(),
+        "prune-tools" => hub.prune_tools()?,
+        "uninstall" => hub.uninstall(args.at(0, "installation")?)?,
+        "add-tools" => hub.add_tools(
+            args.at(0, "installation")?,
+            &components(&args),
+            args.has("android-rust-targets"),
+        )?,
+        "add-dev" => hub.add_dev(&PathBuf::from(args.at(0, "repository")?))?,
+        "modules" => hub.modules(args.positional.first().map(String::as_str))?,
+        "dev-options" => hub.dev_options(args.at(0, "installation")?)?,
+        "check-releases" => hub.check_releases(args.positional.first().map(String::as_str))?,
+        "release-settings" => {
+            hub.release_settings(args.value("source"), args.value("url"), args.value("repo"))?
+        }
+        "install" => hub.install(
+            &PathBuf::from(args.at(0, "bundle")?),
+            &components(&args),
+            args.has("android-rust-targets"),
+        )?,
+        "download-release" => hub.download_release(
+            args.at(0, "version")?,
+            &components(&args),
+            args.has("android-rust-targets"),
+            args.value("sha256"),
+        )?,
+        "rebuild" => hub.rebuild(args.at(0, "installation")?, jobs(&args)?)?,
+        "prepare-dev" => hub.prepare_dev(args.at(0, "installation")?, jobs(&args)?)?,
+        "install-dev" => hub.install_dev(
+            args.at(0, "installation")?,
+            &components(&args),
+            args.has("android-rust-targets"),
+            args.value("build-id"),
+        )?,
         other => return Err(Error::new(format!("Unknown command: {other}"))),
     })
 }

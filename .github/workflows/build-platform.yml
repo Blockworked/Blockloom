@@ -93,10 +93,6 @@ jobs:
       - name: Service and packaging tests
         run: |
           python scripts/test-replace.py
-          python scripts/test-hub.py
-          python scripts/test-hub-tools.py
-          python scripts/test-hub-download.py
-          python scripts/test-hub-github.py
           python scripts/test-package-release.py
       - name: Qt Hub smoke tests
         env:

@@ -128,9 +128,9 @@ state. Failed builds leave the previous development installation intact.
 
 ## Running the first milestone
 
-Python 3.11 or newer is required for the development CLI. It does not build the
-editor just to inspect projects. Run `just hub --help` or
-`python scripts/hub.py --help` (`python3` on Unix).
+The development CLI is the Rust `blockloom-hubctl` (the Hub window's own
+`--hubctl` tool). It does not build the editor just to inspect projects. Run
+`just hub <command>`; `scripts/hub.py` forwards to the same tool.
 
 ```text
 just hub projects
@@ -225,7 +225,7 @@ changed by another Hub between preparation and installation.
 Hub replacement builds exclude the companion Hub target to avoid relinking the
 running launcher on Windows; they still build the editor, runtime and players.
 
-Validation: `python scripts/test-hub.py` covers the installation service;
+Validation: `cargo test -p blockloom-hub-state` covers the installation service;
 `python scripts/test-hub-ui.py` runs the built Hub offscreen against isolated
 fixtures and captures Projects, Installations, tool selection and editor
 selection under `target/hub-ui-smoke`. Windows smoke tests load an OS font
@@ -242,9 +242,9 @@ files or changes detected during copying discard the partial ZIP and preserve th
 selection. Show backup opens the saved archive's folder. Restoring a snapshot is
 manual; switching editors alone does not undo a format migration.
 
-`python scripts/test-hub-process.py` checks real child-tree cancellation and
-process birth identity; service tests cover active-owner refusal, stale locks,
-optional tool selection and failed/cancelled installation preservation.
+`cargo test -p blockloom-hub-state` covers process birth identity, active-owner
+refusal, stale locks, optional tool selection and failed installation
+preservation.
 
 ## Downloads and build workflows
 
@@ -292,6 +292,6 @@ manual cleanup; it does not overwrite an existing release.
 
 Protocol references: [GitHub CLI release downloads](https://cli.github.com/manual/gh_release_download)
 and [Rust distribution manifests](https://forge.rust-lang.org/infra/channel-layout.html).
-`test-hub-download.py`, `test-hub-github.py` and `test-package-release.py` use
-controlled fixtures to verify downloads, private release discovery, archives and
+`blockloom-hub-state`'s `fetch`, `toolchain` and `github` tests and
+`test-package-release.py` use controlled fixtures to verify downloads, private release discovery, archives and
 CI profile selection. Real hosted workflow execution remains to be verified.

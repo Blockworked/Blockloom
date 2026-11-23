@@ -18,5 +18,13 @@ dirs.workspace = true
 sha2.workspace = true
 zip = { version = "7.2", default-features = false, features = ["deflate"] }
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
-
 tempfile.workspace = true
+regex = "1.13"
+toml = "1.2"
+url = "2.5"
+ureq = { version = "3.4", default-features = false, features = ["rustls"] }
+tar = "0.4.46"
+flate2.workspace = true
+lzma-rs = "0.3"
+sha1_smol = "1.0"
+quick-xml = "0.41"

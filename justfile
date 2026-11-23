@@ -66,11 +66,10 @@ prune-target *args:
 run: build
     {{TARGET}}
 
-# Hub inspection and installation commands do not need an editor build; the
-# project and editor commands run in the small Rust state tool.
+# Every Hub command (projects, installs, downloads, builds) without the Hub
+# window: the small Rust tool the window runs as `blockloom-hub --hubctl`.
 hub *args:
-    cargo build -q -p blockloom-hub-state --bin blockloom-hubctl
-    {{if os() == "windows" { "python" } else { "python3" }}} scripts/hub.py {{args}}
+    cargo run -q -p blockloom-hub-state --bin blockloom-hubctl -- {{args}}
 
 # Build the workspace and open the separate Hub window.
 hub-run: build

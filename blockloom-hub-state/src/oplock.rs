@@ -1,5 +1,4 @@
-//! The Hub's operation lock: one mutating operation at a time, shared with
-//! the Python service that still installs editors.
+//! The Hub's operation lock: one mutating operation at a time.
 
 use crate::{Error, Result, process, read_json, write_json};
 use std::path::{Path, PathBuf};
