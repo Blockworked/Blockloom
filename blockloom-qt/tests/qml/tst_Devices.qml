@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Window
 import QtQuick.Controls
 import QtTest
+import com.blockworked.Blockstitch
 import "../../qml" as Editor
 
 TestCase {
@@ -85,7 +86,10 @@ TestCase {
         panel.device = "phone-1";
         deferBuild = true;
         const deploy = findChild(panel, "deployButton");
-        mouseClick(deploy); mouseClick(deploy);
+        // Let the layouts settle between clicks, as frames do for a real double click.
+        waitForPolish(panel); wait(50);
+        mouseClick(deploy); wait(50);
+        mouseClick(deploy);
         compare(matching("start_build_game").length, 1);
         compare(matching("start_build_game")[0].args.target, "aarch64-linux-android");
         verify(panel.busy);
@@ -323,7 +327,7 @@ TestCase {
         const image = grabImage(panel);
         compare(image.width, data.w);
         compare(image.height, data.h);
-        verify(image.red(data.w - 10, 10) < 60);
+        verify(Qt.colorEqual(image.pixel(data.w - 10, 10), Theme.window));
         verify(image.pixel(10, 10) !== image.pixel(data.w - 10, 10));
         image.save("/tmp/blockloom-devices-" + data.tag + ".png");
     }

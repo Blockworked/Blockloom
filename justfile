@@ -353,9 +353,10 @@ android-smoke apk app device="":
 test: prepare-patched-deps
     {{if os() == "linux" { "python3 scripts/prune-target.py --run" } else if os() == "windows" { "python scripts/prune-target.py --run" } else { "" }}} cargo test --workspace
 
-# Qt Quick interaction and layout tests use the staged blockstitch controls.
-qml-test: build
-    {{if os() == "windows" { "python" } else { "python3" }}} scripts/run-bash.py scripts/test-devices-qml.sh
+# Qt Quick tests against the pinned (or `blockstitch-local`) blockstitch QML.
+# Needs no build; set QMLTESTRUNNER to Qt 6.12's qmltestrunner if it isn't on PATH.
+qml-test *args:
+    {{if os() == "windows" { "python" } else { "python3" }}} scripts/run-bash.py scripts/test-qml.sh {{args}}
 
 # An MCP server standing on `blockloom-shell`: every backend command becomes
 # an MCP tool, so an agent can drive a project the way a user does. Builds the

@@ -27,6 +27,23 @@ jobs:
       - run: bash scripts/prepare-patched-deps.sh
       - run: cargo fmt --all --check
 
+  # Every Qt Quick test, against the pinned blockstitch QML. No editor build:
+  # Qt 6.12 comes from conda-forge, the tests mock the backend.
+  qml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Qt 6.12
+        run: |
+          mkdir -p "$RUNNER_TEMP/mamba"
+          curl -fsSL https://conda.anaconda.org/conda-forge/linux-64/micromamba-2.0.5-0.tar.bz2 \
+            | tar -xj -C "$RUNNER_TEMP/mamba" bin/micromamba
+          MAMBA_ROOT_PREFIX="$RUNNER_TEMP/mamba" "$RUNNER_TEMP/mamba/bin/micromamba" create -y -q \
+            -p "$RUNNER_TEMP/qt" -c conda-forge --override-channels 'qt6-main>=6.12,<6.13'
+          echo "QMLTESTRUNNER=$RUNNER_TEMP/qt/lib/qt6/bin/qmltestrunner" >> "$GITHUB_ENV"
+      - name: QML tests
+        run: bash scripts/test-qml.sh
+
   test:
     runs-on: ubuntu-latest
     steps:

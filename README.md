@@ -116,7 +116,7 @@ cargo build --workspace
 ./target/debug/blockloom
 cargo fmt --all --check
 just test
-just qml-test               # Qt Quick interaction/layout tests, after building
+just qml-test               # Qt Quick interaction/layout tests (no build needed)
 ```
 
 See [patches/README.md](patches/README.md) for patch preparation and maintenance.
