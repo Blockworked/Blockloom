@@ -197,14 +197,18 @@ fn sample_frame(index: f32, uv: vec2<f32>) -> vec4<f32> {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Sampled up front: WGSL only allows implicit-derivative samples in
+    // uniform control flow, and `in.kind` varies per fragment.
+    let first = sample_frame(in.frames.x, in.uv);
+    let second = sample_frame(in.frames.y, in.uv);
     var color = in.color;
     if (in.kind == 1u) {
         let across = abs(in.uv.y * 2.0 - 1.0);
         color.a *= 1.0 - across * across;
     } else if (has(FLAG_FLIPBOOK)) {
-        var tex = sample_frame(in.frames.x, in.uv);
+        var tex = first;
         if (has(FLAG_FRAME_BLEND)) {
-            tex = mix(tex, sample_frame(in.frames.y, in.uv), in.frames.z);
+            tex = mix(tex, second, in.frames.z);
         }
         color *= tex;
     } else {
