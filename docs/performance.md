@@ -99,11 +99,10 @@ Readings:
    Cheapest levers, in order: dynamic resolution on by default, FXAA/SMAA
    instead of 4x MSAA, 2 cascades, a shorter shadow distance. Needs a profiler
    dump from a slow scene before choosing.
-2. **Fixed-step catch-up has no cap.** `Time<Virtual>` keeps Bevy's 250 ms
-   `max_delta`, so a hitch runs up to 15 fixed steps in the next frame. If a
-   step costs more than 1/60 s that spirals. A cap turns it into slow motion,
-   but it would also slow a GPU-bound game whose sim is cheap, so it should
-   adapt to the measured step cost. Not changed here.
+2. **Fixed-step catch-up** (done). `catchup.rs` measures each fixed step
+   and sets `Time<Virtual>::max_delta` to as many steps as fit in 100 ms, up
+   to Bevy's 250 ms, so a cheap sim behind a slow GPU keeps catching up and
+   an expensive one slows down instead of spiralling.
 3. **VM strand bookkeeping.** `Vm::start` scans every script and clones two
    strings per start; `tick_at` clones the actor id per strand per tick.
    Reporter arguments allocate a `Vec<Evaluated>` and `String`s per call
