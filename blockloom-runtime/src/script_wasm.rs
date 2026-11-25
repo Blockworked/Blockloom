@@ -787,6 +787,49 @@ pub(crate) mod tests {
         assert_minimal_guest(&script);
     }
 
+    /// The whole Play path for a guest language: a `.c` script in a project
+    /// folder, built the way Play builds it and opened the way the runtime
+    /// opens it. Skipped without clang.
+    #[test]
+    fn a_c_script_is_built_and_opened_the_way_play_does() {
+        use blockloom_core::script::lang::{Language, build_guest};
+        if Language::C.available().is_err() {
+            return;
+        }
+        let guest =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../blockloom-script-guest");
+        let dir = std::env::temp_dir().join(format!("blockloom-c-play-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let relative = "assets/scripts/walker.c";
+        let source = dir.join(relative);
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::copy(guest.join("templates/minimal.c"), &source).unwrap();
+        assert!(!crate::engine::ScriptBackend::is_built(&dir, relative));
+        let module = match build_guest(&dir, relative) {
+            Ok(module) => module,
+            // No wasm backend or linker on this machine: nothing to test.
+            Err(error) if error.contains("wasm-ld") || error.contains("unable to execute") => {
+                let _ = std::fs::remove_dir_all(&dir);
+                return;
+            }
+            Err(error) => panic!("the C script builds: {error}"),
+        };
+        assert!(module.is_file());
+        assert!(crate::engine::ScriptBackend::is_built(&dir, relative));
+        // Nothing changed, so the second build is the stamp saying so.
+        let built = std::fs::metadata(&module).unwrap().modified().unwrap();
+        build_guest(&dir, relative).expect("reuses the build");
+        assert_eq!(
+            std::fs::metadata(&module).unwrap().modified().unwrap(),
+            built
+        );
+        match crate::engine::ScriptBackend::load(&dir, relative).expect("opens") {
+            crate::engine::ScriptBackend::Wasm(script) => assert_minimal_guest(&script),
+            _ => panic!("a guest module runs in the sandbox"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Builds `templates/minimal.c`; `None` when this machine has no wasm clang.
     fn build_c_guest() -> Option<Vec<u8>> {
         let guest =

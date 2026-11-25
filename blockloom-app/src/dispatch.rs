@@ -1093,9 +1093,12 @@ impl Backend {
             "check_shader" => to_json(commands::check_shader(state, app, arg(&args, "actorId")?)?),
 
             // ── Scripts ────────────────────────────────────────────────────
-            "create_script" => {
-                to_json(commands::create_script(state, app, arg(&args, "actorId")?)?)
-            }
+            "create_script" => to_json(commands::create_script(
+                state,
+                app,
+                arg(&args, "actorId")?,
+                arg(&args, "language").ok().flatten(),
+            )?),
             "add_script" => to_json(commands::add_script(
                 state,
                 app,

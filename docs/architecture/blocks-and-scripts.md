@@ -125,6 +125,27 @@ under wasmi. Compiled components are cached per process and under
 `.blockloom/build/components` (first load of CPython or QuickJS is seconds),
 and `wasi:http` is defined as traps. wasmtime is why web and Android guests stay Rust and C only.
 
+A script's language is its extension (`blockloom-core/src/script/lang.rs`):
+`.rs`, `.c`, `.py`, `.ts`, `.mjs`, `.go`, `.cs`, `.kt`, plus `.wasm` for one
+already built. Only Rust goes through rustc. Every other language is a guest
+build: Play partitions the actors' scripts, hands the guests to
+`lang::build_guest`, and that runs the language's own toolchain through the
+guest kit's `build.sh` (C is one direct `clang --target=wasm32`) into
+`.blockloom/build/guest/<name>.wasm`. A stamp beside the module (ABI, language,
+source hash) reuses the last build. `Language::available` checks each
+toolchain's programs on PATH and says how to get a missing one
+(`install_hint`), reported once per language in the run log rather than once per
+script, and Play carries on: blocks still run. `ScriptBackend::is_built`/`load`
+look for a guest script's module at `lang::guest_wasm_path`, opening a component
+under wasmtime and a core module under wasmi, so nothing about running one
+differs from a prebuilt `.wasm`. `create-script` takes a `language` (its name or
+its extension, Rust by default) and copies that language's
+`blockloom-script-guest/templates/minimal.<ext>`; the kit is
+`BLOCKLOOM_SCRIPT_GUEST`, else `script-guest/` beside the editor, else the
+repo's own folder. A runtime test builds `templates/minimal.c` through
+`build_guest` and opens it through `ScriptBackend`, holding its effects to the
+WAT fixture's.
+
 ## Compiling the blocks
 
 `blockloom-core/src/codegen/` emits a project's blocks as Rust source: an

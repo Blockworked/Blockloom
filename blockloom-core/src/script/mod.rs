@@ -20,6 +20,7 @@ pub mod abi;
 pub mod complete;
 pub mod data;
 pub mod ide;
+pub mod lang;
 pub mod symbols;
 pub mod timing;
 pub mod typed;
@@ -110,12 +111,13 @@ blockloom::export!(start = start, tick = tick, event = event);
     )
 }
 
-/// A script path the project can hold: under `assets/scripts`, ending in
-/// `.rs`, and with nothing in it that would climb out of the folder.
+/// A script path the project can hold: under `assets/scripts`, written in a
+/// language Blockloom knows, and with nothing in it that would climb out of
+/// the folder.
 pub fn is_valid_path(relative: &str) -> bool {
     let relative = relative.replace('\\', "/");
     relative.starts_with(&format!("{SCRIPTS_DIR}/"))
-        && relative.ends_with(".rs")
+        && lang::Language::of(&relative).is_some()
         && !relative.split('/').any(|part| part == ".." || part == ".")
 }
 
@@ -128,6 +130,13 @@ pub fn path_for(actor: &str) -> String {
     let stem = stem.trim_matches('_');
     let stem = if stem.is_empty() { "script" } else { stem };
     format!("{SCRIPTS_DIR}/{}.rs", stem.to_lowercase())
+}
+
+/// The same path in `language` instead of Rust.
+pub fn path_for_language(actor: &str, language: lang::Language) -> String {
+    let base = path_for(actor);
+    let stem = base.trim_end_matches(".rs");
+    format!("{stem}.{}", language.extension())
 }
 
 pub fn scripts_dir(project_dir: &Path) -> PathBuf {
@@ -159,12 +168,15 @@ pub fn source_path(project_dir: &Path, relative: &str) -> PathBuf {
 }
 
 /// A crate name rustc will accept, from a script's path.
+/// The build artifact's stem for a script in any language, which is
+/// [`crate_name`] for Rust.
+pub fn crate_name_of(relative: &str) -> String {
+    crate_name(relative)
+}
+
 fn crate_name(relative: &str) -> String {
-    let stem = relative
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(relative)
-        .trim_end_matches(".rs");
+    let stem = relative.rsplit(['/', '\\']).next().unwrap_or(relative);
+    let stem = stem.rsplit_once('.').map_or(stem, |(before, _)| before);
     let name: String = stem
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
@@ -396,7 +408,7 @@ pub fn compile_for_with_linker(
             ));
         }
         return Err(format!(
-            "\"{relative}\" isn't a script path - a script lives in {SCRIPTS_DIR}/ and ends in .rs"
+            "\"{relative}\" isn't a script path - a script lives in {SCRIPTS_DIR}/ and ends in a language Blockloom builds (.rs, .c, .py, .go, ...)"
         ));
     }
     let source_path = source_path(project_dir, relative);
@@ -576,20 +588,33 @@ pub fn create(project_dir: &Path, relative: &str, actor: &str) -> Result<String,
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
-    std::fs::write(&path, starter(actor)).map_err(|e| format!("{}: {e}", path.display()))?;
+    let source = match lang::Language::of(relative) {
+        Some(language) if !language.is_rust() => lang::starter(language, actor)?,
+        _ => starter(actor),
+    };
+    std::fs::write(&path, source).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(relative.to_string())
 }
 
 /// An unused script path based on `actor`'s name - `player.rs`, then
 /// `player_2.rs`.
 pub fn unused_path(project_dir: &Path, actor: &str) -> String {
-    let wanted = path_for(actor);
+    unused_path_in(project_dir, actor, lang::Language::Rust)
+}
+
+/// The same, for a script in `language`.
+pub fn unused_path_in(project_dir: &Path, actor: &str, language: lang::Language) -> String {
+    let wanted = path_for_language(actor, language);
     if !source_path(project_dir, &wanted).exists() {
         return wanted;
     }
-    let stem = wanted.trim_end_matches(".rs").to_string();
+    let extension = language.extension();
+    let stem = wanted
+        .trim_end_matches(extension)
+        .trim_end_matches('.')
+        .to_string();
     (2..)
-        .map(|n| format!("{stem}_{n}.rs"))
+        .map(|n| format!("{stem}_{n}.{extension}"))
         .find(|candidate| !source_path(project_dir, candidate).exists())
         .expect("an unused name always exists")
 }

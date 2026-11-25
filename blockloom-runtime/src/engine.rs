@@ -71,11 +71,23 @@ pub fn is_prebuilt(relative: &str) -> bool {
     relative.to_ascii_lowercase().ends_with(".wasm")
 }
 
+/// Whether a script is written in a guest language Play builds through that
+/// language's own toolchain into one wasm module (Python, Go, C, ...).
+#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+pub fn is_guest(relative: &str) -> bool {
+    blockloom_core::script::lang::Language::of(relative)
+        .is_some_and(|language| !language.is_rust() && !language.is_prebuilt())
+}
+
 /// Opens a prebuilt `.wasm` script: a component under wasmtime when this
 /// build has it, a core module under wasmi.
 #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
 fn load_prebuilt(project_dir: &std::path::Path, relative: &str) -> Result<ScriptBackend, String> {
-    let path = project_dir.join(relative);
+    let path = if is_guest(relative) {
+        blockloom_core::script::lang::guest_wasm_path(project_dir, relative)
+    } else {
+        project_dir.join(relative)
+    };
     let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     #[cfg(feature = "components")]
     if crate::script_component::is_component(&bytes) {
@@ -107,6 +119,10 @@ impl ScriptBackend {
     /// counts. On Android only the native library beside the runtime does.
     pub fn is_built(project_dir: &std::path::Path, relative: &str) -> bool {
         #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        if is_guest(relative) {
+            return blockloom_core::script::lang::guest_wasm_path(project_dir, relative).is_file();
+        }
+        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
         if is_prebuilt(relative) {
             return project_dir.join(relative).is_file();
         }
@@ -132,7 +148,7 @@ impl ScriptBackend {
     /// broken native build doesn't surface as a confusing wasm complaint.
     pub fn load(project_dir: &std::path::Path, relative: &str) -> Result<ScriptBackend, String> {
         #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
-        if is_prebuilt(relative) {
+        if is_prebuilt(relative) || is_guest(relative) {
             return load_prebuilt(project_dir, relative);
         }
         #[cfg(any(target_os = "android", target_arch = "wasm32"))]

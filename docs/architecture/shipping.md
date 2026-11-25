@@ -69,7 +69,11 @@ built for a platform this machine's rustc can compile for; `script::compile_for`
 cross-builds them into `.blockloom/build/<triple>/`, leaving Play's own build
 where the runtime has always looked for it. `build::targets` answers both
 questions at once, which is what the Build dialog lists, with the reason
-attached to every platform it can't offer.
+attached to every platform it can't offer. A guest-language script is one wasm
+module whatever the platform, so a build copies it into
+`.blockloom/build/guest/` rather than cross-building anything; a `.wasm` script
+ships inside `assets/`, where the runtime loads it from. Android runs native
+libraries only, so a guest script stops an Android build with that said plainly.
 
 A build folder is named for the project and the platform - `Pond Game (Linux
 x64)` - because one output folder holds a build per platform, and three folders

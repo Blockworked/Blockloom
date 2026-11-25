@@ -31,6 +31,7 @@ use blockloom_core::scene::{
 };
 use blockloom_core::scene_components::{SceneComponent, SceneComponents};
 use blockloom_core::script;
+use blockloom_core::script::lang;
 use blockloom_core::sky::{Sky, SkyKind};
 use blockloom_core::sound::SoundMixer;
 use blockloom_core::sync;
@@ -3102,6 +3103,59 @@ fn build_scripts(s: &mut AppState) -> usize {
     build_scripts_for(s, None)
 }
 
+/// Builds every guest-language script through its own toolchain, answering how
+/// many failed. A missing toolchain is reported once per language, with how to
+/// get it, rather than once per script.
+fn build_guest_scripts(
+    s: &mut AppState,
+    dir: &Path,
+    guests: Vec<(String, String)>,
+    live: bool,
+) -> usize {
+    let mut failed = 0;
+    let mut said: Vec<lang::Language> = Vec::new();
+    for (actor, path) in guests {
+        let Some(language) = lang::Language::of(&path) else {
+            continue;
+        };
+        if let Err(error) = language.available() {
+            failed += 1;
+            if live {
+                s.record_script_status(&path, "build_failed", Some(error.clone()));
+            }
+            if !said.contains(&language) {
+                said.push(language);
+                s.push_log(LogLine::error(
+                    "Scripts".to_string(),
+                    format!("{error} Blocks still run."),
+                ));
+            }
+            continue;
+        }
+        let result = lang::build_guest(dir, &path).map(|_| ());
+        if live {
+            s.record_script_status(
+                &path,
+                if result.is_ok() {
+                    "built"
+                } else {
+                    "build_failed"
+                },
+                result.as_ref().err().cloned(),
+            );
+        }
+        if let Err(error) = result {
+            failed += 1;
+            s.push_log(LogLine::script_error(
+                actor,
+                &path,
+                format!("{path} didn't build:\n{error}"),
+            ));
+        }
+    }
+    failed
+}
+
 /// Compiles every actor's script for `target` (`None` being this machine),
 /// logging whatever rustc has to say about the ones that fail and answering
 /// how many did. A failed script just doesn't load, so Play carries on - a
@@ -3112,7 +3166,7 @@ fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
     let Some(dir) = s.project_dir().map(Path::to_path_buf) else {
         return 0;
     };
-    let scripts: Vec<(String, String)> = s
+    let all: Vec<(String, String)> = s
         .project()
         .into_iter()
         .flat_map(|project| project.actors.iter())
@@ -3126,8 +3180,15 @@ fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
                 .collect::<Vec<_>>()
         })
         .collect();
+    // A guest language builds through its own toolchain into one wasm module;
+    // only Rust goes through cargo. Cross-building a guest script is the same
+    // module either way, so a target build runs it once too.
+    let (guests, scripts): (Vec<_>, Vec<_>) = all
+        .into_iter()
+        .partition(|(_, path)| lang::Language::of(path).is_some_and(|l| !l.is_rust()));
+    let mut failed = build_guest_scripts(s, &dir, guests, target.is_none());
     if scripts.is_empty() {
-        return 0;
+        return failed;
     }
     if target.is_none()
         && let Err(error) = script::toolchain_version()
@@ -3139,9 +3200,8 @@ fn build_scripts_for(s: &mut AppState, target: Option<&str>) -> usize {
                 "Scripts need a Rust toolchain and this machine doesn't have one, so {} script(s) won't run. Blocks still run. {error}",
                 scripts.len()
             )));
-        return scripts.len();
+        return failed + scripts.len();
     }
-    let mut failed = 0;
     // Android links through the NDK wrapper, which a direct rustc call only
     // takes as `-C linker=`. Anything else links the way Play does.
     let linker = target
@@ -4617,14 +4677,29 @@ fn repoint_assets(s: &mut AppState, app: &AppHandle, from: &str, to: &str) {
 
 // ─── Scripts ───────────────────────────────────────────────────────────────
 
-/// Gives an actor its first script: makes the file from the starter template
-/// if it isn't there, and attaches the component that names it. An actor
-/// that already names one keeps it; [`add_script`] attaches another.
+/// Gives an actor its first script: makes the file from `language`'s starter
+/// template (Rust by default) if it isn't there, and attaches the component
+/// that names it. An actor that already names one keeps it, whatever language
+/// it is in; [`add_script`] attaches another.
 pub(crate) fn create_script(
     state: &SharedState,
     app: &AppHandle,
     actor_id: String,
+    language: Option<String>,
 ) -> Result<String, String> {
+    let language = match language.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+        None => lang::Language::Rust,
+        Some(name) => lang::Language::named(name).ok_or_else(|| {
+            format!(
+                "\"{name}\" isn't a script language. Blockloom builds: {}",
+                lang::Language::every()
+                    .iter()
+                    .map(|l| l.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?,
+    };
     let mut s = lock(state)?;
     let dir = s
         .project_dir()
@@ -4638,7 +4713,7 @@ pub(crate) fn create_script(
     // "make the file I deleted" button.
     let path = match actor.components.script() {
         Some(path) => path.to_string(),
-        None => script::unused_path(&dir, &actor.name),
+        None => script::unused_path_in(&dir, &actor.name, language),
     };
     let name = actor.name.clone();
     script::create(&dir, &path, &name)?;

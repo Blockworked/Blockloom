@@ -2808,8 +2808,15 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "create-script",
         cmd: "create_script",
         aliases: &["create_script"],
-        summary: "Give an actor its first Rust script, made from the starter template.",
-        args: &[A],
+        summary: "Give an actor its first script, made from a language's starter template (Rust by default).",
+        args: &[
+            A,
+            ArgSpec {
+                name: "language",
+                ty: "string",
+                required: false,
+            },
+        ],
     },
     CommandSpec {
         name: "add-script",

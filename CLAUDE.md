@@ -395,8 +395,10 @@ The rest of the architecture lives in `docs/architecture/`, one page per area. R
   luminance`, GPU readbacks and the profiler behave as the browser allows.
 - Recursive statement-shaped custom blocks fall back to the VM because their
   loop counters still need to move onto each call frame.
-- A script needs a Rust toolchain on the machine that presses Play, which a
-  packaged install can't assume. The script editor is a plain textarea, and a
+- A script needs its language's toolchain on the machine that presses Play
+  (rustc for `.rs`, clang/componentize-py/TinyGo/... for a guest language),
+  which a packaged install can't assume; nothing is bundled or downloaded on
+  demand. The script editor is a plain textarea that only knows Rust, and a
   script's errors only show in the run log.
 - A script can't be attached mid-run: its library is opened when the world is
   built.

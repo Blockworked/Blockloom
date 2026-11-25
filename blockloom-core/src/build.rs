@@ -1306,6 +1306,15 @@ fn android_native_libs(
     let triple = Some(target.triple);
     let mut libs = vec![(abi.clone(), runtime_so.to_path_buf())];
     for relative in script_paths(project) {
+        // Android runs native libraries and nothing else yet, so a guest
+        // language can't ship there - say so rather than report it unbuilt.
+        if let Some(language) = script::lang::Language::of(relative).filter(|l| !l.is_rust()) {
+            return Err(format!(
+                "{relative} is a {} script, which {} can't run yet: only Rust scripts build for Android",
+                language.name(),
+                target.label
+            ));
+        }
         let library = script::library_path_for(project_dir, relative, triple);
         if !library.is_file() {
             return Err(format!(
@@ -1590,8 +1599,9 @@ fn clear_build_dir(dir: &Path) -> Result<(), String> {
 }
 
 /// Copies the project's `assets/` into the build, minus the script sources -
-/// what a built game runs is the library beside them, not the `.rs` - and
-/// minus the scene assets, which the pack already carries embedded.
+/// what a built game runs is the library or module built from them, not the
+/// `.rs` or `.py` - and minus the scene assets, which the pack already
+/// carries embedded.
 fn copy_assets(project_dir: &Path, game: &Path) -> Result<usize, String> {
     let from = project_dir.join(project::ASSETS_DIR);
     if !from.is_dir() {
@@ -1599,7 +1609,14 @@ fn copy_assets(project_dir: &Path, game: &Path) -> Result<usize, String> {
     }
     let scripts = script::scripts_dir(project_dir);
     copy_tree(&from, &game.join(project::ASSETS_DIR), &|path| {
-        !(path.starts_with(&scripts) && path.extension().is_some_and(|ext| ext == "rs"))
+        // Script sources stay behind; what a built game runs is the library or
+        // the wasm module built from them. A `.wasm` script is that artifact,
+        // so it ships.
+        !(path.starts_with(&scripts)
+            && path
+                .to_str()
+                .and_then(script::lang::Language::of)
+                .is_some_and(|language| !language.is_prebuilt()))
             // Scene assets ride in the pack, wherever the tray keeps them.
             && !path
                 .extension()
@@ -1819,6 +1836,28 @@ fn copy_scripts(
     let build = script::build_dir(game);
     std::fs::create_dir_all(&build).map_err(|e| format!("{}: {e}", build.display()))?;
     for relative in &paths {
+        // A guest language ships the one wasm module its toolchain built,
+        // which runs on every target. A prebuilt `.wasm` already rides along
+        // in `assets/`, where the runtime loads it from.
+        if let Some(language) = script::lang::Language::of(relative).filter(|l| !l.is_rust()) {
+            if language.is_prebuilt() {
+                continue;
+            }
+            let module = script::lang::guest_wasm_path(project_dir, relative);
+            if !module.is_file() {
+                return Err(format!(
+                    "{relative} hasn't been built, so the game would ship without it"
+                ));
+            }
+            let to = script::lang::guest_wasm_path(game, relative);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("{}: {e}", parent.display()))?;
+            }
+            std::fs::copy(&module, &to)
+                .map_err(|e| format!("{} -> {}: {e}", module.display(), to.display()))?;
+            continue;
+        }
         let library = script::library_path_for(project_dir, relative, script_target(target));
         if !library.is_file() {
             return Err(format!(
