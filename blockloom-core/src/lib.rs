@@ -99,6 +99,7 @@ pub mod ui;
 pub mod ui_layers;
 pub mod ui_tree;
 pub mod value;
+pub mod verbs;
 pub mod vfs;
 pub mod vfx;
 pub mod vm;

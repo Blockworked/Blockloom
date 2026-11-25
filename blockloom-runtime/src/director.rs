@@ -15,6 +15,12 @@ use blockloom_core::vm::{Effect, Event};
 
 pub fn register(app: &mut App) {
     app.init_resource::<DirectorClock>()
+        .init_resource::<DirectorRun>()
+        .add_message::<crate::module::WorldRebuilt>()
+        .add_systems(
+            Update,
+            crate::module::forget_on_rebuild::<DirectorRun>.after(crate::world::rebuild_world),
+        )
         .init_resource::<WeatherNow>()
         .init_resource::<WetnessField>()
         .init_resource::<WetnessTexture>()
@@ -32,6 +38,16 @@ pub fn register(app: &mut App) {
             ),
         )
         .add_systems(Update, upload_wetness.after(crate::world::rebuild_world));
+}
+
+/// `set time of day`, `advance time by` and `set precipitation` this run.
+#[derive(Resource, Default, Debug, Clone)]
+pub struct DirectorRun {
+    /// The clock's explicit time, 0-24, once a block moved it. `None`
+    /// follows the project's clock.
+    pub time: Option<f32>,
+    /// `set precipitation`, over the director and the project.
+    pub precipitation: blockloom_core::director::PrecipitationOverrides,
 }
 
 /// The weather blend as of this tick, for modules that read it without the
@@ -165,23 +181,27 @@ impl Default for DirectorClock {
 
 /// `set time of day`, `advance time by`, `set precipitation` and
 /// `blend weather to` for the rest of the run.
-fn apply_director_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engine>) {
+fn apply_director_effects(
+    effects: Res<PendingEffects>,
+    mut engine: NonSendMut<Engine>,
+    mut run: ResMut<DirectorRun>,
+) {
     if !engine.running {
         return;
     }
     for effect in &effects.0 {
         match effect {
             Effect::SetTimeOfDay { time } if time.is_finite() => {
-                engine.director_time = Some(time.rem_euclid(24.0));
+                run.time = Some(time.rem_euclid(24.0));
             }
             Effect::AdvanceTime { hours } if hours.is_finite() => {
-                let now = engine
-                    .director_time
+                let now = run
+                    .time
                     .unwrap_or_else(|| engine.project.world.director.time_of_day.rem_euclid(24.0));
-                engine.director_time = Some((now + hours).rem_euclid(24.0));
+                run.time = Some((now + hours).rem_euclid(24.0));
             }
             Effect::SetPrecipitation { property, value } => {
-                engine.precipitation.set(*property, *value);
+                run.precipitation.set(*property, *value);
             }
             Effect::BlendWeather { weather, seconds } => {
                 let preset = engine.project.world.director.preset(weather).or_else(|| {
@@ -209,6 +229,7 @@ fn apply_director_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<E
 #[allow(clippy::too_many_arguments)]
 fn step_director(
     mut engine: NonSendMut<Engine>,
+    run: Res<DirectorRun>,
     time: Res<Time<Fixed>>,
     mut clock: ResMut<DirectorClock>,
     mut sources: ResMut<AtmosphereSources>,
@@ -220,7 +241,7 @@ fn step_director(
         clock.time = director.time_of_day.rem_euclid(24.0);
         engine.weather = Default::default();
         wetness.map.reset();
-        write_sources(&director, clock.time, &engine, &mut sources);
+        write_sources(&director, clock.time, &engine, &run, &mut sources);
         wetness.sampled = sources.wetness;
         wetness.map.sampled = sources.wetness;
         return;
@@ -230,7 +251,7 @@ fn step_director(
     }
     let dt = time.delta_secs();
     // The clock: explicit block time wins, else the director's own rate.
-    if let Some(set) = engine.director_time {
+    if let Some(set) = run.time {
         clock.time = set.rem_euclid(24.0);
     } else if director.enabled {
         clock.time = (clock.time + director.rate() * dt).rem_euclid(24.0);
@@ -245,7 +266,7 @@ fn step_director(
     if let Some(name) = finished {
         engine.fire(Event::Weather { weather: name });
     }
-    write_sources(&director, clock.time, &engine, &mut sources);
+    write_sources(&director, clock.time, &engine, &run, &mut sources);
     // The wetness map: rain soaks the ground round the camera while warm
     // sun and wind dry it back towards the weather's damp, unevenly.
     let weather = engine.weather.sampled();
@@ -293,19 +314,25 @@ fn step_director(
 /// Rain, snow, temperature, clock and weather name as of this tick.
 /// Explicit `set precipitation` wins over tracks and blends. Wetness is the
 /// map's read now (stepped just below), so the target below only seeds it.
-fn write_sources(director: &Director, time: f32, engine: &Engine, sources: &mut AtmosphereSources) {
+fn write_sources(
+    director: &Director,
+    time: f32,
+    engine: &Engine,
+    run: &DirectorRun,
+    sources: &mut AtmosphereSources,
+) {
     let weather = engine.weather.sampled();
     let active = engine.weather.is_active();
     let track = |t: &blockloom_core::director::TimeTrack| t.sample(time);
     // Precipitation: explicit blocks, then the blend, then the track.
-    let rain = engine.precipitation.rain.or_else(|| {
+    let rain = run.precipitation.rain.or_else(|| {
         if active {
             Some(weather.precipitation)
         } else {
             track(&director.precipitation)
         }
     });
-    let snow = engine
+    let snow = run
         .precipitation
         .snow
         .or(if active { Some(weather.snow) } else { None });
@@ -389,6 +416,7 @@ mod tests {
             .init_resource::<AtmosphereSources>()
             .init_resource::<Time<Fixed>>()
             .init_resource::<DirectorClock>()
+            .init_resource::<DirectorRun>()
             .init_resource::<WetnessField>()
             .add_systems(Update, (step_director, apply_director_effects).chain());
         app
@@ -430,9 +458,10 @@ mod tests {
         app.update();
         app.world_mut().resource_mut::<PendingEffects>().0.clear();
         app.update();
+        let run = app.world().resource::<DirectorRun>();
+        assert_eq!(run.time, Some(18.5));
+        assert_eq!(run.precipitation.rain, Some(0.7));
         let engine = app.world().non_send::<Engine>();
-        assert_eq!(engine.director_time, Some(18.5));
-        assert_eq!(engine.precipitation.rain, Some(0.7));
         assert!(engine.weather.is_active());
         let sources = app.world().resource::<AtmosphereSources>();
         assert_eq!(sources.time_of_day, 18.5);

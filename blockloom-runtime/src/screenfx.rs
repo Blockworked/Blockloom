@@ -144,6 +144,7 @@ struct CoverDisc;
 
 pub fn register(app: &mut App) {
     app.init_resource::<ScreenFxState>()
+        .init_resource::<crate::light2d::Look2d>()
         .add_systems(Update, drive_screenfx.after(crate::camera2d::apply_camera));
 }
 
@@ -163,7 +164,8 @@ fn full(mut node: Node) -> Node {
 #[allow(clippy::too_many_arguments)]
 fn drive_screenfx(
     mut commands: Commands,
-    mut engine: NonSendMut<Engine>,
+    engine: NonSend<Engine>,
+    mut look: ResMut<crate::light2d::Look2d>,
     mut state: ResMut<ScreenFxState>,
     real: Res<Time<Real>>,
     mut flashes: Query<(Entity, &mut BackgroundColor), (With<FlashNode>, Without<CoverNode>)>,
@@ -175,9 +177,9 @@ fn drive_screenfx(
 ) {
     if !engine.running {
         state.0 = ScreenFx::default();
-        engine.look2d.fx.clear();
+        look.fx.clear();
     }
-    for (dial, value) in std::mem::take(&mut engine.look2d.fx) {
+    for (dial, value) in std::mem::take(&mut look.fx) {
         state.0.set(dial, &value);
     }
     state.0.step(real.delta_secs().max(0.0));

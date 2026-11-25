@@ -34,6 +34,12 @@ pub fn register(app: &mut App) {
     bevy::asset::embedded_asset!(app, "shaders/light2d.wesl");
     app.add_plugins(Material2dPlugin::<LightMapMaterial>::default())
         .init_resource::<ShadowCache>()
+        .init_resource::<Look2d>()
+        .add_message::<crate::module::WorldRebuilt>()
+        .add_systems(
+            Update,
+            crate::module::forget_on_rebuild::<Look2d>.after(crate::world::rebuild_world),
+        )
         .add_systems(
             Update,
             sync_lighting
@@ -42,9 +48,8 @@ pub fn register(app: &mut App) {
         );
 }
 
-/// What the blocks have set the lit look to this run. Cleared on a rebuild
-/// with the rest of the run's live state.
-#[derive(Debug, Clone, Default, PartialEq)]
+/// What the blocks have set the 2D look to this run. Forgotten on a rebuild.
+#[derive(Debug, Clone, Default, PartialEq, Resource)]
 pub struct Look2d {
     /// `set ambient light to`: the multiplier over the project's ambient
     /// colour, or `None` to leave it to the project and the clock.
@@ -62,13 +67,17 @@ pub struct Look2d {
 }
 
 /// `set [look] to` blocks, applied on the fixed tick.
-pub fn apply_look2d_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engine>) {
+pub fn apply_look2d_effects(
+    effects: Res<PendingEffects>,
+    engine: NonSend<Engine>,
+    mut look: ResMut<Look2d>,
+) {
     if !engine.running || engine.paused {
         return;
     }
     for effect in &effects.0 {
         if let Effect::SetLook2d { dial, value } = effect {
-            engine.look2d.set(*dial, value);
+            look.set(*dial, value);
         }
     }
 }
@@ -423,6 +432,7 @@ pub fn sync_lighting(
     mut last: Local<Option<LightMapUniform>>,
     mut frame: Local<LightFrame>,
     run: Option<Res<crate::lights::LightsRun>>,
+    look: Res<Look2d>,
 ) {
     let settings = &engine.project.world.lighting2d;
     let live = dimension.0 == Mode::TwoD && settings.enabled;
@@ -486,7 +496,7 @@ pub fn sync_lighting(
     }
     cache.maps.retain(|key, _| keep.contains(key));
 
-    let overrides = &engine.look2d;
+    let overrides = &*look;
     let mut ambient = settings.ambient_at(hour, director.enabled);
     if let Some(color) = &overrides.ambient_color {
         let c = blockloom_core::material::hex_to_linear(color);

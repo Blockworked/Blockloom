@@ -2405,6 +2405,34 @@ impl Actor {
         self.text(TEXT_PLUGIN, Str::borrow(plugin), Str::borrow(&asked))
     }
 
+    /// Runs a declared block verb by name, as the block would. The typed
+    /// methods (`set_property`, ...) are this with the arguments spelled out.
+    pub fn verb(&self, verb: &str, args: &[PluginArg]) {
+        let json = plugin_args_json(args);
+        self.act(
+            ACT_VERB,
+            Str::borrow(verb),
+            Str::EMPTY,
+            Str::borrow(&json),
+            0.0,
+            0.0,
+            0.0,
+        );
+    }
+
+    /// A declared reporter verb's answer as a number (a switch as 1 or 0),
+    /// or `None` when it can't answer.
+    pub fn verb_number(&self, verb: &str, args: &[PluginArg]) -> Option<f64> {
+        let json = plugin_args_json(args);
+        self.number(READ_VERB, Str::borrow(verb), Str::borrow(&json), 0.0)
+    }
+
+    /// The same reporter's answer as text.
+    pub fn verb_text(&self, verb: &str, args: &[PluginArg]) -> Option<String> {
+        let json = plugin_args_json(args);
+        self.text(TEXT_VERB, Str::borrow(verb), Str::borrow(&json))
+    }
+
     /// Every scene's name, in project order. What `scene names` reports.
     pub fn scene_names(&self) -> Option<String> {
         self.text(TEXT_SCENE_NAMES, Str::EMPTY, Str::EMPTY)

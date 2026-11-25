@@ -100,6 +100,7 @@ impl ExtractResource<RenderApp> for HeatVolumes {
 pub fn collect_heat(
     mut commands: Commands,
     engine: NonSend<Engine>,
+    run: Res<crate::volumes::VolumeRun>,
     dimension: Res<Dimension>,
     debug: Res<VolumeDebugView>,
     cameras: Query<(Entity, Has<VolumeHeat>), With<WorldCamera>>,
@@ -119,7 +120,7 @@ pub fn collect_heat(
         }
     }
     let next = if on {
-        heat_volumes(&engine, dimension.0, actors.iter())
+        heat_volumes(&engine, &run, dimension.0, actors.iter())
     } else {
         HeatVolumes::default()
     };
@@ -128,10 +129,11 @@ pub fn collect_heat(
 
 fn heat_volumes<'a>(
     engine: &'a Engine,
+    run: &crate::volumes::VolumeRun,
     mode: Mode,
     actors: impl Iterator<Item = (&'a ActorId, &'a Transform)>,
 ) -> HeatVolumes {
-    let volumes = placed(engine, actors)
+    let volumes = placed(engine, run, actors)
         .into_iter()
         .filter(|(_, spec, _)| spec.shape != VolumeShape::Global)
         .take(MAX_VOLUMES)

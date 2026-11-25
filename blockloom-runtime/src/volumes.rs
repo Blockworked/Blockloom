@@ -20,6 +20,12 @@ pub fn register(app: &mut App) {
         .init_resource::<VolumeEye>()
         .init_resource::<VolumeDebugView>()
         .init_resource::<LiveVolumes>()
+        .init_resource::<VolumeRun>()
+        .add_message::<crate::module::WorldRebuilt>()
+        .add_systems(
+            Update,
+            crate::module::forget_on_rebuild::<VolumeRun>.after(crate::world::rebuild_world),
+        )
         .add_systems(
             FixedUpdate,
             publish_live_volumes
@@ -87,10 +93,18 @@ impl VolumeBlend {
     }
 }
 
+/// What `enable volume` and `set weight of volume` (and a cutscene's volume
+/// keys) set this run, by actor id, over the authored `Volume`.
+#[derive(Resource, Default, Debug, Clone)]
+pub struct VolumeRun {
+    pub enabled: std::collections::HashMap<String, bool>,
+    pub weight: std::collections::HashMap<String, f32>,
+}
+
 /// An actor's volume as it stands this run: carried right now, with what
 /// the blocks switched and weighed since Play. One attached mid-run that the
 /// editor never authored has the defaults.
-pub fn live_spec(engine: &Engine, id: &str) -> Option<VolumeSpec> {
+pub fn live_spec(engine: &Engine, run: &VolumeRun, id: &str) -> Option<VolumeSpec> {
     if !engine.has_component(id, "Volume") {
         return None;
     }
@@ -100,10 +114,10 @@ pub fn live_spec(engine: &Engine, id: &str) -> Option<VolumeSpec> {
         .volume()
         .cloned()
         .unwrap_or_default();
-    if let Some(enabled) = engine.volume_enabled.get(id) {
+    if let Some(enabled) = run.enabled.get(id) {
         spec.enabled = *enabled;
     }
-    if let Some(weight) = engine.volume_weight.get(id) {
+    if let Some(weight) = run.weight.get(id) {
         spec.weight = *weight;
     }
     Some(spec)
@@ -141,12 +155,13 @@ impl LiveVolumes {
 /// Refreshes `LiveVolumes` at the head of the fixed tick.
 pub fn publish_live_volumes(
     engine: NonSend<Engine>,
+    run: Res<VolumeRun>,
     actors: Query<&ActorId>,
     mut live: ResMut<LiveVolumes>,
 ) {
     live.0.clear();
     for id in &actors {
-        if let Some(spec) = live_spec(&engine, &id.0) {
+        if let Some(spec) = live_spec(&engine, &run, &id.0) {
             live.0.insert(id.0.clone(), spec);
         }
     }
@@ -155,18 +170,23 @@ pub fn publish_live_volumes(
 /// Every switched-on volume in the world, with where it stands.
 pub(crate) fn placed<'a>(
     engine: &'a Engine,
+    run: &VolumeRun,
     actors: impl Iterator<Item = (&'a ActorId, &'a Transform)>,
 ) -> Vec<(&'a str, VolumeSpec, VolumePose)> {
     actors
         .filter_map(|(id, transform)| {
-            let spec = live_spec(engine, &id.0)?;
+            let spec = live_spec(engine, run, &id.0)?;
             (spec.enabled && spec.weight > 0.0).then(|| (id.0.as_str(), spec, pose_of(transform)))
         })
         .collect()
 }
 
 /// `enable volume` and `set weight of volume` for the rest of the run.
-pub fn apply_volume_effects(effects: Res<PendingEffects>, mut engine: NonSendMut<Engine>) {
+pub fn apply_volume_effects(
+    effects: Res<PendingEffects>,
+    engine: NonSend<Engine>,
+    mut run: ResMut<VolumeRun>,
+) {
     if !engine.running {
         return;
     }
@@ -187,10 +207,10 @@ pub fn apply_volume_effects(effects: Res<PendingEffects>, mut engine: NonSendMut
         for id in targets {
             match effect {
                 Effect::SetVolumeEnabled { enabled, .. } => {
-                    engine.volume_enabled.insert(id, *enabled);
+                    run.enabled.insert(id, *enabled);
                 }
                 Effect::SetVolumeWeight { weight, .. } if weight.is_finite() => {
-                    engine.volume_weight.insert(id, weight.clamp(0.0, 1.0));
+                    run.weight.insert(id, weight.clamp(0.0, 1.0));
                 }
                 _ => {}
             }
@@ -229,6 +249,7 @@ fn targets(engine: &Engine, running: &str, wanted: &str) -> Vec<String> {
 #[allow(clippy::too_many_arguments)]
 pub fn gather_volumes(
     engine: NonSend<Engine>,
+    run: Res<VolumeRun>,
     dimension: Res<Dimension>,
     debug: Res<VolumeDebugView>,
     claims: Res<ExposureClaims>,
@@ -259,7 +280,7 @@ pub fn gather_volumes(
         volumes.0.clear();
         return;
     };
-    blend.active = weigh(&engine, dimension.0, eye, actors.iter());
+    blend.active = weigh(&engine, &run, dimension.0, eye, actors.iter());
     volumes.0 = blend
         .active
         .iter()
@@ -269,12 +290,13 @@ pub fn gather_volumes(
 
 fn weigh<'a>(
     engine: &'a Engine,
+    run: &VolumeRun,
     mode: Mode,
     eye: Vec3,
     actors: impl Iterator<Item = (&'a ActorId, &'a Transform)>,
 ) -> Vec<ActiveVolume> {
     let flat = mode == Mode::TwoD;
-    let mut active: Vec<ActiveVolume> = placed(engine, actors)
+    let mut active: Vec<ActiveVolume> = placed(engine, run, actors)
         .into_iter()
         .filter_map(|(id, spec, pose)| {
             let coverage = spec.coverage(&pose, eye.to_array(), flat);
@@ -348,6 +370,7 @@ const HOT: Color = Color::srgba(1.0, 0.6, 0.15, 0.9);
 /// Volume bounds in the scene view. The heat map is `volume_heat`'s pass.
 pub fn draw_volumes(
     engine: NonSend<Engine>,
+    run: Res<VolumeRun>,
     dimension: Res<Dimension>,
     debug: Res<VolumeDebugView>,
     editor: Option<Res<SceneEditor>>,
@@ -357,7 +380,7 @@ pub fn draw_volumes(
 ) {
     let mode = dimension.0;
     let editing = editor.is_some_and(|editor| editing(&engine, &editor));
-    let volumes = placed(&engine, actors.iter());
+    let volumes = placed(&engine, &run, actors.iter());
     if debug.0.bounds && editing {
         for (id, spec, pose) in &volumes {
             let weight = blend
@@ -528,6 +551,7 @@ mod tests {
             engine.project.actors.push(actor);
         }
         app.insert_engine(engine);
+        app.init_resource::<VolumeRun>();
         app.world_mut().spawn((WorldCamera, Transform::default()));
         app.add_systems(
             Update,

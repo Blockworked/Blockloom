@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 /// Bumped whenever anything in this file changes shape. The host refuses a
 /// library that reports a different one rather than calling into it.
-pub const ABI_VERSION: u32 = 52;
+pub const ABI_VERSION: u32 = 53;
 
 /// A borrowed string, as the boundary passes one. Not NUL-terminated: the
 /// length is the length.
@@ -240,6 +240,9 @@ pub const TEXT_LANGUAGE: u32 = 30;
 /// `a` = key. The text for it in the run's language, falling back to the
 /// default language and then to the key itself. What `text for` reports.
 pub const TEXT_LOCALE_TEXT: u32 = 31;
+/// A declared verb's reporter as text (`verbs::VERBS`). `a` = the verb's
+/// name, `b` = its arguments as a JSON array.
+pub const TEXT_VERB: u32 = 36;
 
 /// Separates the parts a plugin call or event is spelled with in one string.
 pub const PLUGIN_SEP: char = '\u{1f}';
@@ -252,6 +255,9 @@ pub const TEXT_PLUGIN: u32 = 21;
 /// `a` = field name (`count`, `x`, `distance`, ...), `arg` = which hit, from
 /// 1. A number from this actor's last query; a miss reads as zero.
 pub const READ_QUERY: u32 = 54;
+/// A declared verb's reporter as a number (a switch as 1 or 0). `a` = the
+/// verb's name, `b` = its arguments as a JSON array.
+pub const READ_VERB: u32 = 76;
 /// `a` = field name (`actor`, `body`, `collider`, `error`, ...), `b` = which
 /// hit, from 1. Words from this actor's last query.
 pub const TEXT_QUERY: u32 = 22;
@@ -699,6 +705,10 @@ pub const ACT_SET_MASS_OTHER: u32 = 159;
 pub const ACT_SET_REVERB: u32 = 160;
 /// `a` = bus, `n0` = 1 to muffle it while the camera is underwater, 0 to stop.
 pub const ACT_MUFFLE_UNDERWATER: u32 = 161;
+/// A declared verb (`verbs::VERBS`). `a` = its name, `c` = its arguments as
+/// a JSON array. One verb for every declared block, so new ones need no
+/// new constant.
+pub const ACT_VERB: u32 = 162;
 
 /// The three calls a script makes back into the runtime, handed to it on
 /// every entry point along with an opaque context. Three instead of one per

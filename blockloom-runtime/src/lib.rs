@@ -33,6 +33,7 @@ mod beams;
 mod bridge;
 mod camera2d;
 mod capture;
+mod catchup;
 mod cinematic;
 mod cloud_layers;
 mod clouds;
@@ -128,6 +129,7 @@ mod transition;
 mod ui;
 mod ui_design;
 mod ui_systems;
+mod verbs;
 mod vfx;
 mod volume_heat;
 mod volumes;
@@ -609,7 +611,11 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 overlay::apply_ui_effects
                     .after(SimStep::PluginFixed)
                     .before(SimStep::SavedData),
-                (environment::apply_exposure_effects, hdr::apply_hdr_effects)
+                (
+                    environment::apply_exposure_effects,
+                    environment::apply_surface_verbs,
+                    hdr::apply_hdr_effects,
+                )
                     .chain()
                     .after(SimStep::Common)
                     .before(SimStep::VolumeEffects),

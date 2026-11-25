@@ -511,6 +511,12 @@ pub struct Engine {
     /// `create actor` block conjured. Looked up before the project, so the
     /// rest of the runtime asks one question to find any actor at all.
     pub spawned: HashMap<String, Actor>,
+    /// Authored actors as `set property` left them this run, looked up
+    /// before the document. Cleared on every rebuild.
+    live: HashMap<String, Actor>,
+    /// Each actor's components as the run has them, shared with the sensor
+    /// snapshot so `property of` reads without a copy per frame.
+    specs: std::cell::RefCell<HashMap<String, std::sync::Arc<blockloom_core::sense::ActorSpec>>>,
     /// Where `project.actors` last held each id looked up. Checked against the
     /// actor found there, so a stale slot is a miss, never a wrong answer.
     actor_slots: std::cell::RefCell<HashMap<String, usize>>,
@@ -522,35 +528,13 @@ pub struct Engine {
     pub parents: HashMap<String, String>,
     /// Actor id -> the last actor or clone it made, for "the actor I made".
     pub last_created: HashMap<String, String>,
-    /// What `set ambient light to` and friends set the 2D lit look to.
-    pub look2d: crate::light2d::Look2d,
-    /// Actor id -> what `enable volume` and `set weight of volume` set this
-    /// run, over the authored `Volume`.
-    pub volume_enabled: HashMap<String, bool>,
-    pub volume_weight: HashMap<String, f32>,
-    /// `set time scale` this run, over 1. A cutscene's slow-motion keys
-    /// only move `cine_scale` while this is unset.
-    pub time_scale: Option<f32>,
-    /// The playing cutscene's slow-motion keys, while one plays.
-    pub cine_scale: Option<f32>,
-    /// The cutscene playing right now, by name, and seconds into it. What
-    /// `is cutscene playing?` and `cutscene time` read.
-    pub cine_name: String,
-    pub cine_time: f32,
     /// Set once on Mali GPUs: their driver holds per-shadow-view memory to
     /// OOM, so point and spot lights never get shadow maps there. Latched
     /// by `lights::sync_lights`; the sun keeps its own maps.
     pub no_point_shadow_maps: bool,
-    /// `set precipitation` this run, over the director and the project.
-    pub precipitation: blockloom_core::director::PrecipitationOverrides,
     /// The live weather blend: what the air is right now and where it is
     /// going. Stepped on the fixed tick; `blend weather to` moves it.
     pub weather: blockloom_core::director::WeatherState,
-    /// The director clock's explicit time, 0-24, once `set time of day` or
-    /// `advance time by` has moved it. `None` follows the project's clock.
-    pub director_time: Option<f32>,
-    /// `set snow cover to` and `set surface wetness to`, for the run.
-    pub surface: SurfaceOverrides,
     /// Erosion previews the editor asked for, by terrain actor.
     pub terrain_previews: Vec<(String, Option<blockloom_core::terrain::sculpt::Erosion>)>,
     /// Dynamic actors a walk verb (`move`, `change position`) drove this
@@ -565,11 +549,6 @@ pub struct Engine {
     /// `set collision` blocks, so queries read this run's values rather than
     /// the authored ones.
     pub physics_filter: HashMap<String, (u8, u8, bool)>,
-    /// Run-scoped input remaps: lowercase action name -> bindings. Seeded
-    /// empty on every rebuild; the `bind`/`clear` blocks move it from there,
-    /// so a settings screen remaps for this run without touching the
-    /// document.
-    pub input_overrides: HashMap<String, Vec<blockloom_core::input::InputBinding>>,
     /// Whether each action was held last frame, by lowercase name. What
     /// turns a held action into a one-frame `pressed`/`released`.
     pub prev_action_held: HashMap<String, bool>,
@@ -685,25 +664,16 @@ impl Engine {
             script_times: HashMap::new(),
             attached: HashMap::new(),
             spawned: HashMap::new(),
+            live: HashMap::new(),
+            specs: Default::default(),
             clones: HashMap::new(),
             parents: HashMap::new(),
-            look2d: Default::default(),
-            volume_enabled: HashMap::new(),
-            volume_weight: HashMap::new(),
-            time_scale: None,
-            cine_scale: None,
-            cine_name: String::new(),
-            cine_time: 0.0,
             no_point_shadow_maps: false,
-            precipitation: Default::default(),
             weather: Default::default(),
-            director_time: None,
-            surface: Default::default(),
             terrain_previews: Vec::new(),
             last_created: HashMap::new(),
             driven: HashSet::new(),
             physics_filter: HashMap::new(),
-            input_overrides: HashMap::new(),
             prev_action_held: HashMap::new(),
             preview_inputs: Vec::new(),
             pause_after_tick: false,
@@ -721,7 +691,40 @@ impl Engine {
     /// physics or components goes through here, so a clone answers the same
     /// questions the actor it was copied from does.
     pub fn actor(&self, id: &str) -> Option<&Actor> {
-        self.spawned.get(id).or_else(|| self.authored(id))
+        self.live
+            .get(id)
+            .or_else(|| self.spawned.get(id))
+            .or_else(|| self.authored(id))
+    }
+
+    /// Replaces an actor's run copy after a property write: a run-made one
+    /// in place, an authored one in the overlay the document stays under.
+    pub fn set_live(&mut self, actor: Actor) {
+        self.specs.borrow_mut().remove(&actor.id);
+        if let Some(spawned) = self.spawned.get_mut(&actor.id) {
+            *spawned = actor;
+        } else {
+            self.live.insert(actor.id.clone(), actor);
+        }
+    }
+
+    /// Forgets every property write, as a rebuild does.
+    pub fn clear_live(&mut self) {
+        self.live.clear();
+        self.specs.borrow_mut().clear();
+    }
+
+    /// The components the sensor snapshot shares for `id`, made once per
+    /// actor per rebuild or write.
+    pub fn spec_of(&self, id: &str) -> Option<std::sync::Arc<blockloom_core::sense::ActorSpec>> {
+        if let Some(spec) = self.specs.borrow().get(id) {
+            return Some(spec.clone());
+        }
+        let spec = std::sync::Arc::new(blockloom_core::sense::ActorSpec::new(
+            self.actor(id)?.components.clone(),
+        ));
+        self.specs.borrow_mut().insert(id.to_string(), spec.clone());
+        Some(spec)
     }
 
     /// An authored actor by id. The document keeps actors in a list, so each
@@ -804,27 +807,8 @@ impl Engine {
         );
     }
 
-    /// This run's bindings for an action: a `bind`/`clear` override first,
-    /// then what the document authored. `None` for an action nobody defined.
-    pub fn effective_bindings(
-        &self,
-        action: &str,
-    ) -> Option<Vec<blockloom_core::input::InputBinding>> {
-        let key = action.trim().to_lowercase();
-        if let Some(bindings) = self.input_overrides.get(&key) {
-            return Some(bindings.clone());
-        }
-        self.project
-            .settings
-            .input
-            .find(action)
-            .map(|found| found.bindings.clone())
-    }
-
-    /// Clears every run-scoped remap and edge, so a fresh Play starts from
-    /// the document again.
+    /// Clears every held-action edge, so a fresh Play starts from scratch.
     pub fn reset_input_run(&mut self) {
-        self.input_overrides.clear();
         self.prev_action_held.clear();
     }
 
@@ -1078,12 +1062,4 @@ mod tests {
         assert!(matches!(loaded, Ok(ScriptBackend::Wasm(_))));
         let _ = std::fs::remove_dir_all(&dir);
     }
-}
-
-/// Surface weather blocks and scripts set for the run, laid over the
-/// blended environment.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct SurfaceOverrides {
-    pub snow: Option<f32>,
-    pub wetness: Option<f32>,
 }

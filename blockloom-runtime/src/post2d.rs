@@ -20,6 +20,7 @@ use blockloom_core::post2d::{MAX_PALETTE, Post2d, parse_srgb};
 pub fn register(app: &mut App) {
     bevy::asset::embedded_asset!(app, "shaders/post2d.wesl");
     app.add_plugins(FullscreenMaterialPlugin::<Post2dPass>::default())
+        .init_resource::<crate::light2d::Look2d>()
         .add_systems(Update, sync_post2d.run_if(is_2d_world));
 }
 
@@ -102,9 +103,9 @@ impl FullscreenMaterial for Post2dPass {
 }
 
 /// The project's 2D post with what blocks have set this run laid over it.
-pub fn effective(engine: &Engine) -> Post2d {
+pub fn effective(engine: &Engine, look: &crate::light2d::Look2d) -> Post2d {
     let mut post = engine.project.world.post2d.clone();
-    for (dial, value) in &engine.look2d.post {
+    for (dial, value) in &look.post {
         post.set(*dial, value);
     }
     post
@@ -114,10 +115,11 @@ pub fn effective(engine: &Engine) -> Post2d {
 /// off when none is.
 fn sync_post2d(
     engine: NonSend<Engine>,
+    look: Res<crate::light2d::Look2d>,
     cameras: Query<(Entity, Option<&Post2dPass>), With<WorldCamera>>,
     mut commands: Commands,
 ) {
-    let post = effective(&engine);
+    let post = effective(&engine, &look);
     for (entity, held) in &cameras {
         if !post.is_on() {
             if held.is_some() {

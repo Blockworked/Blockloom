@@ -399,6 +399,97 @@ pub fn set_component_property(
     serde_json::from_value(current).map_err(|e| format!("{name}.{path}: {e}"))
 }
 
+/// A path as blocks and scripts spell it, as the component serializes:
+/// most components wrap one spec (`{"light": {...}}`), so `intensity`
+/// means `light.intensity` there.
+pub fn resolve_component_path(component: &ActorComponent, path: &str) -> String {
+    match serde_json::to_value(component) {
+        Ok(json) => resolve_path_in(&json, path),
+        Err(_) => path.to_string(),
+    }
+}
+
+/// [`resolve_component_path`] over a component already serialized.
+pub fn resolve_path_in(component: &Value, path: &str) -> String {
+    let Value::Object(map) = component else {
+        return path.to_string();
+    };
+    let mut keys = map.keys().filter(|key| key.as_str() != "component");
+    let first = split_path(path).first().copied().unwrap_or_default();
+    match (keys.next(), keys.next()) {
+        (Some(only), None) if only != first && map[only].is_object() => {
+            if path.is_empty() {
+                only.clone()
+            } else {
+                format!("{only}.{path}")
+            }
+        }
+        _ => path.to_string(),
+    }
+}
+
+/// The value at `path` inside a component, as it serializes. An empty path
+/// is the whole component.
+pub fn component_property(component: &ActorComponent, path: &str) -> Result<Value, String> {
+    let json = serde_json::to_value(component).map_err(|e| e.to_string())?;
+    value_at(&json, path).cloned()
+}
+
+/// The value at `path` inside serialized JSON, borrowed.
+pub fn value_at<'a>(mut current: &'a Value, path: &str) -> Result<&'a Value, String> {
+    for step in split_path(path) {
+        current = match current {
+            Value::Object(map) => map
+                .get(step)
+                .ok_or_else(|| format!("there is no \"{path}\""))?,
+            Value::Array(items) => {
+                let i: usize = step
+                    .parse()
+                    .map_err(|_| format!("\"{step}\" isn't a list index in {path}"))?;
+                items.get(i).ok_or_else(|| format!("{path}: no item {i}"))?
+            }
+            _ => return Err(format!("there is no \"{path}\"")),
+        };
+    }
+    Ok(current)
+}
+
+/// A block's value as JSON of the type at `path` in a component: text that
+/// reads as a number becomes one for a number field, and so on, so a block
+/// can type `0.5` into a text slot.
+pub fn coerce_component_value(
+    component: &ActorComponent,
+    path: &str,
+    value: &crate::value::Evaluated,
+) -> Value {
+    use crate::value::Evaluated;
+    let fields = component_fields(component.name());
+    let root = FieldType::Struct { fields };
+    let current = serde_json::to_value(component).unwrap_or(Value::Null);
+    let ty = type_at(&root, &split_path(path), &current);
+    match (ty, value) {
+        (Some(FieldType::Int { .. }), v) => v
+            .as_number()
+            .map(|n| Value::from(n.round() as i64))
+            .unwrap_or_else(|_| crate::value::json_of(v)),
+        (Some(FieldType::Number { .. }), v) => v
+            .as_number()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number)
+            .unwrap_or_else(|| crate::value::json_of(v)),
+        (Some(FieldType::Bool), v) => Value::Bool(v.as_bool()),
+        (Some(FieldType::Text { .. } | FieldType::Color | FieldType::Choice { .. }), v) => {
+            Value::String(v.as_text())
+        }
+        // Lists, vectors and structs are written as JSON text.
+        (_, Evaluated::Text(text)) => {
+            serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.clone()))
+        }
+        (_, v) => crate::value::json_of(v),
+    }
+}
+
 /// Sets `path` on a scene's world settings, checked against their schema.
 pub fn set_world_property(world: &World, path: &str, value: Value) -> Result<World, String> {
     let root = FieldType::Struct {

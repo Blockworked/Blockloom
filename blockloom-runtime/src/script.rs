@@ -618,6 +618,27 @@ extern "C" fn read_number(
 /// Asks a plugin reporter for a script: `a` is the plugin, `b` the block, a
 /// separator and the slots as a JSON array. A failure is reported to the run
 /// log and answers nothing.
+/// A declared verb's reporter, as the block would answer it for `actor`.
+/// A failure goes to the run log and reads as nothing.
+fn verb_answer(actor: &str, verb: &str, args: &str) -> Option<Evaluated> {
+    let answer = serde_json::from_str::<Vec<serde_json::Value>>(args)
+        .map_err(|error| format!("{verb} got values it couldn't read: {error}"))
+        .and_then(|args| {
+            let args = blockloom_core::verbs::args_of(&args);
+            sense::with_actor(actor, || blockloom_core::verbs::read(verb, &args))
+        });
+    match answer {
+        Ok(answer) => Some(answer),
+        Err(message) => {
+            crate::bridge::send(&RuntimeMessage::Error {
+                actor: actor.to_string(),
+                message,
+            });
+            None
+        }
+    }
+}
+
 fn plugin_answer(actor: &str, plugin: &str, asked: &str) -> Option<Evaluated> {
     let (block, slots) = asked.split_once(abi::PLUGIN_SEP)?;
     let fail = |message: String| {
@@ -854,6 +875,11 @@ pub(crate) fn number_for(actor: &str, what: u32, a: &str, b: &str, arg: f64) -> 
         abi::READ_IS_NIGHT => bool_as(sense::read(|s| s.light2d.night)),
         abi::READ_ATMOSPHERE => sense::read(|sensors| sensors.atmosphere.field(a)),
         abi::READ_PLUGIN => match plugin_answer(actor, a, b)? {
+            Evaluated::Number(n) => Some(n),
+            Evaluated::Bool(value) => bool_as(value),
+            Evaluated::Text(text) => text.trim().parse().ok(),
+        },
+        abi::READ_VERB => match verb_answer(actor, a, b)? {
             Evaluated::Number(n) => Some(n),
             Evaluated::Bool(value) => bool_as(value),
             Evaluated::Text(text) => text.trim().parse().ok(),
@@ -1594,6 +1620,7 @@ pub(crate) fn text_for(actor: &str, what: u32, a: &str, b: &str) -> Option<Strin
         }
         abi::TEXT_CURRENT_QUALITY => Some(format!("{:?}", sense::read(|s| s.performance.quality))),
         abi::TEXT_PLUGIN => plugin_answer(actor, a, b).map(|answer| answer.as_text()),
+        abi::TEXT_VERB => verb_answer(actor, a, b).map(|answer| answer.as_text()),
         abi::TEXT_EVENT => EVENT_WORDS.with(|words| {
             let words = words.borrow();
             let (subject, detail) = words.as_ref()?;
@@ -2149,6 +2176,15 @@ fn act_for(ctx: &mut Ctx, what: u32, a: &str, b: &str, c: &str, numbers: &[f64])
             Err(error) => Effect::Error {
                 actor,
                 message: format!("{a}/{b} got slot values it couldn't read: {error}"),
+            },
+        },
+        abi::ACT_VERB => match serde_json::from_str::<Vec<serde_json::Value>>(c) {
+            Ok(args) => {
+                blockloom_core::verbs::effect(&actor, a, &blockloom_core::verbs::args_of(&args))
+            }
+            Err(error) => Effect::Error {
+                actor,
+                message: format!("{a} got values it couldn't read: {error}"),
             },
         },
         abi::ACT_SWITCH_SCENE => Effect::SwitchScene {
@@ -3163,6 +3199,85 @@ blockloom::export!(start = start, event = event);
                     actor: "a1".to_string(),
                     text: "com.example.health changed [\"Hero\", \"5\"]".to_string(),
                 },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_script_runs_and_reads_declared_verbs_like_blocks() {
+        blockloom_core::init();
+        let project = TempProject::new("verbs");
+        let Some(script) = project.build(
+            r#"
+use blockloom::*;
+
+fn start(me: &Actor) {
+    let lit = me.property("Light.intensity", "Lamp");
+    me.set_property("Light.intensity", "myself", 900.0);
+    me.say(&format!("{lit:?} {:?}", me.screen_open("pause")));
+    me.verb("set_property", &["Light.range".into()]);
+}
+
+blockloom::export!(start = start);
+"#,
+        ) else {
+            return;
+        };
+        let mut light = blockloom_core::components::Components::default();
+        light.insert(
+            blockloom_core::registry::default_component(
+                "Light",
+                blockloom_core::scene::Mode::ThreeD,
+            )
+            .unwrap(),
+        );
+        let mut actors = std::collections::HashMap::new();
+        actors.insert(
+            "a1".to_string(),
+            sense::ActorSense {
+                name: "Lamp".to_string(),
+                spec: Some(std::sync::Arc::new(sense::ActorSpec::new(light))),
+                ..Default::default()
+            },
+        );
+        sense::publish(sense::Sensors {
+            actors,
+            screens: vec![("assets/ui/pause.blockui".to_string(), true)],
+            ..Default::default()
+        });
+        let mut asked = Asked::default();
+        script.start("a1", &mut asked);
+        let intensity = blockloom_core::verbs::read(
+            "property",
+            &[
+                Evaluated::Text("Light.intensity".into()),
+                Evaluated::Text("a1".into()),
+            ],
+        );
+        assert_eq!(
+            asked.effects,
+            vec![
+                blockloom_core::verbs::effect(
+                    "a1",
+                    "set_property",
+                    &[
+                        Evaluated::Text("Light.intensity".into()),
+                        Evaluated::Text("myself".into()),
+                        Evaluated::Number(900.0),
+                    ],
+                ),
+                Effect::Say {
+                    actor: "a1".to_string(),
+                    text: format!(
+                        "{:?} Some(true)",
+                        intensity.ok().map(|value| value.as_text())
+                    ),
+                },
+                blockloom_core::verbs::effect(
+                    "a1",
+                    "set_property",
+                    &[Evaluated::Text("Light.range".into())],
+                ),
             ]
         );
     }

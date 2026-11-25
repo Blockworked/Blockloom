@@ -395,6 +395,11 @@ pub enum Action {
         block: String,
         args: Vec<Value>,
     },
+    /// A declared verb (`verbs::VERBS`): its arguments in order.
+    Verb {
+        verb: String,
+        args: Vec<Value>,
+    },
     /// Grabs or frees the pointer; window-global, like gravity.
     SetMouseLocked(bool),
     /// Rumbles connected gamepads: 0-100 strength for seconds.
@@ -982,7 +987,7 @@ fn action_values(action: &Action) -> Vec<&Value> {
             values
         }
         Action::RumbleGamepad { strength, duration } => vec![strength, duration],
-        Action::PluginCall { args, .. } => args.iter().collect(),
+        Action::PluginCall { args, .. } | Action::Verb { args, .. } => args.iter().collect(),
         Action::BindAction { action, binding } => vec![action, binding],
         Action::SwitchScene { scene, transition } => vec![scene, transition],
         Action::SwitchSaveSlot(slot) | Action::DeleteSaveSlot(slot) | Action::SetLanguage(slot) => {
@@ -1469,6 +1474,10 @@ fn lift_action(action: Action, ctx: &mut LiftCtx) -> Action {
         } => Action::PluginCall {
             plugin,
             block,
+            args: args.into_iter().map(|v| lift_one(v, ctx)).collect(),
+        },
+        Action::Verb { verb, args } => Action::Verb {
+            verb,
             args: args.into_iter().map(|v| lift_one(v, ctx)).collect(),
         },
         Action::BindAction { action, binding } => Action::BindAction {
@@ -2733,6 +2742,10 @@ fn emit_kind(steps: &mut Vec<Step>, kind: &InstructionKind) {
         } => steps.push(Step::Action(Action::PluginCall {
             plugin: plugin.clone(),
             block: block.clone(),
+            args: args.clone(),
+        })),
+        K::Verb { verb, args } => steps.push(Step::Action(Action::Verb {
+            verb: verb.clone(),
             args: args.clone(),
         })),
         K::StopAll => steps.push(Step::StopAll),

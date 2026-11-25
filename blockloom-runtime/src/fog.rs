@@ -400,6 +400,7 @@ pub fn pick_fog_lights(mut lights: Vec<FogLight>, camera: Vec3) -> Vec<FogLight>
 fn resolve_fog(
     scaling: Option<Res<crate::quality::Scaling>>,
     engine: NonSend<Engine>,
+    volume_run: Res<crate::volumes::VolumeRun>,
     environment: Res<Environment>,
     time: Res<Time>,
     sky: Option<Res<SkyRender>>,
@@ -413,7 +414,7 @@ fn resolve_fog(
     mut render: ResMut<FogRender>,
 ) {
     let world = &engine.project.world;
-    let locals: Vec<_> = crate::volumes::placed(&engine, actors.iter())
+    let locals: Vec<_> = crate::volumes::placed(&engine, &volume_run, actors.iter())
         .into_iter()
         .filter(|(_, spec, _)| spec.fog.enabled && spec.fog.density > 0.0)
         .filter_map(|(id, spec, _)| {

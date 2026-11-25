@@ -57,6 +57,8 @@ pub const READ_CUTSCENE_TIME: u32 = 52;
 pub const READ_TILE_AT: u32 = 48;
 pub const READ_PLUGIN: u32 = 53;
 pub const READ_QUERY: u32 = 54;
+/// A declared verb's reporter as a number. `a` = name, `b` = args as JSON.
+pub const READ_VERB: u32 = 76;
 pub const READ_CONTROLLER: u32 = 55;
 pub const READ_VELOCITY: u32 = 56;
 pub const READ_ANGULAR_VELOCITY: u32 = 57;
@@ -106,6 +108,8 @@ pub const TEXT_SAVE_SLOT: u32 = 28;
 pub const TEXT_SAVE_SLOTS: u32 = 29;
 pub const TEXT_LANGUAGE: u32 = 30;
 pub const TEXT_LOCALE_TEXT: u32 = 31;
+/// A declared verb's reporter as text. `a` = name, `b` = args as JSON.
+pub const TEXT_VERB: u32 = 36;
 pub const TEXT_PLUGIN: u32 = 21;
 pub const TEXT_QUERY: u32 = 22;
 pub const TEXT_CONTROLLER: u32 = 23;
@@ -257,6 +261,8 @@ pub const ACT_SET_DENSITY_OTHER: u32 = 158;
 pub const ACT_SET_MASS_OTHER: u32 = 159;
 pub const ACT_SET_REVERB: u32 = 160;
 pub const ACT_MUFFLE_UNDERWATER: u32 = 161;
+/// A declared verb. `a` = name, `c` = args as a JSON array.
+pub const ACT_VERB: u32 = 162;
 pub const ACT_SET_TRAIL_ENABLED: u32 = 142;
 pub const ACT_GLIDE: u32 = 143;
 pub const ACT_FRACTURE: u32 = 144;

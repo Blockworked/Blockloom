@@ -30,6 +30,7 @@ pub enum SimStep {
     Scripts,
     PluginFixed,
     SavedData,
+    Verbs,
     Lifetimes,
     Common,
     VolumeEffects,
@@ -48,8 +49,16 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
     if let Some(recorder) = crate::record::Recorder::from_env() {
         app.insert_resource(recorder);
     }
+    crate::catchup::register(app);
     app.insert_resource(Dimension(mode))
         .init_resource::<PendingEffects>()
+        .init_resource::<crate::volumes::VolumeRun>()
+        .init_resource::<world::InputRun>()
+        .add_message::<crate::module::WorldRebuilt>()
+        .add_systems(
+            Update,
+            crate::module::forget_on_rebuild::<world::InputRun>.after(world::rebuild_world),
+        )
         .init_resource::<world::NavMesh>()
         .init_resource::<crate::player_camera::BodyFacing>()
         .init_resource::<physics_install::PhysicsLayers>()
@@ -90,6 +99,7 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
             SimStep::Scripts,
             SimStep::PluginFixed,
             SimStep::SavedData,
+            SimStep::Verbs,
             SimStep::Lifetimes,
             SimStep::Common,
             SimStep::VolumeEffects,
@@ -137,6 +147,7 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
                 .in_set(SimStep::Scripts),
             plugins::stage(Stage::FixedSimulation).in_set(SimStep::PluginFixed),
             world::apply_saved_data.in_set(SimStep::SavedData),
+            crate::verbs::apply_property_writes.in_set(SimStep::Verbs),
             (world::apply_lifetimes, world::sync_navmesh)
                 .chain()
                 .in_set(SimStep::Lifetimes),

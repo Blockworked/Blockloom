@@ -3,7 +3,7 @@
 //! project's own settings, and the result is the one `Environment` every pass
 //! reads - the camera, the sun and the render world - instead of the project.
 
-use crate::engine::{Dimension, Engine};
+use crate::engine::{Dimension, Engine, PendingEffects};
 use crate::hdr::{HdrDebug, HdrFrame};
 use crate::world::{WorldCamera, WorldLight, parse_color};
 use bevy::anti_alias::contrast_adaptive_sharpening::ContrastAdaptiveSharpening;
@@ -24,9 +24,45 @@ use blockloom_core::volume::VolumeOverrides;
 
 pub fn register(app: &mut App) {
     app.init_resource::<Environment>()
+        .init_resource::<SurfaceRun>()
+        .add_message::<crate::module::WorldRebuilt>()
+        .add_systems(
+            Update,
+            crate::module::forget_on_rebuild::<SurfaceRun>.after(crate::world::rebuild_world),
+        )
         .init_resource::<EnvironmentVolumes>()
         .init_resource::<ExposureClaims>()
         .add_plugins(ExtractResourcePlugin::<Environment>::default());
+}
+
+/// `set surface snow` and `set surface wetness` this run, laid over the
+/// blended environment.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub struct SurfaceRun {
+    pub snow: Option<f32>,
+    pub wetness: Option<f32>,
+}
+
+/// The `set_surface` verb, on the fixed tick.
+pub fn apply_surface_verbs(
+    effects: Res<PendingEffects>,
+    engine: NonSend<Engine>,
+    mut run: ResMut<SurfaceRun>,
+) {
+    if !engine.running {
+        return;
+    }
+    for (_, args) in crate::verbs::calls(&effects, "set_surface") {
+        let value = args
+            .get(1)
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0) as f32;
+        let value = Some(value.clamp(0.0, 1.0));
+        match args.first().and_then(serde_json::Value::as_str) {
+            Some("wetness") => run.wetness = value,
+            _ => run.snow = value,
+        }
+    }
 }
 
 /// What the world looks like this frame, volumes and all.
@@ -731,6 +767,7 @@ pub fn blend_environment(
     mut environment: ResMut<Environment>,
     scaling: Option<Res<crate::quality::Scaling>>,
     sky_run: Option<Res<crate::space::SkyRun>>,
+    surface: Option<Res<SurfaceRun>>,
 ) {
     let mut blended = Environment::from_world(&engine.project.world);
     for (weight, over) in &volumes.0 {
@@ -823,11 +860,13 @@ pub fn blend_environment(
         run.clouds.apply(&mut blended.clouds);
     }
     // `set snow cover` and `set surface wetness` outlast every volume too.
-    if let Some(snow) = engine.surface.snow {
-        blended.snow = snow;
-    }
-    if let Some(wetness) = engine.surface.wetness {
-        blended.wetness = wetness;
+    if let Some(surface) = surface {
+        if let Some(snow) = surface.snow {
+            blended.snow = snow;
+        }
+        if let Some(wetness) = surface.wetness {
+            blended.wetness = wetness;
+        }
     }
     if let Some(scaling) = scaling {
         use blockloom_core::{clouds::CloudQuality, quality::Quality};
@@ -1265,5 +1304,32 @@ mod tests {
         let mut world = scene::World::default();
         world.lighting.light_direction = [0.0; 3];
         assert_eq!(Environment::from_world(&world).sun.direction, Vec3::Y);
+    }
+}
+
+#[cfg(test)]
+mod surface_tests {
+    use super::*;
+    use crate::engine::InsertEngine;
+    use blockloom_core::vm::Effect;
+
+    #[test]
+    fn the_set_surface_verb_holds_for_the_run() {
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, blockloom_core::scene::Mode::ThreeD);
+        engine.running = true;
+        let mut app = App::new();
+        app.insert_engine(engine);
+        app.init_resource::<SurfaceRun>()
+            .insert_resource(PendingEffects(vec![Effect::Verb {
+                actor: "a".into(),
+                verb: "set_surface".into(),
+                args: vec!["wetness".into(), 2.0.into()],
+            }]))
+            .add_systems(Update, apply_surface_verbs);
+        app.update();
+        let run = app.world().resource::<SurfaceRun>();
+        assert_eq!(run.wetness, Some(1.0));
+        assert_eq!(run.snow, None);
     }
 }

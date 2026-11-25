@@ -910,7 +910,8 @@ pub fn value_slot_mut(kind: &mut InstructionKind, field: FieldId) -> Option<&mut
         (K::CallBlock { args, .. } | K::BranchCallBlock { args, .. }, F::CallArg(i)) => {
             args.get_mut(i)
         }
-        (K::PluginBlock { args, .. }, F::PluginArg(i)) => args.get_mut(i),
+        // A plugin block's and a declared verb's slots, in order.
+        (K::PluginBlock { args, .. } | K::Verb { args, .. }, F::PluginArg(i)) => args.get_mut(i),
         _ => None,
     }
 }

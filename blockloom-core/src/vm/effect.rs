@@ -544,6 +544,13 @@ pub enum Effect {
         block: String,
         args: Vec<serde_json::Value>,
     },
+    /// A declared verb ran (`verbs::VERBS`): its arguments checked and
+    /// coerced, an actor argument as an id. A runtime system acts on it.
+    Verb {
+        actor: String,
+        verb: String,
+        args: Vec<serde_json::Value>,
+    },
     /// A physics query ran and its answer is filed under `actor`; the world
     /// has nothing to apply, so this only keeps the two schedulers honest.
     PhysicsQuery {

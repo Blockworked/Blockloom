@@ -9,19 +9,23 @@ use bevy::prelude::*;
 use blockloom_core::camera2d::{self as cam, Camera2dSettings};
 use blockloom_core::sense::{self, Camera2dSense};
 
+use crate::light2d::Look2d;
+
 pub fn register(app: &mut App) {
-    app.init_resource::<Camera2dState>().add_systems(
-        Update,
-        (
-            remove_shake
-                .before(crate::world::drive_camera)
-                .run_if(is_2d),
-            apply_camera
-                .after(crate::world::drive_camera)
-                .after(crate::world::publish_sensors)
-                .run_if(is_2d),
-        ),
-    );
+    app.init_resource::<Camera2dState>()
+        .init_resource::<Look2d>()
+        .add_systems(
+            Update,
+            (
+                remove_shake
+                    .before(crate::world::drive_camera)
+                    .run_if(is_2d),
+                apply_camera
+                    .after(crate::world::drive_camera)
+                    .after(crate::world::publish_sensors)
+                    .run_if(is_2d),
+            ),
+        );
 }
 
 fn is_2d(dimension: Res<Dimension>) -> bool {
@@ -43,9 +47,9 @@ pub struct Camera2dState {
 }
 
 /// The project's camera rules with what blocks set this run laid over them.
-pub fn effective(engine: &Engine) -> Camera2dSettings {
+pub fn effective(engine: &Engine, look: &Look2d) -> Camera2dSettings {
     let mut settings = engine.project.world.camera2d.clone();
-    for (dial, value) in &engine.look2d.post {
+    for (dial, value) in &look.post {
         settings.set(*dial, value);
     }
     settings
@@ -79,6 +83,7 @@ fn remove_shake(
 pub(crate) fn apply_camera(
     mut engine: NonSendMut<Engine>,
     mut state: ResMut<Camera2dState>,
+    mut look: ResMut<Look2d>,
     time: Res<Time>,
     real: Res<Time<Real>>,
     editor: Option<Res<crate::edit::SceneEditor>>,
@@ -98,16 +103,16 @@ pub(crate) fn apply_camera(
     let Projection::Orthographic(ortho) = projection.as_mut() else {
         return;
     };
-    let settings = effective(&engine);
+    let settings = effective(&engine, &look);
     let dt = time.delta_secs();
     let now = real.elapsed_secs_f64();
 
     // Trauma comes in from `shake camera`, and goes out over time.
-    let added = std::mem::take(&mut engine.look2d.shake);
+    let added = std::mem::take(&mut look.shake);
     state.trauma = cam::decay((state.trauma + added).min(1.0), dt, settings.shake.decay);
 
     // Hitstop freezes the world on the real clock; the interface keeps going.
-    let asked = std::mem::take(&mut engine.look2d.hitstop);
+    let asked = std::mem::take(&mut look.hitstop);
     if asked > 0.0 {
         let until = now + asked as f64;
         state.hitstop_until = Some(state.hitstop_until.map_or(until, |u| u.max(until)));

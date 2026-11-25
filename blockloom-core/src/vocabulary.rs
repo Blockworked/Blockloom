@@ -3820,6 +3820,22 @@ pub const BLOCKS: &[BlockSpec] = &[
         bodies: NO_BODIES,
     },
     BlockSpec {
+        r#type: "Verb",
+        category: "Verbs",
+        purpose: "A declared verb: `verb` names one from `verbs` (a statement), `args` follow its arguments in order. Reporter verbs are the `Verb` operator with the verb's name as the first arg.",
+        header: false,
+        three_d: false,
+        slots: &[Slot {
+            field: "args",
+            id: "PluginArg:n",
+            value: "Any",
+        }],
+        dropdowns: NO_DROPDOWNS,
+        strings: &["verb"],
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
         r#type: "Return",
         category: "Custom Blocks",
         purpose: "Evaluates and returns value; only meaningful in a reporter body.",
@@ -3855,6 +3871,7 @@ pub fn block_vocabulary() -> serde_json::Value {
         },
         "reporters": crate::value::reporter_specs(),
         "blocks": BLOCKS,
+        "verbs": crate::verbs::to_json(),
     })
 }
 

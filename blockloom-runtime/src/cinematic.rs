@@ -8,6 +8,7 @@
 //! and physics keep their tick while the wall runs on.
 
 use crate::engine::{ActorId, Dimension, Engine, PendingEffects};
+use crate::volumes::VolumeRun;
 use bevy::prelude::*;
 use blockloom_core::cinematic::{normalize_fade, sample_path};
 use blockloom_core::vm::{Effect, Event};
@@ -15,6 +16,7 @@ use std::collections::HashMap;
 
 pub fn register(app: &mut App) {
     app.init_resource::<CinePlayer>()
+        .init_resource::<VolumeRun>()
         .add_systems(
             FixedUpdate,
             apply_cinematic_effects
@@ -52,7 +54,7 @@ struct Active {
     fired_signals: usize,
     fired_slow: usize,
     fired_vol: usize,
-    /// What `engine.volume_weight` held before the reel's keys, per actor
+    /// What `volumes.weight` held before the reel's keys, per actor
     /// id. Restored when the reel ends, so a timeline borrows the grade.
     vol_snapshot: HashMap<String, Option<f32>>,
     /// Which shot a missing-camera error was already sent for.
@@ -71,6 +73,15 @@ pub struct CinePlayer {
     fade_alpha: f32,
     pub hitstop: u32,
     last_speed: f32,
+    /// `set time scale` this run, over 1. A reel's slow-motion keys only
+    /// move `reel_scale` while this is unset.
+    pub time_scale: Option<f32>,
+    /// The playing reel's slow-motion keys, while one plays.
+    pub reel_scale: Option<f32>,
+    /// The reel playing right now and seconds into it: what `is cutscene
+    /// playing?` and `cutscene time` read.
+    pub name: String,
+    pub time: f32,
 }
 
 impl Default for CinePlayer {
@@ -84,6 +95,10 @@ impl Default for CinePlayer {
             fade_alpha: 0.0,
             hitstop: 0,
             last_speed: 0.0,
+            time_scale: None,
+            reel_scale: None,
+            name: String::new(),
+            time: 0.0,
         }
     }
 }
@@ -163,6 +178,7 @@ fn apply_cinematic_effects(
     effects: Res<PendingEffects>,
     mut engine: NonSendMut<Engine>,
     mut player: ResMut<CinePlayer>,
+    mut volumes: ResMut<VolumeRun>,
 ) {
     if !engine.running {
         return;
@@ -185,11 +201,11 @@ fn apply_cinematic_effects(
                 // and the time scale restore, but no end strands run for a
                 // reel that never reached its end marker.
                 if player.active.is_some() {
-                    end_reel(&mut engine, &mut player, false);
+                    end_reel(&mut engine, &mut player, &mut volumes, false);
                 }
-                engine.cine_name = reel.name.clone();
-                engine.cine_time = 0.0;
-                engine.cine_scale = None;
+                player.name = reel.name.clone();
+                player.time = 0.0;
+                player.reel_scale = None;
                 player.active = Some(Active {
                     name: reel.name,
                     ..Active::default()
@@ -197,14 +213,14 @@ fn apply_cinematic_effects(
             }
             Effect::SkipCutscene => {
                 if player.active.is_some() {
-                    skip_reel(&mut engine, &mut player);
+                    skip_reel(&mut engine, &mut player, &mut volumes);
                 }
             }
             Effect::CameraShake { amount } if amount.is_finite() => {
                 player.trauma = (player.trauma + amount.clamp(0.0, 1.0)).min(1.0);
             }
             Effect::SetTimeScale { scale } if scale.is_finite() => {
-                engine.time_scale = Some(scale.clamp(0.0, 2.0));
+                player.time_scale = Some(scale.clamp(0.0, 2.0));
             }
             Effect::Hitstop { frames } if frames.is_finite() => {
                 player.hitstop = frames.clamp(0.0, 600.0).floor() as u32;
@@ -222,7 +238,7 @@ fn apply_cinematic_effects(
 
 /// Fires every signal the clock hasn't reached, then ends the reel: the
 /// skip lands on the end marker rather than cutting away from it.
-fn skip_reel(engine: &mut Engine, player: &mut CinePlayer) {
+fn skip_reel(engine: &mut Engine, player: &mut CinePlayer, volumes: &mut VolumeRun) {
     let Some(active) = player.active.as_mut() else {
         return;
     };
@@ -234,7 +250,7 @@ fn skip_reel(engine: &mut Engine, player: &mut CinePlayer) {
         .find(|c| c.name == active.name)
         .cloned()
     else {
-        end_reel(engine, player, false);
+        end_reel(engine, player, volumes, false);
         return;
     };
     active.clock = reel.length();
@@ -243,28 +259,28 @@ fn skip_reel(engine: &mut Engine, player: &mut CinePlayer) {
         active.fired_signals += 1;
         engine.fire(Event::CutsceneSignal { signal });
     }
-    end_reel(engine, player, true);
+    end_reel(engine, player, volumes, true);
 }
 
 /// Ends the reel: end strands run when it got there, volumes and the
 /// slow-motion keys restore either way.
-fn end_reel(engine: &mut Engine, player: &mut CinePlayer, ended: bool) {
+fn end_reel(engine: &mut Engine, player: &mut CinePlayer, volumes: &mut VolumeRun, ended: bool) {
     let Some(active) = player.active.take() else {
         return;
     };
     for (id, was) in active.vol_snapshot {
         match was {
             Some(weight) => {
-                engine.volume_weight.insert(id, weight);
+                volumes.weight.insert(id, weight);
             }
             None => {
-                engine.volume_weight.remove(&id);
+                volumes.weight.remove(&id);
             }
         }
     }
-    engine.cine_scale = None;
-    engine.cine_name.clear();
-    engine.cine_time = 0.0;
+    player.reel_scale = None;
+    player.name.clear();
+    player.time = 0.0;
     if ended {
         engine.fire(Event::CutsceneEnded {
             cutscene: active.name,
@@ -280,6 +296,7 @@ pub fn step_cutscene(
     mut commands: Commands,
     mut engine: NonSendMut<Engine>,
     mut player: ResMut<CinePlayer>,
+    mut volumes: ResMut<VolumeRun>,
     real: Res<Time<Real>>,
     mut virtual_time: ResMut<Time<Virtual>>,
     mut bars: Query<(Entity, &mut Node, &mut BackgroundColor), With<CineBars>>,
@@ -291,7 +308,6 @@ pub fn step_cutscene(
     if !engine.running || engine.rebuild {
         reset_presentation(
             &mut commands,
-            &mut engine,
             &mut player,
             &mut virtual_time,
             &mut bars,
@@ -306,7 +322,7 @@ pub fn step_cutscene(
         player.hitstop -= 1;
         0.0
     } else {
-        engine.time_scale.or(engine.cine_scale).unwrap_or(1.0)
+        player.time_scale.or(player.reel_scale).unwrap_or(1.0)
     };
     if speed != player.last_speed {
         virtual_time.set_relative_speed(speed);
@@ -321,6 +337,7 @@ pub fn step_cutscene(
     player.fade_alpha =
         (player.fade_alpha + dt * 4.0 * if fade_target > 0.0 { 1.0 } else { -1.0 }).clamp(0.0, 1.0);
     draw_chrome(&mut commands, &player, &mut bars, &mut washes);
+    let player = &mut *player;
     let Some(active) = player.active.as_mut() else {
         return;
     };
@@ -332,7 +349,7 @@ pub fn step_cutscene(
         .find(|c| c.name == active.name)
         .cloned()
     else {
-        end_reel(&mut engine, &mut player, false);
+        end_reel(&mut engine, player, &mut volumes, false);
         return;
     };
     active.clock += dt;
@@ -349,8 +366,8 @@ pub fn step_cutscene(
         active.fired_slow += 1;
         // Explicit blocks win over the reel: a `set time scale` anywhere
         // stands, and the reel stops moving the dial.
-        if engine.time_scale.is_none() {
-            engine.cine_scale = Some(scale);
+        if player.time_scale.is_none() {
+            player.reel_scale = Some(scale);
         }
     }
     while active.fired_vol < reel.volumes.len() && reel.volumes[active.fired_vol].at <= clock {
@@ -360,22 +377,21 @@ pub fn step_cutscene(
             active
                 .vol_snapshot
                 .entry(id.clone())
-                .or_insert_with(|| engine.volume_weight.get(&id).copied());
-            engine.volume_weight.insert(id, key.weight);
+                .or_insert_with(|| volumes.weight.get(&id).copied());
+            volumes.weight.insert(id, key.weight);
         }
     }
     let (shot_idx, _) = reel.shot_at(clock);
     active.shot_idx = shot_idx;
-    engine.cine_name = active.name.clone();
-    engine.cine_time = clock;
+    player.name = active.name.clone();
+    player.time = clock;
     if clock >= reel.length() {
-        end_reel(&mut engine, &mut player, true);
+        end_reel(&mut engine, player, &mut volumes, true);
     }
 }
 
 fn reset_presentation(
     commands: &mut Commands,
-    engine: &mut Engine,
     player: &mut CinePlayer,
     virtual_time: &mut ResMut<Time<Virtual>>,
     bars: &mut Query<(Entity, &mut Node, &mut BackgroundColor), With<CineBars>>,
@@ -385,9 +401,9 @@ fn reset_presentation(
     >,
 ) {
     player.reset();
-    engine.cine_scale = None;
-    engine.cine_name.clear();
-    engine.cine_time = 0.0;
+    player.reel_scale = None;
+    player.name.clear();
+    player.time = 0.0;
     if player.last_speed != 1.0 {
         virtual_time.set_relative_speed(1.0);
         player.last_speed = 1.0;
@@ -629,6 +645,7 @@ mod tests {
         app.insert_engine(engine)
             .init_resource::<PendingEffects>()
             .init_resource::<CinePlayer>()
+            .init_resource::<VolumeRun>()
             .init_resource::<Time<Real>>()
             .init_resource::<Time<Virtual>>()
             .add_systems(Update, (step_cutscene, apply_cinematic_effects).chain());
@@ -737,9 +754,9 @@ mod tests {
         app.world_mut().resource_mut::<PendingEffects>().0.clear();
         app.update();
         assert!(app.world().resource::<CinePlayer>().active.is_some());
-        assert_eq!(app.world().non_send::<Engine>().cine_name, "Opener");
+        assert_eq!(app.world().resource::<CinePlayer>().name, "Opener");
         // The slow key at 0 fired on the first step.
-        assert_eq!(app.world().non_send::<Engine>().cine_scale, Some(0.5));
+        assert_eq!(app.world().resource::<CinePlayer>().reel_scale, Some(0.5));
         // Past the signal marker: it fired exactly once.
         app.world_mut()
             .resource_mut::<CinePlayer>()
@@ -766,8 +783,8 @@ mod tests {
             .clock = 5.0;
         app.update();
         assert!(app.world().resource::<CinePlayer>().active.is_none());
-        assert_eq!(app.world().non_send::<Engine>().cine_name, "");
-        assert_eq!(app.world().non_send::<Engine>().cine_scale, None);
+        assert_eq!(app.world().resource::<CinePlayer>().name, "");
+        assert_eq!(app.world().resource::<CinePlayer>().reel_scale, None);
     }
 
     #[test]
@@ -786,7 +803,7 @@ mod tests {
             app.world().resource::<Time<Virtual>>().relative_speed(),
             0.5
         );
-        assert_eq!(app.world().non_send::<Engine>().time_scale, Some(0.5));
+        assert_eq!(app.world().resource::<CinePlayer>().time_scale, Some(0.5));
     }
 
     #[test]

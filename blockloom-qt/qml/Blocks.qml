@@ -175,7 +175,7 @@ QtObject {
         ChangeVariable:"trending-up", SaveVariable:"save", ClearSavedVariable:"trash-2", SwitchSaveSlot:"save", DeleteSaveSlot:"trash-2", SetLanguage:"languages", AddToList:"plus", DeleteOfList:"trash-2",
         DeleteAllOfList:"trash-2", ShiftList:"arrow-left", InsertIntoList:"plus", ReplaceItemOfList:"repeat", ReverseList:"rotate-cw",
         LoadJsonIntoList:"braces", SetDictValue:"book-plus", DeleteDictKey:"trash-2", DeleteAllOfDict:"trash-2", LoadJsonIntoDict:"braces",
-        CallBlock:"blocks", BranchCallBlock:"blocks", RunBranch:"git-branch", Return:"corner-down-right", PluginBlock:"plug-zap", WhenPlugin:"plug-zap"
+        CallBlock:"blocks", BranchCallBlock:"blocks", RunBranch:"git-branch", Return:"corner-down-right", PluginBlock:"plug-zap", WhenPlugin:"plug-zap", Verb:"blocks"
     })
 
     function buildRows() {
@@ -393,7 +393,9 @@ QtObject {
             Return: cap([lb("return"), slot("ReturnValue", "value")]),
             // One generic type for every plugin block: its row is the schema's label.
             PluginBlock: { head: pluginHead },
-            WhenPlugin: header(pluginHatHead)
+            WhenPlugin: header(pluginHatHead),
+            // One generic type for every declared verb: its row is the verb's label.
+            Verb: { head: verbHead }
         };
         for (const type in r) r[type].icon = icons[type] || "blocks";
         return r;
@@ -500,6 +502,91 @@ QtObject {
             (entry.block.kind === "reporter" ? g.reporters : g.entries).push(entry);
         }
         return groups;
+    }
+
+    // ─── Declared verbs ────────────────────────────────────────────────────
+    // `builtinVerbs` (generated below from blockloom-core's verbs.rs) is in
+    // plugin block schema shape, so verbs reuse the plugin row builders. A
+    // statement is the one generic `Verb` row; a reporter the `Verb`
+    // operator whose first arg names the verb and the rest are its slots.
+    readonly property string verbStatementPrefix: "Verb:"
+    readonly property string verbReadPrefix: "VerbRead:"
+    property var verbPieces: ({})
+    function verbSchema(name) {
+        for (const v of builtinVerbs) if (v.type_id === name) return v;
+        return null;
+    }
+    function verbHead(ins) {
+        const key = ins.verb;
+        if (verbPieces[key]) return verbPieces[key];
+        const schema = verbSchema(key);
+        const pieces = schema
+            ? pluginLabelPieces(schema, (index) => ({ kind: "value", field: "PluginArg:" + index, key: "args", index: index }))
+            : [lb(key + " (unknown block)")];
+        verbPieces[key] = pieces;
+        return pieces;
+    }
+    function verbLayout(value) {
+        const args = value && value.args ? value.args : [];
+        const name = args[0] ? args[0].value : "";
+        const key = "read:" + name;
+        if (verbPieces[key]) return verbPieces[key];
+        const schema = verbSchema(name);
+        const pieces = schema
+            ? pluginLabelPieces(schema, (index, slot) => ({ label: "", arg: index + 1, bool: slot.type === "bool" })).map(p => p.kind === "label" ? { label: p.text, arg: -1, bool: false } : p)
+            : [{ label: name + " (unknown reporter)", arg: -1, bool: false }];
+        verbPieces[key] = pieces;
+        return pieces;
+    }
+    function verbResult(value) {
+        const args = value && value.args ? value.args : [];
+        const schema = verbSchema(args[0] ? args[0].value : "");
+        const type = schema && schema.returns ? schema.returns.type : "";
+        return type === "bool" ? "bool" : type === "number" ? "number" : "text";
+    }
+    function verbFresh(schema) {
+        return { id: uuid(), type: "Verb", verb: schema.type_id, args: schema.slots.map(pluginDefault) };
+    }
+    function verbValue(schema) {
+        return { kind: "Op", op: "Verb", args: [txt(schema.type_id)].concat(schema.slots.map(pluginDefault)), saved: num(0) };
+    }
+    // The palette names each verb under a stand-in, filed into the section
+    // its declaration names (made at the end of its category if missing).
+    function verbPaletteName(schema) {
+        return (schema.kind === "reporter" ? verbReadPrefix : verbStatementPrefix) + schema.type_id;
+    }
+    function withVerbs(sections) {
+        const out = sections.map(section => Object.assign({}, section, { items: section.items.slice() }));
+        for (const v of builtinVerbs) {
+            let section = out.find(x => x.category === v.category && x.title === v.section);
+            if (!section) {
+                section = { category: v.category, title: v.section, items: [] };
+                let at = -1;
+                out.forEach((x, i) => { if (x.category === v.category) at = i; });
+                out.splice(at < 0 ? out.length : at + 1, 0, section);
+            }
+            section.items.push(verbPaletteName(v));
+        }
+        return out;
+    }
+    readonly property var verbOperators: builtinVerbs.filter(v => v.kind === "reporter").map(v => {
+        const value = verbValue(v);
+        return [verbPaletteName(v), verbResult(value), value.args.length, value.args];
+    })
+    function registerVerbEntries() {
+        const rows = {}, prefabs = {}, ops = {};
+        for (const v of builtinVerbs) {
+            const schema = v;
+            if (schema.kind === "reporter") {
+                ops[verbPaletteName(schema)] = { layout: verbLayout, result: verbResult };
+            } else {
+                rows[verbPaletteName(schema)] = { head: verbHead, icon: schema.icon || "blocks" };
+                prefabs[verbPaletteName(schema)] = () => verbFresh(schema);
+            }
+        }
+        BlockRegistry.registerRows(rows);
+        BlockRegistry.registerPrefabs(prefabs);
+        BlockRegistry.registerOperators(ops);
     }
 
     // ─── Fresh palette blocks (paletteState.ts) ────────────────────────────
@@ -639,6 +726,7 @@ QtObject {
         case "BranchCallBlock": return { block_id: "", args: [], branches: [] };
         case "RunBranch": return { name: "" };
         case "PluginBlock": return { plugin: "", block: "", args: [] };
+        case "Verb": return { verb: "", args: [] };
         case "WhenPlugin": return { plugin: "", block: "", event: "", args: [] };
         case "Return": return { value: num(0) };
         case "SetMouseLocked": return { locked: true };
@@ -854,6 +942,7 @@ QtObject {
         {"kind":"MotorText","op":"MotorText","arity":1,"args":[{"type":"text","default":{"kind":"Text","value":"state"}}],"host":true},
         {"kind":"Atmosphere","op":"Atmosphere","arity":1,"args":[{"type":"text","default":{"kind":"Text","value":"sun x"}}],"host":true},
         {"kind":"PluginRead","op":"PluginRead","arity":2,"args":[{"type":"text","default":{"kind":"Text","value":""}},{"type":"text","default":{"kind":"Text","value":""}}],"host":true},
+        {"kind":"Verb","op":"Verb","arity":1,"args":[{"type":"text","default":{"kind":"Text","value":"property"}}],"host":true},
         {"kind":"FrameTime","op":"FrameTime","arity":0,"args":[],"host":true},
         {"kind":"DrawCalls","op":"DrawCalls","arity":0,"args":[],"host":true},
         {"kind":"CurrentQuality","op":"CurrentQuality","arity":0,"args":[],"host":true},
@@ -893,6 +982,14 @@ QtObject {
         {"kind":"CircleHit","op":"CircleHit","arity":4,"args":[{"type":"number","default":{"kind":"Number","value":0.0}},{"type":"number","default":{"kind":"Number","value":0.0}},{"type":"number","default":{"kind":"Number","value":0.0}},{"type":"number","default":{"kind":"Number","value":10.0}}],"host":true}
     ]
     // END GENERATED operator descriptors
+    // BEGIN GENERATED verbs (blockloom-core tests/verbs.rs; BLESS=1 rewrites)
+    readonly property var builtinVerbs: [
+        {"category":"actors","icon":"sliders-horizontal","kind":"statement","label":"set {property} of {actor} to {value}","purpose":"Writes one property of a component on an actor for the rest of the run, by its registry path (Light.intensity, Look.visual.color).","section":"Components","slots":[{"default":"Light.intensity","name":"property","type":"text"},{"default":"myself","name":"actor","type":"actor"},{"default":"800","name":"value","type":"any"}],"type_id":"set_property"},
+        {"category":"world","icon":"cloud","kind":"statement","label":"set surface {property} to {value}","purpose":"Sets the world's snow cover or surface wetness (0 to 1) for the rest of the run, over the director and volumes.","section":"Sky and weather","slots":[{"default":"snow","name":"property","options":["snow","wetness"],"type":"choice"},{"default":1.0,"name":"value","type":"number"}],"type_id":"set_surface"},
+        {"category":"actors","icon":"sliders-horizontal","kind":"reporter","label":"{property} of {actor}","purpose":"Reads one property of a component on an actor by its registry path, as the run has it now.","returns":{"type":"any"},"section":"Components","slots":[{"default":"Light.intensity","name":"property","type":"text"},{"default":"myself","name":"actor","type":"actor"}],"type_id":"property"},
+        {"category":"interface","icon":"app-window","kind":"reporter","label":"is screen {screen} open?","purpose":"Whether a screen the scene or game lists is open, by its file name without the extension or its path.","returns":{"type":"bool"},"section":"Screens","slots":[{"default":"pause","name":"screen","type":"text"}],"type_id":"screen_open"},
+    ]
+    // END GENERATED verbs
     // ─── The palette (blockstitch's PalettePanel) ───────────────────────────
     // Blockloom's categories, between blockstitch's Flow and Data.
     readonly property var appCategories: [
@@ -954,13 +1051,13 @@ QtObject {
         { category: "operators", title: "Comparing", items: ["Eq", "Neq", "Gt", "Lt", "Gte", "Lte", "And", "Or", "Not", "True", "False"] },
         { category: "operators", title: "Text", items: ["Join", "Join3", "Length", "LetterOf", "IndexOf", "LastIndexOf", "Case", "NewLine", "Tab", "CurrentTime"] }
     ]
-    readonly property var paletteSections: baseSections.concat(pluginSections)
+    readonly property var paletteSections: withVerbs(baseSections).concat(pluginSections)
     // The sensing reporters as PalettePanel lists host operators:
     // [op, result, arity], plus each plugin reporter with its own args.
     readonly property var extraOperators: {
         const arity = {};
         for (const d of hostDescriptors) arity[d.kind] = d.arity;
-        return Object.keys(sensing).map(k => [k, sensing[k].result, arity[k] || 0]).concat(pluginOperators);
+        return Object.keys(sensing).map(k => [k, sensing[k].result, arity[k] || 0]).concat(verbOperators, pluginOperators);
     }
     readonly property var listOperatorKinds: ["ListItem","ListItemNumber","ListAmount","ListLength","ListContains","ListItemExists","ListIsEmpty","ListAsJson"]
     readonly property var dictOperatorKinds: ["DictValue","DictHasKey","DictSize","DictKeys","DictAsJson","DictIsEmpty"]
@@ -1010,6 +1107,7 @@ QtObject {
     function realType(type) {
         if (String(type).indexOf(pluginHatPrefix) === 0) return "WhenPlugin";
         if (String(type).indexOf(pluginStatementPrefix) === 0) return "PluginBlock";
+        if (String(type).indexOf(verbStatementPrefix) === 0) return "Verb";
         return type;
     }
     // A palette instruction or value as the backend knows it.
@@ -1018,12 +1116,19 @@ QtObject {
         return Object.assign({}, ins, { type: realType(ins.type) });
     }
     function realValue(value) {
-        if (!value || value.kind !== "Op" || String(value.op).indexOf(pluginReadPrefix) !== 0) return value;
-        return Object.assign({}, value, { op: "PluginRead" });
+        if (!value || value.kind !== "Op") return value;
+        if (String(value.op).indexOf(pluginReadPrefix) === 0) return Object.assign({}, value, { op: "PluginRead" });
+        if (String(value.op).indexOf(verbReadPrefix) === 0) return Object.assign({}, value, { op: "Verb" });
+        return value;
     }
     // What Details calls a palette entry.
     function labelFor(type) {
         const t = String(type);
+        for (const prefix of [verbStatementPrefix, verbReadPrefix]) {
+            if (t.indexOf(prefix) !== 0) continue;
+            const schema = verbSchema(t.slice(prefix.length));
+            return schema ? schema.purpose : t.slice(prefix.length);
+        }
         for (const prefix of [pluginHatPrefix, pluginStatementPrefix, pluginReadPrefix])
             if (t.indexOf(prefix) === 0) return t.slice(prefix.length);
         return labels[t] || t;
@@ -1055,7 +1160,7 @@ QtObject {
         SaveVariable:"save a variable", ClearSavedVariable:"clear a saved variable", SwitchSaveSlot:"switch save slot", DeleteSaveSlot:"delete a save slot", SetLanguage:"set the language", AddToList:"add to a list", DeleteOfList:"delete a list item",
         DeleteAllOfList:"clear a list", ShiftList:"shift a list", InsertIntoList:"insert into a list", ReplaceItemOfList:"replace a list item",
         ReverseList:"reverse a list", LoadJsonIntoList:"load JSON into a list", SetDictValue:"set a dict value", DeleteDictKey:"delete a dict key",
-        DeleteAllOfDict:"clear a dict", LoadJsonIntoDict:"load JSON into a dict", CallBlock:"my block", BranchCallBlock:"my block", RunBranch:"run branch", Return:"return", PluginBlock:"plugin block", WhenPlugin:"when a plugin event occurs", PluginRead:"plugin reporter"
+        DeleteAllOfDict:"clear a dict", LoadJsonIntoDict:"load JSON into a dict", CallBlock:"my block", BranchCallBlock:"my block", RunBranch:"run branch", Return:"return", PluginBlock:"plugin block", WhenPlugin:"when a plugin event occurs", PluginRead:"plugin reporter", Verb:"block"
     })
 
     Component.onCompleted: {
@@ -1068,12 +1173,14 @@ QtObject {
                     prefabs[name] = (type => () => fresh(type))(name);
         BlockRegistry.registerPrefabs(prefabs);
         registerPluginEntries();
+        registerVerbEntries();
         const ops = {};
         for (const kind in sensing) {
             const s = sensing[kind];
             ops[kind] = { prefix: s.prefix, infix: s.infix, suffix: s.suffix, result: s.result, enumArg: s.enumArg };
         }
         ops.PluginRead = { layout: pluginLayout, result: pluginResult };
+        ops.Verb = { layout: verbLayout, result: verbResult };
         BlockRegistry.registerOperators(ops);
         BlockRegistry.blockMenu = [
             { id: "copy", text: "Copy block", icon: "copy" },

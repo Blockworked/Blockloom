@@ -538,6 +538,12 @@ pub enum Act {
         block: String,
         args: Vec<Val>,
     },
+    /// A declared verb ran: its arguments in order, already evaluated. The
+    /// host checks them against the declaration, as the VM does.
+    Verb {
+        verb: String,
+        args: Vec<Val>,
+    },
     /// A physics query: `kind` by name, `triggers` as a `TriggerPolicy` name
     /// and the kind's numbers. The host files the answer under the actor.
     Query {
@@ -1430,7 +1436,7 @@ pub trait Host {
 
 // --- Native logic boundary -------------------------------------------------
 
-pub const LOGIC_ABI_VERSION: u32 = 41;
+pub const LOGIC_ABI_VERSION: u32 = 42;
 pub const ABI_OK: u32 = 0;
 pub const ABI_TOO_LONG: u32 = 1;
 pub const ABI_MISSING: u32 = 2;
@@ -1680,6 +1686,8 @@ pub const ACT_SET_REVERB: u32 = 129;
 pub const ACT_MUFFLE_UNDERWATER: u32 = 130;
 /// `a` = the screen, `n0` = 1 to open.
 pub const ACT_SET_SCREEN_OPEN: u32 = 131;
+/// `a` = the verb's name, `c` = its arguments as a JSON array.
+pub const ACT_VERB: u32 = 132;
 /// `a` = dial name, `b` = the value as text. Window-global.
 pub const ACT_SET_LOOK_2D: u32 = 200;
 
@@ -2732,6 +2740,15 @@ impl Host for AbiHost {
                 ACT_PLUGIN_CALL,
                 &plugin,
                 &block,
+                &plugin_args_json(&args),
+                &[],
+                &zero,
+            ),
+            Act::Verb { verb, args } => self.act_many(
+                actor,
+                ACT_VERB,
+                &verb,
+                "",
                 &plugin_args_json(&args),
                 &[],
                 &zero,

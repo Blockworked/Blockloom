@@ -442,6 +442,11 @@ pub const READS: &[WitOp] = &[
         wit: "physics.query-number",
     },
     WitOp {
+        abi: abi::READ_VERB,
+        name: "READ_VERB",
+        wit: "sensors.verb",
+    },
+    WitOp {
         abi: abi::READ_CONTROLLER,
         name: "READ_CONTROLLER",
         wit: "physics.controller-number",
@@ -719,6 +724,11 @@ pub const TEXTS: &[WitOp] = &[
         abi: abi::TEXT_LOCALE_TEXT,
         name: "TEXT_LOCALE_TEXT",
         wit: "texts.locale-text",
+    },
+    WitOp {
+        abi: abi::TEXT_VERB,
+        name: "TEXT_VERB",
+        wit: "texts.verb",
     },
 ];
 
@@ -1438,6 +1448,11 @@ pub const ACTS: &[WitOp] = &[
         abi: abi::ACT_MUFFLE_UNDERWATER,
         name: "ACT_MUFFLE_UNDERWATER",
         wit: "acts.muffle-underwater",
+    },
+    WitOp {
+        abi: abi::ACT_VERB,
+        name: "ACT_VERB",
+        wit: "acts.verb",
     },
     WitOp {
         abi: abi::ACT_SET_TRAIL_ENABLED,

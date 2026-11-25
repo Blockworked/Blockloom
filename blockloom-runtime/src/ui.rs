@@ -418,6 +418,20 @@ impl UiManager {
         }
     }
 
+    /// Each screen layer and whether it is open: any of its roots visible,
+    /// which is what `open screen` and `close screen` set.
+    pub fn screen_states(&self) -> Vec<(String, bool)> {
+        self.screens
+            .iter()
+            .map(|(path, roots)| {
+                let open = roots
+                    .iter()
+                    .any(|id| self.nodes.get(id).is_some_and(|node| node.visible));
+                (path.clone(), open)
+            })
+            .collect()
+    }
+
     /// Every element as the reporter blocks see it, which is what goes into
     /// the sensing snapshot once a frame.
     pub fn senses(&self) -> HashMap<String, UiSense> {

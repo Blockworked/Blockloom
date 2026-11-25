@@ -2396,6 +2396,13 @@ impl Vm {
                     args,
                 });
             }
+            Action::Verb { verb, args } => {
+                let args: Vec<_> = args
+                    .iter()
+                    .map(|arg| self.eval(arg, actor, params, temps, out))
+                    .collect();
+                out.push(crate::verbs::effect(actor, verb, &args));
+            }
             Action::RumbleGamepad { strength, duration } => {
                 let strength = self
                     .eval_f32(strength, actor, params, temps, out)

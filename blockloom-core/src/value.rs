@@ -883,6 +883,14 @@ static OPERATORS: &[ExtOperator] = &[
         },
     },
     ExtOperator {
+        kind: crate::verbs::OPERATOR,
+        op: crate::verbs::OPERATOR,
+        arity: 1,
+        default_args: || vec![text("property")],
+        // A reporter declared in `verbs::VERBS`: its name, then its slots.
+        eval: |args| crate::verbs::read(&args[0].as_text(), &args[1..]),
+    },
+    ExtOperator {
         kind: "FrameTime",
         op: "FrameTime",
         arity: 0,

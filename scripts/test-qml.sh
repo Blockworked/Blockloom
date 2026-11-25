@@ -47,6 +47,10 @@ for name in manifest["files"]:
 (out / "qmldir").write_text("\n".join(lines) + "\n")
 PY
 cp -R "$root/blockloom-qt/tests/qml/fixtures/Blockloom" "$imports/com/blockworked/Blockloom"
+# The editor's one singleton, as its own module, for tests of the vocabulary.
+mkdir -p "$imports/BlockloomBlocks"
+cp "$root/blockloom-qt/qml/Blocks.qml" "$imports/BlockloomBlocks/"
+printf 'module BlockloomBlocks\nsingleton Blocks 1.0 Blocks.qml\n' > "$imports/BlockloomBlocks/qmldir"
 
 QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}" \
 QT_QUICK_BACKEND="${QT_QUICK_BACKEND:-software}" \

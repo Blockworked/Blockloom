@@ -81,6 +81,10 @@ pub struct ActorSense {
     pub grounded: bool,
     /// What its emitter's particles did this frame, and where last.
     pub particles: crate::vfx::ParticleSense,
+    /// The actor's components as the run has them now (authored, or written
+    /// by `set property`), shared rather than copied each frame. What the
+    /// `property of` reporter reads.
+    pub spec: Option<std::sync::Arc<ActorSpec>>,
 }
 
 /// What shape an actor collides (and raycasts) with, in world units, in the
@@ -198,6 +202,8 @@ pub struct Sensors {
     pub ui: HashMap<String, UiSense>,
     /// The text input holding the keyboard, by id, or empty for none.
     pub ui_focus: String,
+    /// Each screen layer the run composed, by path, and whether it is open.
+    pub screens: Vec<(String, bool)>,
     /// Asset paths with at least one live voice, so `is sound playing?`
     /// answers. Spelled the way the play blocks spell them.
     pub sounds: HashSet<String>,
@@ -488,6 +494,36 @@ impl Default for UiSense {
     }
 }
 
+/// An actor's components as a run has them, with each one's JSON made on
+/// first read and kept, so `property of` walks a tree instead of
+/// serializing a component per read.
+#[derive(Debug, Default)]
+pub struct ActorSpec {
+    pub components: crate::components::Components,
+    json: std::sync::OnceLock<Vec<serde_json::Value>>,
+}
+
+impl ActorSpec {
+    pub fn new(components: crate::components::Components) -> Self {
+        Self {
+            components,
+            json: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// The first component called `name`, serialized.
+    pub fn json(&self, name: &str) -> Option<&serde_json::Value> {
+        let index = self.components.iter().position(|c| c.name() == name)?;
+        let all = self.json.get_or_init(|| {
+            self.components
+                .iter()
+                .map(|c| serde_json::to_value(c).unwrap_or(serde_json::Value::Null))
+                .collect()
+        });
+        all.get(index)
+    }
+}
+
 impl Default for ActorSense {
     fn default() -> Self {
         Self {
@@ -518,6 +554,7 @@ impl Default for ActorSense {
             mass: 0.0,
             grounded: false,
             particles: crate::vfx::ParticleSense::default(),
+            spec: None,
         }
     }
 }
@@ -560,6 +597,29 @@ impl Sensors {
                 .actors
                 .values()
                 .find(|actor| actor.name.eq_ignore_ascii_case(id_or_name)),
+        }
+    }
+
+    /// The id of the actor [`Sensors::find`] answers with: an id as is, else
+    /// the smallest id among actors with that name.
+    pub fn find_id(&self, id_or_name: &str) -> Option<&str> {
+        if let Some((id, _)) = self.actors.get_key_value(id_or_name) {
+            return Some(id);
+        }
+        let indexed = self.names.with(&self.actors, |index| {
+            index
+                .get(&id_or_name.to_ascii_lowercase())
+                .and_then(|(_, id)| self.actors.get_key_value(id))
+                .map(|(id, _)| id.as_str())
+        });
+        match indexed {
+            Some(found) => found,
+            None => self
+                .actors
+                .iter()
+                .filter(|(_, actor)| actor.name.eq_ignore_ascii_case(id_or_name))
+                .map(|(id, _)| id.as_str())
+                .min(),
         }
     }
 
@@ -679,6 +739,11 @@ pub fn publish_ui(ui: HashMap<String, UiSense>, focus: String) {
         s.ui = ui;
         s.ui_focus = focus;
     });
+}
+
+/// Publishes which screen layers are open, for `is screen open?`.
+pub fn publish_screens(screens: Vec<(String, bool)>) {
+    SENSORS.with(|slot| slot.borrow_mut().screens = screens);
 }
 
 /// Publishes the 2D camera for `camera zoom` and `is camera at bounds?`.

@@ -34,7 +34,8 @@ pub(crate) const PRELUDE_SOURCE: &str = concat!(
     include_str!("abi.rs"),
     include_str!("timing.rs"),
     include_str!("typed.rs"),
-    include_str!("prelude.rs")
+    include_str!("prelude.rs"),
+    include_str!("verbs_gen.rs")
 );
 
 /// Where scripts live inside a project folder.

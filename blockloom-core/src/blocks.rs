@@ -1359,6 +1359,13 @@ pub enum InstructionKind {
         block: String,
         args: Vec<Value>,
     },
+
+    /// A statement declared in [`crate::verbs::VERBS`]: `verb` names it and
+    /// `args` follow its arguments in order (slot ids `PluginArg:i`).
+    Verb {
+        verb: String,
+        args: Vec<Value>,
+    },
 }
 
 /// Blockloom's half of the block-editor contract: where its instructions
@@ -1846,7 +1853,7 @@ impl BlockKind for InstructionKind {
                     f(arg, InputValueType::Any);
                 }
             }
-            K::PluginBlock { args, .. } => {
+            K::PluginBlock { args, .. } | K::Verb { args, .. } => {
                 for arg in args {
                     f(arg, InputValueType::Any);
                 }

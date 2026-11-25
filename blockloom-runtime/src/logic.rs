@@ -33,9 +33,9 @@ use blockloom_core::codegen::{
     ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT, ACT_SET_WATER, ACT_SET_WIND, ACT_SHOW_ELEMENT,
     ACT_SKIP_CUTSCENE, ACT_SPAWN_DECAL, ACT_SPLASH, ACT_STOP_ANIMATION, ACT_STOP_SOUND,
     ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING, ACT_SWITCH_SAVE_SLOT, ACT_SWITCH_SCENE, ACT_TURN,
-    ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, LOGIC_ABI_VERSION,
-    LogicHostApi, READ_SENSE, READ_VARIABLE, TICK_STOPPED, VALUE_BOOL, VALUE_ERROR, VALUE_NUMBER,
-    VALUE_TEXT,
+    ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, ACT_VERB, AbiStr, AbiValue,
+    LOGIC_ABI_VERSION, LogicHostApi, READ_SENSE, READ_VARIABLE, TICK_STOPPED, VALUE_BOOL,
+    VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT,
 };
 // Symbol names for the native `dlopen` path; web builds link statically later.
 #[cfg(not(target_arch = "wasm32"))]
@@ -1064,6 +1064,15 @@ extern "C" fn act(
                 message: format!("{a}/{b} got slot values it couldn't read: {error}"),
             },
         },
+        ACT_VERB => match serde_json::from_str::<Vec<serde_json::Value>>(c) {
+            Ok(args) => {
+                blockloom_core::verbs::effect(&actor, a, &blockloom_core::verbs::args_of(&args))
+            }
+            Err(error) => Effect::Error {
+                actor,
+                message: format!("{a} got values it couldn't read: {error}"),
+            },
+        },
         ACT_SET_MOUSE_LOCKED => Effect::SetMouseLocked { locked: n0 != 0.0 },
         ACT_SET_CAMERA_PITCH => Effect::SetCameraPitch {
             actor,
@@ -1405,6 +1414,131 @@ mod tests {
             ]
         );
         assert_eq!(variables.read("a1", "distance"), Evaluated::Number(9.0));
+        drop(logic);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A declared verb ran compiled lands on exactly the effect the VM
+    /// queues: both check and coerce through `verbs::effect`, and the
+    /// reporter reads the same snapshot.
+    #[test]
+    fn declared_verbs_match_the_vm_through_the_player_boundary() {
+        if blockloom_core::script::toolchain_version().is_err() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!(
+            "blockloom-native-verbs-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        blockloom_core::init();
+        let mut project = Project::starter("Native verbs", Mode::ThreeD);
+        project.actors.clear();
+        let mut actor = Actor::new(
+            "Lamp",
+            Visual::Circle {
+                color: "#fff".to_string(),
+                radius: 1.0,
+            },
+        );
+        actor.id = "a1".to_string();
+        actor
+            .components
+            .insert(blockloom_core::registry::default_component("Light", Mode::ThreeD).unwrap());
+        let read = |args: Vec<Value>| {
+            let mut all = vec![Value::text("property")];
+            all.extend(args);
+            Value::op(Op::from_name(blockloom_core::verbs::OPERATOR), all)
+        };
+        let set = |args: Vec<Value>| {
+            Instruction::new(K::Verb {
+                verb: "set_property".to_string(),
+                args,
+            })
+        };
+        actor.graph.strands.push(Strand::with_instructions(
+            0,
+            0,
+            vec![
+                Instruction::new(K::WhenStarted),
+                // Twice the lamp's own brightness, read back by name.
+                set(vec![
+                    Value::text("Light.intensity"),
+                    Value::text("myself"),
+                    Value::op(
+                        Op::from_name("Mul"),
+                        vec![
+                            read(vec![Value::text("Light.intensity"), Value::text("Lamp")]),
+                            Value::number(2.0),
+                        ],
+                    ),
+                ]),
+                // Defaults fill in, an unknown actor and verb are errors.
+                set(vec![Value::text("Light.range")]),
+                set(vec![
+                    Value::text("Light.range"),
+                    Value::text("Nobody"),
+                    Value::number(1.0),
+                ]),
+                Instruction::new(K::Verb {
+                    verb: "no_such_verb".to_string(),
+                    args: vec![],
+                }),
+            ],
+        ));
+        let spec = std::sync::Arc::new(sense::ActorSpec::new(actor.components.clone()));
+        project.actors.push(actor);
+        let publish = || {
+            let mut actors = std::collections::HashMap::new();
+            actors.insert(
+                "a1".to_string(),
+                sense::ActorSense {
+                    name: "Lamp".to_string(),
+                    spec: Some(spec.clone()),
+                    ..Default::default()
+                },
+            );
+            sense::publish(sense::Sensors {
+                actors,
+                ..Default::default()
+            });
+        };
+
+        publish();
+        let mut vm = blockloom_core::vm::Vm::new();
+        vm.load(&project);
+        vm.fire(Event::Started);
+        let mut expected = Vec::new();
+        vm.tick_at(0.0, 0.0, &mut expected);
+        assert!(matches!(&expected[0], Effect::Verb { verb, args, .. }
+            if verb == "set_property" && args[1] == serde_json::json!("a1")));
+        assert!(matches!(&expected[2], Effect::Error { .. }));
+        assert!(matches!(&expected[3], Effect::Error { .. }));
+
+        codegen::compile_for(&project, &root, None).unwrap();
+        let variables = Variables::default();
+        variables.load(&project);
+        let lists = Lists::default();
+        lists.load(&project);
+        let dicts = Dicts::default();
+        dicts.load(&project);
+        let mut logic = LoadedLogic::load(&root).unwrap();
+        logic.fire(Event::Started, &project);
+        let mut effects = Vec::new();
+        let mut messages = Vec::new();
+        publish();
+        logic.tick(
+            0.0,
+            0.0,
+            variables,
+            lists,
+            dicts,
+            &mut effects,
+            &mut messages,
+        );
+        assert_eq!(effects, expected);
         drop(logic);
         let _ = std::fs::remove_dir_all(root);
     }

@@ -54,7 +54,7 @@ pub const WIT_PACKAGE: &str = "blockloom:script@0.2.0";
 
 /// The numeric ABI this binding lowers to. Matches `abi::ABI_VERSION`; the
 /// core drift test refuses a mismatch.
-pub const ABI_VERSION: u32 = 52;
+pub const ABI_VERSION: u32 = 53;
 
 /// What a host call answered. Anything but `OK` leaves the out-parameter
 /// untouched.
@@ -726,6 +726,25 @@ pub mod plugins {
     /// Runs the `block` command with typed slot values.
     pub fn call_args(plugin: &str, block: &str, args: &[super::PluginArg]) {
         call(plugin, block, &super::slots_json(args));
+    }
+}
+
+/// The engine's declared block verbs (`set_property`, `property`, ...), by
+/// name with their arguments in order.
+pub mod verbs {
+    /// Runs a statement verb.
+    pub fn call(verb: &str, args: &[super::PluginArg]) {
+        super::act(super::ACT_VERB, verb, "", &super::slots_json(args), &[]);
+    }
+
+    /// A reporter verb's answer as a number.
+    pub fn read_number(verb: &str, args: &[super::PluginArg]) -> Option<f64> {
+        super::read_number(super::READ_VERB, verb, &super::slots_json(args), 0.0)
+    }
+
+    /// A reporter verb's answer as text.
+    pub fn read_text(verb: &str, args: &[super::PluginArg]) -> Option<String> {
+        super::read_text(super::TEXT_VERB, verb, &super::slots_json(args))
     }
 }
 

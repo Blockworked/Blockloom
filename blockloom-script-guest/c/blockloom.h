@@ -11,7 +11,7 @@
 typedef unsigned int u32;
 typedef int i32;
 
-#define BL_ABI_VERSION 52u
+#define BL_ABI_VERSION 53u
 #define BL_OK 0u
 #define BL_TOO_LONG 2u
 
@@ -69,6 +69,7 @@ typedef int i32;
 #define BL_READ_TILE_AT 48u
 #define BL_READ_PLUGIN 53u
 #define BL_READ_QUERY 54u
+#define BL_READ_VERB 76u
 #define BL_READ_CONTROLLER 55u
 #define BL_READ_VELOCITY 56u
 #define BL_READ_ANGULAR_VELOCITY 57u
@@ -117,6 +118,7 @@ typedef int i32;
 #define BL_TEXT_SAVE_SLOTS 29u
 #define BL_TEXT_LANGUAGE 30u
 #define BL_TEXT_LOCALE_TEXT 31u
+#define BL_TEXT_VERB 36u
 #define BL_TEXT_PLUGIN 21u
 #define BL_TEXT_QUERY 22u
 #define BL_TEXT_CONTROLLER 23u
@@ -267,6 +269,7 @@ typedef int i32;
 #define BL_ACT_SET_MASS_OTHER 159u
 #define BL_ACT_SET_REVERB 160u
 #define BL_ACT_MUFFLE_UNDERWATER 161u
+#define BL_ACT_VERB 162u
 #define BL_ACT_SET_TRAIL_ENABLED 142u
 #define BL_ACT_GLIDE 143u
 #define BL_ACT_FRACTURE 144u

@@ -85,9 +85,9 @@ pub use runtime::{
     ACT_SET_VISIBLE, ACT_SET_VOLUME_WEIGHT, ACT_SET_WATER, ACT_SET_WIND, ACT_SHOW_ELEMENT,
     ACT_SKIP_CUTSCENE, ACT_SPAWN_DECAL, ACT_SPLASH, ACT_STOP_ANIMATION, ACT_STOP_SOUND,
     ACT_STOP_TWEENS, ACT_STRIKE_LIGHTNING, ACT_SWITCH_SAVE_SLOT, ACT_SWITCH_SCENE, ACT_TURN,
-    ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, AbiStr, AbiValue, Act, Actors, Entry,
-    Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner, SYM_LOGIC_ABI,
-    SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
+    ACT_TWEEN_COLOR, ACT_TWEEN_ROTATION, ACT_TWEEN_SCALE, ACT_VERB, AbiStr, AbiValue, Act, Actors,
+    Entry, Host, LOGIC_ABI_VERSION, LogicHostApi, R, READ_SENSE, READ_VARIABLE, Runner,
+    SYM_LOGIC_ABI, SYM_LOGIC_FIRE, SYM_LOGIC_FREE, SYM_LOGIC_NEW, SYM_LOGIC_PAUSE, SYM_LOGIC_RESET,
     SYM_LOGIC_SCENE, SYM_LOGIC_TICK, SceneTable, State, Status, TICK_STOPPED, VALUE_BOOL,
     VALUE_ERROR, VALUE_NUMBER, VALUE_TEXT, Val, plugin_detail,
 };
@@ -1662,6 +1662,19 @@ impl<'a> Pass<'a> {
                      block: {}.to_string(), args: vec![{}] }});\n",
                     literal(plugin),
                     literal(block),
+                    names.join(", ")
+                )
+            }
+            Action::Verb { verb, args } => {
+                let mut lets = String::new();
+                let mut names = Vec::new();
+                for (i, arg) in args.iter().enumerate() {
+                    lets.push_str(&format!("    let p{i} = {};\n", self.evaluated(arg)?));
+                    names.push(format!("p{i}"));
+                }
+                format!(
+                    "{lets}    h.act(&me, Act::Verb {{ verb: {}.to_string(), args: vec![{}] }});\n",
+                    literal(verb),
                     names.join(", ")
                 )
             }

@@ -74,6 +74,7 @@ pub fn bindings(
     }
     let sample = manager.senses();
     blockloom_core::sense::publish_ui(sample, manager.focus().unwrap_or_default().into());
+    blockloom_core::sense::publish_screens(manager.screen_states());
 }
 
 /// Reuses a bounded set of ordinary button nodes as the viewport moves.
