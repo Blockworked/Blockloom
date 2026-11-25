@@ -74,15 +74,17 @@ impl RuntimeHandle {
     /// Starts the runtime binary sitting next to this one and begins reading
     /// its messages into `backend`'s state.
     /// `project` is a project-built runtime (engine plugins linked in),
-    /// which always runs as a child.
+    /// which always runs as a child; `isolate` asks for a child of the
+    /// ordinary runtime, so a faulting script can't take the editor down.
     pub(crate) fn spawn(
         mode: Mode,
         backend: Backend,
         embedded: Option<Arc<dyn EmbeddedRuntime>>,
         project: Option<std::path::PathBuf>,
+        isolate: bool,
     ) -> Result<Self, String> {
         let id = NEXT_RUNTIME_ID.fetch_add(1, Ordering::Relaxed);
-        if let Some(host) = embedded.as_ref().filter(|_| project.is_none()) {
+        if let Some(host) = embedded.as_ref().filter(|_| project.is_none() && !isolate) {
             return Self::embed(id, mode, backend, host.as_ref());
         }
         let path = project.unwrap_or_else(runtime_path);

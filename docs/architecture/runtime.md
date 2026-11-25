@@ -76,6 +76,13 @@ stdin. `RuntimeHandle::in_view` says which runtime shows there, and
 to the preview stream. The ignored `a_child_world_draws_into_the_view_about_as_fast`
 times key press to frame both ways (build `blockloom-runtime` first).
 
+On Linux a project with a `Script` on any actor runs as a child by default
+(`commands::isolate_runtime`): a script is native code loaded into the world,
+and a child costs nothing there because it still draws into the view. The
+child is the ordinary runtime, not a project runtime, so nothing has to be
+built first. `BLOCKLOOM_RUNTIME=embedded` asks for the in-process world
+anyway.
+
 `BLOCKLOOM_RUNTIME=process` forces the child process and MJPEG preview on
 Linux and Windows too. macOS has no embedded world yet.
 

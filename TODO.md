@@ -1813,6 +1813,6 @@ Phased by dependency and value per cost. Each phase unblocks the next.
 - [x] Zero-copy on NVIDIA: frames are copied to a linear system-memory image, then again through an external-texture pass on the Qt side. Share the image in its native tiled layout (DRM format modifiers) to drop both copies.
 - [x] Resolution: the world renders at the Game view's real pixel size, with an aspect ratio (default 16:9, or Free) and a resolution (default Free, or a fixed size the view is sized to) picked in the Game tab. Code and Game are tabs of one editor area.
 - [ ] Other platforms: Windows (shared D3D or Vulkan handles) and macOS (IOSurface) still use the child process plus MJPEG, which stays until they're ported.
-- [ ] Crash isolation: a native crash (script cdylib, GPU fault) takes the editor down. Decide whether scripted projects should keep the separate process.
+- [x] Crash isolation: on Linux a project with a script runs its world as a child process by default, still drawing into the Game view (`BLOCKLOOM_RUNTIME=embedded` opts out). Windows and macOS follow once they share GPU frames.
 
 Rule: do 1-4 before 5-8, do 9-11 before adding new block surface in 12-15, leave 17-19 until single-player shipping loop is solid.

@@ -27,7 +27,7 @@ just prune-target --dry-run          # inspect the 20 GiB build-cache budget
 cargo build --workspace && target/debug/blockloom   # debug build/run - faster iteration
 just test               # cargo test --workspace (blockloom-core has the bulk of them)
 just qml-test           # every QML test against the pinned blockstitch, no build
-just smoke              # shell flows: edit, undo, Play, Build, run the player (needs a display)
+just smoke              # shell flows: edit, undo, Play, Build, run the player, a scripted project (needs a display)
 just corpus [--bless]   # play corpus projects to a fixed tick, held to tests/corpus/
 cargo bench -p blockloom-core --bench vm   # block VM ns/tick over a few canvases
 just player             # stage the hard-optimized player a built game ships

@@ -155,9 +155,34 @@ def flow_playground(shell, work, mode, env, args):
     shell.run("close-project")
 
 
+def flow_scripted(shell, work, mode, env, args):
+    """A project whose actor is driven by a Rust script: the editor compiles it
+    on Play, so this flow needs a rustc. The world runs in its own process for
+    a scripted project, which is what keeps a faulting script off the editor."""
+    name = f"Smoke script {mode}"
+    shell.run(f'create-project name="{name}" location="{work}" mode={mode}')
+    shape = "Cuboid" if mode == "ThreeD" else "Rect"
+    actor = actors(shell.run(f"add-actor shape={shape} name=Walker")["state"])[-1]
+    step = 0.05 if mode == "ThreeD" else 5.0
+    source = (
+        "use blockloom::*;\n"
+        "fn tick(me: &Actor, _dt: f32) {\n"
+        f"    let pose = me.pose();\n"
+        f"    me.go_to(pose.position[0] + {step}, pose.position[1], pose.position[2]);\n"
+        "}\n"
+        "blockloom::export!(tick = tick);\n"
+    )
+    shell.run(f'write-text-asset path=assets/scripts/walker.rs text={json.dumps(source)}')
+    component = json.dumps({"component": "Script", "path": "assets/scripts/walker.rs"})
+    shell.run(f'add-actor-component actorId={actor["id"]} component={component}')
+    play(shell, args.seconds, args.timeout)
+    shell.run("close-project")
+
+
 FLOWS = {
     "playground-3d": lambda s, w, e, a: flow_playground(s, w, "ThreeD", e, a),
     "playground-2d": lambda s, w, e, a: flow_playground(s, w, "TwoD", e, a),
+    "scripted-3d": lambda s, w, e, a: flow_scripted(s, w, "ThreeD", e, a),
 }
 
 

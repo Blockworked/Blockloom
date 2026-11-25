@@ -2701,6 +2701,7 @@ pub(crate) fn run_project(
             backend.clone(),
             s.embedded.clone(),
             project_runtime_for(&s)?,
+            isolate_runtime(&s),
         )?);
         greet(&mut s);
     }
@@ -2824,6 +2825,7 @@ pub(crate) fn open_world(
         backend.clone(),
         s.embedded.clone(),
         project_runtime_for(&s)?,
+        isolate_runtime(&s),
     )?);
     let dir = s
         .project_dir()
@@ -6964,6 +6966,30 @@ pub(crate) fn preview_terrain_erosion(
     Ok(())
 }
 
+/// Whether this project's world runs as a child process rather than inside
+/// the editor. A script or an engine plugin is native code loaded into the
+/// world, so a fault in one would take the editor down with it; a child
+/// costs nothing on Linux, where it still draws into the Game view.
+/// `BLOCKLOOM_RUNTIME=embedded` asks for the old in-process world anyway.
+fn isolate_runtime(s: &AppState) -> bool {
+    if !cfg!(target_os = "linux") || std::env::var("BLOCKLOOM_RUNTIME").as_deref() == Ok("embedded")
+    {
+        return false;
+    }
+    s.open
+        .as_ref()
+        .is_some_and(|open| has_scripts(&open.project))
+}
+
+/// Whether any actor in any scene carries a `Script`.
+fn has_scripts(project: &Project) -> bool {
+    project
+        .scenes
+        .iter()
+        .flat_map(|scene| scene.actors.iter())
+        .any(|actor| actor.components.script().is_some())
+}
+
 /// The project-built runtime the open project needs, if its plugins carry
 /// engine crates. Refuses while it hasn't been built.
 fn project_runtime_for(s: &AppState) -> Result<Option<std::path::PathBuf>, String> {
@@ -7144,5 +7170,37 @@ mod branch_call_tests {
         };
         assert_eq!(branches[0][0]["type"], "Move");
         assert_eq!(graph.strands.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod isolation_tests {
+    use super::*;
+    use blockloom_core::components::ActorComponent;
+    use blockloom_core::project::Actor;
+    use blockloom_core::scene::{Mode, Visual};
+
+    fn project(script: bool) -> Project {
+        let mut project = Project::starter("Demo", Mode::TwoD);
+        let mut actor = Actor::new(
+            "Ball",
+            Visual::Circle {
+                color: "#FFFFFF".to_string(),
+                radius: 10.0,
+            },
+        );
+        if script {
+            actor.components.insert(ActorComponent::Script {
+                path: "assets/scripts/ball.rs".to_string(),
+            });
+        }
+        project.scenes[0].actors.push(actor);
+        project
+    }
+
+    #[test]
+    fn only_a_scripted_project_needs_its_own_process() {
+        assert!(has_scripts(&project(true)));
+        assert!(!has_scripts(&project(false)));
     }
 }
