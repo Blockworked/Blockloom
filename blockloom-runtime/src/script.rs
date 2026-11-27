@@ -349,7 +349,8 @@ impl ScriptEvent {
     ) -> Option<(Option<String>, ScriptEvent)> {
         use blockloom_core::vm::Event;
         Some(match event {
-            Event::Started | Event::Cloned { .. } => return None,
+            // A test start is for test strands, which scripts have none of.
+            Event::Started | Event::Cloned { .. } | Event::Test(_) => return None,
             Event::Plugin {
                 plugin,
                 event,

@@ -1232,6 +1232,9 @@ impl Backend {
             )?),
             "pause_project" => to_json(commands::pause_project(state, app, arg(&args, "paused")?)?),
             "step_project" => to_json(commands::step_project(state, app)?),
+            "run_tests" => {
+                commands::run_tests(state, app, arg(&args, "name")?, arg(&args, "ticks")?)
+            }
             "close_runtime" => to_json(commands::close_runtime(state, app)?),
             "open_world" => to_json(commands::open_world(self, state, app)?),
             "set_scene_view" => to_json(commands::set_scene_view(

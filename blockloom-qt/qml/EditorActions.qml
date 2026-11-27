@@ -40,7 +40,7 @@ QtObject {
         { title: "File", items: ["close_project", "save_project", "-", "editor.import", "editor.export", "-", "editor.build", "-", "editor.projectSettings", "editor.appSettings"] },
         { title: "Edit", items: ["undo", "redo", "-", "editor.palette"] },
         { title: "View", items: ["editor.showCode", "editor.showGame", "editor.showInterface", "editor.showDevices", "-", "editor.split", "-", "editor.assets", "editor.runLog", "editor.problems"] },
-        { title: "Run", items: ["run_project", "stop_project", "editor.pause", "step_project", "-", "close_runtime"] },
+        { title: "Run", items: ["run_project", "stop_project", "editor.pause", "step_project", "-", "run_tests", "-", "close_runtime"] },
         { title: "Plugins", items: ["editor.plugins", "editor.pluginPanels", "editor.pluginEditors"] },
         { title: "Help", items: ["editor.palette", "editor.shortcuts"] }
     ]
@@ -68,6 +68,7 @@ QtObject {
         "stop_project": { label: "Stop", icon: "square" },
         "editor.pause": { label: "Pause", icon: "pause" },
         "step_project": { label: "Advance one tick", icon: "step-forward" },
+        "run_tests": { label: "Run playmode tests", icon: "flask-conical" },
         "close_runtime": { label: "Close the game window", icon: "monitor-x" },
         "editor.plugins": { label: "Plugin manager…", icon: "plug-zap" },
         "editor.pluginPanels": { label: "Show plugin panels", icon: "panel-left" },
@@ -112,6 +113,8 @@ QtObject {
         if (!root.enabled(id)) return;
         if (id === "editor.pause") root.report("pause_project", { paused: !root.appState.paused });
         else if (id.startsWith("editor.")) root.page.editorAction(id);
+        // The verdicts land in the run log; show it.
+        else if (id === "run_tests") { if (root.page.showPanel) root.page.showPanel("runLog"); root.report(id); }
         else root.report(id);
     }
 

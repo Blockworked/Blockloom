@@ -158,7 +158,7 @@ QtObject {
     readonly property var icons: ({
         Fracture:"hammer", Splash:"droplets", PuffSmoke:"cloud", SpawnDecal:"stamp", FadeDecals:"eraser",
         WhenStarted:"flag", WhenKeyPressed:"keyboard", WhenActionPressed:"gamepad-2", WhenTouched:"pointer", WhenClicked:"mouse-pointer-click",
-        WhenQualityDrops:"gauge", SetRenderSetting:"gauge", SetLook2d:"lamp", WhenCollision:"crosshair", WhenMessage:"radio", WhenCloned:"copy", WhenParticles:"sparkles", WhenMotor:"footprints", WhenAnimationMarker:"flag", WhenEnterRoom:"square-dashed", WhenUiEvent:"square-mouse-pointer", WhenWeather:"cloud", WhenUiClicked:"square-mouse-pointer", WhenUiChanged:"sliders-horizontal",
+        WhenQualityDrops:"gauge", SetRenderSetting:"gauge", SetLook2d:"lamp", WhenCollision:"crosshair", WhenMessage:"radio", WhenTestRuns:"flask-conical", WhenCloned:"copy", WhenParticles:"sparkles", WhenMotor:"footprints", WhenAnimationMarker:"flag", WhenEnterRoom:"square-dashed", WhenUiEvent:"square-mouse-pointer", WhenWeather:"cloud", WhenUiClicked:"square-mouse-pointer", WhenUiChanged:"sliders-horizontal",
         BlockHeader:"blocks", Move:"arrow-right", GoTo:"move", NavigateTo:"navigation", ChangePosition:"move-3d", Glide:"wind", TweenScale:"maximize", TweenRotation:"rotate-cw", TweenColor:"palette", StopTweens:"square", PlayAnimation:"play", StopAnimation:"square", SetAnimationSpeed:"gauge", FireAnimationTrigger:"zap", SetRigSlot:"git-branch", SetSlotTint:"palette", SetIkTarget:"crosshair", SetSpriteDial:"sliders-horizontal", Turn:"rotate-cw",
         SetRotation:"rotate-cw", PointTowards:"target", SetScale:"maximize", SetBody:"boxes", SetTrigger:"ghost", SetCollisionLayer:"layers",
         SetCollisionMask:"filter", ApplyImpulse:"zap", AddForce:"arrow-right", AddTorque:"rotate-cw", ControllerMove:"footprints", SetController:"sliders-horizontal", MotorAct:"person-standing", SetMotor:"gauge", JointAct:"link", CastRay:"crosshair", CastBall:"circle-dot", OverlapBall:"search", FindClosest:"target", SetVelocity:"trending-up", SetGravity:"cloud", SetDensity:"weight", SetMass:"weight",
@@ -193,6 +193,7 @@ QtObject {
             WhenClicked: header([lb("when I am clicked")]),
             WhenCollision: header([lb("when I"), dd("phase", contactPhaseOptions), dd("with", () => [{ value: "", label: "anything" }].concat(actorOptions(false)), { placeholder: "anything" }), lb("as"), dd("scope", contactScopeOptions)]),
             WhenMessage: header([lb("when I get"), field("name", "message")]),
+            WhenTestRuns: header([lb("when test"), field("name", "test name"), lb("runs")]),
             WhenCloned: header([lb("when I start as a clone")]),
             WhenMotor: header([lb("when I"), dd("event", () => motorEventOptions)]),
             WhenParticles: header([lb("when my particles"), dd("event", () => particleEventOptions)]),
@@ -600,6 +601,7 @@ QtObject {
         case "WhenActionPressed": return { action: "Jump" };
         case "WhenCollision": return { with: "", phase: "Enter", scope: "Any" };
         case "WhenMessage": case "Broadcast": return { name: "message1" };
+        case "WhenTestRuns": return { name: "my test" };
         case "BlockHeader": return { block_id: "" };
         case "Move": return { steps: num(10) };
         case "GoTo": return { x: num(0), y: num(0), z: num(0) };
@@ -992,6 +994,9 @@ QtObject {
         {"category":"looks","icon":"eye","kind":"statement","label":"make my head look at {target}","purpose":"Turns my model's head toward another actor every frame, as far as my Animation component's IK look limit allows, until stop looking.","section":"Animation","slots":[{"default":"Player","name":"target","type":"actor"}],"type_id":"look_at"},
         {"category":"looks","icon":"eye","kind":"statement","label":"make my head look at x {x} y {y} z {z}","purpose":"Turns my model's head toward a point in the world, as far as my Animation component's IK look limit allows, until stop looking.","section":"Animation","slots":[{"default":0.0,"name":"x","type":"number"},{"default":1.5,"name":"y","type":"number"},{"default":0.0,"name":"z","type":"number"}],"type_id":"look_at_point"},
         {"category":"looks","icon":"square","kind":"statement","label":"stop looking","purpose":"Hands my model's head back to its animation.","section":"Animation","slots":[],"type_id":"stop_looking"},
+        {"category":"events","icon":"circle-check","kind":"statement","label":"pass test","purpose":"Ends the running playmode test as passed. Outside a test run it does nothing.","section":"Testing","slots":[],"type_id":"pass_test"},
+        {"category":"events","icon":"circle-x","kind":"statement","label":"fail test {reason}","purpose":"Ends the running playmode test as failed, giving the reason. Outside a test run it does nothing.","section":"Testing","slots":[{"default":"","name":"reason","type":"text"}],"type_id":"fail_test"},
+        {"category":"events","icon":"flask-conical","kind":"statement","label":"expect {condition} else fail with {message}","purpose":"Fails the running playmode test with message when condition is false, and carries on when it is true.","section":"Testing","slots":[{"default":true,"name":"condition","type":"bool"},{"default":"","name":"message","type":"text"}],"type_id":"expect"},
         {"category":"looks","icon":"user","kind":"statement","label":"go limp","purpose":"Hands my model's ragdoll bones to physics, keeping how fast I was moving, until get up. My own body stops colliding meanwhile.","section":"Animation","slots":[],"type_id":"go_limp"},
         {"category":"looks","icon":"user","kind":"statement","label":"get up","purpose":"Ends my ragdoll where it lies: my body comes back there and the animation blends back in over the ragdoll's get up time.","section":"Animation","slots":[],"type_id":"get_up"},
         {"category":"actors","icon":"sliders-horizontal","kind":"reporter","label":"{property} of {actor}","purpose":"Reads one property of a component on an actor by its registry path, as the run has it now.","returns":{"type":"any"},"section":"Components","slots":[{"default":"Light.intensity","name":"property","type":"text"},{"default":"myself","name":"actor","type":"actor"}],"type_id":"property"},
@@ -1017,6 +1022,7 @@ QtObject {
         { category: "events", title: "Messages", items: ["WhenMessage", "Broadcast"] },
         { category: "events", title: "In the world", items: ["WhenCollision", "WhenEnterRoom", "WhenWeather", "WhenQualityDrops", "WhenParticles", "WhenMotor", "WhenAnimationEnds", "WhenAnimationMarker"] },
         { category: "events", title: "Cutscenes", items: ["WhenCutsceneSignal", "WhenCutsceneEnds"] },
+        { category: "events", title: "Testing", items: ["WhenTestRuns"] },
         { category: "events", title: "Interface", items: ["WhenUiEvent", "WhenUiClicked", "WhenUiChanged"] },
         { category: "control", title: "", items: ["Wait", "WaitUntil", "If", "IfElse", "Repeat", "Forever", "While", "EscapeLoop", "ContinueLoop", "StopAll", "Return", "Timer"] },
         { category: "control", title: "Scenes and cutscenes", items: ["SwitchScene", "CurrentScene", "SceneNames", "PlayCutscene", "SkipCutscene", "IsCutscenePlaying", "CutsceneTime"] },
@@ -1146,7 +1152,7 @@ QtObject {
     readonly property var labels: ({
         Fracture:"fracture an actor into debris", Splash:"make a water ripple", PuffSmoke:"puff advected smoke", SpawnDecal:"spawn a transient surface decal", FadeDecals:"fade decals in a radius",
         WhenStarted:"when the project starts", WhenKeyPressed:"when a key is pressed", WhenActionPressed:"when an input action is pressed",
-        WhenTouched:"when the screen is touched", WhenClicked:"when I am clicked", WhenCollision:"when I touch", WhenMessage:"when I get a message", WhenAnimationEnds:"when an animation ends", WhenAnimationMarker:"when an animation reaches a marker", WhenEnterRoom:"when I enter a room",
+        WhenTouched:"when the screen is touched", WhenClicked:"when I am clicked", WhenCollision:"when I touch", WhenMessage:"when I get a message", WhenTestRuns:"when a test runs", WhenAnimationEnds:"when an animation ends", WhenAnimationMarker:"when an animation reaches a marker", WhenEnterRoom:"when I enter a room",
         WhenQualityDrops:"when quality drops", SetRenderSetting:"set rendering quality", SetLook2d:"set a 2D look, camera or screen dial (ambient, post, zoom, shake, flash, cover)", WhenUiEvent:"when an interface event occurs", WhenCloned:"when I start as a clone", WhenParticles:"when my particles spawn, die or collide", WhenMotor:"when my character jumps, lands or leaves the ground", WhenUiClicked:"when an element is clicked", WhenUiChanged:"when an input is changed",
         WhenSceneStarts:"when scene starts", WhenSceneEnds:"when scene ends", WhenWeather:"when weather becomes", WhenCutsceneSignal:"when cutscene signal", WhenCutsceneEnds:"when cutscene ends", SwitchScene:"switch scene to", PlayCutscene:"play cutscene", SkipCutscene:"skip cutscene", CameraShake:"shake camera", SetTimeScale:"set time scale", Hitstop:"hitstop frames", SetLetterbox:"set letterbox", FadeScreen:"fade screen",
         BlockHeader:"block definition", Move:"move forward", GoTo:"go to", NavigateTo:"navigate to", ChangePosition:"change position",

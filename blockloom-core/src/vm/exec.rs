@@ -306,6 +306,8 @@ pub enum Event {
     /// The outgoing scene is about to unload: every `when scene ends`
     /// strand in it.
     SceneEnded,
+    /// The test runner starts the playmode test of this name.
+    Test(String),
     /// A key went down, in [`sense::normalize_key`]'s spelling.
     Key(String),
     Click {
@@ -872,6 +874,7 @@ impl Vm {
             (Trigger::QualityDropped, Event::QualityDropped) => true,
             (Trigger::SceneStarted, Event::SceneStarted) => true,
             (Trigger::SceneEnded, Event::SceneEnded) => true,
+            (Trigger::Test(want), Event::Test(got)) => want == got,
             (Trigger::KeyPressed(want), Event::Key(got)) => want == got,
             (Trigger::Clicked, Event::Click { actor: clicked }) => clicked == actor,
             (

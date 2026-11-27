@@ -970,7 +970,9 @@ impl Runner {
                 | ("QualityDropped", "QualityDropped")
                 | ("SceneStarted", "SceneStarted")
                 | ("SceneEnded", "SceneEnded") => true,
-                ("Key", "Key") | ("Message", "Message") => entry.detail == detail,
+                ("Key", "Key") | ("Message", "Message") | ("Test", "Test") => {
+                    entry.detail == detail
+                }
                 ("Action", "Action") => entry.detail == detail,
                 ("Touched", "Touched") => true,
                 ("UiEvent", "UiEvent")

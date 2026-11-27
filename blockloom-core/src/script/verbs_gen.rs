@@ -42,6 +42,21 @@ impl Actor {
         self.verb("stop_looking", &[]);
     }
 
+    /// Ends the running playmode test as passed. Outside a test run it does nothing.
+    pub fn pass_test(&self) {
+        self.verb("pass_test", &[]);
+    }
+
+    /// Ends the running playmode test as failed, giving the reason. Outside a test run it does nothing.
+    pub fn fail_test(&self, reason: &str) {
+        self.verb("fail_test", &[PluginArg::from(reason)]);
+    }
+
+    /// Fails the running playmode test with message when condition is false, and carries on when it is true.
+    pub fn expect(&self, condition: bool, message: &str) {
+        self.verb("expect", &[PluginArg::from(condition), PluginArg::from(message)]);
+    }
+
     /// Hands my model's ragdoll bones to physics, keeping how fast I was moving, until get up. My own body stops colliding meanwhile.
     pub fn go_limp(&self) {
         self.verb("go_limp", &[]);

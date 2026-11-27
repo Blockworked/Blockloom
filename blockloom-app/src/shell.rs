@@ -3013,6 +3013,24 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         args: &[],
     },
     CommandSpec {
+        name: "run-tests",
+        cmd: "run_tests",
+        aliases: &["run_tests", "test"],
+        summary: "Play the project's playmode tests (strands under \"when test runs\") headless, each in a fresh world, and answer which passed. A test passes at pass test and fails at fail test, a false expect, a block error or ticks (default 600) without a verdict.",
+        args: &[
+            ArgSpec {
+                name: "name",
+                ty: "string",
+                required: false,
+            },
+            ArgSpec {
+                name: "ticks",
+                ty: "number",
+                required: false,
+            },
+        ],
+    },
+    CommandSpec {
         name: "stop-project",
         cmd: "stop_project",
         aliases: &["stop_project"],

@@ -64,6 +64,8 @@ pub enum Trigger {
     QualityDropped,
     /// The outgoing scene is about to unload for a `switch scene to`.
     SceneEnded,
+    /// The test runner started the playmode test of this name.
+    Test(String),
     /// The named input action went down.
     ActionPressed(String),
     /// A finger touched the screen.
@@ -687,6 +689,7 @@ fn compile_graph(graph: &ActorGraph) -> Program {
                 weather: weather.trim().to_string(),
             }),
             InstructionKind::WhenSceneEnds => Some(Trigger::SceneEnded),
+            InstructionKind::WhenTestRuns { name } => Some(Trigger::Test(name.trim().to_string())),
             InstructionKind::WhenCutsceneSignal { signal } => Some(Trigger::CutsceneSignal {
                 signal: signal.trim().to_string(),
             }),
@@ -1884,6 +1887,7 @@ fn emit_kind(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenSceneStarts
         | K::WhenWeather { .. }
         | K::WhenSceneEnds
+        | K::WhenTestRuns { .. }
         | K::WhenCutsceneSignal { .. }
         | K::WhenCutsceneEnds
         | K::WhenUiEvent { .. }

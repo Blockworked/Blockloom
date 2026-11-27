@@ -43,6 +43,27 @@ read is about 0.5 us against 25 ns for `my x position` (release,
 `verbs::cost`); keep typed verbs for hot reads. `screen_open` answers `is screen open?` from
 `Sensors::screens`. Place, Script and Parent refuse a property write.
 
+## Playmode tests
+
+A test is a strand under `when test runs [name]` (`InstructionKind::WhenTestRuns`,
+`Trigger::Test`, `Event::Test`). It ends with the verbs `pass test`, `fail test
+[reason]` or `expect [condition] else fail with [message]`, which outside a
+test run do nothing. `blockloom-runtime/src/playtest.rs` runs each test in a
+fresh headless world (`simulation::headless`, built from the document the way
+Play builds it, at the project's fixed rate): the green flag is pressed, then
+the test's own event fires, and `judge` reads each step's effects before they
+are cleared. The first `pass test` passes; `fail test`, a false `expect` or any
+block error fails it; no verdict within the tick limit (600 by default) fails
+it too. Tests run on the VM, and scripts never see the test event. Every actor's
+test of one name is the same test.
+
+`blockloom-runtime --test <folder or pack file> [--name N] [--ticks N]` prints
+one JSON outcome per line and exits 0, 1 (a failure) or 2 (nothing to run).
+The shell's `run-tests` (and the editor's Run > Run playmode tests) writes the
+open document to a temporary pack, runs that, answers `{passed, failed,
+tests}` and puts one line per test in the run log, so unsaved edits are what
+gets tested.
+
 ## Scripts
 
 An actor's `Script` component names a real `.rs` file under the project's

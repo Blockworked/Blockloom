@@ -453,6 +453,18 @@ pub const BLOCKS: &[BlockSpec] = &[
         bodies: NO_BODIES,
     },
     BlockSpec {
+        r#type: "WhenTestRuns",
+        category: "Events",
+        purpose: "A playmode test: runs only when the test runner starts the test called name, beside the game's own strands. End it with pass test or fail test.",
+        header: true,
+        three_d: false,
+        slots: NO_SLOTS,
+        dropdowns: NO_DROPDOWNS,
+        strings: &["name"],
+        bools: NO_BOOLS,
+        bodies: NO_BODIES,
+    },
+    BlockSpec {
         r#type: "WhenWeather",
         category: "Events",
         purpose: "Runs when the weather blend lands on the named preset (Clear, Overcast, Storm, Sunset, Night, or one the project authored). Empty matches any weather arriving.",

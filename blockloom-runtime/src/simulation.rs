@@ -238,6 +238,46 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
     );
 }
 
+/// The simulation alone, drawing nothing, stepped one fixed tick per
+/// `update` and already running: the playmode test runner and the tests.
+/// `rebuild` builds the world from the document the way Play does; without
+/// it, actors are spawned bare for a test to dress.
+pub(crate) fn headless(mut engine: Engine, mode: Mode, rebuild: bool) -> App {
+    use bevy::time::TimeUpdateStrategy;
+    use std::time::Duration;
+    let actors = engine.project.actors.clone();
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(TransformPlugin);
+    // The simulation draws nothing, so the only asset store is the mesh
+    // one Rapier's own async colliders read.
+    app.add_plugins(AssetPlugin::default());
+    app.init_asset::<Mesh>()
+        .init_resource::<crate::performance::RenderCache>()
+        .init_resource::<crate::ui::UiManager>()
+        .init_resource::<crate::sound::SoundState>();
+    let rate = engine.project.world.fixed_rate;
+    let rate = if rate.is_finite() {
+        rate.clamp(1.0, 1000.0) as f64
+    } else {
+        60.0
+    };
+    app.insert_resource(Time::<Fixed>::from_hz(rate));
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+        1.0 / rate,
+    )));
+    if !rebuild {
+        for actor in &actors {
+            let entity = app.world_mut().spawn(world::actor_bundle(actor)).id();
+            engine.entities.insert(actor.id.clone(), entity);
+        }
+    }
+    engine.rebuild = rebuild;
+    world::begin_run(&mut engine, 0.0, 0.0);
+    add_simulation(&mut app, mode, engine);
+    app
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,31 +347,7 @@ mod tests {
             engine.dicts.load(&loaded);
             engine.logic = Some(crate::logic::LoadedLogic::load(root).expect("load the library"));
         }
-        let actors = engine.project.actors.clone();
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        app.add_plugins(TransformPlugin);
-        // The simulation draws nothing, so the only asset store is the mesh
-        // one Rapier's own async colliders read.
-        app.add_plugins(AssetPlugin::default());
-        app.init_asset::<Mesh>()
-            .init_resource::<crate::performance::RenderCache>()
-            .init_resource::<crate::ui::UiManager>()
-            .init_resource::<crate::sound::SoundState>();
-        app.insert_resource(Time::<Fixed>::from_hz(60.0));
-        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
-            1.0 / 60.0,
-        )));
-        if !rebuild {
-            for actor in &actors {
-                let entity = app.world_mut().spawn(world::actor_bundle(actor)).id();
-                engine.entities.insert(actor.id.clone(), entity);
-            }
-        }
-        engine.rebuild = rebuild;
-        world::begin_run(&mut engine, 0.0, 0.0);
-        add_simulation(&mut app, mode, engine);
-        app
+        headless(engine, mode, rebuild)
     }
 
     /// The simulation building its own world from the document, the way a

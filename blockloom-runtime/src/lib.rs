@@ -86,6 +86,8 @@ mod performance;
 mod physics_debug;
 mod physics_install;
 pub mod player;
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+pub mod playtest;
 mod plugin_arrays;
 #[cfg(feature = "plugins")]
 mod plugin_compute;
@@ -222,6 +224,13 @@ pub fn run_process() {
             }
         }
         blockloom_core::init();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let args: Vec<String> = std::env::args().collect();
+            if args.iter().any(|a| a == "--test") {
+                std::process::exit(playtest::main(&args));
+            }
+        }
         #[cfg(target_os = "linux")]
         if let Some((fd, mode)) = player::view_child(std::env::args().skip(1)) {
             embed::run_child(fd, mode);

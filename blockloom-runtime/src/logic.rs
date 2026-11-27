@@ -216,6 +216,7 @@ impl LoadedLogic {
             Event::Key(key) => self.fire_raw("Key", "", &key, ""),
             Event::Click { actor } => self.fire_raw("Clicked", &actor, "", ""),
             Event::Message(message) => self.fire_raw("Message", "", &message, ""),
+            Event::Test(name) => self.fire_raw("Test", "", &name, ""),
             Event::Collision {
                 actor,
                 with,

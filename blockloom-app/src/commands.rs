@@ -3162,6 +3162,85 @@ pub(crate) fn step_project(state: &SharedState, app: &AppHandle) -> Result<(), S
     Ok(())
 }
 
+/// Plays the project's playmode tests (strands under `when test runs`)
+/// headless in a runtime process of their own, `only` or all of them. The
+/// document as it stands is what runs, saved or not.
+pub(crate) fn run_tests(
+    state: &SharedState,
+    app: &AppHandle,
+    only: Option<String>,
+    ticks: Option<u64>,
+) -> Result<serde_json::Value, String> {
+    let project = lock(state)?
+        .project()
+        .cloned()
+        .ok_or("No project is open")?;
+    let pack = blockloom_core::pack::GamePack::new(project);
+    let text = serde_json::to_string(&pack).map_err(|e| e.to_string())?;
+    let file = std::env::temp_dir().join(format!(
+        "blockloom-tests-{}-{}.json",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos())
+    ));
+    std::fs::write(&file, text).map_err(|e| format!("couldn't write the test pack: {e}"))?;
+    let mut command =
+        blockloom_core::process::background_command(blockloom_protocol::runtime_path());
+    command.arg("--test").arg(&file);
+    if let Some(only) = only.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        command.arg("--name").arg(only);
+    }
+    if let Some(ticks) = ticks {
+        command.arg("--ticks").arg(ticks.to_string());
+    }
+    let output = command.output();
+    let _ = std::fs::remove_file(&file);
+    let output = output.map_err(|e| format!("couldn't start the game runtime to test: {e}"))?;
+    let tests: Vec<serde_json::Value> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    if tests.is_empty() {
+        let why = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if why.is_empty() {
+            "The test run ended without a result".to_string()
+        } else {
+            why
+        });
+    }
+    let failed = tests.iter().filter(|t| t["passed"] != true).count();
+    // The run log is where the editor reads the verdicts.
+    {
+        let mut s = lock(state)?;
+        for test in &tests {
+            let name = test["name"].as_str().unwrap_or_default();
+            let ticks = test["ticks"].as_u64().unwrap_or_default();
+            let line = if test["passed"] == true {
+                LogLine::with_kind(
+                    "info".into(),
+                    "Tests".into(),
+                    format!("Passed \"{name}\" in {ticks} ticks"),
+                )
+            } else {
+                let reason = test["reason"].as_str().unwrap_or_default();
+                LogLine::with_kind(
+                    "error".into(),
+                    "Tests".into(),
+                    format!("Failed \"{name}\" after {ticks} ticks: {reason}"),
+                )
+            };
+            s.push_log(line);
+        }
+        emit(app, &mut s);
+    }
+    Ok(serde_json::json!({
+        "passed": tests.len() - failed,
+        "failed": failed,
+        "tests": tests,
+    }))
+}
+
 /// [`build_scripts_for`] aimed at this machine, which is what Play needs.
 fn build_scripts(s: &mut AppState) -> usize {
     build_scripts_for(s, None)

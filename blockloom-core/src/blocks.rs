@@ -278,6 +278,11 @@ pub enum InstructionKind {
     /// Runs in the outgoing scene's actors before a `switch scene to`
     /// unloads it.
     WhenSceneEnds,
+    /// A playmode test: runs only when the test runner starts the test named
+    /// `name`, alongside the game's own strands.
+    WhenTestRuns {
+        name: String,
+    },
     /// Runs when the playing cutscene passes the named signal marker.
     /// Empty matches any signal.
     WhenCutsceneSignal {
@@ -1884,6 +1889,7 @@ impl BlockKind for InstructionKind {
             | K::WhenSceneStarts
             | K::WhenWeather { .. }
             | K::WhenSceneEnds
+            | K::WhenTestRuns { .. }
             | K::WhenCutsceneSignal { .. }
             | K::WhenCutsceneEnds
             | K::WhenPlugin { .. }
@@ -1950,6 +1956,7 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenSceneStarts
                 | InstructionKind::WhenWeather { .. }
                 | InstructionKind::WhenSceneEnds
+                | InstructionKind::WhenTestRuns { .. }
                 | InstructionKind::WhenCutsceneSignal { .. }
                 | InstructionKind::WhenCutsceneEnds
                 | InstructionKind::WhenPlugin { .. }

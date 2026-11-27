@@ -36,6 +36,7 @@ just web-player [profile]            # stage the WebGPU player the Web build tar
 just web-player release              # faster web development build without dist's fat LTO
 just web-build <project> [out]       # a project as one self-contained .html
 just web-smoke <page.html> [--scripts N] [--moves ACTOR]  # headless run of a built page
+target/debug/blockloom-runtime --test <project folder> [--name N]  # playmode tests, headless
 ```
 
 `just replace` divides the CPU count across its two builds by default;
@@ -356,7 +357,7 @@ The rest of the architecture lives in `docs/architecture/`, one page per area. R
 - `docs/architecture/data-model.md` (Document and data model): Saving, Resource database, Prefabs, Material and environment assets, Game settings, Components, Type registry, Actors that come and go.
 - `docs/architecture/physics.md` (Physics): Physics document, Physics runtime, Physics queries, Physics inspector, Character controller, Character motor and input actions, Player camera, presets and profiles, Constraints and integration, Upgrade, samples and shipping.
 - `docs/architecture/plugins.md` (Plugins): Plugins.
-- `docs/architecture/blocks-and-scripts.md` (Blocks, scripts and compiled logic): Block verbs, Scripts, Script sandbox and guest languages, Compiling the blocks.
+- `docs/architecture/blocks-and-scripts.md` (Blocks, scripts and compiled logic): Block verbs, Playmode tests, Scripts, Script sandbox and guest languages, Compiling the blocks.
 - `docs/architecture/runtime.md` (Runtime): Game view, Scene view, Simulation and presentation registration, Per-frame cost, Sound, Cinematics.
 - `docs/architecture/rendering.md` (Rendering): Instancing and batching, LOD and occlusion, Quality and scaling, GPU measurement, Loading and streaming, Shader library and pass plumbing, Import roles, probes and the atmosphere slot, Models, tilemaps and surface shaders.
 - `docs/architecture/environment.md` (Environment and lighting (3D)): Environment, Environment volumes, HDR frame and lights, Post stack, Sky, Fog, space and lightning, Wind, Water, Particles and VFX, Decals, Lighting rig, Ray-traced lighting, Volumetric clouds, World-space texturing, Terrain and vegetation, Cloud layers.
