@@ -49,7 +49,16 @@ Rectangle {
         while (at && !seen[at]) { seen[at] = true; at = parentOf(byId(at)); if (at === childId) return true; }
         return false;
     }
+    // Words to find: an actor shows when its name or one of its components'
+    // names holds them, as a flat list wherever it sits in the tree.
+    property string search: ""
+    function matches(actor, wanted) {
+        return actor.name.toLowerCase().indexOf(wanted) >= 0
+            || actor.components.some(c => String(c.component).toLowerCase().indexOf(wanted) >= 0);
+    }
     readonly property var rows: {
+        const wanted = search.trim().toLowerCase();
+        if (wanted) return actors.filter(a => matches(a, wanted)).map(a => ({ actor: a, depth: 0, kids: 0 }));
         const out = [];
         const walk = (actor, depth) => {
             out.push({ actor: actor, depth: depth, kids: childrenOf(actor.id).length });
@@ -163,6 +172,12 @@ Rectangle {
                 }
                 ToolTip.text: "The open scene - double-click a scene file in the Assets tray to open another"
             }
+        }
+        StitchTextField {
+            objectName: "actor-search"
+            Layout.fillWidth: true; Layout.leftMargin: 8; Layout.rightMargin: 8; implicitHeight: 28; font.pixelSize: 12
+            placeholderText: "Find actors by name or component"
+            onTextChanged: root.search = text
         }
         RowLayout {
             Layout.fillWidth: true; Layout.margins: 8; spacing: 4

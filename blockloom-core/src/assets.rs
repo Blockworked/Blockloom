@@ -285,6 +285,30 @@ pub fn list(project_dir: &Path, relative: &str) -> Result<Vec<AssetEntry>, Strin
     Ok(entries)
 }
 
+/// Every file and folder under the project whose path holds `query`
+/// (ignoring case), depth first, at most `limit` of them. Hidden entries stay
+/// hidden, the way `list` hides them.
+pub fn find(project_dir: &Path, query: &str, limit: usize) -> Result<Vec<AssetEntry>, String> {
+    let wanted = query.trim().to_lowercase();
+    let mut found = Vec::new();
+    let mut folders = vec![String::new()];
+    while let Some(folder) = folders.pop() {
+        for entry in list(project_dir, &folder)? {
+            if entry.kind == AssetKind::Folder {
+                folders.push(entry.path.clone());
+            }
+            if wanted.is_empty() || entry.path.to_lowercase().contains(&wanted) {
+                found.push(entry);
+                if found.len() >= limit {
+                    return Ok(found);
+                }
+            }
+        }
+    }
+    found.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
+    Ok(found)
+}
+
 /// A name nothing in `parent` has yet - `player.png`, then `player 2.png`.
 pub fn unused_name(project_dir: &Path, parent: &str, name: &str) -> String {
     let taken = |candidate: &str| {
@@ -474,6 +498,34 @@ fn base64_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_searches_every_folder_by_path() {
+        let dir = std::env::temp_dir().join(format!("blockloom-find-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets/sprites/enemies")).unwrap();
+        std::fs::write(dir.join("assets/sprites/enemies/Guard.png"), b"x").unwrap();
+        std::fs::write(dir.join("assets/sprites/player.png"), b"x").unwrap();
+        std::fs::write(dir.join("assets/theme.ogg"), b"x").unwrap();
+        let paths = |q: &str| -> Vec<String> {
+            find(&dir, q, 100)
+                .unwrap()
+                .into_iter()
+                .map(|e| e.path)
+                .collect()
+        };
+        assert_eq!(paths("guard"), ["assets/sprites/enemies/Guard.png"]);
+        assert_eq!(
+            paths(".png"),
+            [
+                "assets/sprites/enemies/Guard.png",
+                "assets/sprites/player.png"
+            ]
+        );
+        assert!(paths("enem").contains(&"assets/sprites/enemies".to_string()));
+        assert_eq!(find(&dir, "", 2).unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn normalize_refuses_anything_that_climbs_out() {

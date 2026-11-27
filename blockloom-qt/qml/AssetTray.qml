@@ -47,10 +47,16 @@ Rectangle {
         return (bytes / (1024 * 1024)).toFixed(1) + " MB";
     }
 
+    // Words to find in any file's path; while set, the tray lists matches from
+    // every folder instead of the one it is in.
+    property string query: ""
+    onQueryChanged: searchSettle.restart()
+    Timer { id: searchSettle; interval: 200; onTriggered: root.refresh() }
     function refresh() {
         if (!appState.project_path) { entries = []; return; }
         busy = true;
-        app.invoke("list_assets", { path: path }, list => {
+        const searching = query.trim().length > 0;
+        app.invoke(searching ? "find_assets" : "list_assets", searching ? { query: query.trim() } : { path: path }, list => {
             busy = false; entries = list; error = "";
             app.invoke("pipeline_status", {}, statuses => { const next = {}; for (const r of statuses) next[r.path] = r; reports = next; }, () => {});
             app.invoke("plugin_imports", {}, result => { const next = {}; for (const i of result.imports || []) next[i.source] = i; imports = next; }, () => imports = ({}));
@@ -77,7 +83,8 @@ Rectangle {
             refresh();
         }, e => { error = String(e); refresh(); });
     }
-    function goTo(p) { path = p; selected = ""; }
+    // Opening a folder, from a search result too, ends the search.
+    function goTo(p) { assetSearch.text = ""; query = ""; path = p; selected = ""; }
     onPathChanged: refresh()
     Connections { target: root.app; function onAppStateChanged() { if (root.lastProject !== root.appState.project_path) { root.lastProject = root.appState.project_path; root.path = ""; root.refresh(); } } }
     Connections { target: root.app; function onInspectedLightingChanged() { root.refresh(); } }
@@ -227,6 +234,14 @@ Rectangle {
                 }
             }
             Item { Layout.fillWidth: true; visible: !root.shown }
+            StitchTextField {
+                id: assetSearch
+                objectName: "asset-search"
+                visible: root.shown
+                Layout.preferredWidth: 180; implicitHeight: 28; font.pixelSize: 12
+                placeholderText: "Find in every folder"
+                onTextChanged: root.query = text
+            }
             IconButton { visible: root.shown; iconName: "folder-plus"; tip: "New folder"; implicitWidth: 28; implicitHeight: 28; onClicked: root.startDraft("folder") }
             IconButton { visible: root.shown; iconName: "file-plus"; tip: "New asset"; implicitWidth: 28; implicitHeight: 28; onClicked: createMenu.popup() }
             IconButton { visible: root.shown; iconName: "download"; tip: "Import files into this folder"; implicitWidth: 28; implicitHeight: 28; onClicked: importDialog.open() }
@@ -323,7 +338,8 @@ Rectangle {
                             Text {
                                 visible: !tile.renaming
                                 anchors.left: parent.left; anchors.right: parent.right; anchors.margins: 4; y: 58
-                                text: tile.modelData.name; color: Theme.text; font.pixelSize: 11
+                                // A search result says where it lives.
+                                text: root.query.trim() ? tile.modelData.path : tile.modelData.name; color: Theme.text; font.pixelSize: 11
                                 horizontalAlignment: Text.AlignHCenter; elide: Text.ElideMiddle
                             }
                             StitchTextField {

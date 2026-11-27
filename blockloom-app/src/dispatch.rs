@@ -1007,6 +1007,7 @@ impl Backend {
                 arg(&args, "resource")?,
             )?),
             // ── Assets ─────────────────────────────────────────────────────
+            "find_assets" => to_json(commands::find_assets(state, arg(&args, "query")?)?),
             "list_assets" => to_json(commands::list_assets(
                 state,
                 arg(&args, "path").unwrap_or_default(),

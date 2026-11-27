@@ -4037,6 +4037,17 @@ pub(crate) fn list_assets(
     Ok(entries)
 }
 
+/// `find-assets`: every file or folder in the project whose path holds
+/// `query`, for the asset tray's search. Capped so a huge folder stays quick.
+pub(crate) fn find_assets(
+    state: &SharedState,
+    query: String,
+) -> Result<Vec<assets::AssetEntry>, String> {
+    let s = lock(state)?;
+    let dir = project_dir(&s)?;
+    assets::find(&dir, &query, 500)
+}
+
 /// `asset-used-by`: every place the document names a file, or anything
 /// under a folder.
 pub(crate) fn asset_used_by(

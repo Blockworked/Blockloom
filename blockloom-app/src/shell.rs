@@ -2439,6 +2439,17 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
     },
     // ── Assets ────────────────────────────────────────────────────────────
     CommandSpec {
+        name: "find-assets",
+        cmd: "find_assets",
+        aliases: &["find_assets"],
+        summary: "Every file or folder in the project whose path holds query (any case), searching every folder; at most 500.",
+        args: &[ArgSpec {
+            name: "query",
+            ty: "string",
+            required: true,
+        }],
+    },
+    CommandSpec {
         name: "list-assets",
         cmd: "list_assets",
         aliases: &["list_assets"],
