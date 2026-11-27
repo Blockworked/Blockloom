@@ -274,6 +274,22 @@ layer's clip `weight`, so each bone is blended exactly once. Changing the layers
 mid-run takes effect when the model next loads. Layers don't apply to 2D
 flipbooks or rigs, and at most 32 are kept.
 
+The component's `ik` lays IK over a model's animated pose in `ik3d::solve_ik`,
+which runs in PostUpdate after Bevy animates and before transforms propagate.
+It reads each bone's world transform from the locals up its parents, since
+nothing has propagated yet. Each foot named in `feet` is a leg made of the
+foot and its two parents. A ray down from `foot_reach` above the ankle finds
+the ground under it, ignoring the actor's own colliders and sensors. The
+`hips` drop by however much the lowest foot needs, and `two_bone` bends the
+thigh and shin to put the ankle `foot_height` above the hit, keeping the
+knee's bend side. The foot keeps the world angle its animation gave it. The
+`look_at`, `look_at_point` and `stop_looking` verbs set
+`ik3d::LookTarget` on the tick. The head then turns from the body's facing
+(-Z) toward the target, at most `look_limit`, without needing to know the
+bone's own axes. Each fix eases in and out over 0.15 s. The bones are found by
+name once the model loads and again when `ik` changes, and a missing one is
+reported once.
+
 A solid tilemap collides per tile, as the merged rects of
 `Tilemap::solid_rects` (minus its `passable` tiles), and nav blocks the same
 rects. Ray and overlap queries see them too, as a `ColliderShape::Parts`

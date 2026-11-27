@@ -40,6 +40,17 @@ pub struct ModelRig {
 }
 
 impl ModelRig {
+    /// A rig with nothing in it, for tests of what reads a loaded model.
+    #[cfg(test)]
+    pub fn empty() -> Self {
+        Self {
+            players: Vec::new(),
+            nodes: HashMap::new(),
+            layers: Vec::new(),
+            missing: None,
+        }
+    }
+
     fn node_in(&self, name: &str, region: usize) -> Option<AnimationNodeIndex> {
         self.nodes
             .get(&name.trim().to_lowercase())

@@ -703,6 +703,13 @@ Add component calls it "Hurt volume". 2D worlds only.
 | `animation.layers[].name` | text |  |  |
 | `animation.layers[].bones` | list of text | `[]` |  |
 | `animation.layers[].weight` | number | `1.0` |  |
+| `animation.ik` | record or none | `null` | Pose fixes a 3D model gets after its animation: feet set on the ground and a head turning toward what `look at` names. |
+| `animation.ik.feet` | list of text | `[]` |  |
+| `animation.ik.hips` | text |  |  |
+| `animation.ik.foot_reach` | number | `0.4000000059604645` | How far above and below the animated foot the ground is looked for, in metres. |
+| `animation.ik.foot_height` | number | `0.0` | The ankle's height above the sole, in metres. |
+| `animation.ik.head` | text |  |  |
+| `animation.ik.look_limit` | number | `70.0` | The most the head turns from the body's facing, in degrees. |
 
 ## Sprite
 

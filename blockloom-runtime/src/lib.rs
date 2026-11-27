@@ -58,6 +58,7 @@ mod fog;
 mod fx;
 mod gpu;
 mod hdr;
+mod ik3d;
 mod indirect;
 mod input_caret;
 mod lan;
@@ -397,6 +398,14 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
         );
     #[cfg(feature = "plugins")]
     app.add_systems(PostUpdate, plugin_meshes::publish_poses.run_if(is_3d));
+    // Model IK goes over the animated pose, before it propagates.
+    app.add_systems(
+        PostUpdate,
+        ik3d::solve_ik
+            .run_if(is_3d)
+            .after(bevy::app::AnimationSystems)
+            .before(bevy::transform::TransformSystems::Propagate),
+    );
     #[cfg(feature = "plugins")]
     plugin_compute::register(app);
     #[cfg(feature = "plugins")]

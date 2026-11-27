@@ -27,6 +27,21 @@ impl Actor {
         self.verb("set_layer_weight", &[PluginArg::from(layer), PluginArg::from(weight)]);
     }
 
+    /// Turns my model's head toward another actor every frame, as far as my Animation component's IK look limit allows, until stop looking.
+    pub fn look_at(&self, target: &str) {
+        self.verb("look_at", &[PluginArg::from(target)]);
+    }
+
+    /// Turns my model's head toward a point in the world, as far as my Animation component's IK look limit allows, until stop looking.
+    pub fn look_at_point(&self, x: f64, y: f64, z: f64) {
+        self.verb("look_at_point", &[PluginArg::from(x), PluginArg::from(y), PluginArg::from(z)]);
+    }
+
+    /// Hands my model's head back to its animation.
+    pub fn stop_looking(&self) {
+        self.verb("stop_looking", &[]);
+    }
+
     /// Reads one property of a component on an actor by its registry path, as the run has it now.
     pub fn property(&self, property: &str, actor: &str) -> Option<String> {
         self.verb_text("property", &[PluginArg::from(property), PluginArg::from(actor)])

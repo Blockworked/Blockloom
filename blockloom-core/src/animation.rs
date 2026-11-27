@@ -827,6 +827,62 @@ pub struct AnimationSpec {
     /// such as a wave on the upper body while the legs walk.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<AnimationLayer>,
+    /// Pose fixes a 3D model gets after its animation: feet set on the
+    /// ground and a head turning toward what `look at` names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ik: Option<ModelIk>,
+}
+
+/// A model's inverse kinematics, by bone name. Each foot's leg is the foot
+/// and its two parents (shin, thigh). `hips` drops so the lower foot can
+/// reach the ground; empty leaves it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
+pub struct ModelIk {
+    #[serde(default)]
+    pub feet: Vec<String>,
+    #[serde(default)]
+    pub hips: String,
+    /// How far above and below the animated foot the ground is looked for,
+    /// in metres.
+    #[serde(default = "default_foot_reach")]
+    pub foot_reach: f32,
+    /// The ankle's height above the sole, in metres.
+    #[serde(default)]
+    pub foot_height: f32,
+    #[serde(default)]
+    pub head: String,
+    /// The most the head turns from the body's facing, in degrees.
+    #[serde(default = "default_look_limit")]
+    pub look_limit: f32,
+}
+
+fn default_foot_reach() -> f32 {
+    0.4
+}
+
+fn default_look_limit() -> f32 {
+    70.0
+}
+
+impl ModelIk {
+    pub fn normalize(&mut self) {
+        self.feet.retain_mut(|foot| {
+            *foot = foot.trim().to_string();
+            !foot.is_empty()
+        });
+        self.hips = self.hips.trim().to_string();
+        self.head = self.head.trim().to_string();
+        let clean = |v: f32, default: f32, max: f32| {
+            if v.is_finite() {
+                v.clamp(0.0, max)
+            } else {
+                default
+            }
+        };
+        self.foot_reach = clean(self.foot_reach, default_foot_reach(), 5.0);
+        self.foot_height = clean(self.foot_height, 0.0, 1.0);
+        self.look_limit = clean(self.look_limit, default_look_limit(), 180.0);
+    }
 }
 
 /// The most layers a spec keeps: each is a mask group beside the base.
@@ -1064,6 +1120,9 @@ impl AnimationSpec {
             !layer.name.is_empty()
         });
         self.layers.truncate(MAX_LAYERS);
+        if let Some(ik) = &mut self.ik {
+            ik.normalize();
+        }
     }
 
     pub fn find_layer(&self, name: &str) -> Option<&AnimationLayer> {
