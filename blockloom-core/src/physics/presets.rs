@@ -230,7 +230,8 @@ impl Scene {
             blocked: None,
         };
         let Some(actor) = self.actors.iter().find(|a| a.id == actor_id) else {
-            preview.blocked = Some("Actor not found".to_string());
+            preview.blocked =
+                Some("That actor isn't in this scene: pick one from the actor list".to_string());
             return preview;
         };
         if self.world.mode != preset.mode() {
@@ -401,7 +402,9 @@ impl Scene {
                 }
             }
             let Some(actor) = self.actors.iter_mut().find(|a| a.id == actor_id) else {
-                return Err("Actor not found".to_string());
+                return Err(
+                    "That actor isn't in this scene: pick one from the actor list".to_string(),
+                );
             };
             if convert {
                 actor.components.remove("Body");
@@ -501,7 +504,7 @@ impl PlayerProfile {
             .actors
             .iter()
             .find(|a| a.id == actor_id)
-            .ok_or("Actor not found")?;
+            .ok_or("That actor isn't in this scene: pick one from the actor list")?;
         let c = &actor.components;
         let controller = c
             .character_controller()

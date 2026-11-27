@@ -1659,7 +1659,9 @@ impl Backend {
             )?),
             "clear_log" => to_json(commands::clear_log(state, app)?),
 
-            other => Err(format!("Unknown command: {other}")),
+            other => Err(format!(
+                "Unknown command: {other} (the shell's `help` lists every command)"
+            )),
         }
     }
 }

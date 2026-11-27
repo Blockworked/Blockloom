@@ -61,7 +61,11 @@ pub(crate) fn write_world(
     edit: impl FnOnce(&World) -> Result<World, String>,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
-    let next = edit(&s.project().ok_or("No project is open")?.world)?;
+    let next = edit(
+        &s.project()
+            .ok_or("No project is open: open or create one on the Dashboard")?
+            .world,
+    )?;
     push_undo_for(
         &mut s,
         session.map(|key| EditSession::Comment {
@@ -105,7 +109,11 @@ fn settings_edit(
     edit: impl FnOnce(&GameSettings) -> Result<GameSettings, String>,
 ) -> Result<(), String> {
     let mut s = lock(state)?;
-    let next = edit(&s.project().ok_or("No project is open")?.settings)?;
+    let next = edit(
+        &s.project()
+            .ok_or("No project is open: open or create one on the Dashboard")?
+            .settings,
+    )?;
     push_undo_for(
         &mut s,
         session.map(|path| EditSession::Comment {
@@ -144,7 +152,7 @@ pub(crate) fn set_property(
                     let record = s
                         .project()
                         .and_then(|p| p.actor(&actor))
-                        .ok_or("Actor not found")?
+                        .ok_or("That actor isn't in this scene: pick one from the actor list")?
                         .components
                         .plugin_record(qualified)
                         .ok_or_else(|| format!("This actor has no \"{qualified}\" component"))?;
@@ -166,7 +174,7 @@ pub(crate) fn set_property(
                 let component = s
                     .project()
                     .and_then(|p| p.actor(&actor))
-                    .ok_or("Actor not found")?
+                    .ok_or("That actor isn't in this scene: pick one from the actor list")?
                     .components
                     .get(&name)
                     .ok_or_else(|| format!("This actor has no \"{name}\" component"))?
@@ -197,7 +205,10 @@ pub(crate) fn add_component(
     }
     let mode = {
         let s = lock(state)?;
-        s.project().ok_or("No project is open")?.world.mode
+        s.project()
+            .ok_or("No project is open: open or create one on the Dashboard")?
+            .world
+            .mode
     };
     let component: ActorComponent = match kind.as_str() {
         "Script" => return Err("A script needs a file: use add-script".into()),

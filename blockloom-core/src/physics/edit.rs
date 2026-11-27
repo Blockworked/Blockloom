@@ -60,7 +60,7 @@ impl Scene {
         change: impl FnOnce(&mut Components) -> Result<(), String>,
     ) -> Result<(), String> {
         let Some(index) = self.actors.iter().position(|a| a.id == actor_id) else {
-            return Err("Actor not found".to_string());
+            return Err("That actor isn't in this scene: pick one from the actor list".to_string());
         };
         let before = self.actors[index].components.clone();
         if let Err(message) = change(&mut self.actors[index].components) {

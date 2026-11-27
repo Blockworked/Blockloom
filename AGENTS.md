@@ -79,6 +79,7 @@ defaults.
 
 - `CLAUDE.md` and `AGENTS.md` are the same text (only their first lines differ): change both together.
 - NEVER use em-dashes (-) in comments, code, docs, or commit messages. Use a normal hyphen (-) instead.
+- A refusal names the fix: what is wrong, then a colon and what to do about it ("No project is open: open or create one on the Dashboard"), the way `preflight` does.
 - Write comments like a human: short and terse, 1-2 lines. State what and why briefly. No multi-paragraph essays, no history lessons ("Previously..."), no dangling "see X docs" pointers unless X exists.
 
 ### Frontend (`blockloom-qt/qml/`, QML)

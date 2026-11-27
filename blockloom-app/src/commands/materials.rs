@@ -159,7 +159,7 @@ pub(crate) fn create_material_asset(
         .project()
         .and_then(|p| p.actor(&actor_id))
         .cloned()
-        .ok_or("Actor not found")?;
+        .ok_or("That actor isn't in this scene: pick one from the actor list")?;
     let path = match path.filter(|p| !p.trim().is_empty()) {
         Some(path) => checked_path(&path)?,
         None => new_material_path(&dir, &actor.name),
@@ -195,7 +195,7 @@ pub(crate) fn assign_material(
     let actor = s
         .project_mut()
         .and_then(|p| p.actor_mut(&actor_id))
-        .ok_or("Actor not found")?;
+        .ok_or("That actor isn't in this scene: pick one from the actor list")?;
     link_actor(actor, material, &index, &path);
     auto_save(&mut s);
     sync_runtime(&mut s);
@@ -216,7 +216,7 @@ pub(crate) fn apply_material(
         .project()
         .and_then(|p| p.actor(&actor_id))
         .cloned()
-        .ok_or("Actor not found")?;
+        .ok_or("That actor isn't in this scene: pick one from the actor list")?;
     let link = asset::link(&actor)
         .cloned()
         .ok_or("That actor's material doesn't follow a file")?;
@@ -224,7 +224,9 @@ pub(crate) fn apply_material(
     let material = material_of(&actor).cloned().unwrap_or_default();
     asset::write(&dir, &path, &material)?;
     push_undo(&mut s);
-    let project = s.project_mut().ok_or("No project is open")?;
+    let project = s
+        .project_mut()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     if let Some((_, link)) = project.actor_mut(&actor_id).and_then(asset::linked_mut) {
         link.overrides.clear();
     }
@@ -246,8 +248,12 @@ pub(crate) fn revert_material(
     let dir = project_dir(&s)?;
     let index = ResourceIndex::load(&dir);
     push_undo(&mut s);
-    let project = s.project_mut().ok_or("No project is open")?;
-    let actor = project.actor_mut(&actor_id).ok_or("Actor not found")?;
+    let project = s
+        .project_mut()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
+    let actor = project
+        .actor_mut(&actor_id)
+        .ok_or("That actor isn't in this scene: pick one from the actor list")?;
     let (material, link) =
         asset::linked_mut(actor).ok_or("That actor's material doesn't follow a file")?;
     match path.filter(|p| !p.is_empty()) {
@@ -273,7 +279,7 @@ pub(crate) fn unlink_material(
     let actor = s
         .project_mut()
         .and_then(|p| p.actor_mut(&actor_id))
-        .ok_or("Actor not found")?;
+        .ok_or("That actor isn't in this scene: pick one from the actor list")?;
     let mut found = false;
     for component in actor.components.iter_mut() {
         if let ActorComponent::Material { source, .. } = component {

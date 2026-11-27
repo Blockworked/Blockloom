@@ -138,7 +138,9 @@ pub(crate) fn create_environment_asset(
 ) -> Result<String, String> {
     let mut s = lock(state)?;
     let dir = project_dir(&s)?;
-    let project = s.project().ok_or("No project is open")?;
+    let project = s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let path = match path.filter(|p| !p.trim().is_empty()) {
         Some(path) => checked_path(&path)?,
         None => new_path(&dir, &project.active_scene().name),
@@ -147,7 +149,9 @@ pub(crate) fn create_environment_asset(
     reindex(&dir);
     let index = ResourceIndex::load(&dir);
     push_undo(&mut s);
-    let project = s.project_mut().ok_or("No project is open")?;
+    let project = s
+        .project_mut()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     project.world.environment = Some(link_to(&index, &path));
     auto_save(&mut s);
     sync_runtime(&mut s);
@@ -168,7 +172,9 @@ pub(crate) fn assign_environment(
     let file = asset::read(&dir, &path)?;
     let index = ResourceIndex::load(&dir);
     push_undo(&mut s);
-    let project = s.project_mut().ok_or("No project is open")?;
+    let project = s
+        .project_mut()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let mut world = asset::apply(&project.world, &file)?;
     world.environment = Some(link_to(&index, &path));
     project.world = world;
@@ -183,7 +189,9 @@ pub(crate) fn assign_environment(
 pub(crate) fn apply_environment(state: &SharedState, app: &AppHandle) -> Result<usize, String> {
     let mut s = lock(state)?;
     let dir = project_dir(&s)?;
-    let project = s.project().ok_or("No project is open")?;
+    let project = s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let link = project
         .world
         .environment
@@ -192,7 +200,9 @@ pub(crate) fn apply_environment(state: &SharedState, app: &AppHandle) -> Result<
     let path = source_path(&ResourceIndex::load(&dir), &link);
     asset::write(&dir, &path, &asset::extract(&project.world))?;
     push_undo(&mut s);
-    let project = s.project_mut().ok_or("No project is open")?;
+    let project = s
+        .project_mut()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     if let Some(link) = &mut project.world.environment {
         link.overrides.clear();
     }
@@ -213,7 +223,9 @@ pub(crate) fn revert_environment(
     let dir = project_dir(&s)?;
     let index = ResourceIndex::load(&dir);
     push_undo(&mut s);
-    let project = s.project_mut().ok_or("No project is open")?;
+    let project = s
+        .project_mut()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let link = project
         .world
         .environment
@@ -236,7 +248,9 @@ pub(crate) fn revert_environment(
 pub(crate) fn unlink_environment(state: &SharedState, app: &AppHandle) -> Result<(), String> {
     let mut s = lock(state)?;
     push_undo(&mut s);
-    let project = s.project_mut().ok_or("No project is open")?;
+    let project = s
+        .project_mut()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     if project.world.environment.take().is_none() {
         return Err("This scene doesn't follow an environment".into());
     }

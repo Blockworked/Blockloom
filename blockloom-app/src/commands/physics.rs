@@ -37,12 +37,17 @@ fn edit<R>(
     edit: impl FnOnce(&mut Project) -> Result<R, String>,
 ) -> Result<R, String> {
     let mut s = lock(state)?;
-    let snapshot = s.project().cloned().ok_or("No project is open")?;
+    let snapshot = s
+        .project()
+        .cloned()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     super::push_undo_for(
         &mut s,
         session.map(|comment_id| EditSession::Comment { comment_id }),
     );
-    let project = s.project_mut().ok_or("No project is open")?;
+    let project = s
+        .project_mut()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let result = match edit(project) {
         Ok(result) => {
             project.physics.stamp();
@@ -183,7 +188,9 @@ pub(crate) fn list_constraints(
     actor_id: Option<String>,
 ) -> Result<Value, String> {
     let s = lock(state)?;
-    let project = s.project().ok_or("No project is open")?;
+    let project = s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let scene = project.active_scene();
     let mut out = Vec::new();
     for actor in &scene.actors {
@@ -426,7 +433,10 @@ pub(crate) fn collision_extras(
 pub(crate) fn physics_cook(state: &SharedState) -> Result<Value, String> {
     let (project, dir) = {
         let s = lock(state)?;
-        let project = s.project().cloned().ok_or("No project is open")?;
+        let project = s
+            .project()
+            .cloned()
+            .ok_or("No project is open: open or create one on the Dashboard")?;
         let dir = s.project_dir().map(|dir| dir.to_path_buf());
         (project, dir)
     };
@@ -482,7 +492,9 @@ pub(crate) fn set_physics_cooking(
 /// `physics-check`: every physics problem in every scene.
 pub(crate) fn physics_check(state: &SharedState) -> Result<Value, String> {
     let s = lock(state)?;
-    let project = s.project().ok_or("No project is open")?;
+    let project = s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let mut issues = Vec::new();
     let lookup = lookup_for(s.project_dir());
     for scene in &project.scenes {
@@ -537,7 +549,9 @@ pub(crate) fn preflight(
 /// their mass split, shapes with their poses, materials and filter groups).
 pub(crate) fn physics_plan(state: &SharedState) -> Result<Value, String> {
     let s = lock(state)?;
-    let project = s.project().ok_or("No project is open")?;
+    let project = s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let scene = project.active_scene();
     let lookup = lookup_for(s.project_dir());
     let plan = scene.physics_plan_with(&project.physics, &*lookup);
@@ -563,7 +577,9 @@ pub(crate) fn physics_plan(state: &SharedState) -> Result<Value, String> {
 /// and where in the body's frame the shape sits.
 pub(crate) fn physics_ownership(state: &SharedState) -> Result<Value, String> {
     let s = lock(state)?;
-    let project = s.project().ok_or("No project is open")?;
+    let project = s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let scene = project.active_scene();
     let table = PhysicsOwnership::resolve(&scene.actors);
     let legacy: Vec<&str> = scene
@@ -606,7 +622,9 @@ pub(crate) fn preview_player_preset(
 ) -> Result<Value, String> {
     let preset = preset_named(&preset)?;
     let s = lock(state)?;
-    let project = s.project().ok_or("No project is open")?;
+    let project = s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let preview =
         project
             .active_scene()
@@ -635,7 +653,9 @@ pub(crate) fn apply_player_preset(
 /// Where a project keeps its saved player profiles.
 fn profile_dir(state: &SharedState) -> Result<std::path::PathBuf, String> {
     let s = lock(state)?;
-    let dir = s.project_dir().ok_or("No project is open")?;
+    let dir = s
+        .project_dir()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     Ok(dir.join("assets").join("profiles"))
 }
 
@@ -668,7 +688,9 @@ pub(crate) fn save_player_profile(
     let path = profile_path(state, &name)?;
     let profile = {
         let s = lock(state)?;
-        let project = s.project().ok_or("No project is open")?;
+        let project = s
+            .project()
+            .ok_or("No project is open: open or create one on the Dashboard")?;
         PlayerProfile::capture(
             project.active_scene(),
             &project.settings.input,
@@ -773,7 +795,9 @@ pub(crate) fn physics_migration_preview(
     actor: Option<String>,
 ) -> Result<Value, String> {
     let s = lock(state)?;
-    let project = s.project().ok_or("No project is open")?;
+    let project = s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let mut scenes = Vec::new();
     let mut total = 0;
     for scene in &project.scenes {

@@ -92,7 +92,7 @@ pub(crate) fn load_active(dir: &Path) -> ActivePlugins {
 /// editor's files: package changes would race the owner's.
 fn owned_dir(s: &AppState) -> Result<PathBuf, String> {
     let Some(open) = &s.open else {
-        return Err("No project is open".to_string());
+        return Err("No project is open: open or create one on the Dashboard".to_string());
     };
     if open.attached || !open.owns_lock {
         return Err(
@@ -105,14 +105,14 @@ fn owned_dir(s: &AppState) -> Result<PathBuf, String> {
 fn open_dir(s: &AppState) -> Result<PathBuf, String> {
     s.project_dir()
         .map(Path::to_path_buf)
-        .ok_or_else(|| "No project is open".to_string())
+        .ok_or_else(|| "No project is open: open or create one on the Dashboard".to_string())
 }
 
 fn active(s: &AppState) -> Result<&ActivePlugins, String> {
     s.open
         .as_ref()
         .map(|open| &open.plugins)
-        .ok_or_else(|| "No project is open".to_string())
+        .ok_or_else(|| "No project is open: open or create one on the Dashboard".to_string())
 }
 
 /// The plugin code a run hosts in the game world: what the open project's
@@ -618,7 +618,9 @@ pub(crate) fn plugin_list(state: &SharedState) -> Result<Value, String> {
 /// project may run.
 pub(crate) fn plugin_check(state: &SharedState) -> Result<Value, String> {
     let s = lock(state)?;
-    let project = s.project().ok_or("No project is open")?;
+    let project = s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let active = active(&s)?;
     let issues = active.audit(project.plugin_records());
     let conflicts = active.conflicts();
@@ -1045,8 +1047,13 @@ pub(crate) fn plugin_data_gc(state: &SharedState, dry_run: bool) -> Result<Value
                     .to_string(),
             );
         }
-        let project = s.project().ok_or("No project is open")?;
-        let dir = s.project_dir().ok_or("No project is open")?.to_path_buf();
+        let project = s
+            .project()
+            .ok_or("No project is open: open or create one on the Dashboard")?;
+        let dir = s
+            .project_dir()
+            .ok_or("No project is open: open or create one on the Dashboard")?
+            .to_path_buf();
         let mut named: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let records = project
             .actors
@@ -1259,7 +1266,7 @@ pub(crate) fn add_plugin_component(
     let mut s = lock(state)?;
     let record = make_record(active(&s)?, &component, payload, false)?;
     if s.project().and_then(|p| p.actor(&actor_id)).is_none() {
-        return Err("Actor not found".to_string());
+        return Err("That actor isn't in this scene: pick one from the actor list".to_string());
     }
     push_undo(&mut s);
     if let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) {
@@ -1281,8 +1288,12 @@ pub(crate) fn set_plugin_component(
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     {
-        let project = s.project().ok_or("No project is open")?;
-        let actor = project.actor(&actor_id).ok_or("Actor not found")?;
+        let project = s
+            .project()
+            .ok_or("No project is open: open or create one on the Dashboard")?;
+        let actor = project
+            .actor(&actor_id)
+            .ok_or("That actor isn't in this scene: pick one from the actor list")?;
         if actor.components.plugin_record(&component).is_none() {
             return Err(format!("This actor has no \"{component}\" component"));
         }
@@ -1405,8 +1416,12 @@ pub(crate) fn plugin_call(
             let actor_id = actor_of(&args);
             let current = {
                 let s = lock(state)?;
-                let project = s.project().ok_or("No project is open")?;
-                let actor = project.actor(&actor_id).ok_or("Actor not found")?;
+                let project = s
+                    .project()
+                    .ok_or("No project is open: open or create one on the Dashboard")?;
+                let actor = project
+                    .actor(&actor_id)
+                    .ok_or("That actor isn't in this scene: pick one from the actor list")?;
                 actor
                     .components
                     .plugin_record(&name)
@@ -1439,7 +1454,9 @@ pub(crate) fn plugin_call(
             };
             let mut payload = {
                 let s = lock(state)?;
-                let project = s.project().ok_or("No project is open")?;
+                let project = s
+                    .project()
+                    .ok_or("No project is open: open or create one on the Dashboard")?;
                 project
                     .plugin_resources
                     .iter()
@@ -1472,7 +1489,10 @@ fn with_module<T>(
 ) -> Result<T, String> {
     let module = {
         let mut s = lock(state)?;
-        let open = s.open.as_mut().ok_or("No project is open")?;
+        let open = s
+            .open
+            .as_mut()
+            .ok_or("No project is open: open or create one on the Dashboard")?;
         open.modules
             .get(&open.plugins, plugin, &open.dir, &open.project.id)?
     };
@@ -1603,7 +1623,9 @@ pub(crate) fn run_tool(
                 let name = id::qualified(plugin, &resource);
                 let mut payload = {
                     let s = lock(state)?;
-                    let project = s.project().ok_or("No project is open")?;
+                    let project = s
+                        .project()
+                        .ok_or("No project is open: open or create one on the Dashboard")?;
                     project
                         .plugin_resources
                         .iter()
@@ -1668,7 +1690,9 @@ pub(crate) fn plugin_migrate(
 ) -> Result<Value, String> {
     let mut s = lock(state)?;
     let dir = open_dir(&s)?;
-    let project = s.project().ok_or("No project is open")?;
+    let project = s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let old: Vec<PluginRecord> = project
         .plugin_records()
         .into_iter()

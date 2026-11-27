@@ -632,7 +632,7 @@ impl InputConfig {
             ));
         }
         let Some(action) = self.find_mut(old) else {
-            return Err("Input action not found".to_string());
+            return Err("No input action by that name: add it under Project settings > Game > Input actions".to_string());
         };
         action.name = trimmed.clone();
         Ok(trimmed)
@@ -655,7 +655,7 @@ impl InputConfig {
             .normalized()
             .ok_or_else(|| format!("\"{binding}\" isn't a binding"))?;
         let Some(action) = self.find_mut(name) else {
-            return Err("Input action not found".to_string());
+            return Err("No input action by that name: add it under Project settings > Game > Input actions".to_string());
         };
         let text = parsed.text();
         if action.bindings.iter().any(|held| held.text() == text) {
@@ -671,7 +671,7 @@ impl InputConfig {
             .map(|binding| binding.text())
             .ok_or_else(|| format!("\"{binding}\" isn't a binding"))?;
         let Some(action) = self.find_mut(name) else {
-            return Err("Input action not found".to_string());
+            return Err("No input action by that name: add it under Project settings > Game > Input actions".to_string());
         };
         let before = action.bindings.len();
         action.bindings.retain(|held| held.text() != parsed);
@@ -680,7 +680,7 @@ impl InputConfig {
 
     pub fn clear_bindings(&mut self, name: &str) -> Result<bool, String> {
         let Some(action) = self.find_mut(name) else {
-            return Err("Input action not found".to_string());
+            return Err("No input action by that name: add it under Project settings > Game > Input actions".to_string());
         };
         let had = !action.bindings.is_empty();
         action.bindings.clear();
@@ -692,7 +692,7 @@ impl InputConfig {
     pub fn rebind(&mut self, name: &str, binding: &str) -> Result<bool, String> {
         let trimmed = binding.trim();
         let Some(action) = self.find_mut(name) else {
-            return Err("Input action not found".to_string());
+            return Err("No input action by that name: add it under Project settings > Game > Input actions".to_string());
         };
         if trimmed.is_empty() {
             let had = !action.bindings.is_empty();

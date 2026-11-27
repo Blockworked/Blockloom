@@ -302,7 +302,7 @@ fn run_edit(
     s: &mut AppState,
     command: EditCommand<InstructionKind>,
 ) -> Result<EditOutcome, EditError> {
-    let missing = EditError::Missing("No actor is open");
+    let missing = EditError::Missing("No actor is open: pick one in the actor list");
     let prepared = graph_mut(s)
         .ok_or(missing.clone())?
         .prepare_edit(command, &EditContext::default())?;
@@ -871,7 +871,9 @@ pub(crate) fn export_file_name(state: &SharedState) -> Result<String, String> {
 
 pub(crate) fn export_project(state: &SharedState, path: String) -> Result<(), String> {
     let s = lock(state)?;
-    let project = s.project().ok_or("No project is open")?;
+    let project = s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     project::export_project(project, std::path::Path::new(&path))
 }
 
@@ -1066,7 +1068,7 @@ pub(crate) fn add_scene(
     let mut s = lock(state)?;
     push_undo(&mut s);
     let Some(project) = s.project_mut() else {
-        return Err("No project is open".to_string());
+        return Err("No project is open: open or create one on the Dashboard".to_string());
     };
     let id = project.add_scene(&name, mode);
     s.selected_actor = None;
@@ -1084,7 +1086,7 @@ pub(crate) fn duplicate_scene(
     let mut s = lock(state)?;
     push_undo(&mut s);
     let Some(project) = s.project_mut() else {
-        return Err("No project is open".to_string());
+        return Err("No project is open: open or create one on the Dashboard".to_string());
     };
     let id = project.duplicate_scene(&scene_id)?;
     s.selected_actor = None;
@@ -1103,12 +1105,12 @@ pub(crate) fn rename_scene(
     let mut s = lock(state)?;
     push_undo(&mut s);
     let Some(project) = s.project_mut() else {
-        return Err("No project is open".to_string());
+        return Err("No project is open: open or create one on the Dashboard".to_string());
     };
     let old_path = project
         .scene(&scene_id)
         .map(|scene| scene.asset_path())
-        .ok_or("Scene not found".to_string())?;
+        .ok_or("That scene isn't in this project: pick one from the scene list".to_string())?;
     let renamed = project.rename_scene(&scene_id, &name)?;
     let new_path = project
         .scene(&scene_id)
@@ -1143,12 +1145,12 @@ pub(crate) fn remove_scene(
     push_undo(&mut s);
     let path = {
         let Some(project) = s.project_mut() else {
-            return Err("No project is open".to_string());
+            return Err("No project is open: open or create one on the Dashboard".to_string());
         };
         let path = project
             .scene(&scene_id)
             .map(|scene| scene.asset_path())
-            .ok_or("Scene not found".to_string())?;
+            .ok_or("That scene isn't in this project: pick one from the scene list".to_string())?;
         project.remove_scene(&scene_id)?;
         path
     };
@@ -1177,7 +1179,7 @@ pub(crate) fn set_default_scene(
     let mut s = lock(state)?;
     push_undo(&mut s);
     let Some(project) = s.project_mut() else {
-        return Err("No project is open".to_string());
+        return Err("No project is open: open or create one on the Dashboard".to_string());
     };
     project.set_default_scene(&scene_id)?;
     auto_save(&mut s);
@@ -1227,10 +1229,12 @@ pub(crate) fn scene_components(
 ) -> Result<Vec<SceneComponent>, String> {
     let s = lock(state)?;
     let Some(project) = s.project() else {
-        return Err("No project is open".to_string());
+        return Err("No project is open: open or create one on the Dashboard".to_string());
     };
     let scene = match scene_id.as_deref().filter(|id| !id.is_empty()) {
-        Some(id) => project.scene(id).ok_or("Scene not found".to_string())?,
+        Some(id) => project
+            .scene(id)
+            .ok_or("That scene isn't in this project: pick one from the scene list".to_string())?,
         None => project.active_scene(),
     };
     Ok(SceneComponents::from_world(&scene.world).0)
@@ -1291,11 +1295,16 @@ pub(crate) fn set_scene_component(
     }
     let mut s = lock(state)?;
     let target = {
-        let project = s.project().ok_or("No project is open".to_string())?;
+        let project = s
+            .project()
+            .ok_or("No project is open: open or create one on the Dashboard".to_string())?;
         match scene_id.clone().filter(|id| !id.is_empty()) {
             Some(id) => {
                 if project.scene(&id).is_none() {
-                    return Err("Scene not found".to_string());
+                    return Err(
+                        "That scene isn't in this project: pick one from the scene list"
+                            .to_string(),
+                    );
                 }
                 id
             }
@@ -1307,10 +1316,12 @@ pub(crate) fn set_scene_component(
     let name = component.name().to_string();
     let new_mode = {
         let Some(project) = s.project_mut() else {
-            return Err("No project is open".to_string());
+            return Err("No project is open: open or create one on the Dashboard".to_string());
         };
         let Some(i) = project.scenes.iter().position(|s| s.id == target) else {
-            return Err("Scene not found".to_string());
+            return Err(
+                "That scene isn't in this project: pick one from the scene list".to_string(),
+            );
         };
         let scene = &mut project.scenes[i];
         if let SceneComponent::Dimension { mode } = component {
@@ -1345,11 +1356,16 @@ pub(crate) fn remove_scene_component(
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     let target = {
-        let project = s.project().ok_or("No project is open".to_string())?;
+        let project = s
+            .project()
+            .ok_or("No project is open: open or create one on the Dashboard".to_string())?;
         match scene_id.clone().filter(|id| !id.is_empty()) {
             Some(id) => {
                 if project.scene(&id).is_none() {
-                    return Err("Scene not found".to_string());
+                    return Err(
+                        "That scene isn't in this project: pick one from the scene list"
+                            .to_string(),
+                    );
                 }
                 id
             }
@@ -1361,10 +1377,12 @@ pub(crate) fn remove_scene_component(
     push_undo(&mut s);
     let _new_mode = {
         let Some(project) = s.project_mut() else {
-            return Err("No project is open".to_string());
+            return Err("No project is open: open or create one on the Dashboard".to_string());
         };
         let Some(scene) = project.scene_mut(&target) else {
-            return Err("Scene not found".to_string());
+            return Err(
+                "That scene isn't in this project: pick one from the scene list".to_string(),
+            );
         };
         let mut components = SceneComponents::from_world(&scene.world);
         if !components.remove(&name) {
@@ -1400,7 +1418,7 @@ pub(crate) fn import_scene(
         project::read_scene_file(&source).map_err(|e| format!("{}: {e}", source.display()))?;
     push_undo(&mut s);
     let Some(project) = s.project_mut() else {
-        return Err("No project is open".to_string());
+        return Err("No project is open: open or create one on the Dashboard".to_string());
     };
     // Fresh ids keep cross-scene references from leaking between the copy
     // and whatever project it came from.
@@ -1563,7 +1581,7 @@ pub(crate) fn set_scene_lighting_asset(
     let current = s
         .project()
         .and_then(|p| p.scene(&target))
-        .ok_or("Scene not found")?;
+        .ok_or("That scene isn't in this project: pick one from the scene list")?;
     let mut lighting = if path.is_empty() {
         current.world.lighting.clone()
     } else {
@@ -1573,7 +1591,7 @@ pub(crate) fn set_scene_lighting_asset(
     push_undo(&mut s);
     s.project_mut()
         .and_then(|p| p.scene_mut(&target))
-        .ok_or("Scene not found")?
+        .ok_or("That scene isn't in this project: pick one from the scene list")?
         .world
         .lighting = lighting;
     auto_save(&mut s);
@@ -1744,7 +1762,7 @@ pub(crate) fn paint_cloud_layer(
     let dir = project_dir(&s)?;
     let current = s
         .project()
-        .ok_or("No project is open")?
+        .ok_or("No project is open: open or create one on the Dashboard")?
         .world
         .cloud_layers
         .get(layer)
@@ -1777,7 +1795,7 @@ pub(crate) fn bake_cloud_noise(
     let dir = project_dir(&s)?;
     let seed = s
         .project()
-        .ok_or("No project is open")?
+        .ok_or("No project is open: open or create one on the Dashboard")?
         .world
         .wind
         .clouds
@@ -1888,7 +1906,7 @@ pub(crate) fn save_director_preset(
     let director = s
         .project()
         .map(|project| project.world.director.clone())
-        .ok_or_else(|| "No project is open".to_string())?;
+        .ok_or_else(|| "No project is open: open or create one on the Dashboard".to_string())?;
     let mut preset = director
         .preset(&from)
         .ok_or_else(|| format!("There's no weather called \"{}\"", from.trim()))?;
@@ -1925,7 +1943,7 @@ pub(crate) fn set_locale(
     let mut next = {
         let s = lock(state)?;
         s.project()
-            .ok_or_else(|| "No project is open".to_string())?
+            .ok_or_else(|| "No project is open: open or create one on the Dashboard".to_string())?
             .localization
             .clone()
     };
@@ -1953,7 +1971,7 @@ pub(crate) fn remove_locale(
     let mut next = {
         let s = lock(state)?;
         s.project()
-            .ok_or_else(|| "No project is open".to_string())?
+            .ok_or_else(|| "No project is open: open or create one on the Dashboard".to_string())?
             .localization
             .clone()
     };
@@ -1981,7 +1999,7 @@ pub(crate) fn remove_language(
     let mut next = {
         let s = lock(state)?;
         s.project()
-            .ok_or_else(|| "No project is open".to_string())?
+            .ok_or_else(|| "No project is open: open or create one on the Dashboard".to_string())?
             .localization
             .clone()
     };
@@ -2022,7 +2040,7 @@ pub(crate) fn set_default_language(
             tag
         });
     }
-    Err("No project is open".to_string())
+    Err("No project is open: open or create one on the Dashboard".to_string())
 }
 
 /// Every language with at least one string, plus the default first. What a
@@ -2031,7 +2049,7 @@ pub(crate) fn list_locales(state: &SharedState) -> Result<Vec<String>, String> {
     let s = lock(state)?;
     s.project()
         .map(|project| project.localization.languages())
-        .ok_or_else(|| "No project is open".to_string())
+        .ok_or_else(|| "No project is open: open or create one on the Dashboard".to_string())
 }
 
 /// Every save slot with a file on disk for the open project, default first.
@@ -2040,7 +2058,7 @@ pub(crate) fn save_slots(state: &SharedState) -> Result<Vec<String>, String> {
     let s = lock(state)?;
     s.project()
         .map(|project| blockloom_core::save::list_slots(&project.id))
-        .ok_or_else(|| "No project is open".to_string())
+        .ok_or_else(|| "No project is open: open or create one on the Dashboard".to_string())
 }
 
 /// Deletes one save slot's file for the open project without touching the
@@ -2049,7 +2067,7 @@ pub(crate) fn save_slots(state: &SharedState) -> Result<Vec<String>, String> {
 pub(crate) fn delete_save_slot(state: &SharedState, slot: String) -> Result<bool, String> {
     let s = lock(state)?;
     let Some(project) = s.project() else {
-        return Err("No project is open".to_string());
+        return Err("No project is open: open or create one on the Dashboard".to_string());
     };
     blockloom_core::save::delete_slot(&project.id, &slot)
 }
@@ -2220,7 +2238,7 @@ pub(crate) fn add_actor(
     let mut s = lock(state)?;
     push_undo(&mut s);
     let Some(project) = s.project_mut() else {
-        return Err("No project is open".to_string());
+        return Err("No project is open: open or create one on the Dashboard".to_string());
     };
     let visual = default_visual(&shape).ok_or_else(|| format!("Unknown shape \"{shape}\""))?;
     let name = name.unwrap_or_else(|| shape_label(&shape).to_string());
@@ -2240,9 +2258,12 @@ pub(crate) fn duplicate_actor(
     let mut s = lock(state)?;
     push_undo(&mut s);
     let Some(project) = s.project_mut() else {
-        return Err("No project is open".to_string());
+        return Err("No project is open: open or create one on the Dashboard".to_string());
     };
-    let mut copy = project.actor(&actor_id).cloned().ok_or("Actor not found")?;
+    let mut copy = project
+        .actor(&actor_id)
+        .cloned()
+        .ok_or("That actor isn't in this scene: pick one from the actor list")?;
     copy.id = uuid::Uuid::new_v4().simple().to_string();
     // Fresh ids for everything on the canvas, so the copy's blocks are its own.
     for strand in &mut copy.graph.strands {
@@ -2300,7 +2321,7 @@ pub(crate) fn move_actor(
     push_undo(&mut s);
     let moved = match s.project_mut() {
         Some(project) => project.move_actor(&actor_id, &parent, &before)?,
-        None => return Err("No project is open".to_string()),
+        None => return Err("No project is open: open or create one on the Dashboard".to_string()),
     };
     auto_save(&mut s);
     sync_runtime(&mut s);
@@ -2423,7 +2444,7 @@ pub(crate) fn add_actor_component(
     check_parent(s.project(), &actor_id, &component)?;
     push_undo(&mut s);
     let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
-        return Err("Actor not found".to_string());
+        return Err("That actor isn't in this scene: pick one from the actor list".to_string());
     };
     if let ActorComponent::Custom { name, .. } = &mut component {
         *name = actor.components.unique_custom_name(name);
@@ -2455,11 +2476,11 @@ pub(crate) fn animate_from_model(
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let actor = s
         .project()
         .and_then(|p| p.actor(&actor_id))
-        .ok_or("Actor not found")?;
+        .ok_or("That actor isn't in this scene: pick one from the actor list")?;
     let Some(blockloom_core::scene::Visual::Model { path, .. }) = actor.visual() else {
         return Err(format!("{} doesn't look like a model", actor.name));
     };
@@ -2487,7 +2508,7 @@ pub(crate) fn animate_from_model(
         + usize::from(spec.add_locomotion(motor.walk_speed, motor.sprint_speed));
     push_undo(&mut s);
     let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
-        return Err("Actor not found".to_string());
+        return Err("That actor isn't in this scene: pick one from the actor list".to_string());
     };
     actor
         .components
@@ -2531,7 +2552,7 @@ pub(crate) fn set_actor_component(
         }),
     );
     let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
-        return Err("Actor not found".to_string());
+        return Err("That actor isn't in this scene: pick one from the actor list".to_string());
     };
     let result = rename_or_replace(&mut actor.components, &name, component);
     auto_save(&mut s);
@@ -2577,7 +2598,7 @@ fn check_parent(
         return Err("An actor can't hang off itself".to_string());
     }
     let Some(other) = project.actor(parent) else {
-        return Err("No such actor to hang off".to_string());
+        return Err("No such actor to hang off: pick a parent from the actor list".to_string());
     };
     let parents: HashMap<String, String> = project
         .actors
@@ -2738,7 +2759,7 @@ pub(crate) fn run_project(
     plugins::refresh_imports(state, app);
     let mut s = lock(state)?;
     let Some(project) = s.project().cloned() else {
-        return Err("No project is open".to_string());
+        return Err("No project is open: open or create one on the Dashboard".to_string());
     };
     // Missing plugin data is a report, not a game that quietly does less.
     plugins::preflight_run(&s)?;
@@ -2772,7 +2793,7 @@ pub(crate) fn run_project(
     }
 
     let Some(runtime) = s.runtime.as_mut() else {
-        return Err("The game runtime isn't running".to_string());
+        return Err("The game isn't running: press Play first".to_string());
     };
     let alive = runtime.send(&blockloom_protocol::EditorMessage::Load {
         project: Box::new(project),
@@ -2783,7 +2804,9 @@ pub(crate) fn run_project(
     runtime_stale(&mut s);
     if !alive {
         s.runtime = None;
-        return Err("Lost the connection to the game runtime".to_string());
+        return Err(
+            "Lost the connection to the game runtime: press Play to start it again".to_string(),
+        );
     }
     // The sidecar belongs to the process, so a fresh runtime re-enables it.
     if s.preview_enabled {
@@ -2830,7 +2853,7 @@ pub(crate) fn lan_command(
     }
     let runtime = s.runtime.as_mut().ok_or("No game runtime is connected")?;
     if !runtime.send(&message) {
-        return Err("Lost the connection to the game runtime".into());
+        return Err("Lost the connection to the game runtime: press Play to start it again".into());
     }
     Ok(())
 }
@@ -2859,7 +2882,9 @@ pub(crate) fn pause_project(
         s.paused = false;
         s.status = None;
         emit(app, &mut s);
-        return Err("Lost the connection to the game runtime".to_string());
+        return Err(
+            "Lost the connection to the game runtime: press Play to start it again".to_string(),
+        );
     }
     s.paused = paused && s.running;
     emit(app, &mut s);
@@ -2876,7 +2901,7 @@ pub(crate) fn open_world(
     let mut s = lock(state)?;
     commit(&mut s);
     let Some(project) = s.project().cloned() else {
-        return Err("No project is open".to_string());
+        return Err("No project is open: open or create one on the Dashboard".to_string());
     };
     if s.runtime
         .as_ref()
@@ -2914,7 +2939,9 @@ pub(crate) fn open_world(
     if !alive {
         s.runtime = None;
         emit(app, &mut s);
-        return Err("Lost the connection to the game runtime".to_string());
+        return Err(
+            "Lost the connection to the game runtime: press Play to start it again".to_string(),
+        );
     }
     if let Some(open) = &mut s.open {
         open.tracker.runtime_synced();
@@ -2973,7 +3000,7 @@ pub(crate) fn capture_exr(state: &SharedState) -> Result<String, String> {
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let name: String = s
         .project()
         .map(|project| project.name.as_str())
@@ -3000,7 +3027,7 @@ pub(crate) fn capture_exr(state: &SharedState) -> Result<String, String> {
     };
     if !runtime.send(&blockloom_protocol::EditorMessage::CaptureExr { path: path.clone() }) {
         s.runtime = None;
-        return Err("The game world has stopped".to_string());
+        return Err("The game world has stopped: press Play to start it again".to_string());
     }
     Ok(path)
 }
@@ -3010,7 +3037,9 @@ pub(crate) fn capture_exr(state: &SharedState) -> Result<String, String> {
 /// asked for; each bake says so in the run log once it is written.
 pub(crate) fn bake_probes(state: &SharedState, actors: Vec<String>) -> Result<usize, String> {
     let mut s = lock(state)?;
-    let project = s.project().ok_or("No project is open")?;
+    let project = s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     if !project.world.mode.is_3d() {
         return Err("Light probes need a 3D world".to_string());
     }
@@ -3029,7 +3058,7 @@ pub(crate) fn bake_probes(state: &SharedState, actors: Vec<String>) -> Result<us
         actors
     };
     if wanted.is_empty() {
-        return Err("Nothing carries a Probe component".to_string());
+        return Err("Nothing carries a Probe component: add one to an actor first".to_string());
     }
     let count = wanted.len();
     let Some(runtime) = s.runtime.as_mut() else {
@@ -3037,7 +3066,7 @@ pub(crate) fn bake_probes(state: &SharedState, actors: Vec<String>) -> Result<us
     };
     if !runtime.send(&blockloom_protocol::EditorMessage::BakeProbes { actors: wanted }) {
         s.runtime = None;
-        return Err("The game world has stopped".to_string());
+        return Err("The game world has stopped: press Play to start it again".to_string());
     }
     Ok(count)
 }
@@ -3048,8 +3077,12 @@ pub(crate) fn probe_status(
     state: &SharedState,
 ) -> Result<Vec<blockloom_core::probe::ProbeStatus>, String> {
     let s = lock(state)?;
-    let dir = s.project_dir().ok_or("No project is open")?;
-    let project = s.project().ok_or("No project is open")?;
+    let dir = s
+        .project_dir()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
+    let project = s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     Ok(blockloom_core::probe::statuses(project, dir))
 }
 
@@ -3091,7 +3124,9 @@ pub(crate) fn set_preview_enabled(
         s.status = None;
         s.preview_port = None;
         emit(app, &mut s);
-        return Err("Lost the connection to the game runtime".to_string());
+        return Err(
+            "Lost the connection to the game runtime: press Play to start it again".to_string(),
+        );
     }
     emit(app, &mut s);
     Ok(())
@@ -3118,7 +3153,9 @@ pub(crate) fn set_preview_headless(
         s.status = None;
         s.preview_port = None;
         emit(app, &mut s);
-        return Err("Lost the connection to the game runtime".to_string());
+        return Err(
+            "Lost the connection to the game runtime: press Play to start it again".to_string(),
+        );
     }
     emit(app, &mut s);
     Ok(())
@@ -3139,7 +3176,9 @@ pub(crate) fn preview_input(
         s.paused = false;
         s.status = None;
         s.preview_port = None;
-        return Err("Lost the connection to the game runtime".to_string());
+        return Err(
+            "Lost the connection to the game runtime: press Play to start it again".to_string(),
+        );
     }
     Ok(())
 }
@@ -3156,7 +3195,9 @@ pub(crate) fn step_project(state: &SharedState, app: &AppHandle) -> Result<(), S
         s.status = None;
         s.preview_port = None;
         emit(app, &mut s);
-        return Err("Lost the connection to the game runtime".to_string());
+        return Err(
+            "Lost the connection to the game runtime: press Play to start it again".to_string(),
+        );
     }
     emit(app, &mut s);
     Ok(())
@@ -3174,7 +3215,7 @@ pub(crate) fn run_tests(
     let project = lock(state)?
         .project()
         .cloned()
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let pack = blockloom_core::pack::GamePack::new(project);
     let text = serde_json::to_string(&pack).map_err(|e| e.to_string())?;
     let file = std::env::temp_dir().join(format!(
@@ -3409,7 +3450,7 @@ pub(crate) fn list_build_targets(state: &SharedState) -> Result<Vec<build::Targe
     });
     let fast_source = project
         .as_ref()
-        .ok_or_else(|| "No project is open".to_string())
+        .ok_or_else(|| "No project is open: open or create one on the Dashboard".to_string())
         .and_then(|project| {
             codegen::compile(project)
                 .map(|_| ())
@@ -3441,7 +3482,7 @@ pub(crate) fn prepare_build_game(
     let project = s
         .project()
         .cloned()
-        .ok_or_else(|| "No project is open".to_string())?;
+        .ok_or_else(|| "No project is open: open or create one on the Dashboard".to_string())?;
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
@@ -3527,7 +3568,10 @@ pub(crate) fn run_build_game(
         blockloom_core::build_control::step("Compiling the project runtime")?;
         let crates = {
             let s = lock(state)?;
-            let open = s.open.as_ref().ok_or("No project is open")?;
+            let open = s
+                .open
+                .as_ref()
+                .ok_or("No project is open: open or create one on the Dashboard")?;
             crate::project_runtime::engine_crates(&open.plugins)?
         };
         let env = if target.is_android() {
@@ -4008,7 +4052,7 @@ fn asset_template(name: &str) -> String {
 fn project_dir(s: &Guard<'_>) -> Result<std::path::PathBuf, String> {
     s.project_dir()
         .map(Path::to_path_buf)
-        .ok_or_else(|| "No project is open".to_string())
+        .ok_or_else(|| "No project is open: open or create one on the Dashboard".to_string())
 }
 
 /// What one folder of the project holds.
@@ -4056,7 +4100,9 @@ pub(crate) fn asset_used_by(
 ) -> Result<Vec<resources::Use>, String> {
     let s = lock(state)?;
     let dir = project_dir(&s)?;
-    let project = s.project().ok_or("No project is open")?;
+    let project = s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let path = assets::normalize(&path).ok_or("That isn't a path in this project")?;
     Ok(resources::uses_of(
         project,
@@ -4124,7 +4170,7 @@ pub(crate) fn create_asset(
         push_undo(&mut s);
         let id = {
             let Some(project) = s.project_mut() else {
-                return Err("No project is open".to_string());
+                return Err("No project is open: open or create one on the Dashboard".to_string());
             };
             project.add_scene_at(&made, None)?
         };
@@ -4140,7 +4186,7 @@ pub(crate) fn create_asset(
     let template = if assets::kind_of(&name) == assets::AssetKind::Lighting {
         let mut lighting = s
             .project()
-            .ok_or("No project is open")?
+            .ok_or("No project is open: open or create one on the Dashboard")?
             .world
             .lighting
             .clone();
@@ -4226,7 +4272,9 @@ fn register_scene_file(
         );
         fresh
     });
-    let project = s.project_mut().ok_or("No project is open".to_string())?;
+    let project = s
+        .project_mut()
+        .ok_or("No project is open: open or create one on the Dashboard".to_string())?;
     if project.scene(&scene.id).is_some() || scene.id.trim().is_empty() {
         scene.id = uuid::Uuid::new_v4().simple().to_string();
         let mut remap = std::collections::HashMap::new();
@@ -4279,13 +4327,17 @@ pub(crate) fn rename_asset(
                 .project()
                 .and_then(|p| p.scene_for_asset(&path))
                 .map(|scene| scene.id.clone())
-                .ok_or("Scene not found".to_string())?;
+                .ok_or(
+                    "That scene isn't in this project: pick one from the scene list".to_string(),
+                )?;
             if let Some(scene) = s.project_mut().and_then(|p| p.scene_mut(&id)) {
                 scene.path = moved.clone();
             }
             let _renamed = {
                 let Some(project) = s.project_mut() else {
-                    return Err("No project is open".to_string());
+                    return Err(
+                        "No project is open: open or create one on the Dashboard".to_string()
+                    );
                 };
                 project.rename_scene_to_stem(&id, &stem)?
             };
@@ -4301,7 +4353,9 @@ pub(crate) fn rename_asset(
                 .map(|scene| scene.id.clone());
             if let Some(id) = id {
                 let Some(project) = s.project_mut() else {
-                    return Err("No project is open".to_string());
+                    return Err(
+                        "No project is open: open or create one on the Dashboard".to_string()
+                    );
                 };
                 if project.scenes.len() <= 1 {
                     return Err("A project needs at least one scene".to_string());
@@ -4680,7 +4734,7 @@ pub(crate) fn export_shader(
     let actor = s
         .project()
         .and_then(|p| p.actor(&actor_id))
-        .ok_or("Actor not found")?;
+        .ok_or("That actor isn't in this scene: pick one from the actor list")?;
     let mut material = actor
         .components
         .material()
@@ -4750,7 +4804,7 @@ pub(crate) fn check_shader(
     let actor = s
         .project()
         .and_then(|p| p.actor(&actor_id))
-        .ok_or("Actor not found")?;
+        .ok_or("That actor isn't in this scene: pick one from the actor list")?;
     let name = actor.name.clone();
     let source = actor
         .components
@@ -4858,10 +4912,10 @@ pub(crate) fn create_script(
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     push_undo(&mut s);
     let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
-        return Err("Actor not found".to_string());
+        return Err("That actor isn't in this scene: pick one from the actor list".to_string());
     };
     // An actor that already names a script keeps it, so this is also the
     // "make the file I deleted" button.
@@ -4893,7 +4947,7 @@ pub(crate) fn add_script(
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let path = path.filter(|p| !p.trim().is_empty());
     // Resolve the wanted path before borrowing the actor mutably.
     let wanted = match path {
@@ -4934,7 +4988,7 @@ pub(crate) fn add_script(
     };
     push_undo(&mut s);
     let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
-        return Err("Actor not found".to_string());
+        return Err("That actor isn't in this scene: pick one from the actor list".to_string());
     };
     if actor.components.scripts().any(|other| other == wanted) {
         return Err(format!("This actor already runs {wanted}"));
@@ -4961,7 +5015,7 @@ pub(crate) fn remove_script(
     let mut s = lock(state)?;
     push_undo(&mut s);
     let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
-        return Err("Actor not found".to_string());
+        return Err("That actor isn't in this scene: pick one from the actor list".to_string());
     };
     if !actor.components.remove_script(&path) {
         return Err(format!("This actor doesn't run {path}"));
@@ -4983,7 +5037,7 @@ pub(crate) fn move_script(
     let mut s = lock(state)?;
     push_undo(&mut s);
     let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
-        return Err("Actor not found".to_string());
+        return Err("That actor isn't in this scene: pick one from the actor list".to_string());
     };
     if !actor.components.move_script(&path, index) {
         return Err(format!("This actor doesn't run {path}"));
@@ -5027,9 +5081,9 @@ pub(crate) fn check_script(
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let Some(actor) = s.project().and_then(|p| p.actor(&actor_id)) else {
-        return Err("Actor not found".to_string());
+        return Err("That actor isn't in this scene: pick one from the actor list".to_string());
     };
     let name = actor.name.clone();
     let path = resolve_actor_script(actor, path)?;
@@ -5067,7 +5121,7 @@ pub(crate) fn read_script(
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let Some(actor) = s.project().and_then(|p| p.actor(&actor_id)) else {
         return Ok(String::new());
     };
@@ -5090,12 +5144,12 @@ pub(crate) fn write_script(
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let path = s
         .project()
         .and_then(|p| p.actor(&actor_id))
         .map(|actor| resolve_actor_script(actor, path))
-        .ok_or("Actor not found")??;
+        .ok_or("That actor isn't in this scene: pick one from the actor list")??;
     if !script::is_valid_path(&path) {
         return Err(format!("\"{path}\" isn't a script path"));
     }
@@ -5134,12 +5188,12 @@ pub(crate) fn script_diagnostics(
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let path = s
         .project()
         .and_then(|p| p.actor(&actor_id))
         .map(|actor| resolve_actor_script(actor, path))
-        .ok_or("Actor not found")??;
+        .ok_or("That actor isn't in this scene: pick one from the actor list")??;
     drop(s);
     sync_ide(&dir);
     Ok(script::ide::diagnostics_for(&dir, &path))
@@ -5158,12 +5212,12 @@ pub(crate) fn format_script(
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let path = s
         .project()
         .and_then(|p| p.actor(&actor_id))
         .map(|actor| resolve_actor_script(actor, path))
-        .ok_or("Actor not found")??;
+        .ok_or("That actor isn't in this scene: pick one from the actor list")??;
     let file = script::source_path(&dir, &path);
     let source = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
     let formatted = script::ide::format_source(&source)?;
@@ -5190,12 +5244,12 @@ pub(crate) fn clippy_script(
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let path = s
         .project()
         .and_then(|p| p.actor(&actor_id))
         .map(|actor| resolve_actor_script(actor, path))
-        .ok_or("Actor not found")??;
+        .ok_or("That actor isn't in this scene: pick one from the actor list")??;
     drop(s);
     sync_ide(&dir);
     Ok(script::ide::clippy_for(&dir, &path))
@@ -5211,7 +5265,7 @@ pub(crate) fn script_completions(
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     drop(s);
     Ok(script::complete::completions_for(&dir, &prefix))
 }
@@ -5224,7 +5278,7 @@ pub(crate) fn script_hover(state: &SharedState, symbol: String) -> Result<Option
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     drop(s);
     Ok(script::complete::hover_for(&dir, &symbol))
 }
@@ -5237,7 +5291,7 @@ pub(crate) fn sync_script_ide(state: &SharedState) -> Result<script::ide::SyncRe
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     drop(s);
     let report = script::ide::sync_ide_project(&dir)?;
     Ok(report)
@@ -5251,7 +5305,7 @@ pub(crate) fn open_script_ide(state: &SharedState) -> Result<serde_json::Value, 
     let dir = s
         .project_dir()
         .map(Path::to_path_buf)
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     drop(s);
     sync_ide(&dir);
     let path = dir.to_string_lossy().into_owned();
@@ -5352,7 +5406,9 @@ pub(crate) fn reporter_branch_edit(
     args: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let mut s = lock(state)?;
-    let mut graph = graph_mut(&mut s).ok_or("No actor is open")?.clone();
+    let mut graph = graph_mut(&mut s)
+        .ok_or("No actor is open: pick one in the actor list")?
+        .clone();
     let result = graph.edit_reporter_branch(command, args, &branch_codec())?;
     push_undo(&mut s);
     if let Some(open) = graph_mut(&mut s) {
@@ -5482,11 +5538,13 @@ pub(crate) fn copy_instructions(
     count: Option<usize>,
 ) -> Result<Fragment, String> {
     let s = lock(state)?;
-    let id = s.actor_id().ok_or("No actor is open")?;
+    let id = s
+        .actor_id()
+        .ok_or("No actor is open: pick one in the actor list")?;
     let actor = s
         .project()
         .and_then(|project| project.actor(&id))
-        .ok_or("No actor is open")?;
+        .ok_or("No actor is open: pick one in the actor list")?;
     Ok(actor.graph.copy_fragment(&strand_id, &path, count)?)
 }
 
@@ -5557,7 +5615,7 @@ pub(crate) fn add_strand(
             let instructions = instruction.map(|i| vec![i]).unwrap_or_default();
             graph.add_strand(x.unwrap_or(default_x), y.unwrap_or(default_y), instructions)
         }
-        None => return Err("No actor is open".to_string()),
+        None => return Err("No actor is open: pick one in the actor list".to_string()),
     };
     auto_save(&mut s);
     emit(app, &mut s);
@@ -5609,7 +5667,7 @@ pub(crate) fn split_strand(
     push_undo(&mut s);
     let result = match graph_mut(&mut s) {
         Some(graph) => graph.split_strand(&strand_id, &path, x, y),
-        None => Err("No actor is open".to_string()),
+        None => Err("No actor is open: pick one in the actor list".to_string()),
     };
     auto_save(&mut s);
     emit(app, &mut s);
@@ -5794,7 +5852,7 @@ pub(crate) fn create_floating_value(
     push_undo(&mut s);
     let id = match graph_mut(&mut s) {
         Some(graph) => graph.add_floating_value(x, y, value, origin_block_id),
-        None => return Err("No actor is open".to_string()),
+        None => return Err("No actor is open: pick one in the actor list".to_string()),
     };
     auto_save(&mut s);
     emit(app, &mut s);
@@ -5847,7 +5905,7 @@ pub(crate) fn create_comment(
     push_undo(&mut s);
     let id = match graph_mut(&mut s) {
         Some(graph) => graph.add_comment(x, y, text, attached_to),
-        None => return Err("No actor is open".to_string()),
+        None => return Err("No actor is open: pick one in the actor list".to_string()),
     };
     auto_save(&mut s);
     emit(app, &mut s);
@@ -6223,7 +6281,7 @@ pub(crate) fn set_list_items(
                     list.items = items;
                     Ok(())
                 }
-                None => Err("List not found".to_string()),
+                None => Err("No list by that name: make it under Variables first".to_string()),
             },
             None => Ok(()),
         }
@@ -6264,7 +6322,7 @@ pub(crate) fn set_list_editor_state(
                     list.editor_y = y.max(0);
                     Ok(())
                 }
-                None => Err("List not found".to_string()),
+                None => Err("No list by that name: make it under Variables first".to_string()),
             },
             None => Ok(()),
         }
@@ -6388,7 +6446,9 @@ pub(crate) fn set_dict_entries(
                     dict.entries = entries;
                     Ok(())
                 }
-                None => Err("Dict not found".to_string()),
+                None => {
+                    Err("No dictionary by that name: make it under Variables first".to_string())
+                }
             },
             None => Ok(()),
         }
@@ -6429,7 +6489,9 @@ pub(crate) fn set_dict_editor_state(
                     dict.editor_y = y.max(0);
                     Ok(())
                 }
-                None => Err("Dict not found".to_string()),
+                None => {
+                    Err("No dictionary by that name: make it under Variables first".to_string())
+                }
             },
             None => Ok(()),
         }
@@ -6486,7 +6548,7 @@ pub(crate) fn create_block(
             apply_block_details(graph, &id, details)?;
             id
         }
-        None => return Err("No actor is open".to_string()),
+        None => return Err("No actor is open: pick one in the actor list".to_string()),
     };
     auto_save(&mut s);
     emit(app, &mut s);
@@ -6667,7 +6729,7 @@ pub(crate) fn preview_interface(
         .as_mut()
         .is_some_and(|runtime| runtime.send(&message))
     {
-        return Err("Lost the connection to the game runtime".into());
+        return Err("Lost the connection to the game runtime: press Play to start it again".into());
     }
     s.interface_design = design;
     s.interface_layout = None;
@@ -6695,14 +6757,16 @@ fn designed(s: &AppState, screen: Option<&str>) -> Result<blockloom_core::ui::Ui
     match screen.filter(|p| !p.is_empty()) {
         None => Ok(s
             .project()
-            .ok_or("No project is open")?
+            .ok_or("No project is open: open or create one on the Dashboard")?
             .world
             .interface
             .clone()),
-        Some(path) => {
-            blockloom_core::ui_layers::read(s.project_dir().ok_or("No project is open")?, path)?
-                .lower()
-        }
+        Some(path) => blockloom_core::ui_layers::read(
+            s.project_dir()
+                .ok_or("No project is open: open or create one on the Dashboard")?,
+            path,
+        )?
+        .lower(),
     }
 }
 
@@ -6727,7 +6791,10 @@ fn check_interface_edit(s: &AppState, token: &str) -> Result<(), String> {
         .as_ref()
         .filter(|d| d.token == token)
         .ok_or("Unknown interface transaction")?;
-    let open = s.open.as_ref().ok_or("No project is open")?;
+    let open = s
+        .open
+        .as_ref()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let current = match &draft.screen {
         None => open.project.world.interface.clone(),
         Some((path, _)) => designed(s, Some(path))?,
@@ -6757,7 +6824,10 @@ pub(crate) fn begin_interface_edit(
         }
         s.interface_edit = None;
     }
-    let open = s.open.as_ref().ok_or("No project is open")?;
+    let open = s
+        .open
+        .as_ref()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     if open.loaded_revision() != revision || sync::read_revision(&open.dir) != revision {
         return Err("Stale interface revision".into());
     }
@@ -6875,7 +6945,7 @@ pub(crate) fn set_interface(
     document.validate()?;
     let mut s = lock(state)?;
     if s.project().is_none() {
-        return Err("No project is open".into());
+        return Err("No project is open: open or create one on the Dashboard".into());
     }
     push_undo(&mut s);
     s.project_mut().unwrap().world.interface = document;
@@ -6887,7 +6957,11 @@ pub(crate) fn set_interface(
 
 pub(crate) fn save_interface_asset(state: &SharedState, name: String) -> Result<String, String> {
     let s = lock(state)?;
-    let document = &s.project().ok_or("No project is open")?.world.interface;
+    let document = &s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?
+        .world
+        .interface;
     let text = serde_json::to_string_pretty(document).map_err(|e| e.to_string())?;
     assets::create_file(&project_dir(&s)?, "assets/ui", &name, &text)
 }
@@ -6911,9 +6985,9 @@ pub(crate) fn load_interface_asset(
 fn tilemap_of(s: &AppState, actor_id: &str) -> Result<blockloom_core::material::Tilemap, String> {
     match s
         .project()
-        .ok_or("No project is open")?
+        .ok_or("No project is open: open or create one on the Dashboard")?
         .actor(actor_id)
-        .ok_or("Actor not found")?
+        .ok_or("That actor isn't in this scene: pick one from the actor list")?
         .visual()
     {
         Some(Visual::Tilemap { tilemap }) => Ok(tilemap.clone()),
@@ -7066,9 +7140,9 @@ fn terrain_of(
     actor_id: &str,
 ) -> Result<blockloom_core::terrain::TerrainSpec, String> {
     s.project()
-        .ok_or("No project is open")?
+        .ok_or("No project is open: open or create one on the Dashboard")?
         .actor(actor_id)
-        .ok_or("Actor not found")?
+        .ok_or("That actor isn't in this scene: pick one from the actor list")?
         .components
         .terrain()
         .cloned()
@@ -7095,7 +7169,10 @@ pub(crate) fn terrain_stroke(
     if s.running {
         return Err("Stop the game to edit terrain".to_string());
     }
-    let dir = s.project_dir().ok_or("No project is open")?.to_path_buf();
+    let dir = s
+        .project_dir()
+        .ok_or("No project is open: open or create one on the Dashboard")?
+        .to_path_buf();
     let mut spec = terrain_of(s, actor_id)?;
     let shape = spec.shape();
     let mut grids = sculpt::Editable::load(Some(&dir), &spec);
@@ -7137,7 +7214,10 @@ pub(crate) fn import_terrain_heightmap(
 ) -> Result<(), String> {
     use blockloom_core::terrain::{Heightfield, store};
     let mut s = lock(state)?;
-    let dir = s.project_dir().ok_or("No project is open")?.to_path_buf();
+    let dir = s
+        .project_dir()
+        .ok_or("No project is open: open or create one on the Dashboard")?
+        .to_path_buf();
     let mut spec = terrain_of(&s, &actor_id)?;
     let map = pipeline::load_heightmap(&dir, &path)?;
     let field = Heightfield::from_heightmap(&map, spec.resolution);
@@ -7156,7 +7236,10 @@ pub(crate) fn erode_terrain(
 ) -> Result<(), String> {
     use blockloom_core::terrain::store;
     let mut s = lock(state)?;
-    let dir = s.project_dir().ok_or("No project is open")?.to_path_buf();
+    let dir = s
+        .project_dir()
+        .ok_or("No project is open: open or create one on the Dashboard")?
+        .to_path_buf();
     let mut spec = terrain_of(&s, &actor_id)?;
     let mut field = store::heights_for(Some(&dir), &spec);
     erosion.apply(&mut field, &spec.shape());
@@ -7190,7 +7273,7 @@ pub(crate) fn preview_terrain_erosion(
         erosion,
     }) {
         s.runtime = None;
-        return Err("The game world has stopped".to_string());
+        return Err("The game world has stopped: press Play to start it again".to_string());
     }
     Ok(())
 }
@@ -7250,14 +7333,20 @@ pub fn build_project_runtime(
 ) -> Result<serde_json::Value, String> {
     let (dir, crates) = {
         let s = lock(state)?;
-        let open = s.open.as_ref().ok_or("No project is open")?;
+        let open = s
+            .open
+            .as_ref()
+            .ok_or("No project is open: open or create one on the Dashboard")?;
         (
             open.dir.clone(),
             crate::project_runtime::engine_crates(&open.plugins)?,
         )
     };
     if crates.is_empty() {
-        return Err("No active plugin carries an engine crate".to_string());
+        return Err(
+            "No active plugin carries an engine crate: install or enable one in the plugin manager"
+                .to_string(),
+        );
     }
     let ledger = blockloom_plugin_host::trust::TrustLedger::read(
         &blockloom_plugin_host::trust::default_path(),

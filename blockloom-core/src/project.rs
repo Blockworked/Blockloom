@@ -421,7 +421,7 @@ impl Scene {
     /// is validates but leaves the document alone.
     pub fn move_actor(&mut self, id: &str, parent: &str, before: &str) -> Result<bool, String> {
         let Some(from) = self.actors.iter().position(|actor| actor.id == id) else {
-            return Err("Actor not found".to_string());
+            return Err("That actor isn't in this scene: pick one from the actor list".to_string());
         };
         if before == id {
             return Err("An actor can't move before itself".to_string());
@@ -504,7 +504,9 @@ impl Scene {
         }
         let old = self
             .actor(id)
-            .ok_or_else(|| "Actor not found".to_string())?
+            .ok_or_else(|| {
+                "That actor isn't in this scene: pick one from the actor list".to_string()
+            })?
             .name
             .clone();
         if trimmed == old {
@@ -1524,7 +1526,9 @@ impl Project {
     /// Makes `id` the boot scene: what a fresh open and a built game load.
     pub fn set_default_scene(&mut self, id: &str) -> Result<(), String> {
         if !self.scenes.iter().any(|s| s.id == id) {
-            return Err("Scene not found".to_string());
+            return Err(
+                "That scene isn't in this project: pick one from the scene list".to_string(),
+            );
         }
         self.default_scene = id.to_string();
         Ok(())
@@ -1638,7 +1642,9 @@ impl Project {
     /// two scenes never share one. The copy becomes active.
     pub fn duplicate_scene(&mut self, id: &str) -> Result<String, String> {
         let Some(from) = self.scene(id).cloned() else {
-            return Err("Scene not found".to_string());
+            return Err(
+                "That scene isn't in this project: pick one from the scene list".to_string(),
+            );
         };
         let mut copy = from;
         copy.id = new_id();
@@ -1693,7 +1699,7 @@ impl Project {
         let current = self
             .scene(id)
             .map(|s| s.asset_path())
-            .ok_or("Scene not found".to_string())?;
+            .ok_or("That scene isn't in this project: pick one from the scene list".to_string())?;
         // The file follows the name, keeping its folder.
         let parent = current
             .rfind('/')
@@ -1733,7 +1739,9 @@ impl Project {
             n += 1;
         }
         let Some(scene) = self.scene_mut(id) else {
-            return Err("Scene not found".to_string());
+            return Err(
+                "That scene isn't in this project: pick one from the scene list".to_string(),
+            );
         };
         scene.name = trimmed.clone();
         if candidate != current {
@@ -1764,7 +1772,9 @@ impl Project {
             return Err("A project needs at least one scene".to_string());
         }
         let Some(index) = self.scenes.iter().position(|s| s.id == id) else {
-            return Err("Scene not found".to_string());
+            return Err(
+                "That scene isn't in this project: pick one from the scene list".to_string(),
+            );
         };
         self.scenes.remove(index);
         if self.active_scene == id {
@@ -1780,7 +1790,9 @@ impl Project {
     /// editor, so switching scenes clears it there.
     pub fn set_active_scene(&mut self, id: &str) -> Result<(), String> {
         if !self.scenes.iter().any(|s| s.id == id) {
-            return Err("Scene not found".to_string());
+            return Err(
+                "That scene isn't in this project: pick one from the scene list".to_string(),
+            );
         }
         self.active_scene = id.to_string();
         Ok(())
@@ -1829,7 +1841,7 @@ impl Project {
             return Err(format!("A variable named \"{trimmed}\" already exists"));
         }
         let Some(variable) = self.globals.iter_mut().find(|v| v.name == old) else {
-            return Err("Variable not found".to_string());
+            return Err("No variable by that name: make it under Variables first".to_string());
         };
         if trimmed == old {
             return Ok(trimmed);
@@ -1914,7 +1926,7 @@ impl Project {
             return Err(format!("A list named \"{trimmed}\" already exists"));
         }
         let Some(list) = self.global_lists.iter_mut().find(|list| list.name == old) else {
-            return Err("List not found".to_string());
+            return Err("No list by that name: make it under Variables first".to_string());
         };
         if trimmed == old {
             return Ok(trimmed);
@@ -1988,7 +2000,7 @@ impl Project {
             return Err(format!("A dict named \"{trimmed}\" already exists"));
         }
         let Some(dict) = self.global_dicts.iter_mut().find(|dict| dict.name == old) else {
-            return Err("Dict not found".to_string());
+            return Err("No dictionary by that name: make it under Variables first".to_string());
         };
         if trimmed == old {
             return Ok(trimmed);

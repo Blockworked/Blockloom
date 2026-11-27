@@ -393,7 +393,7 @@ pub(crate) fn create_prefab(
     let scene = s
         .project()
         .map(|p| p.active_scene().clone())
-        .ok_or("No project is open")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let mut actors = subtree(&scene, &actor_id);
     // A nested instance comes whole, even members not hung off its root.
     let roots: Vec<String> = actors
@@ -411,7 +411,10 @@ pub(crate) fn create_prefab(
             }
         }
     }
-    let actor = actors.first().cloned().ok_or("Actor not found")?;
+    let actor = actors
+        .first()
+        .cloned()
+        .ok_or("That actor isn't in this scene: pick one from the actor list")?;
     if prefab::link(&actor).is_some() {
         return Err(format!(
             "\"{}\" is already an instance of a prefab",
@@ -464,7 +467,9 @@ pub(crate) fn create_prefab(
     reindex(&dir);
     let index = ResourceIndex::load(&dir);
     push_undo(&mut s);
-    let project = s.project_mut().ok_or("No project is open")?;
+    let project = s
+        .project_mut()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     for a in &actors {
         let Some(scene_actor) = project.actor_mut(&a.id) else {
             continue;
@@ -525,7 +530,9 @@ pub(crate) fn instantiate_prefab(
         }
     }
     push_undo(&mut s);
-    let project = s.project_mut().ok_or("No project is open")?;
+    let project = s
+        .project_mut()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let mut root = String::new();
     for mut actor in actors {
         // There is one camera, so a placed copy doesn't take it.
@@ -555,8 +562,10 @@ pub(crate) fn apply_prefab(
     let scene = s
         .project()
         .map(|p| p.active_scene().clone())
-        .ok_or("No project is open")?;
-    let picked = scene.actor(&actor_id).ok_or("Actor not found")?;
+        .ok_or("No project is open: open or create one on the Dashboard")?;
+    let picked = scene
+        .actor(&actor_id)
+        .ok_or("That actor isn't in this scene: pick one from the actor list")?;
     let root_id = root_of(picked).ok_or("That actor isn't a prefab instance")?;
     let root = scene
         .actor(&root_id)
@@ -629,7 +638,9 @@ pub(crate) fn apply_prefab(
     }
     prefab::write_members(&dir, &path, &source, &children)?;
     push_undo(&mut s);
-    let project = s.project_mut().ok_or("No project is open")?;
+    let project = s
+        .project_mut()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     // Every actor of this instance now matches the file.
     for a in &actors {
         let Some(actor) = project.actor_mut(&a.id) else {
@@ -684,8 +695,12 @@ pub(crate) fn revert_prefab(
     let dir = project_dir(&s)?;
     let index = ResourceIndex::load(&dir);
     push_undo(&mut s);
-    let project = s.project_mut().ok_or("No project is open")?;
-    let actor = project.actor_mut(&actor_id).ok_or("Actor not found")?;
+    let project = s
+        .project_mut()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
+    let actor = project
+        .actor_mut(&actor_id)
+        .ok_or("That actor isn't in this scene: pick one from the actor list")?;
     let link = prefab::link_mut(actor).ok_or("That actor isn't a prefab instance")?;
     match path.filter(|p| !p.is_empty()) {
         Some(path) => link.overrides.retain(|o| *o != path),
@@ -717,8 +732,12 @@ pub(crate) fn unpack_prefab(
 ) -> Result<(), String> {
     let mut s = lock(state)?;
     push_undo(&mut s);
-    let project = s.project_mut().ok_or("No project is open")?;
-    let actor = project.actor(&actor_id).ok_or("Actor not found")?;
+    let project = s
+        .project_mut()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
+    let actor = project
+        .actor(&actor_id)
+        .ok_or("That actor isn't in this scene: pick one from the actor list")?;
     let root = root_of(actor).ok_or("That actor isn't a prefab instance")?;
     let scene = project.active_scene_mut();
     for id in instance_ids(scene, &root) {

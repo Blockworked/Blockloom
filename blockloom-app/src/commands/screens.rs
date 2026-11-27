@@ -50,7 +50,9 @@ fn free_path(dir: &Path, name: &str, ext: &str) -> String {
 
 /// Which list a layer command edits: the open scene's or the game's.
 fn list<'a>(s: &'a mut AppState, scope: Option<&str>) -> Result<&'a mut Vec<UiLayer>, String> {
-    let project = s.project_mut().ok_or("No project is open")?;
+    let project = s
+        .project_mut()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     match scope.unwrap_or("scene") {
         "scene" => Ok(&mut project.world.screens),
         "game" => Ok(&mut project.settings.screens),
@@ -86,7 +88,9 @@ pub(crate) fn create_screen(
     if dir.join(&path).exists() {
         return Err(format!("{path} already exists"));
     }
-    let project = s.project().ok_or("No project is open")?;
+    let project = s
+        .project()
+        .ok_or("No project is open: open or create one on the Dashboard")?;
     let screen = if from_interface {
         UiScreen::from_document(&project.world.interface)
     } else {
@@ -97,7 +101,9 @@ pub(crate) fn create_screen(
     reindex(&dir);
     if from_interface {
         push_undo(&mut s);
-        let project = s.project_mut().ok_or("No project is open")?;
+        let project = s
+            .project_mut()
+            .ok_or("No project is open: open or create one on the Dashboard")?;
         project.world.interface = Default::default();
         project.world.screens.retain(|l| l.screen != path);
         project.world.screens.insert(0, UiLayer::new(path.clone()));
