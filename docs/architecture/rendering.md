@@ -290,6 +290,21 @@ bone's own axes. Each fix eases in and out over 0.15 s. The bones are found by
 name once the model loads and again when `ik` changes, and a missing one is
 reported once.
 
+The `ragdoll` field lists the bones `go_limp` hands to physics
+(`ragdoll::apply_ragdoll_verbs`, on the tick, 3D only). Each bone gets a
+dynamic body at its world pose, shaped as a capsule to its first named child
+or else a ball. Each body sits on a spherical joint to the nearest listed bone
+above it, limited to `swing` on each axis, with contacts between the jointed
+pair off. The bodies share out `mass` and start at the actor's `Velocity`. The
+actor's own body and colliders get `RigidBodyDisabled`/`ColliderDisabled`,
+remembered so `get_up` takes back only what it added. `follow_ragdolls` keeps
+the actor over the hips, standing as high above the ground under them as it
+stood when it fell. `pose_ragdolls` (PostUpdate, before IK, which skips limp
+actors) lays each bone over its body. `get_up` despawns the bodies and blends
+from the pose they lay in back to the animation over `get_up` seconds
+(`GettingUp`). It needs the loaded model, so a headless world has nothing to
+ragdoll.
+
 A solid tilemap collides per tile, as the merged rects of
 `Tilemap::solid_rects` (minus its `passable` tiles), and nav blocks the same
 rects. Ray and overlap queries see them too, as a `ColliderShape::Parts`

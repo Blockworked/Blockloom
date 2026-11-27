@@ -252,7 +252,10 @@ pub fn solve_ik(
     mut commands: Commands,
     time: Res<Time>,
     engine: NonSend<Engine>,
-    actors: Query<(Entity, &ActorId, &ModelChild, Option<&LookTarget>)>,
+    actors: Query<
+        (Entity, &ActorId, &ModelChild, Option<&LookTarget>),
+        Without<crate::ragdoll::Ragdoll>,
+    >,
     mut rigs: Query<Option<&mut IkBones>, With<ModelRig>>,
     children: Query<&Children>,
     names: Query<&Name>,

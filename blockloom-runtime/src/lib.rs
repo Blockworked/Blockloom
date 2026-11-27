@@ -101,6 +101,7 @@ mod preview;
 mod probes;
 mod quality;
 mod queries;
+mod ragdoll;
 mod ray_tracing;
 mod record;
 mod screenfx;
@@ -401,7 +402,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // Model IK goes over the animated pose, before it propagates.
     app.add_systems(
         PostUpdate,
-        ik3d::solve_ik
+        (ragdoll::pose_ragdolls, ik3d::solve_ik)
+            .chain()
             .run_if(is_3d)
             .after(bevy::app::AnimationSystems)
             .before(bevy::transform::TransformSystems::Propagate),

@@ -181,6 +181,8 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
                 crate::anim_layers::apply_layer_verbs,
                 crate::anim_layers::step_layers,
                 crate::ik3d::apply_look_verbs,
+                crate::ragdoll::apply_ragdoll_verbs.run_if(crate::is_3d),
+                crate::ragdoll::follow_ragdolls.run_if(crate::is_3d),
             )
                 .chain()
                 .in_set(SimStep::Animation),

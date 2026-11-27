@@ -42,6 +42,16 @@ impl Actor {
         self.verb("stop_looking", &[]);
     }
 
+    /// Hands my model's ragdoll bones to physics, keeping how fast I was moving, until get up. My own body stops colliding meanwhile.
+    pub fn go_limp(&self) {
+        self.verb("go_limp", &[]);
+    }
+
+    /// Ends my ragdoll where it lies: my body comes back there and the animation blends back in over the ragdoll's get up time.
+    pub fn get_up(&self) {
+        self.verb("get_up", &[]);
+    }
+
     /// Reads one property of a component on an actor by its registry path, as the run has it now.
     pub fn property(&self, property: &str, actor: &str) -> Option<String> {
         self.verb_text("property", &[PluginArg::from(property), PluginArg::from(actor)])

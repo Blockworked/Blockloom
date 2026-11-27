@@ -710,6 +710,12 @@ Add component calls it "Hurt volume". 2D worlds only.
 | `animation.ik.foot_height` | number | `0.0` | The ankle's height above the sole, in metres. |
 | `animation.ik.head` | text |  |  |
 | `animation.ik.look_limit` | number | `70.0` | The most the head turns from the body's facing, in degrees. |
+| `animation.ragdoll` | record or none | `null` | The bones `go limp` hands to physics. |
+| `animation.ragdoll.bones` | list of text | `[]` |  |
+| `animation.ragdoll.radius` | number | `0.07999999821186066` | Each body's radius, in metres. |
+| `animation.ragdoll.mass` | number | `60.0` | The whole ragdoll's mass in kilograms, shared out evenly. |
+| `animation.ragdoll.swing` | number | `60.0` | How far each joint swings either way on each axis, in degrees. |
+| `animation.ragdoll.get_up` | number | `0.4000000059604645` | Seconds getting up takes to blend back to the animation. |
 
 ## Sprite
 

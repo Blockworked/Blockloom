@@ -831,6 +831,65 @@ pub struct AnimationSpec {
     /// ground and a head turning toward what `look at` names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ik: Option<ModelIk>,
+    /// The bones `go limp` hands to physics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ragdoll: Option<RagdollSpec>,
+}
+
+/// A model's ragdoll: one physics body per named bone, shaped as a capsule
+/// to its first child bone, each jointed to the nearest named bone above it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
+pub struct RagdollSpec {
+    #[serde(default)]
+    pub bones: Vec<String>,
+    /// Each body's radius, in metres.
+    #[serde(default = "default_ragdoll_radius")]
+    pub radius: f32,
+    /// The whole ragdoll's mass in kilograms, shared out evenly.
+    #[serde(default = "default_ragdoll_mass")]
+    pub mass: f32,
+    /// How far each joint swings either way on each axis, in degrees.
+    #[serde(default = "default_ragdoll_swing")]
+    pub swing: f32,
+    /// Seconds getting up takes to blend back to the animation.
+    #[serde(default = "default_get_up")]
+    pub get_up: f32,
+}
+
+fn default_ragdoll_radius() -> f32 {
+    0.08
+}
+
+fn default_ragdoll_mass() -> f32 {
+    60.0
+}
+
+fn default_ragdoll_swing() -> f32 {
+    60.0
+}
+
+fn default_get_up() -> f32 {
+    0.4
+}
+
+impl RagdollSpec {
+    pub fn normalize(&mut self) {
+        self.bones.retain_mut(|bone| {
+            *bone = bone.trim().to_string();
+            !bone.is_empty()
+        });
+        let clean = |v: f32, default: f32, min: f32, max: f32| {
+            if v.is_finite() {
+                v.clamp(min, max)
+            } else {
+                default
+            }
+        };
+        self.radius = clean(self.radius, default_ragdoll_radius(), 0.005, 2.0);
+        self.mass = clean(self.mass, default_ragdoll_mass(), 0.01, 10_000.0);
+        self.swing = clean(self.swing, default_ragdoll_swing(), 0.0, 180.0);
+        self.get_up = clean(self.get_up, default_get_up(), 0.0, 10.0);
+    }
 }
 
 /// A model's inverse kinematics, by bone name. Each foot's leg is the foot
@@ -1122,6 +1181,9 @@ impl AnimationSpec {
         self.layers.truncate(MAX_LAYERS);
         if let Some(ik) = &mut self.ik {
             ik.normalize();
+        }
+        if let Some(ragdoll) = &mut self.ragdoll {
+            ragdoll.normalize();
         }
     }
 
