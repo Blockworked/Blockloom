@@ -89,7 +89,9 @@ one stacked 3D atlas too (`clouds::noise_atlas_texture` over
 `pipeline::pack_volume_atlas` sizes): shape under detail in one image, paged
 in the march shader through `noise_shape`/`noise_detail`, so the march and
 the shadow pass bind once instead of once per volume. Baked pages render
-into scratch textures and copy into their slab once.
+into scratch textures and copy into their slab once. `Quality::msaa_cap` holds world
+cameras to 1, 2 or 4 MSAA samples (Low, Medium, High and up) through
+`cap_msaa`, from the live preset, so an auto-drop lowers it too.
 
 The main-world camera stays at native size for input. Extracted world-view targets
 scale before rendering and Bevy's spatial blit fills the output. Custom sub-viewports

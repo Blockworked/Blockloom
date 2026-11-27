@@ -29,7 +29,7 @@ just test               # cargo test --workspace (blockloom-core has the bulk of
 just qml-test           # every QML test against the pinned blockstitch, no build
 just smoke              # shell flows: edit, undo, Play, Build, run the player, a scripted project (needs a display)
 just corpus [--bless]   # play corpus projects to a fixed tick, held to tests/corpus/
-just perf [--label N]   # release build, then frame times of every template on this GPU
+just perf [--label N] [--check]   # release build, frame times of every template on this GPU (--check: fail over budget)
 cargo bench -p blockloom-core --bench vm   # block VM ns/tick over a few canvases
 just player             # stage the hard-optimized player a built game ships
 just web-check          # runtime check-build for wasm32-unknown-unknown (Phase 8)

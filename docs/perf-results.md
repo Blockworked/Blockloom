@@ -4,6 +4,38 @@
 release build, 1920x1440 window, vsync off. Raw summaries are in
 `tests/perf/<label>/` when a run is checked in.
 
+## 2026-11-27, master d94e38d, sirstrokes (round 2)
+
+Same machine. GPU occlusion now waits for 2000 meshes, and the capture adds
+main-world CPU. Rounded from the run's summaries.
+
+| GPU | quality | 3D fps | 3D GPU ms | 3D main CPU ms | 2D fps |
+|---|---|---|---|---|---|
+| RTX 5080 Laptop | default (High) | ~270 | 0.67 | - | ~500 |
+| Intel Graphics (ARL) | default (High) | 89-96 | 7.1-9.1 | 5.6-6.2 | 190-230 |
+| Intel Graphics (ARL) | Medium, Low | about the same | about the same | - | - |
+
+### What it showed
+
+- Dropping occlusion halved iGPU 3D frame times (16 ms to 7-9 ms of GPU).
+- The round-1 third-person result (78 fps on the RTX) was noise: it ran at
+  ~270 like the other 3D templates.
+- Medium and Low barely moved 3D GPU time, since `main_opaque_pass_3d` stayed
+  at 2.7-3.3 ms at every tier: presets didn't touch MSAA. They now cap it
+  (Low off, Medium 2x, High and Ultra 4x).
+- The largest main-world span in 3D is PostUpdate at 1.6-2.4 ms.
+- Whichever window was moved between screens held exactly 60 fps. Both
+  displays hang off the NVIDIA card, so an iGPU frame crosses GPUs, and
+  this looks like the compositor's path rather than Blockloom's. It also
+  explains round 1's 60 fps rows.
+- Tonemapping (~0.45 ms) and upscaling (~0.4 ms) still lead 2D on the iGPU.
+
+### Budgets
+
+`scripts/perf.py` checks each entry against its GPU class (`--check` makes
+it exit 1): integrated mean 16.7 ms and p95 25 ms (60 fps), discrete mean
+6.9 ms and p95 16.7 ms (144 fps). Round 2 holds both on this machine.
+
 ## 2026-11-27, master f9bc965, sirstrokes
 
 Intel Core Ultra 9 275HX, 30 GiB, KDE Wayland, Mesa 27.0.0-devel /

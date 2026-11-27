@@ -86,6 +86,30 @@ impl Scaling {
     }
 }
 
+/// Holds world cameras to the live preset's MSAA cap, so an auto-drop
+/// lowers it too.
+fn cap_msaa(scaling: Res<Scaling>, mut cameras: Query<&mut Msaa, With<WorldCamera>>) {
+    let cap = scaling.controller.quality.msaa_cap();
+    for mut msaa in &mut cameras {
+        let capped = msaa_capped(*msaa, cap);
+        if *msaa != capped {
+            *msaa = capped;
+        }
+    }
+}
+
+fn msaa_capped(msaa: Msaa, cap: u32) -> Msaa {
+    if msaa.samples() <= cap {
+        return msaa;
+    }
+    match cap {
+        0 | 1 => Msaa::Off,
+        2 | 3 => Msaa::Sample2,
+        4..=7 => Msaa::Sample4,
+        _ => Msaa::Sample8,
+    }
+}
+
 pub fn register(app: &mut App) {
     app.init_resource::<Scaling>()
         .add_systems(PreUpdate, feedback)
@@ -110,6 +134,7 @@ pub fn register(app: &mut App) {
             (
                 configure_cameras.after(crate::environment::apply_environment),
                 probe_dlss.after(configure_cameras),
+                cap_msaa.after(configure_cameras),
                 configure_ui_camera.before(CameraUpdateSystems),
             ),
         )
@@ -957,6 +982,24 @@ mod tests {
     use bevy::mesh::Indices;
     use bevy::render::render_resource::PrimitiveTopology;
     use blockloom_core::quality::{Quality, Setting};
+
+    #[test]
+    fn msaa_follows_the_presets_cap_and_never_rises() {
+        assert_eq!(
+            msaa_capped(Msaa::Sample4, Quality::Low.msaa_cap()),
+            Msaa::Off
+        );
+        assert_eq!(
+            msaa_capped(Msaa::Sample4, Quality::Medium.msaa_cap()),
+            Msaa::Sample2
+        );
+        assert_eq!(
+            msaa_capped(Msaa::Sample4, Quality::High.msaa_cap()),
+            Msaa::Sample4
+        );
+        // Off stays off: SSAO and SSR need it.
+        assert_eq!(msaa_capped(Msaa::Off, Quality::Ultra.msaa_cap()), Msaa::Off);
+    }
     use blockloom_core::vm::Effect;
 
     #[test]

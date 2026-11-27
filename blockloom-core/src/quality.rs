@@ -54,6 +54,16 @@ impl Quality {
         }
     }
 
+    /// The most MSAA samples a world camera may take. The opaque pass was
+    /// about 3 ms on an Arrow Lake iGPU at 4x and 1920x1440, at every preset.
+    pub fn msaa_cap(self) -> u32 {
+        match self {
+            Self::Low => 1,
+            Self::Medium => 2,
+            Self::High | Self::Ultra => 4,
+        }
+    }
+
     /// Anisotropy cap for streamed surface textures. Baked data textures
     /// (cloud noise, LUTs, lens dirt) never pass through streaming.
     pub fn anisotropy_cap(self) -> u8 {

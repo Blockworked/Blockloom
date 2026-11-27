@@ -29,6 +29,13 @@ from smoke import Failed, Shell  # noqa: E402
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "tests" / "perf"
 
+# Frame-time budgets in ms by GPU class: 60 fps on an integrated GPU, 144 on
+# a discrete one, and no p95 frame slower than the class allows.
+BUDGETS = {
+    "IntegratedGpu": {"mean": 16.7, "p95": 25.0},
+    "DiscreteGpu": {"mean": 6.9, "p95": 16.7},
+}
+
 PERF_ENTRIES = dict(ENTRIES)
 PERF_ENTRIES["third-person"] = ("sample", ("third-person", "ThreeD"))
 
@@ -62,6 +69,15 @@ def profile(shell, work, name, seconds, warmup, env, timeout):
     return json.loads(summary.read_text())
 
 
+def over_budget(got):
+    """The budget lines a summary breaks, empty when it holds or has no class."""
+    budget = BUDGETS.get((got.get("adapter") or {}).get("device_type"))
+    frame = got.get("frame_ms")
+    if not budget or not frame:
+        return []
+    return [f"{key} {frame[key]:.2f} > {limit}" for key, limit in budget.items() if frame[key] > limit]
+
+
 def cell(stats, key):
     return f"{stats[key]:.2f}" if stats else "-"
 
@@ -78,6 +94,7 @@ def main():
     parser.add_argument("--quality", choices=["Low", "Medium", "High", "Ultra"],
                         help="set the project's quality preset before building")
     parser.add_argument("--vsync", action="store_true", help="keep vsync on (frame times then show the display)")
+    parser.add_argument("--check", action="store_true", help="exit 1 when an entry is over its budget")
     parser.add_argument("--keep", action="store_true")
     args = parser.parse_args()
 
@@ -125,18 +142,22 @@ def main():
         adapter = rows[0][1].get("adapter") or {}
         print(f"\n{adapter.get('name', 'unknown GPU')} ({adapter.get('backend', '?')}), "
               f"{rows[0][1].get('resolution')}, {build} build, quality {args.quality or 'default'}, vsync {'on' if args.vsync else 'off'}\n")
-        print("| entry | fps | frame mean | p95 | p99 | GPU mean | GPU p95 | main CPU | fixed mean |")
-        print("|---|---|---|---|---|---|---|---|---|")
+        print("| entry | fps | frame mean | p95 | p99 | GPU mean | GPU p95 | main CPU | fixed mean | budget |")
+        print("|---|---|---|---|---|---|---|---|---|---|")
         for name, got in rows:
             f, g, s, m = got.get("frame_ms"), got.get("gpu_ms"), got.get("fixed_ms"), got.get("main_ms")
             print(f"| {name} | {got['fps']:.0f} | {cell(f, 'mean')} | {cell(f, 'p95')} | {cell(f, 'p99')} | "
-                  f"{cell(g, 'mean')} | {cell(g, 'p95')} | {cell(m, 'mean')} | {cell(s, 'mean')} |")
+                  f"{cell(g, 'mean')} | {cell(g, 'p95')} | {cell(m, 'mean')} | {cell(s, 'mean')} | "
+                  f"{', '.join(over_budget(got)) or 'ok'} |")
         print(f"\nsummaries: {target}")
     if args.keep or failures:
         print(f"work folder: {work}")
     else:
         shutil.rmtree(work, ignore_errors=True)
-    sys.exit(1 if failures else 0)
+    over = [name for name, got in rows if over_budget(got)]
+    if args.check and over:
+        print(f"over budget: {', '.join(over)}")
+    sys.exit(1 if failures or (args.check and over) else 0)
 
 
 if __name__ == "__main__":
