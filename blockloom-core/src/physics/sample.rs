@@ -28,8 +28,8 @@ pub fn modes(sample: &str) -> &'static [Mode] {
     }
 }
 
-/// Where the third-person sample keeps its figure.
-pub const FIGURE: &str = "assets/models/figure.glb";
+/// Where the third-person sample keeps its character.
+pub const FIGURE: &str = "assets/models/human.glb";
 
 /// Builds the sample named `sample` (see [`SAMPLES`]).
 pub fn build(sample: &str, name: &str, mode: Mode) -> Result<Project, String> {
@@ -50,12 +50,12 @@ pub fn build(sample: &str, name: &str, mode: Mode) -> Result<Project, String> {
 /// The files a sample brings into its project folder, by relative path.
 pub fn files(sample: &str) -> Vec<(&'static str, Vec<u8>)> {
     match sample {
-        "third-person" => vec![(FIGURE, crate::figure::glb())],
+        "third-person" => vec![(FIGURE, crate::human::GLB.to_vec())],
         _ => Vec::new(),
     }
 }
 
-/// The third-person template: the blocky figure as the player, walking,
+/// The third-person template: the animated human as the player, walking,
 /// running and jumping on one blended animator with foot and head IK, and a
 /// boulder that knocks it limp for two seconds. A footstep counter shows the
 /// animator's markers reaching the blocks.
@@ -63,7 +63,7 @@ fn third_person(name: &str, mode: Mode) -> Result<Project, String> {
     use crate::animation::{AnimationLayer, AnimationSpec, FrameMarker, ModelIk, RagdollSpec};
     use crate::blocks::{Instruction, InstructionKind as K, Strand};
     use crate::components::ActorComponent;
-    use crate::figure;
+    use crate::human;
     use crate::value::Value;
     if !mode.is_3d() {
         return Err("the third-person sample is 3D only".to_string());
@@ -110,13 +110,7 @@ fn third_person(name: &str, mode: Mode) -> Result<Project, String> {
         .cloned()
         .unwrap_or_default();
     let mut animation: AnimationSpec = AnimationSpec::default();
-    let clips: Vec<crate::pipeline::ModelClip> = figure::clip_lengths()
-        .into_iter()
-        .map(|(name, seconds)| crate::pipeline::ModelClip {
-            name: name.to_string(),
-            seconds,
-        })
-        .collect();
+    let clips = human::clips();
     animation.add_model_clips(&clips);
     animation.add_locomotion(motor.walk_speed, motor.sprint_speed);
     // A footstep at each foot's plant.
@@ -135,15 +129,15 @@ fn third_person(name: &str, mode: Mode) -> Result<Project, String> {
             .collect();
     }
     animation.ik = Some(ModelIk {
-        feet: figure::FEET.iter().map(|b| b.to_string()).collect(),
-        hips: figure::HIPS.to_string(),
+        feet: human::FEET.iter().map(|b| b.to_string()).collect(),
+        hips: human::HIPS.to_string(),
         foot_reach: 0.4,
         foot_height: 0.05 * size,
-        head: figure::HEAD.to_string(),
+        head: human::HEAD.to_string(),
         look_limit: 70.0,
     });
     animation.ragdoll = Some(RagdollSpec {
-        bones: figure::RAGDOLL.iter().map(|b| b.to_string()).collect(),
+        bones: human::RAGDOLL.iter().map(|b| b.to_string()).collect(),
         radius: 0.08 * size,
         mass: 70.0,
         swing: 60.0,
@@ -151,7 +145,7 @@ fn third_person(name: &str, mode: Mode) -> Result<Project, String> {
     });
     animation.layers = vec![AnimationLayer {
         name: "upper body".to_string(),
-        bones: figure::UPPER_BODY.iter().map(|b| b.to_string()).collect(),
+        bones: human::UPPER_BODY.iter().map(|b| b.to_string()).collect(),
         weight: 1.0,
     }];
     animation.normalize();

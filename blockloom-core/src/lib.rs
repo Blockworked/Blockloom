@@ -56,6 +56,7 @@ pub mod figure;
 pub mod files;
 pub mod fog;
 pub mod hub;
+pub mod human;
 pub mod input;
 pub mod library;
 pub mod light2d;

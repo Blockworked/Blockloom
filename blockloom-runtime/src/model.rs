@@ -756,6 +756,19 @@ mod tests {
     }
 
     #[test]
+    fn the_third_person_human_loads_with_its_clips() {
+        let gltf =
+            bevy::gltf::gltf::Gltf::from_slice(blockloom_core::human::GLB).expect("a valid glb");
+        assert!(gltf.skins().next().is_some_and(|s| s.joints().count() > 20));
+        assert!(gltf.images().count() == 1);
+        let names: Vec<_> = gltf
+            .animations()
+            .filter_map(|a| a.name().map(str::to_string))
+            .collect();
+        assert_eq!(names, ["Idle", "Walk", "Run", "Jump", "Punch", "Death"]);
+    }
+
+    #[test]
     fn region_masks_leave_each_region_only_its_own_group() {
         assert_eq!(region_mask(0, 1), 0);
         assert_eq!(region_mask(0, 3), 0b110);
