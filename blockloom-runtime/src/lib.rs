@@ -368,8 +368,10 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     display::install_render_error_handler(app);
     app.add_plugins((RenderDiagnosticsPlugin, MeshAllocatorDiagnosticPlugin));
     if let Some(profiler) = profile::Profiler::from_env() {
-        app.insert_resource(profiler)
-            .add_systems(Last, profile::sample);
+        app.insert_resource(profiler).add_systems(
+            Last,
+            profile::sample.after(performance::publish_update_split),
+        );
     }
     // The simulation first: its resources and the engine, which the
     // presentation systems below reach as a `NonSend` too.

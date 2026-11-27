@@ -3,7 +3,8 @@
 //! With `BLOCKLOOM_PROFILE_SECONDS=N` and `BLOCKLOOM_PROFILE_OUT=<file>` set,
 //! a running world waits out `BLOCKLOOM_PROFILE_WARMUP` seconds (3 by
 //! default), then samples every frame for N seconds: wall frame time, the
-//! whole-frame GPU span, each render pass and the fixed step's cost. It
+//! whole-frame GPU span, each render pass, the main world's CPU time with
+//! its `Update` spans, and the fixed step's cost. It
 //! writes the summary as JSON and quits. Vsync is off unless
 //! `BLOCKLOOM_PROFILE_VSYNC=1`, so frame times are the game's, not the display's.
 
@@ -32,6 +33,9 @@ pub struct Profiler {
     gpu: Vec<f64>,
     fixed: Vec<f64>,
     passes: BTreeMap<String, Vec<f64>>,
+    /// Main-world CPU per frame, and its `Update` spans.
+    main: Vec<f64>,
+    spans: BTreeMap<String, Vec<f64>>,
     done: bool,
 }
 
@@ -59,6 +63,8 @@ impl Profiler {
             gpu: Vec::new(),
             fixed: Vec::new(),
             passes: BTreeMap::new(),
+            main: Vec::new(),
+            spans: BTreeMap::new(),
             done: false,
         })
     }
@@ -99,6 +105,10 @@ pub fn sample(
     profiler: Option<ResMut<Profiler>>,
     diagnostics: Option<Res<DiagnosticsStore>>,
     sim: Option<Res<crate::performance::SimSplit>>,
+    (pace, split): (
+        Option<Res<crate::performance::LoopPace>>,
+        Option<Res<crate::performance::UpdateSplit>>,
+    ),
     adapter: Option<Res<RenderAdapter>>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut exit: MessageWriter<AppExit>,
@@ -126,6 +136,15 @@ pub fn sample(
         if let Some(sim) = &sim {
             p.fixed.push(sim.frame_fixed_ms);
         }
+        if let Some(pace) = &pace {
+            p.main.push(pace.frame_main_ms);
+        }
+        // Smoothed already, so their means are a fair split, not a series.
+        if let Some(split) = &split {
+            for (label, ms) in &split.segments {
+                p.spans.entry(label.clone()).or_default().push(*ms);
+            }
+        }
         if let Some(store) = &diagnostics {
             for d in store.iter() {
                 let name = d.path().as_str();
@@ -150,6 +169,11 @@ pub fn sample(
         .iter()
         .filter_map(|(name, values)| Some((name.clone(), stats(values)?.mean)))
         .collect();
+    let spans: BTreeMap<_, _> = p
+        .spans
+        .iter()
+        .filter_map(|(name, values)| Some((name.clone(), stats(values)?.mean)))
+        .collect();
     let info = adapter.map(|a| a.get_info());
     let resolution = windows
         .single()
@@ -162,6 +186,8 @@ pub fn sample(
         "frame_ms": stats(&p.frames),
         "gpu_ms": stats(&p.gpu),
         "fixed_ms": stats(&p.fixed),
+        "main_ms": stats(&p.main),
+        "update_spans_ms": spans,
         "passes_ms": passes,
         "adapter": info.map(|i| json!({
             "name": i.name,

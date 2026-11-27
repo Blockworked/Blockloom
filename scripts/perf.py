@@ -75,6 +75,8 @@ def main():
     parser.add_argument("--timeout", type=float, default=600.0)
     parser.add_argument("--shell", type=pathlib.Path, default=None)
     parser.add_argument("--adapter", help="GPU to use, by part of its name (WGPU_ADAPTER_NAME), e.g. intel")
+    parser.add_argument("--quality", choices=["Low", "Medium", "High", "Ultra"],
+                        help="set the project's quality preset before building")
     parser.add_argument("--vsync", action="store_true", help="keep vsync on (frame times then show the display)")
     parser.add_argument("--keep", action="store_true")
     args = parser.parse_args()
@@ -104,8 +106,11 @@ def main():
         shell = Shell(exe, False, env)
         try:
             open_entry(shell, work, name, how, what)
+            if args.quality:
+                shell.run('set-quality quality=' + json.dumps({'preset': args.quality}, separators=(',', ':')))
             got = profile(shell, work, name, args.seconds, args.warmup, env, args.timeout)
             got["build"] = build
+            got["quality"] = args.quality or "default"
             (target / f"{name}.json").write_text(json.dumps(got, indent=2, sort_keys=True) + "\n")
             rows.append((name, got))
         except Failed as e:
@@ -119,13 +124,13 @@ def main():
     if rows:
         adapter = rows[0][1].get("adapter") or {}
         print(f"\n{adapter.get('name', 'unknown GPU')} ({adapter.get('backend', '?')}), "
-              f"{rows[0][1].get('resolution')}, {build} build, vsync {'on' if args.vsync else 'off'}\n")
-        print("| entry | fps | frame mean | p95 | p99 | GPU mean | GPU p95 | fixed mean |")
-        print("|---|---|---|---|---|---|---|---|")
+              f"{rows[0][1].get('resolution')}, {build} build, quality {args.quality or 'default'}, vsync {'on' if args.vsync else 'off'}\n")
+        print("| entry | fps | frame mean | p95 | p99 | GPU mean | GPU p95 | main CPU | fixed mean |")
+        print("|---|---|---|---|---|---|---|---|---|")
         for name, got in rows:
-            f, g, s = got.get("frame_ms"), got.get("gpu_ms"), got.get("fixed_ms")
+            f, g, s, m = got.get("frame_ms"), got.get("gpu_ms"), got.get("fixed_ms"), got.get("main_ms")
             print(f"| {name} | {got['fps']:.0f} | {cell(f, 'mean')} | {cell(f, 'p95')} | {cell(f, 'p99')} | "
-                  f"{cell(g, 'mean')} | {cell(g, 'p95')} | {cell(s, 'mean')} |")
+                  f"{cell(g, 'mean')} | {cell(g, 'p95')} | {cell(m, 'mean')} | {cell(s, 'mean')} |")
         print(f"\nsummaries: {target}")
     if args.keep or failures:
         print(f"work folder: {work}")
