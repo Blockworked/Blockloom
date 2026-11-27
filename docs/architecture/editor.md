@@ -53,7 +53,10 @@ chip's popup in the top bar stays as the short version. The actor list's
 find field shows a flat list of actors whose name or a component's name holds
 the words, wherever they sit in the tree. The asset tray's find field asks
 `find-assets` (`assets::find`, every folder, at most 500) and shows each match
-by its path; opening a folder ends the search. Each panel lives once in a hidden pool and is parented into the region its
+by its path; opening a folder ends the search. `Tour.qml` walks a first-time user round the
+window: each step rings a part found by `objectName` and explains it. It
+starts once (QML `Settings` category `tour`) and again from Help, and takes no
+clicks outside its card. Each panel lives once in a hidden pool and is parented into the region its
 id is placed in; a region's move button sends the current panel to another
 edge, and the layout is kept in QML `Settings`. Code and Game sit
 side by side when `split` is on. Everything the window can do is an id in

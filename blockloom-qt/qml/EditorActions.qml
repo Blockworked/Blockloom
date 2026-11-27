@@ -42,7 +42,7 @@ QtObject {
         { title: "View", items: ["editor.showCode", "editor.showGame", "editor.showInterface", "editor.showDevices", "-", "editor.split", "-", "editor.assets", "editor.runLog", "editor.problems", "editor.profiler"] },
         { title: "Run", items: ["run_project", "stop_project", "editor.pause", "step_project", "-", "run_tests", "-", "close_runtime"] },
         { title: "Plugins", items: ["editor.plugins", "editor.pluginPanels", "editor.pluginEditors"] },
-        { title: "Help", items: ["editor.palette", "editor.shortcuts"] }
+        { title: "Help", items: ["editor.tour", "editor.palette", "editor.shortcuts"] }
     ]
     readonly property var defs: ({
         "close_project": { label: "All projects", icon: "layout-grid" },
@@ -56,6 +56,7 @@ QtObject {
         "redo": { label: "Redo", icon: "redo-2" },
         "editor.palette": { label: "Command palette…", icon: "search" },
         "editor.shortcuts": { label: "Keyboard shortcuts…", icon: "keyboard" },
+        "editor.tour": { label: "Tour the editor", icon: "map" },
         "editor.showCode": { label: "Code", icon: "blocks" },
         "editor.showGame": { label: "Game", icon: "gamepad-2" },
         "editor.showInterface": { label: "Interface", icon: "layout-grid" },

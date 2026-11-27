@@ -112,6 +112,7 @@ Item {
                           "editor.appSettings": "appSettings", "editor.import": "import", "editor.export": "export" };
         if (id === "editor.palette") palette.open();
         else if (id === "editor.shortcuts") keymapDialog.open();
+        else if (id === "editor.tour") tour.start();
         else if (views.indexOf(id) >= 0) panels.tab = views.indexOf(id);
         else if (id === "editor.split") { panels.split = !panels.split; if (panels.split && panels.tab > 1) panels.tab = 0; }
         else if (root.panelActions[id]) root.togglePanel(root.panelActions[id]);
@@ -297,6 +298,7 @@ Item {
                             visible: !!root.actor
                             BlockSidebar {
                                 id: sidebar
+                                objectName: "block-sidebar"
                                 visible: panels.blocksOpen
                                 Layout.fillHeight: true
                                 Layout.preferredWidth: panels.blocksWidth
@@ -469,4 +471,6 @@ Item {
         trashContains: (sx, sy) => sidebar.contains(sidebar.mapFromItem(null, sx, sy))
         submit: (edit, reply) => root.submitEdit(edit, reply)
     }
+    // Over everything, last so it draws on top.
+    Tour { id: tour; host: root; anchors.fill: parent }
 }
