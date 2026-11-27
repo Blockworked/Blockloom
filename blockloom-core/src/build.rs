@@ -2770,6 +2770,53 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[test]
+    fn a_guest_script_ships_its_module_and_a_prebuilt_one_rides_in_assets() {
+        let root = temp("guest-scripts");
+        let (mut project, project_dir, _) = a_project(&root);
+        let target = host().unwrap();
+        let game = root.join("game");
+        for path in ["assets/scripts/walker.py", "assets/scripts/ready.wasm"] {
+            project.scenes[0].actors[0].components.insert(
+                crate::components::ActorComponent::Script {
+                    path: path.to_string(),
+                },
+            );
+        }
+        let sources = project_dir.join("assets/scripts");
+        std::fs::create_dir_all(&sources).unwrap();
+        std::fs::write(sources.join("walker.py"), b"# source").unwrap();
+        std::fs::write(sources.join("ready.wasm"), b"\0asm").unwrap();
+
+        // Unbuilt, the guest stops the build rather than ship without it.
+        let error = copy_scripts(&project, &project_dir, &game, target).unwrap_err();
+        assert!(error.contains("walker.py hasn't been built"), "{error}");
+
+        let module = script::lang::guest_wasm_path(&project_dir, "assets/scripts/walker.py");
+        std::fs::create_dir_all(module.parent().unwrap()).unwrap();
+        std::fs::write(&module, b"\0asm-guest").unwrap();
+        assert_eq!(
+            copy_scripts(&project, &project_dir, &game, target).unwrap(),
+            2
+        );
+        let shipped = script::lang::guest_wasm_path(&game, "assets/scripts/walker.py");
+        assert_eq!(std::fs::read(shipped).unwrap(), b"\0asm-guest");
+
+        // Assets keep the prebuilt module and drop the guest's source.
+        copy_assets(&project_dir, &game).unwrap();
+        assert!(game.join("assets/scripts/ready.wasm").is_file());
+        assert!(!game.join("assets/scripts/walker.py").exists());
+
+        // Android can't run a guest yet, and says which script and why.
+        let android = super::target(android::ARM64_TRIPLE).unwrap();
+        let runtime = root.join("libblockloom_runtime.so");
+        std::fs::write(&runtime, b"fake-so").unwrap();
+        let error =
+            android_native_libs(&project, &project_dir, android, &runtime, false).unwrap_err();
+        assert!(error.contains("walker.py is a Python script"), "{error}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A fabricated SDK tree with stub tools: aapt2 `compile` touches its
     /// `-o`, `link` writes an empty zip there, zipalign/apksigner copy
     /// input to output. Unix-only, like the assembly test it exercises.
