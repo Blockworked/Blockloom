@@ -4,6 +4,49 @@
 release build, 1920x1440 window, vsync off. Raw summaries are in
 `tests/perf/<label>/` when a run is checked in.
 
+## 2026-11-27, master 039b5df, sirstrokes (round 3)
+
+MSAA now capped per preset. A first pass ran under heavy background load
+(another app using ~10 cores) and was thrown away; this is the rerun, 1-min
+load 3.6-5.2 on 24 cores. Every row is within budget.
+
+### NVIDIA GeForce RTX 5080 Laptop GPU, default quality
+
+| entry | fps | frame mean | p95 | GPU mean | main CPU |
+|---|---|---|---|---|---|
+| playground-3d | 271 | 3.69 | 7.44 | 0.68 | 3.00 |
+| playground-2d | 515 | 1.94 | 3.94 | 0.20 | 1.42 |
+| platformer | 512 | 1.95 | 3.95 | 0.20 | 1.44 |
+| top-down | 505 | 1.98 | 4.09 | 0.22 | 1.46 |
+| first-person | 249 | 4.02 | 7.16 | 0.67 | 3.26 |
+| ui-puzzle | 512 | 1.95 | 3.79 | 0.22 | 1.43 |
+| third-person | 259 | 3.86 | 7.24 | 0.71 | 3.15 |
+
+### Intel Graphics (ARL), fps (frame mean ms, GPU mean ms) by preset
+
+| entry | default (High) | Medium | Low |
+|---|---|---|---|
+| playground-3d | 99 (10.08, 7.98) | 111 (8.98, 6.88) | 139 (7.20, 5.12) |
+| playground-2d | 245 (4.08, 1.75) | 262 (3.82, 1.71) | 353 (2.83, 0.96) |
+| platformer | 270 (3.70, 1.76) | 265 (3.77, 1.72) | 361 (2.77, 0.94) |
+| top-down | 246 (4.06, 2.15) | 258 (3.88, 2.09) | 79 (12.64, 2.16) |
+| first-person | 100 (10.05, 7.96) | 109 (9.14, 7.04) | 101 (9.93, 5.42) |
+| ui-puzzle | 266 (3.77, 1.89) | 256 (3.91, 1.83) | 378 (2.65, 0.97) |
+| third-person | 91 (10.95, 8.90) | 101 (9.94, 7.87) | 125 (8.00, 5.85) |
+
+### What it showed
+
+- The iGPU now holds 90-100 fps in 3D at default quality and 245+ in 2D;
+  the RTX holds 250+ and 500+.
+- Low cuts iGPU GPU time by about a third, but not in `main_opaque_pass_3d`,
+  which stays 3.0-3.2 ms at every preset. The templates may already run with
+  MSAA off (SSAO or SSR forces it), in which case the opaque pass is shading
+  cost. The summary now records the world camera's `msaa` to settle it.
+- top-down at Low (79 fps, 4.55 ms main CPU, GPU unchanged) and first-person
+  at Low look like CPU hiccups, not preset costs; rerun before reading them.
+- No window held 60 fps with the windows left alone, so round 2's cap came
+  from moving a window between screens.
+
 ## 2026-11-27, master d94e38d, sirstrokes (round 2)
 
 Same machine. GPU occlusion now waits for 2000 meshes, and the capture adds
@@ -26,8 +69,7 @@ main-world CPU. Rounded from the run's summaries.
 - The largest main-world span in 3D is PostUpdate at 1.6-2.4 ms.
 - Whichever window was moved between screens held exactly 60 fps. Both
   displays hang off the NVIDIA card, so an iGPU frame crosses GPUs, and
-  this looks like the compositor's path rather than Blockloom's. It also
-  explains round 1's 60 fps rows.
+  this looks like the compositor's path rather than Blockloom's.
 - Tonemapping (~0.45 ms) and upscaling (~0.4 ms) still lead 2D on the iGPU.
 
 ### Budgets

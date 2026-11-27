@@ -149,7 +149,9 @@ sizes the views' own textures instead. All of it reaches the profiler as
 GPU. It builds each one like the corpus, then runs the player with
 `BLOCKLOOM_PROFILE_SECONDS`: `profile.rs` (in `Last`) waits out a warm-up,
 samples wall frame time, `gpu/frame`, every pass and the fixed step each
-frame, and writes means and p50/p95/p99 with the adapter and resolution.
+frame, and writes means and p50/p95/p99 with the adapter, resolution and
+the world camera's final MSAA. `--check` holds each entry to its GPU
+class's `BUDGETS`.
 Summaries go to `tests/perf/<label>/`, one folder per machine.
 
 ## Loading and streaming

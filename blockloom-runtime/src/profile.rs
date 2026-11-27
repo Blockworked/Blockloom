@@ -111,6 +111,7 @@ pub fn sample(
     ),
     adapter: Option<Res<RenderAdapter>>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    cameras: Query<&Msaa, With<crate::world::WorldCamera>>,
     mut exit: MessageWriter<AppExit>,
 ) {
     let Some(mut p) = profiler else { return };
@@ -198,6 +199,8 @@ pub fn sample(
         "resolution": resolution,
         "mode": format!("{:?}", engine.project.world.mode),
         "vsync": !p.uncapped,
+        // What the world cameras ended up with, after presets and post effects.
+        "msaa": cameras.iter().map(|m| m.samples()).max(),
     });
     let written = serde_json::to_vec_pretty(&summary)
         .map_err(|e| e.to_string())
