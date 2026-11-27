@@ -36,8 +36,11 @@ copies it again through a small shader into a plain texture.
 
 Status (positions, variables) and the run log reach QML through their own
 `statusJson` and `logJson`, not the whole state snapshot - re-evaluating every
-binding on each status or `say` stuttered the view. `RunLog.qml` appends by
-`log.total` rather than rebuilding its list.
+binding on each status or `say` stuttered the view. `AppState::push_log`
+folds a line that repeats the last one into it (`count`, latest `time`), so a
+`say` in a loop is one line, and `publish_log` sends the log at most every
+`LOG_EVERY` (100 ms), leaving the rest for the next status. `RunLog.qml`
+reconciles by line `id` rather than rebuilding its list.
 
 Input is `PreviewInput`, as it is for the MJPEG preview: keys, buttons,
 position, text, scroll, touch, plus `focus` (which, once sent, decides whether

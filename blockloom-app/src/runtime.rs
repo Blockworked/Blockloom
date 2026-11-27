@@ -236,6 +236,9 @@ impl Drop for RuntimeHandle {
     }
 }
 
+/// Shortest gap between two run log sends while lines pour in.
+const LOG_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
+
 impl Backend {
     /// Folds one runtime message into app state and tells the frontend.
     pub(crate) fn on_runtime_message(&self, runtime_id: u64, message: RuntimeMessage) {
@@ -327,7 +330,11 @@ impl Backend {
                 if unchanged {
                     let json = serde_json::to_string(&status);
                     s.status = Some(status);
+                    let log = s.log_pending.then(|| Self::log_json(&mut s)).flatten();
                     drop(s);
+                    if let Some(log) = log {
+                        self.app.send(Event::Log(log.into()));
+                    }
                     match json {
                         Ok(json) => self.app.send(Event::Status(json.into())),
                         Err(e) => tracing::warn!("Couldn't serialize the run status: {e}"),
@@ -458,17 +465,31 @@ impl Backend {
     }
 
     /// Adds a line and sends the log on its own, leaving the snapshot alone.
+    /// At most one send per `LOG_EVERY`; the next status sends the rest.
     fn publish_log(&self, mut s: std::sync::MutexGuard<'_, crate::state::AppState>, line: LogLine) {
         s.push_log(line);
-        let json = serde_json::to_string(&crate::state::LogDto {
+        let due = s.log_sent_at.is_none_or(|sent| sent.elapsed() >= LOG_EVERY);
+        if !due {
+            s.log_pending = true;
+            return;
+        }
+        let json = Self::log_json(&mut s);
+        drop(s);
+        if let Some(json) = json {
+            self.app.send(Event::Log(json.into()));
+        }
+    }
+
+    /// The log as [`Event::Log`] carries it, marked sent.
+    fn log_json(s: &mut crate::state::AppState) -> Option<String> {
+        s.log_pending = false;
+        s.log_sent_at = Some(std::time::Instant::now());
+        serde_json::to_string(&crate::state::LogDto {
             total: s.log_total,
             lines: &s.log,
-        });
-        drop(s);
-        match json {
-            Ok(json) => self.app.send(Event::Log(json.into())),
-            Err(e) => tracing::warn!("Couldn't serialize the run log: {e}"),
-        }
+        })
+        .inspect_err(|e| tracing::warn!("Couldn't serialize the run log: {e}"))
+        .ok()
     }
 
     /// The runtime's window closed. Its handle is dropped so the next Play

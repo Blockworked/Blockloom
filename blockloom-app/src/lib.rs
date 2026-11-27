@@ -107,6 +107,8 @@ impl Backend {
             interface_layout: None,
             log: Vec::new(),
             log_total: 0,
+            log_sent_at: None,
+            log_pending: false,
             // An embedded world is always shown, so it is always previewing.
             preview_enabled: embedded.is_some(),
             preview_headless: false,

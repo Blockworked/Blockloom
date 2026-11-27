@@ -229,6 +229,8 @@ mod tests {
                 interface_layout: None,
                 log: vec![],
                 log_total: 0,
+                log_sent_at: None,
+                log_pending: false,
                 preview_enabled: false,
                 preview_headless: false,
                 preview_port: None,

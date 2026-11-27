@@ -45,7 +45,14 @@ The editor page (`EditorPage.qml`) is a shell of three `PanelDock`s
 and Assets, Run log, Problems, Profiler and every plugin panel as tabs along the bottom.
 The Run log (`RunLog.qml`) keeps every line the backend holds in `all` and
 shows those that pass its kind buttons (All, Errors with a count, Says,
-Other) and its find field, which matches a line or its actor. The Profiler
+Other) and its find field, which matches a line or its actor. It never
+rebuilds for new lines: `reconcile` drops the rows the backend dropped from
+the top, ticks a repeat's count and appends the rest, keyed by each line's
+`id`. It follows new lines only while scrolled to the bottom (otherwise a
+"new lines" button counts them), and its pause button holds the view while
+the world keeps logging. Rows are one line high with a run time and actor
+column; a long or multi-line one expands on click. Shared variables sit on
+their own row under the controls. The Profiler
 (`ProfilerPanel.qml`) lists every `render_metrics` row the runtime reports,
 grouped by the name before the first `/`, with the average and peak over the
 last 30 status updates; it can hold its numbers and filter by name. The fps

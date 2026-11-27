@@ -122,8 +122,14 @@ pub(crate) struct AppState {
     pub(crate) interface_design: Option<blockloom_protocol::InterfaceDesign>,
     pub(crate) interface_layout: Option<blockloom_protocol::InterfaceLayout>,
     pub(crate) log: Vec<LogLine>,
-    /// Lines ever pushed, so a frontend can tell which ones it hasn't seen.
+    /// Lines ever pushed, repeats included, so a frontend can tell the log
+    /// moved. Each kept line's `id` is the total it was first pushed at.
     pub(crate) log_total: u64,
+    /// When the runtime's lines last went to the frontend, and whether some
+    /// are waiting: a chatty world sends the log a few times a second, not
+    /// once a line.
+    pub(crate) log_sent_at: Option<std::time::Instant>,
+    pub(crate) log_pending: bool,
     /// Whether the embedded preview viewport wants the sidecar stream.
     pub(crate) preview_enabled: bool,
     /// Hides the runtime's OS window while the stream runs.
@@ -204,12 +210,30 @@ impl AppState {
             .is_some_and(|o| o.tracker.history.can_redo())
     }
 
-    pub(crate) fn push_log(&mut self, line: LogLine) {
-        self.log.push(line);
+    /// Adds a line, or counts it on the last one when it says the same thing
+    /// again, so a `say` in a loop is one line that ticks up.
+    pub(crate) fn push_log(&mut self, mut line: LogLine) {
         self.log_total += 1;
-        let overflow = self.log.len().saturating_sub(LOG_LIMIT);
-        self.log.drain(..overflow);
+        if line.time.is_none() && self.running {
+            line.time = self.status.as_ref().map(|status| status.time);
+        }
+        fold_into(&mut self.log, line, self.log_total);
     }
+}
+
+fn fold_into(log: &mut Vec<LogLine>, mut line: LogLine, id: u64) {
+    if let Some(last) = log.last_mut()
+        && last.repeats(&line)
+    {
+        last.count += 1;
+        last.time = line.time;
+        return;
+    }
+    line.id = id;
+    line.count = 1;
+    log.push(line);
+    let overflow = log.len().saturating_sub(LOG_LIMIT);
+    log.drain(..overflow);
 }
 
 /// One line of the editor's run log.
@@ -230,6 +254,15 @@ pub(crate) struct LogLine {
     pub(crate) path: Option<String>,
     #[serde(default)]
     pub(crate) line: Option<u32>,
+    /// Stable for as long as the line is kept: the log total it arrived at.
+    #[serde(default)]
+    pub(crate) id: u64,
+    /// How many times in a row it was said.
+    #[serde(default = "LogLine::one")]
+    pub(crate) count: u32,
+    /// Seconds into the run of its latest repeat, while a world was running.
+    #[serde(default)]
+    pub(crate) time: Option<f64>,
 }
 
 impl LogLine {
@@ -237,40 +270,46 @@ impl LogLine {
         "info".to_string()
     }
 
-    pub(crate) fn say(actor: String, text: String) -> Self {
+    fn one() -> u32 {
+        1
+    }
+
+    fn repeats(&self, next: &LogLine) -> bool {
+        self.kind == next.kind
+            && self.level == next.level
+            && self.actor == next.actor
+            && self.text == next.text
+            && self.path == next.path
+            && self.line == next.line
+    }
+
+    fn new(kind: &str, level: &str, actor: String, text: String) -> Self {
         LogLine {
-            kind: "say".to_string(),
-            level: "info".to_string(),
+            kind: kind.to_string(),
+            level: level.to_string(),
             actor,
             text,
             path: None,
             line: None,
+            id: 0,
+            count: 1,
+            time: None,
         }
     }
 
+    pub(crate) fn say(actor: String, text: String) -> Self {
+        LogLine::new("say", "info", actor, text)
+    }
+
     pub(crate) fn error(actor: String, text: String) -> Self {
-        LogLine {
-            kind: "error".to_string(),
-            level: "error".to_string(),
-            actor,
-            text,
-            path: None,
-            line: None,
-        }
+        LogLine::new("error", "error", actor, text)
     }
 
     /// A line with a caller-chosen kind (plugin log levels, the frontend's
     /// own pushes). Anything but `"error"` reads as info.
     pub(crate) fn with_kind(kind: String, actor: String, text: String) -> Self {
-        let level = if kind == "error" { "error" } else { "info" }.to_string();
-        LogLine {
-            kind,
-            level,
-            actor,
-            text,
-            path: None,
-            line: None,
-        }
+        let level = if kind == "error" { "error" } else { "info" };
+        LogLine::new(&kind, level, actor, text)
     }
 
     /// An error about one script file: carries its path and the first
@@ -279,12 +318,9 @@ impl LogLine {
     pub(crate) fn script_error(actor: String, path: &str, text: String) -> Self {
         let line = first_error_line(&text, path);
         LogLine {
-            kind: "error".to_string(),
-            level: "error".to_string(),
-            actor,
-            text,
             path: Some(path.to_string()),
             line,
+            ..LogLine::new("error", "error", actor, text)
         }
     }
 }
@@ -576,5 +612,34 @@ mod tests {
             LogLine::say("A".to_string(), "hi".to_string()).level,
             "info"
         );
+    }
+
+    #[test]
+    fn repeats_fold_into_one_line() {
+        let mut log = Vec::new();
+        let say = |text: &str, time: f64| LogLine {
+            time: Some(time),
+            ..LogLine::say("Player".to_string(), text.to_string())
+        };
+        fold_into(&mut log, say("score: 1", 0.5), 1);
+        fold_into(&mut log, say("score: 1", 0.6), 2);
+        fold_into(&mut log, say("score: 1", 0.7), 3);
+        assert_eq!(log.len(), 1);
+        assert_eq!((log[0].id, log[0].count, log[0].time), (1, 3, Some(0.7)));
+        fold_into(&mut log, say("score: 2", 0.8), 4);
+        fold_into(
+            &mut log,
+            LogLine::error("Player".to_string(), "score: 2".to_string()),
+            5,
+        );
+        assert_eq!(
+            log.iter().map(|l| (l.id, l.count)).collect::<Vec<_>>(),
+            [(1, 3), (4, 1), (5, 1)]
+        );
+        for id in 6..6 + LOG_LIMIT as u64 {
+            fold_into(&mut log, say(&id.to_string(), 1.0), id);
+        }
+        assert_eq!(log.len(), LOG_LIMIT);
+        assert_eq!(log[0].id, 6, "the oldest lines go first");
     }
 }
