@@ -369,6 +369,10 @@ corpus *args:
     cargo build -p blockloom-app --bin blockloom-shell -p blockloom-runtime --bin blockloom-runtime
     {{if os() == "windows" { "python" } else { "python3" }}} scripts/corpus.py {{args}}
 
+# Frame times of the templates on this machine's GPU, release build.
+perf *args: build
+    {{if os() == "windows" { "python" } else { "python3" }}} scripts/perf.py {{args}}
+
 # An MCP server standing on `blockloom-shell`: every backend command becomes
 # an MCP tool, so an agent can drive a project the way a user does. Builds the
 # workspace first so the shell is current, then wires an MCP client to it.

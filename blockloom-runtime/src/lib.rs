@@ -101,6 +101,7 @@ mod plugins;
 mod post;
 mod preview;
 mod probes;
+mod profile;
 mod quality;
 mod queries;
 mod ragdoll;
@@ -366,6 +367,10 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // in the surface code, so it must not quit the run like other errors.
     display::install_render_error_handler(app);
     app.add_plugins((RenderDiagnosticsPlugin, MeshAllocatorDiagnosticPlugin));
+    if let Some(profiler) = profile::Profiler::from_env() {
+        app.insert_resource(profiler)
+            .add_systems(Last, profile::sample);
+    }
     // The simulation first: its resources and the engine, which the
     // presentation systems below reach as a `NonSend` too.
     simulation::add_simulation(app, mode, engine);

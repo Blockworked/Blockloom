@@ -140,6 +140,13 @@ render target needs a label that sorts, not code. Without a report (Metal) it
 sizes the views' own textures instead. All of it reaches the profiler as
 `gpu/*` and `memory/*`.
 
+`just perf` (`scripts/perf.py`) measures the templates on the machine's own
+GPU. It builds each one like the corpus, then runs the player with
+`BLOCKLOOM_PROFILE_SECONDS`: `profile.rs` (in `Last`) waits out a warm-up,
+samples wall frame time, `gpu/frame`, every pass and the fixed step each
+frame, and writes means and p50/p95/p99 with the adapter and resolution.
+Summaries go to `tests/perf/<label>/`, one folder per machine.
+
 ## Loading and streaming
 
 `blockloom-runtime/src/streaming.rs`. `StreamingCells` is the one cell system:
@@ -306,10 +313,12 @@ from the pose they lay in back to the animation over `get_up` seconds
 ragdoll. The bone poses it starts from are the last frame's, not the tick's, so
 a ragdoll is the one part of a run a replay doesn't repeat exactly.
 
-`figure::glb` writes a blocky rigged figure from code. It is a skinned mesh of
-boxes, each rigidly on one of 11 bones, with Idle, Walk, Run and Jump clips. It
-stands 1.8 m tall around its origin and faces -Z. The `third-person` sample
-(3D only) ships it as `assets/models/figure.glb` through `sample::files`, which
+`figure::glb` writes a blocky rigged figure from code (11 bones, Idle, Walk,
+Run and Jump), which runtime tests load as a tiny fixture. The `third-person`
+sample (3D only) uses `human::GLB` instead: Quaternius's CC0 Animated Human,
+converted by `scripts/convert-human.py` into `res/models/human.glb` (1.8 m
+tall around its origin, facing -Z, license in `res/models/README.md`). It
+ships as `assets/models/human.glb` through `sample::files`, which
 `create-project` writes into the new folder. Its player is the third-person
 preset scaled to the controller's height, with a Locomotion blend over the
 motor, `step` markers counted by a block, IK, a ragdoll, an upper-body layer,
