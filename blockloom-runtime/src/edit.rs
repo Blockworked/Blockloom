@@ -1839,6 +1839,28 @@ pub fn draw(
         if mode == Mode::TwoD {
             draw_actor_aids(&mut lines, &engine, &editor, &id.0, &pose.0);
         }
+        // The selected actor shows every invisible part; others only their
+        // lights and cameras, faintly.
+        if let Some(actor) = engine.actor(&id.0) {
+            let pose_of = |key: &str| {
+                let other = engine
+                    .project
+                    .actors
+                    .iter()
+                    .find(|a| a.id == key || a.name == key)?;
+                let entity = engine.entities.get(&other.id)?;
+                posed.get(*entity).ok().map(|(_, pose, _)| pose.0)
+            };
+            for line in crate::scene_gizmos::actor_lines(actor, &pose.0, mode, &pose_of) {
+                if selected {
+                    lines.line(line.a, line.b, line.color);
+                } else if line.color == crate::scene_gizmos::LIGHT
+                    || line.color == crate::scene_gizmos::CAMERA
+                {
+                    lines.line(line.a, line.b, line.color.with_alpha(0.25));
+                }
+            }
+        }
         if selected {
             let mut shown = pose.0;
             shown.translation += editor.shown(&id.0);

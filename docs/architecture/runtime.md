@@ -127,6 +127,14 @@ centre handle the size. Handles are gizmo lines in their own `HandleGizmos`
 group, drawn over the world. In 3D the editor holds the view's pointer lock
 while the right button is down, so looking around reads raw motion.
 
+The selected actor also shows its invisible parts: collider shapes (green,
+triggers blue), the character controller's capsule, joint anchors, reach and
+hinge or slider axes, a light's range, cone or panel, and a carried camera's
+frustum. Other actors show only their lights and cameras, faintly.
+`scene_gizmos::actor_lines` builds them from the document as plain line
+lists, so they are tested headless; Rapier's own debug view stays a
+separate toggle.
+
 ## Simulation and presentation registration
 
 `blockloom-runtime/src/simulation.rs` is the half of `add_world` that a server

@@ -106,6 +106,7 @@ mod queries;
 mod ragdoll;
 mod ray_tracing;
 mod record;
+mod scene_gizmos;
 mod screenfx;
 mod script;
 #[cfg(all(
