@@ -10,17 +10,201 @@ use crate::project::{Actor, Project};
 use crate::scene::{Mode, Visual};
 
 /// Which samples exist, for the project dialog and the shell.
-pub const SAMPLES: [&str; 1] = ["physics-playground"];
+pub const SAMPLES: [&str; 2] = ["physics-playground", "third-person"];
+
+/// Where the third-person sample keeps its figure.
+pub const FIGURE: &str = "assets/models/figure.glb";
 
 /// Builds the sample named `sample` (see [`SAMPLES`]).
 pub fn build(sample: &str, name: &str, mode: Mode) -> Result<Project, String> {
     match sample {
         "physics-playground" => physics_playground(name, mode),
+        "third-person" => third_person(name, mode),
         other => Err(format!(
             "No sample called \"{other}\". Samples: {}",
             SAMPLES.join(", ")
         )),
     }
+}
+
+/// The files a sample brings into its project folder, by relative path.
+pub fn files(sample: &str) -> Vec<(&'static str, Vec<u8>)> {
+    match sample {
+        "third-person" => vec![(FIGURE, crate::figure::glb())],
+        _ => Vec::new(),
+    }
+}
+
+/// The third-person template: the blocky figure as the player, walking,
+/// running and jumping on one blended animator with foot and head IK, and a
+/// boulder that knocks it limp for two seconds. A footstep counter shows the
+/// animator's markers reaching the blocks.
+fn third_person(name: &str, mode: Mode) -> Result<Project, String> {
+    use crate::animation::{AnimationLayer, AnimationSpec, FrameMarker, ModelIk, RagdollSpec};
+    use crate::blocks::{Instruction, InstructionKind as K, Strand};
+    use crate::components::ActorComponent;
+    use crate::figure;
+    use crate::value::Value;
+    if !mode.is_3d() {
+        return Err("the third-person sample is 3D only".to_string());
+    }
+    let mut project = Project::starter(name, mode);
+    // Room to run.
+    if let Some(ground) = project.actors.iter_mut().find(|a| a.name == "Ground") {
+        ground.components.set_visual(Visual::Plane {
+            color: "#3E4A5B".into(),
+            size: [120.0, 120.0],
+        });
+    }
+    let mut library = project.physics.materials.clone();
+    let (scene, settings) = project.active_scene_and_settings();
+    scene.migrate_physics(&mut library);
+    let player = scene
+        .actors
+        .iter()
+        .find(|a| a.name == "Player")
+        .map(|a| a.id.clone())
+        .ok_or("the starter project lost its player")?;
+    scene.apply_player_preset(
+        &mut settings.input,
+        &player,
+        PlayerPreset::ThirdPerson3d,
+        true,
+        &library,
+    )?;
+    let actor = scene.actor_mut(&player).ok_or("the player went missing")?;
+    let height = actor
+        .components
+        .character_controller()
+        .map_or(1.8, |controller| controller.height);
+    let size = height / 1.8;
+    actor.components.set_visual(Visual::Model {
+        path: FIGURE.to_string(),
+        tint: "#FFFFFF".to_string(),
+        scale: [size; 3],
+        animation: String::new(),
+    });
+    let motor = actor
+        .components
+        .character_motor()
+        .cloned()
+        .unwrap_or_default();
+    let mut animation: AnimationSpec = AnimationSpec::default();
+    let clips: Vec<crate::pipeline::ModelClip> = figure::clip_lengths()
+        .into_iter()
+        .map(|(name, seconds)| crate::pipeline::ModelClip {
+            name: name.to_string(),
+            seconds,
+        })
+        .collect();
+    animation.add_model_clips(&clips);
+    animation.add_locomotion(motor.walk_speed, motor.sprint_speed);
+    // A footstep at each foot's plant.
+    for clip in &mut animation.clips {
+        let frames: &[usize] = match clip.name.as_str() {
+            "Walk" => &[1, 16],
+            "Run" => &[1, 10],
+            _ => &[],
+        };
+        clip.markers = frames
+            .iter()
+            .map(|&frame| FrameMarker {
+                frame,
+                name: "step".to_string(),
+            })
+            .collect();
+    }
+    animation.ik = Some(ModelIk {
+        feet: figure::FEET.iter().map(|b| b.to_string()).collect(),
+        hips: figure::HIPS.to_string(),
+        foot_reach: 0.4,
+        foot_height: 0.05 * size,
+        head: figure::HEAD.to_string(),
+        look_limit: 70.0,
+    });
+    animation.ragdoll = Some(RagdollSpec {
+        bones: figure::RAGDOLL.iter().map(|b| b.to_string()).collect(),
+        radius: 0.08 * size,
+        mass: 70.0,
+        swing: 60.0,
+        get_up: 0.5,
+    });
+    animation.layers = vec![AnimationLayer {
+        name: "upper body".to_string(),
+        bones: figure::UPPER_BODY.iter().map(|b| b.to_string()).collect(),
+        weight: 1.0,
+    }];
+    animation.normalize();
+    actor
+        .components
+        .insert(ActorComponent::Animation { animation });
+    let verb = |name: &str, args: Vec<Value>| K::Verb {
+        verb: name.to_string(),
+        args,
+    };
+    let strand = |x: i32, kinds: Vec<K>| {
+        Strand::with_instructions(x, 0, kinds.into_iter().map(Instruction::new).collect())
+    };
+    actor.graph.strands = vec![
+        strand(
+            0,
+            vec![
+                K::WhenAnimationMarker {
+                    marker: "step".to_string(),
+                },
+                K::ChangeVariable {
+                    name: "steps".to_string(),
+                    value: Value::number(1.0),
+                },
+            ],
+        ),
+        strand(
+            320,
+            vec![
+                K::WhenCollision {
+                    with: "Boulder".to_string(),
+                    phase: super::ContactPhase::Enter,
+                    scope: Default::default(),
+                },
+                verb("go_limp", Vec::new()),
+                K::Wait {
+                    duration: Value::number(2.0),
+                },
+                verb("get_up", Vec::new()),
+            ],
+        ),
+        strand(
+            640,
+            vec![
+                K::WhenStarted,
+                verb("look_at", vec![Value::text("Boulder")]),
+            ],
+        ),
+    ];
+
+    // A boulder that drops onto where the player starts.
+    let boulder = scene.add_actor({
+        let mut boulder = Actor::new(
+            "Boulder",
+            Visual::Sphere {
+                color: "#8D8D8D".into(),
+                radius: 0.5,
+            },
+        );
+        boulder.components.placement_mut().position = [0.3, 12.0, 0.0];
+        boulder
+    });
+    scene.set_rigidbody(
+        &boulder,
+        RigidbodySpec {
+            body_type: BodyType::Dynamic,
+            ..RigidbodySpec::default()
+        },
+        &library,
+    )?;
+    scene.add_collider(&boulder, ColliderSpec::from_look(), &library)?;
+    project.physics.materials = library;
+    Ok(project)
 }
 
 struct Spawn {
@@ -243,6 +427,26 @@ mod tests {
     fn plan(project: &Project) -> PhysicsPlan {
         let scene = project.active_scene();
         PhysicsPlan::build(&scene.actors, scene.world.mode, &project.physics)
+    }
+
+    #[test]
+    fn the_third_person_template_carries_its_figure_and_animator() {
+        assert!(build("third-person", "T", Mode::TwoD).is_err());
+        let project = build("third-person", "T", Mode::ThreeD).unwrap();
+        let errors: Vec<_> = plan(&project).errors().map(|i| i.message.clone()).collect();
+        assert!(errors.is_empty(), "{errors:?}");
+        let player = project.actors.iter().find(|a| a.name == "Player").unwrap();
+        assert!(matches!(player.visual(), Some(Visual::Model { path, .. }) if path == FIGURE));
+        let spec = player.components.animation().unwrap();
+        assert_eq!(spec.initial, crate::animation::LOCOMOTION);
+        assert!(spec.ik.is_some() && spec.ragdoll.is_some() && spec.layers.len() == 1);
+        let walk = spec.find_clip("Walk").unwrap();
+        assert_eq!(walk.markers.len(), 2);
+        assert!(player.components.character_motor().is_some());
+        let files = files("third-person");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].0, FIGURE);
+        assert_eq!(&files[0].1[..4], b"glTF");
     }
 
     #[test]

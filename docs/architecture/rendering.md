@@ -305,6 +305,19 @@ from the pose they lay in back to the animation over `get_up` seconds
 (`GettingUp`). It needs the loaded model, so a headless world has nothing to
 ragdoll.
 
+`figure::glb` writes a blocky rigged figure from code. It is a skinned mesh of
+boxes, each rigidly on one of 11 bones, with Idle, Walk, Run and Jump clips. It
+stands 1.8 m tall around its origin and faces -Z. The `third-person` sample
+(3D only) ships it as `assets/models/figure.glb` through `sample::files`, which
+`create-project` writes into the new folder. Its player is the third-person
+preset scaled to the controller's height, with a Locomotion blend over the
+motor, `step` markers counted by a block, IK, a ragdoll, an upper-body layer,
+a head that watches a falling boulder, and `go limp` for two seconds when the
+boulder hits. `simulation::tests::the_third_person_template_walks_jumps_lands_and_runs`
+drives it headless through blocks (forward, a jump, a sprint). It checks
+Locomotion, then Jump, then Locomotion again, walk blending into run, and
+counted footsteps, and that the VM and compiled logic agree on all of them.
+
 A solid tilemap collides per tile, as the merged rects of
 `Tilemap::solid_rects` (minus its `passable` tiles), and nav blocks the same
 rects. Ray and overlap queries see them too, as a `ColliderShape::Parts`

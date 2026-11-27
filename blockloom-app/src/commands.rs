@@ -633,6 +633,15 @@ pub(crate) fn create_project(
     // Before the folder exists, so a refused close leaves nothing behind.
     close_open_project(&mut s, !discard)?;
     let dir = project::create_project(&project, &parent)?;
+    if let Some(sample) = sample.as_deref().map(str::trim) {
+        for (relative, bytes) in blockloom_core::physics::sample::files(sample) {
+            let file = dir.join(relative);
+            if let Some(folder) = file.parent() {
+                std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&file, bytes).map_err(|e| format!("{relative}: {e}"))?;
+        }
+    }
     blockloom_core::hub::bind_new_project(&dir);
     let session = s.session_id.clone();
     library::remember(&dir);

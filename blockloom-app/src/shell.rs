@@ -107,7 +107,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "create-project",
         cmd: "create_project",
         aliases: &["create_project"],
-        summary: "Make a project folder under location and open it, empty or from a sample (physics-playground: a player, crates, a pendulum, a motor wheel, a door, a breakable joint and a trigger zone).",
+        summary: "Make a project folder under location and open it, empty or from a sample (physics-playground: a player, crates, a pendulum, a motor wheel, a door, a breakable joint and a trigger zone; third-person, 3D only: a rigged figure that walks, runs and jumps on a blended animator with foot and head IK, and a boulder that knocks it limp).",
         args: &[
             ArgSpec {
                 name: "name",
@@ -126,7 +126,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
             },
             ArgSpec {
                 name: "sample",
-                ty: "physics-playground",
+                ty: "physics-playground|third-person",
                 required: false,
             },
             ArgSpec {

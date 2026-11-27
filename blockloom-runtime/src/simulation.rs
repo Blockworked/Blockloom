@@ -266,6 +266,21 @@ mod tests {
     /// fixed step at 60 Hz. Schedules the blocks through native logic compiled into `native` when
     /// given a folder, and through the VM otherwise.
     fn headless_with(project: Project, mode: Mode, native: Option<&std::path::Path>) -> App {
+        headless_app(project, mode, native, false)
+    }
+
+    /// `headless_with`, but the world builds itself from the document the way
+    /// a run does (components attached, bodies and motors installed).
+    fn headless_built(project: Project, mode: Mode, native: Option<&std::path::Path>) -> App {
+        headless_app(project, mode, native, true)
+    }
+
+    fn headless_app(
+        project: Project,
+        mode: Mode,
+        native: Option<&std::path::Path>,
+        rebuild: bool,
+    ) -> App {
         blockloom_core::value::register_blockloom_operators();
         let (_sender, incoming) = std::sync::mpsc::channel();
         let mut engine = Engine::new(incoming, mode);
@@ -294,11 +309,13 @@ mod tests {
         app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
             1.0 / 60.0,
         )));
-        for actor in &actors {
-            let entity = app.world_mut().spawn(world::actor_bundle(actor)).id();
-            engine.entities.insert(actor.id.clone(), entity);
+        if !rebuild {
+            for actor in &actors {
+                let entity = app.world_mut().spawn(world::actor_bundle(actor)).id();
+                engine.entities.insert(actor.id.clone(), entity);
+            }
         }
-        engine.rebuild = false;
+        engine.rebuild = rebuild;
         world::begin_run(&mut engine, 0.0, 0.0);
         add_simulation(&mut app, mode, engine);
         app
@@ -830,5 +847,116 @@ mod tests {
             assert_eq!(compiled, position_after(mode, 60), "{mode:?}");
             let _ = std::fs::remove_dir_all(root);
         }
+    }
+
+    /// The third-person template driven by its own blocks: what its animator
+    /// went through each tick, and its footstep count.
+    fn template_run(native: Option<&std::path::Path>) -> (Vec<String>, Vec<Vec<String>>, f64) {
+        use blockloom_core::blocks::{Instruction, InstructionKind as K, Strand};
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::physics::motor::{MotorAction, MotorOwner, MoveSpace};
+        use blockloom_core::value::Value;
+        let mut project =
+            blockloom_core::physics::sample::build("third-person", "T", Mode::ThreeD).unwrap();
+        let player = project
+            .actors
+            .iter_mut()
+            .find(|a| a.name == "Player")
+            .unwrap();
+        // Blocks steer it: forward, a jump, then a sprint.
+        let mut motor = player.components.character_motor().cloned().unwrap();
+        motor.owner = MotorOwner::Script;
+        motor.space = MoveSpace::World;
+        player
+            .components
+            .insert(ActorComponent::CharacterMotor { motor });
+        let act = |action: MotorAction, z: f64| K::MotorAct {
+            action,
+            x: Value::number(0.0),
+            y: Value::number(0.0),
+            z: Value::number(z),
+        };
+        let wait = |seconds: f64| K::Wait {
+            duration: Value::number(seconds),
+        };
+        player.graph.strands.push(Strand::with_instructions(
+            960,
+            0,
+            [
+                K::WhenStarted,
+                act(MotorAction::Intent, -1.0),
+                wait(1.5),
+                act(MotorAction::Jump, 0.0),
+                wait(1.5),
+                act(MotorAction::SprintOn, 0.0),
+            ]
+            .into_iter()
+            .map(Instruction::new)
+            .collect(),
+        ));
+        let id = player.id.clone();
+        let mut app = headless_built(project, Mode::ThreeD, native);
+        let mut states: Vec<String> = Vec::new();
+        let mut blends: Vec<Vec<String>> = Vec::new();
+        for _ in 0..=300 {
+            app.update();
+            let mut players = app
+                .world_mut()
+                .query::<(&crate::engine::ActorId, &crate::engine::AnimationPlayer)>();
+            let Some((_, playing)) = players.iter(app.world()).find(|(a, _)| a.0 == id) else {
+                continue;
+            };
+            if states.last() != Some(&playing.state) {
+                states.push(playing.state.clone());
+            }
+            let mut mixed: Vec<String> = playing
+                .blend
+                .iter()
+                .filter(|(_, w)| *w > 0.05)
+                .map(|(clip, _)| clip.clone())
+                .collect();
+            mixed.sort();
+            if blends.last() != Some(&mixed) {
+                blends.push(mixed);
+            }
+        }
+        let steps = app
+            .world()
+            .non_send::<Engine>()
+            .variables
+            .read(&id, "steps")
+            .as_number()
+            .unwrap_or(0.0);
+        (states, blends, steps)
+    }
+
+    /// Phase D's check: the template walks, runs, jumps and lands on the
+    /// blended animator, and its footsteps reach the blocks; the VM and the
+    /// compiled logic agree on all of it.
+    #[test]
+    fn the_third_person_template_walks_jumps_lands_and_runs() {
+        let (states, blends, steps) = template_run(None);
+        let locomotion = blockloom_core::animation::LOCOMOTION.to_string();
+        let jump = states.iter().position(|s| s == "Jump").expect("it jumped");
+        assert_eq!(states[0], locomotion, "{states:?}");
+        assert!(
+            states[jump + 1..].contains(&locomotion),
+            "it landed: {states:?}"
+        );
+        // It walks, then the sprint blends walk into run on the way to a run.
+        let seen = |clip: &str| blends.iter().any(|mix| mix.iter().any(|c| c == clip));
+        assert!(seen("Walk") && seen("Run"), "{blends:?}");
+        assert!(blends.iter().any(|mix| mix.len() == 2), "{blends:?}");
+        assert!(steps >= 4.0, "{steps} footsteps");
+        if blockloom_core::script::toolchain_version().is_err() {
+            return;
+        }
+        let root =
+            std::env::temp_dir().join(format!("blockloom-template-logic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let compiled = template_run(Some(&root));
+        let _ = std::fs::remove_dir_all(root);
+        assert_eq!(compiled, (states, blends, steps));
     }
 }

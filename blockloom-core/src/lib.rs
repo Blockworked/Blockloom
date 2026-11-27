@@ -52,6 +52,7 @@ pub mod destruction;
 mod distribution;
 pub mod environment_asset;
 pub mod fields;
+pub mod figure;
 pub mod files;
 pub mod fog;
 pub mod hub;

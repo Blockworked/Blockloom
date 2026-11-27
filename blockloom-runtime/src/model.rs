@@ -736,6 +736,26 @@ mod tests {
     }
 
     #[test]
+    fn the_generated_figure_is_a_valid_gltf_for_the_loader() {
+        let bytes = blockloom_core::figure::glb();
+        let gltf = bevy::gltf::gltf::Gltf::from_slice(&bytes).expect("a valid glb");
+        let skin = gltf.skins().next().expect("a skin");
+        assert_eq!(skin.joints().count(), 11);
+        let names: Vec<_> = gltf
+            .animations()
+            .filter_map(|a| a.name().map(str::to_string))
+            .collect();
+        assert_eq!(names, ["Idle", "Walk", "Run", "Jump"]);
+        let blob = gltf.blob.as_deref().expect("a binary chunk");
+        for animation in gltf.animations() {
+            for channel in animation.channels() {
+                let reader = channel.reader(|_| Some(blob));
+                assert!(reader.read_inputs().is_some_and(|times| times.count() >= 2));
+            }
+        }
+    }
+
+    #[test]
     fn region_masks_leave_each_region_only_its_own_group() {
         assert_eq!(region_mask(0, 1), 0);
         assert_eq!(region_mask(0, 3), 0b110);

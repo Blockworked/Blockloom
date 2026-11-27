@@ -10,8 +10,9 @@ StitchDialog {
     id: root
     required property var app
     property string mode: "TwoD"
-    // "" starts empty; "physics-playground" starts from the physics sample.
+    // "" starts empty, otherwise a sample by name ("third-person" is 3D only).
     property string sample: ""
+    onModeChanged: if (mode === "TwoD" && sample === "third-person") sample = ""
     property string error: ""
     property bool busy: false
     title: "New project"
@@ -69,10 +70,13 @@ StitchDialog {
             spacing: 6
             StitchButton { objectName: "sample-empty"; text: "Empty"; primary: root.sample === ""; onClicked: root.sample = "" }
             StitchButton { objectName: "sample-physics"; text: "Physics playground"; primary: root.sample === "physics-playground"; onClicked: root.sample = "physics-playground" }
+            StitchButton { objectName: "sample-third-person"; text: "Third person"; visible: root.mode === "ThreeD"; primary: root.sample === "third-person"; onClicked: root.sample = "third-person" }
         }
         Text {
             visible: root.sample !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
-            text: "A player, a stack of crates, a pendulum on a rope, a motor wheel, a door" + (root.mode === "TwoD" ? " (3D only)" : "") + ", a joint that snaps and a trigger zone, all made of components with no custom code."
+            text: root.sample === "third-person"
+                ? "A rigged figure that walks, runs and jumps on one blended animator, plants its feet and turns its head, and a boulder that knocks it limp for two seconds."
+                : "A player, a stack of crates, a pendulum on a rope, a motor wheel, a door" + (root.mode === "TwoD" ? " (3D only)" : "") + ", a joint that snaps and a trigger zone, all made of components with no custom code."
         }
         RowLayout {
             Layout.alignment: Qt.AlignRight; Layout.topMargin: 8; spacing: 8
