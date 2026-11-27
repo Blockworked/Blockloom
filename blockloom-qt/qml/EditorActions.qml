@@ -39,7 +39,7 @@ QtObject {
     readonly property var menus: [
         { title: "File", items: ["close_project", "save_project", "-", "editor.import", "editor.export", "-", "editor.build", "-", "editor.projectSettings", "editor.appSettings"] },
         { title: "Edit", items: ["undo", "redo", "-", "editor.palette"] },
-        { title: "View", items: ["editor.showCode", "editor.showGame", "editor.showInterface", "editor.showDevices", "-", "editor.split", "-", "editor.assets", "editor.runLog", "editor.problems"] },
+        { title: "View", items: ["editor.showCode", "editor.showGame", "editor.showInterface", "editor.showDevices", "-", "editor.split", "-", "editor.assets", "editor.runLog", "editor.problems", "editor.profiler"] },
         { title: "Run", items: ["run_project", "stop_project", "editor.pause", "step_project", "-", "run_tests", "-", "close_runtime"] },
         { title: "Plugins", items: ["editor.plugins", "editor.pluginPanels", "editor.pluginEditors"] },
         { title: "Help", items: ["editor.palette", "editor.shortcuts"] }
@@ -64,6 +64,7 @@ QtObject {
         "editor.assets": { label: "Assets", icon: "folder" },
         "editor.runLog": { label: "Run log", icon: "scroll" },
         "editor.problems": { label: "Problems", icon: "triangle-alert" },
+        "editor.profiler": { label: "Profiler", icon: "gauge" },
         "run_project": { label: "Play", icon: "play" },
         "stop_project": { label: "Stop", icon: "square" },
         "editor.pause": { label: "Pause", icon: "pause" },

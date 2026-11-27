@@ -47,7 +47,8 @@ Item {
         { id: "inspector", title: "Inspector", iconName: "sliders-horizontal", edge: "right" },
         { id: "assets", title: "Assets", iconName: "folder", edge: "bottom" },
         { id: "runLog", title: "Run log", iconName: "scroll", edge: "bottom" },
-        { id: "problems", title: "Problems", iconName: "triangle-alert", edge: "bottom" }
+        { id: "problems", title: "Problems", iconName: "triangle-alert", edge: "bottom" },
+        { id: "profiler", title: "Profiler", iconName: "gauge", edge: "bottom" }
     ]
     readonly property var pluginPanels: appState.plugins && appState.plugins.panels ? appState.plugins.panels : []
     function pluginPanelId(p) { return "plugin:" + p.plugin + "/" + p.panel.name; }
@@ -91,7 +92,7 @@ Item {
         root.showPanel(id);
     }
     function panelItem(id) {
-        const own = { actors: actorsPanel, inspector: inspector, assets: assetsPanel, runLog: runLogPanel, problems: problems };
+        const own = { actors: actorsPanel, inspector: inspector, assets: assetsPanel, runLog: runLogPanel, problems: problems, profiler: profilerPanel };
         if (own[id]) return own[id];
         for (let i = 0; i < pluginPanelItems.count; ++i) {
             const item = pluginPanelItems.objectAt(i);
@@ -102,7 +103,7 @@ Item {
 
     EditorActions { id: actions; app: root.app; page: root }
     // Actions that show or fold one panel, wherever it docks.
-    readonly property var panelActions: ({ "editor.assets": "assets", "editor.runLog": "runLog", "editor.problems": "problems" })
+    readonly property var panelActions: ({ "editor.assets": "assets", "editor.runLog": "runLog", "editor.problems": "problems", "editor.profiler": "profiler" })
     // The window's own actions, which EditorActions hands back here.
     function editorAction(id) {
         const views = ["editor.showCode", "editor.showGame", "editor.showInterface", "editor.showDevices"];
@@ -430,6 +431,7 @@ Item {
         AssetTray { id: assetsPanel; app: root.app; docked: true }
         RunLog { id: runLogPanel; app: root.app; docked: true; onOpenScriptRequested: (path, line) => inspector.openScript(path, line) }
         ProblemsPanel { id: problems; app: root.app; onOpenScriptRequested: (path, line) => inspector.openScript(path, line) }
+        ProfilerPanel { id: profilerPanel; app: root.app }
     }
     Instantiator {
         id: pluginPanelItems

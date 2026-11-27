@@ -42,8 +42,14 @@ strand and go through blockstitch's `edit_reporter_branch`
 
 The editor page (`EditorPage.qml`) is a shell of three `PanelDock`s
 (blockstitch `DockRegion`s): actors on the left, the inspector on the right,
-and Assets, Run log, Problems and every plugin panel as tabs along the bottom.
-Each panel lives once in a hidden pool and is parented into the region its
+and Assets, Run log, Problems, Profiler and every plugin panel as tabs along the bottom.
+The Run log (`RunLog.qml`) keeps every line the backend holds in `all` and
+shows those that pass its kind buttons (All, Errors with a count, Says,
+Other) and its find field, which matches a line or its actor. The Profiler
+(`ProfilerPanel.qml`) lists every `render_metrics` row the runtime reports,
+grouped by the name before the first `/`, with the average and peak over the
+last 30 status updates; it can hold its numbers and filter by name. The fps
+chip's popup in the top bar stays as the short version. Each panel lives once in a hidden pool and is parented into the region its
 id is placed in; a region's move button sends the current panel to another
 edge, and the layout is kept in QML `Settings`. Code and Game sit
 side by side when `split` is on. Everything the window can do is an id in

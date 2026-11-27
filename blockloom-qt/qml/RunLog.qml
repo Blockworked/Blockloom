@@ -24,19 +24,47 @@ Rectangle {
     property real shownTotal: 0
     onLogChanged: sync()
     Component.onCompleted: sync()
+    // Which lines show: "all", "errors", "says" or "other", and words to find
+    // in a line or its actor's name.
+    property string show: "all"
+    property string search: ""
+    onShowChanged: refilter()
+    onSearchChanged: refilter()
+    property int errorCount: 0
+    function isError(e) { return e.level === "error" || e.kind === "error"; }
+    function passes(e) {
+        if (root.show === "errors" && !root.isError(e)) return false;
+        if (root.show === "says" && e.kind !== "say") return false;
+        if (root.show === "other" && (e.kind === "say" || root.isError(e))) return false;
+        const wanted = root.search.trim().toLowerCase();
+        return !wanted || e.words.toLowerCase().indexOf(wanted) >= 0 || e.actor.toLowerCase().indexOf(wanted) >= 0;
+    }
     function sync() {
         const incoming = log.lines, added = log.total - shownTotal;
-        const entry = line => ({ kind: line.kind, level: line.level || line.kind, actor: line.actor, words: line.text, path: line.path || "", line: line.line || 0 });
+        const entry = line => ({ kind: line.kind, level: line.level || line.kind, actor: line.actor || "", words: line.text || "", path: line.path || "", line: line.line || 0 });
         if (added < 0 || added > incoming.length) {
-            lineModel.clear();
-            for (const line of incoming) lineModel.append(entry(line));
+            all = incoming.map(entry);
+            refilter();
         } else {
-            for (let i = incoming.length - added; i < incoming.length; i++) lineModel.append(entry(incoming[i]));
-            if (lineModel.count > incoming.length) lineModel.remove(0, lineModel.count - incoming.length);
+            const fresh = [];
+            for (let i = incoming.length - added; i < incoming.length; i++) fresh.push(entry(incoming[i]));
+            const dropped = all.length + fresh.length - incoming.length;
+            all = all.concat(fresh).slice(Math.max(0, dropped));
+            if (dropped > 0) refilter();
+            else for (const e of fresh) { if (root.isError(e)) root.errorCount++; if (root.passes(e)) lineModel.append(e); }
         }
         shownTotal = log.total;
     }
+    // Every line the backend still holds; lineModel is the ones that pass.
+    property var all: []
+    function refilter() {
+        lineModel.clear();
+        let errors = 0;
+        for (const e of all) { if (root.isError(e)) errors++; if (root.passes(e)) lineModel.append(e); }
+        root.errorCount = errors;
+    }
     ListModel { id: lineModel }
+    function shownCount() { return lineModel.count; }
     function shown(value) { return value.value === undefined ? String(value.kind) : String(value.value); }
 
     ColumnLayout {
@@ -65,6 +93,23 @@ Rectangle {
                 delegate: Text { required property var modelData; text: modelData.name + ": " + root.shown(modelData.value); color: Theme.text; font.pixelSize: 12 }
             }
             Item { Layout.fillWidth: true }
+            Repeater {
+                model: [{ id: "all", label: "All" }, { id: "errors", label: "Errors" }, { id: "says", label: "Says" }, { id: "other", label: "Other" }]
+                StitchButton {
+                    required property var modelData
+                    objectName: "runlog-show-" + modelData.id
+                    flat: root.show !== modelData.id; primary: root.show === modelData.id
+                    implicitHeight: 24; font.pixelSize: 11
+                    text: modelData.id === "errors" && root.errorCount ? "Errors (" + root.errorCount + ")" : modelData.label
+                    onClicked: root.show = modelData.id
+                }
+            }
+            StitchTextField {
+                objectName: "runlog-search"
+                Layout.preferredWidth: 160; implicitHeight: 24; font.pixelSize: 11
+                placeholderText: "Find in the log"
+                onTextChanged: root.search = text
+            }
             IconButton { iconName: "trash-2"; tip: "Clear the log"; implicitWidth: 24; implicitHeight: 24; onClicked: root.app.invoke("clear_log") }
         }
         ListView {

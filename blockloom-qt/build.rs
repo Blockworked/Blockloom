@@ -37,6 +37,7 @@ fn main() {
                 "qml/EditorActions.qml",
                 "qml/CommandPalette.qml",
                 "qml/ProblemsPanel.qml",
+                "qml/ProfilerPanel.qml",
                 "qml/PluginSettingsPage.qml",
                 "qml/ActorList.qml",
                 "qml/BlockSidebar.qml",

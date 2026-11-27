@@ -26,6 +26,7 @@ pub const KEYMAP: &[Binding] = &[
     bind("run_project", &["F5"]),
     bind("stop_project", &["Shift+F5"]),
     bind("step_project", &["F10"]),
+    bind("run_tests", &["Ctrl+F5"]),
     bind("close_project", &["Ctrl+Shift+W"]),
     bind("editor.palette", &["Ctrl+Shift+P", "Ctrl+K"]),
     bind("editor.build", &["Ctrl+B"]),
@@ -41,6 +42,7 @@ pub const KEYMAP: &[Binding] = &[
     bind("editor.problems", &["Ctrl+Shift+M"]),
     bind("editor.runLog", &["Ctrl+`"]),
     bind("editor.assets", &["Ctrl+Shift+A"]),
+    bind("editor.profiler", &["Ctrl+Alt+P"]),
 ];
 
 /// The user's rebindings: action to keys, an empty list unbinding it.
