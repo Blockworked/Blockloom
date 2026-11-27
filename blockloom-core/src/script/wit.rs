@@ -1903,7 +1903,7 @@ mod tests {
     #[test]
     fn guest_crate_covers_every_abi_verb() {
         let guest = include_str!("../../../blockloom-script-guest/src/lib.rs");
-        let verbs = include_str!("../../../blockloom-script-guest/src/verbs.rs");
+        let verbs = include_str!("../../../blockloom-script-guest/src/abi_ids.rs");
         for prefix in ["READ", "TEXT", "ACT", "EVENT"] {
             let mine = abi_verbs(prefix);
             let theirs = guest_verbs(verbs, prefix);

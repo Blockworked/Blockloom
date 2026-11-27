@@ -39,9 +39,9 @@
 //! export_script!(start = start, tick = tick, event = event);
 //! ```
 
-mod verbs;
+mod abi_ids;
 
-pub use verbs::*;
+pub use abi_ids::*;
 
 /// The frozen world this crate binds. Matches
 /// `blockloom_core::script::wit::WIT_VERSION`; the core drift test refuses a

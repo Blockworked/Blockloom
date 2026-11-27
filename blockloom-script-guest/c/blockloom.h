@@ -1,5 +1,5 @@
 /* C binding for the frozen blockloom:script world, over the same three core
- * wasm imports the Rust guest uses. Verb numbers come from verbs.rs (a core
+ * wasm imports the Rust guest uses. Verb numbers come from abi_ids.rs (a core
  * drift test holds them to abi.rs). Freestanding: no libc, no WASI.
  *
  * clang --target=wasm32 -O2 -nostdlib -Wl,--no-entry -Wl,--export-memory \
