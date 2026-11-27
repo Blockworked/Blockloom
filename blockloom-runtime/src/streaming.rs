@@ -654,7 +654,7 @@ pub fn warm_up(
     mut engine: NonSendMut<Engine>,
     mut warmup: ResMut<Warmup>,
     real: Res<Time<Real>>,
-    time: Res<Time>,
+    fixed: Res<Time<Fixed>>,
     backlog: Option<Res<PipelineBacklog>>,
     loads: Res<Loads>,
     cells: Res<StreamingCells>,
@@ -666,7 +666,7 @@ pub fn warm_up(
         if engine.starting && !engine.rebuild {
             crate::world::begin_run(
                 &mut engine,
-                time.elapsed_secs_f64(),
+                fixed.elapsed_secs_f64(),
                 real.elapsed_secs_f64(),
             );
         }
@@ -704,7 +704,7 @@ pub fn warm_up(
     if engine.starting {
         crate::world::begin_run(
             &mut engine,
-            time.elapsed_secs_f64(),
+            fixed.elapsed_secs_f64(),
             real.elapsed_secs_f64(),
         );
     }

@@ -86,6 +86,7 @@ pub(crate) fn apply_camera(
     mut look: ResMut<Look2d>,
     time: Res<Time>,
     real: Res<Time<Real>>,
+    fixed: Res<Time<Fixed>>,
     editor: Option<Res<crate::edit::SceneEditor>>,
     mut cameras: Query<(&mut Transform, &mut Projection), With<WorldCamera>>,
 ) {
@@ -117,14 +118,14 @@ pub(crate) fn apply_camera(
         let until = now + asked as f64;
         state.hitstop_until = Some(state.hitstop_until.map_or(until, |u| u.max(until)));
         if !engine.paused {
-            crate::world::set_paused(&mut engine, true, time.elapsed_secs_f64());
+            crate::world::set_paused(&mut engine, true, fixed.elapsed_secs_f64());
         }
     }
     if let Some(until) = state.hitstop_until
         && now >= until
     {
         state.hitstop_until = None;
-        crate::world::set_paused(&mut engine, false, time.elapsed_secs_f64());
+        crate::world::set_paused(&mut engine, false, fixed.elapsed_secs_f64());
     }
 
     // Zoom: view height wins over pixels per unit, which wins over the

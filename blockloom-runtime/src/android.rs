@@ -257,7 +257,7 @@ fn sync_device_insets(
 /// timers resume where they froze instead of jumping.
 fn auto_pause(
     mut engine: NonSendMut<crate::engine::Engine>,
-    time: Res<Time>,
+    time: Res<Time<Fixed>>,
     mut focus: MessageReader<WindowFocused>,
     mut state: ResMut<AutoPaused>,
 ) {

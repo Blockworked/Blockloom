@@ -12,7 +12,6 @@ pub fn pump_editor(
     mut volume_debug: Option<ResMut<crate::volumes::VolumeDebugView>>,
     mut captures: Option<ResMut<crate::capture::ExrCaptures>>,
     mut bakes: Option<ResMut<crate::light_probes::ProbeBaker>>,
-    time: Res<Time>,
     real: Res<Time<Real>>,
     mut fixed: ResMut<Time<Fixed>>,
     mut exit: MessageWriter<AppExit>,
@@ -23,7 +22,9 @@ pub fn pump_editor(
     if rate.is_finite() {
         fixed.set_timestep_hz(rate.clamp(1.0, 1000.0) as f64);
     }
-    let now = time.elapsed_secs_f64();
+    // The run clock is the fixed clock, so a `wait` ends on the same tick
+    // however the frames that pressed Play happened to fall.
+    let now = fixed.elapsed_secs_f64();
     // A patch that can't respawn actors on their own loads the patched copy.
     let mut again: Option<EditorMessage> = None;
     loop {

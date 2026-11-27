@@ -168,6 +168,15 @@ asset stores therefore sit only in presentation: `rebuild_world` and
 `apply_lifetimes` take none, colour tweens and 2D frame drawing take theirs as
 `Option`, and the drawing caches a rebuild clears are optional too.
 
+A replay must land on the same tick whatever the frames did, which the corpus
+checks. Two rules keep it so. The run clock is `Time<Fixed>`: `begin_run` and
+every `set_paused` caller pass the fixed clock's elapsed time, so a `wait` wakes
+on the same tick. And the simulation runs Bevy's `mark_dirty_trees` in
+`FixedPostUpdate` before Rapier's transform propagation, which otherwise skips
+every tree Bevy hasn't marked since the last frame: a kinematic parent (any
+actor with collider children) moved twice in one frame would sync last frame's
+pose. `record_poses` and the recorder run after Rapier's writeback.
+
 `rebuild_world` itself is registered by `add_simulation`, in `Update` under
 `world::RebuildSet`; presentation gates that set (`rebuild_ready`, a 2D world
 waits for its sprite shaders) and orders it after `fx::despawn_fx` and before

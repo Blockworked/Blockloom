@@ -63,10 +63,10 @@ fn pause_freezes_the_timer_and_unpause_resumes_it() {
     app.add_systems(Update, pump_editor);
     app.update();
 
-    // Pause at t=15: timer freezes at 5.
+    // The run clock is the fixed one. Pause at t=15: timer freezes at 5.
     sender.send(EditorMessage::Pause { paused: true }).unwrap();
     app.world_mut()
-        .resource_mut::<Time>()
+        .resource_mut::<Time<Fixed>>()
         .advance_to(std::time::Duration::from_secs(15));
     app.update();
     let engine = app.world().non_send::<Engine>();
@@ -77,7 +77,7 @@ fn pause_freezes_the_timer_and_unpause_resumes_it() {
     // Resume at t=25: timer continues from 5, not jumping to 15.
     sender.send(EditorMessage::Pause { paused: false }).unwrap();
     app.world_mut()
-        .resource_mut::<Time>()
+        .resource_mut::<Time<Fixed>>()
         .advance_to(std::time::Duration::from_secs(25));
     app.update();
     let engine = app.world().non_send::<Engine>();
