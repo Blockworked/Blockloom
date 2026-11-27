@@ -36,7 +36,10 @@ from the world camera's `VisibleEntities` only, so shadows are untouched.
 Occlusion is a software Hi-Z: the camera-facing faces of solid, opaque
 `Occluder` boxes (cuboid and plane actors) are rasterized, eroded a texel and
 reduced to a max-depth pyramid. Bevy's GPU `OcclusionCulling` and GPU frustum
-culling (`NoCpuCulling`) are camera toggles in `OcclusionPolicy`. Counts reach
+culling (`NoCpuCulling`) are camera toggles in `OcclusionPolicy`. GPU occlusion
+waits for `gpu_occlusion_meshes` (2000) meshes and drops below half that: its
+depth pyramid measured 3.4 ms a frame on an Arrow Lake iGPU at 1920x1440,
+more than a small scene saves. Counts reach
 the profiler as `culling/*`.
 
 ## Quality and scaling

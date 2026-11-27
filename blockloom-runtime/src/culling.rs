@@ -126,8 +126,11 @@ pub struct OcclusionPolicy {
     pub max_occluders: usize,
     /// Occluders smaller than this on screen aren't drawn into the buffer.
     pub min_occluder_screen: f32,
-    /// Bevy's two-phase GPU occlusion on the world camera.
+    /// Bevy's two-phase GPU occlusion on the world camera, once the world
+    /// has `gpu_occlusion_meshes` meshes. Its depth pyramid costs ~3 ms a
+    /// frame on an integrated GPU, more than it saves in a small scene.
     pub gpu_occlusion: bool,
+    pub gpu_occlusion_meshes: usize,
     /// Frustum culling on the GPU instead of the CPU, for scenes with many
     /// thousands of instances.
     pub gpu_frustum: bool,
@@ -141,6 +144,7 @@ impl Default for OcclusionPolicy {
             max_occluders: 64,
             min_occluder_screen: 0.05,
             gpu_occlusion: true,
+            gpu_occlusion_meshes: 2000,
             gpu_frustum: false,
         }
     }
@@ -275,15 +279,29 @@ pub fn select_lod(
     culling.stats.lod_culled = stats.lod_culled;
 }
 
+/// Whether GPU occlusion should be on for `meshes` meshes. It turns off
+/// again only below half the threshold, so a scene near it doesn't flip.
+pub fn gpu_occlusion_wanted(policy: &OcclusionPolicy, meshes: usize, on: bool) -> bool {
+    let at = if on {
+        policy.gpu_occlusion_meshes / 2
+    } else {
+        policy.gpu_occlusion_meshes
+    };
+    policy.gpu_occlusion && meshes >= at
+}
+
 /// Keeps the world camera's GPU culling in step with the policy.
 pub fn configure_cameras(
     mut commands: Commands,
     policy: Res<OcclusionPolicy>,
     cameras: Query<(Entity, Has<OcclusionCulling>, Has<NoCpuCulling>), With<WorldCamera>>,
+    meshes: Query<(), With<Mesh3d>>,
 ) {
+    let count = meshes.iter().len();
     for (entity, occlusion, gpu_frustum) in &cameras {
         let mut camera = commands.entity(entity);
-        match (policy.gpu_occlusion, occlusion) {
+        let want = gpu_occlusion_wanted(&policy, count, occlusion);
+        match (want, occlusion) {
             (true, false) => {
                 camera.insert(OcclusionCulling);
             }
@@ -675,6 +693,21 @@ mod tests {
                 mesh: None,
             })
             .collect()
+    }
+
+    #[test]
+    fn gpu_occlusion_waits_for_a_big_scene_and_holds_near_the_line() {
+        let policy = OcclusionPolicy::default();
+        let line = policy.gpu_occlusion_meshes;
+        assert!(!gpu_occlusion_wanted(&policy, 40, false));
+        assert!(gpu_occlusion_wanted(&policy, line, false));
+        assert!(gpu_occlusion_wanted(&policy, line / 2 + 1, true));
+        assert!(!gpu_occlusion_wanted(&policy, line / 2 - 1, true));
+        let off = OcclusionPolicy {
+            gpu_occlusion: false,
+            ..policy
+        };
+        assert!(!gpu_occlusion_wanted(&off, line * 4, false));
     }
 
     #[test]
