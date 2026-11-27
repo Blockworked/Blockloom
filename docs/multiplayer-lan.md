@@ -127,6 +127,22 @@ That stronger compatibility gate is required before executable guest gameplay.
 Discovery, packaged host menus, controllable guests,
 dedicated-server shipping and full gameplay replication remain planned.
 
+## Seats and input (schema 3)
+
+An admitted guest gets the lowest free player seat (1 to 16; seat 0 is the
+host's own player) in a seat frame before its first state. It then sends its
+own actions by base name (`Jump`, `Move`) whenever they change and at least
+every 250 ms: at most 64 actions, names up to 64 bytes, finite values within
+10000, and a rising sequence; anything else drops the guest. The host feeds a
+seat's actions in as that player's action copies (`Jump P2` for seat 1), in
+place of the local pad, so a character motor or player camera set to that
+player follows the guest. An action the guest hasn't sent reads as released.
+`when player joins`/`when player leaves` fire on the host with the player
+number (2 and up), and `player count`/`player connected?` read the seats.
+Scripts don't see these events yet. This is the first step of Phase M in
+plan 2, which moves every game onto an integrated server the host joins as a
+client.
+
 ## Verification
 
 Loopback UDP tests cover baseline/delta reconstruction, spawn/delete, dimension

@@ -158,7 +158,7 @@ QtObject {
     readonly property var icons: ({
         Fracture:"hammer", Splash:"droplets", PuffSmoke:"cloud", SpawnDecal:"stamp", FadeDecals:"eraser",
         WhenStarted:"flag", WhenKeyPressed:"keyboard", WhenActionPressed:"gamepad-2", WhenTouched:"pointer", WhenClicked:"mouse-pointer-click",
-        WhenQualityDrops:"gauge", SetRenderSetting:"gauge", SetLook2d:"lamp", WhenCollision:"crosshair", WhenMessage:"radio", WhenTestRuns:"flask-conical", WhenCloned:"copy", WhenParticles:"sparkles", WhenMotor:"footprints", WhenAnimationMarker:"flag", WhenEnterRoom:"square-dashed", WhenUiEvent:"square-mouse-pointer", WhenWeather:"cloud", WhenUiClicked:"square-mouse-pointer", WhenUiChanged:"sliders-horizontal",
+        WhenQualityDrops:"gauge", SetRenderSetting:"gauge", SetLook2d:"lamp", WhenCollision:"crosshair", WhenMessage:"radio", WhenTestRuns:"flask-conical", WhenPlayerJoins:"user-plus", WhenPlayerLeaves:"user-minus", WhenCloned:"copy", WhenParticles:"sparkles", WhenMotor:"footprints", WhenAnimationMarker:"flag", WhenEnterRoom:"square-dashed", WhenUiEvent:"square-mouse-pointer", WhenWeather:"cloud", WhenUiClicked:"square-mouse-pointer", WhenUiChanged:"sliders-horizontal",
         BlockHeader:"blocks", Move:"arrow-right", GoTo:"move", NavigateTo:"navigation", ChangePosition:"move-3d", Glide:"wind", TweenScale:"maximize", TweenRotation:"rotate-cw", TweenColor:"palette", StopTweens:"square", PlayAnimation:"play", StopAnimation:"square", SetAnimationSpeed:"gauge", FireAnimationTrigger:"zap", SetRigSlot:"git-branch", SetSlotTint:"palette", SetIkTarget:"crosshair", SetSpriteDial:"sliders-horizontal", Turn:"rotate-cw",
         SetRotation:"rotate-cw", PointTowards:"target", SetScale:"maximize", SetBody:"boxes", SetTrigger:"ghost", SetCollisionLayer:"layers",
         SetCollisionMask:"filter", ApplyImpulse:"zap", AddForce:"arrow-right", AddTorque:"rotate-cw", ControllerMove:"footprints", SetController:"sliders-horizontal", MotorAct:"person-standing", SetMotor:"gauge", JointAct:"link", CastRay:"crosshair", CastBall:"circle-dot", OverlapBall:"search", FindClosest:"target", SetVelocity:"trending-up", SetGravity:"cloud", SetDensity:"weight", SetMass:"weight",
@@ -194,6 +194,8 @@ QtObject {
             WhenCollision: header([lb("when I"), dd("phase", contactPhaseOptions), dd("with", () => [{ value: "", label: "anything" }].concat(actorOptions(false)), { placeholder: "anything" }), lb("as"), dd("scope", contactScopeOptions)]),
             WhenMessage: header([lb("when I get"), field("name", "message")]),
             WhenTestRuns: header([lb("when test"), field("name", "test name"), lb("runs")]),
+            WhenPlayerJoins: header([lb("when player"), field("player", "any"), lb("joins")]),
+            WhenPlayerLeaves: header([lb("when player"), field("player", "any"), lb("leaves")]),
             WhenCloned: header([lb("when I start as a clone")]),
             WhenMotor: header([lb("when I"), dd("event", () => motorEventOptions)]),
             WhenParticles: header([lb("when my particles"), dd("event", () => particleEventOptions)]),
@@ -602,6 +604,7 @@ QtObject {
         case "WhenCollision": return { with: "", phase: "Enter", scope: "Any" };
         case "WhenMessage": case "Broadcast": return { name: "message1" };
         case "WhenTestRuns": return { name: "my test" };
+        case "WhenPlayerJoins": case "WhenPlayerLeaves": return { player: "" };
         case "BlockHeader": return { block_id: "" };
         case "Move": return { steps: num(10) };
         case "GoTo": return { x: num(0), y: num(0), z: num(0) };
@@ -808,6 +811,8 @@ QtObject {
         TouchX: { prefix: "touch", suffix: "x", result: "number" },
         TouchY: { prefix: "touch", suffix: "y", result: "number" },
         GamepadConnected: { prefix: "gamepad connected?", result: "bool" },
+        PlayerCount: { prefix: "player count", result: "number" },
+        PlayerConnected: { prefix: "player", suffix: "connected?", result: "bool" },
         GamepadAxis: { prefix: "gamepad axis", result: "number", enumArg: { index: 0, options: gamepadAxisOptions } },
         GamepadButtonDown: { prefix: "gamepad button", suffix: "down?", result: "bool", enumArg: { index: 0, options: gamepadButtonOptions } },
         IsTrigger: { prefix: "is", suffix: "a trigger?", result: "bool" },
@@ -898,6 +903,8 @@ QtObject {
         {"kind":"TouchX","op":"TouchX","arity":1,"args":[{"type":"number","default":{"kind":"Number","value":1.0}}],"host":true},
         {"kind":"TouchY","op":"TouchY","arity":1,"args":[{"type":"number","default":{"kind":"Number","value":1.0}}],"host":true},
         {"kind":"GamepadConnected","op":"GamepadConnected","arity":0,"args":[],"host":true},
+        {"kind":"PlayerCount","op":"PlayerCount","arity":0,"args":[],"host":true},
+        {"kind":"PlayerConnected","op":"PlayerConnected","arity":1,"args":[{"type":"number","default":{"kind":"Number","value":2.0}}],"host":true},
         {"kind":"GamepadAxis","op":"GamepadAxis","arity":1,"args":[{"type":"text","default":{"kind":"Text","value":"LeftStickX"}}],"host":true},
         {"kind":"GamepadButtonDown","op":"GamepadButtonDown","arity":1,"args":[{"type":"text","default":{"kind":"Text","value":"South"}}],"host":true},
         {"kind":"IsTweening","op":"IsTweening","arity":0,"args":[],"host":true},
@@ -1023,6 +1030,7 @@ QtObject {
         { category: "events", title: "In the world", items: ["WhenCollision", "WhenEnterRoom", "WhenWeather", "WhenQualityDrops", "WhenParticles", "WhenMotor", "WhenAnimationEnds", "WhenAnimationMarker"] },
         { category: "events", title: "Cutscenes", items: ["WhenCutsceneSignal", "WhenCutsceneEnds"] },
         { category: "events", title: "Testing", items: ["WhenTestRuns"] },
+        { category: "events", title: "Players", items: ["WhenPlayerJoins", "WhenPlayerLeaves", "PlayerCount", "PlayerConnected"] },
         { category: "events", title: "Interface", items: ["WhenUiEvent", "WhenUiClicked", "WhenUiChanged"] },
         { category: "control", title: "", items: ["Wait", "WaitUntil", "If", "IfElse", "Repeat", "Forever", "While", "EscapeLoop", "ContinueLoop", "StopAll", "Return", "Timer"] },
         { category: "control", title: "Scenes and cutscenes", items: ["SwitchScene", "CurrentScene", "SceneNames", "PlayCutscene", "SkipCutscene", "IsCutscenePlaying", "CutsceneTime"] },
@@ -1152,7 +1160,7 @@ QtObject {
     readonly property var labels: ({
         Fracture:"fracture an actor into debris", Splash:"make a water ripple", PuffSmoke:"puff advected smoke", SpawnDecal:"spawn a transient surface decal", FadeDecals:"fade decals in a radius",
         WhenStarted:"when the project starts", WhenKeyPressed:"when a key is pressed", WhenActionPressed:"when an input action is pressed",
-        WhenTouched:"when the screen is touched", WhenClicked:"when I am clicked", WhenCollision:"when I touch", WhenMessage:"when I get a message", WhenTestRuns:"when a test runs", WhenAnimationEnds:"when an animation ends", WhenAnimationMarker:"when an animation reaches a marker", WhenEnterRoom:"when I enter a room",
+        WhenTouched:"when the screen is touched", WhenClicked:"when I am clicked", WhenCollision:"when I touch", WhenMessage:"when I get a message", WhenTestRuns:"when a test runs", WhenPlayerJoins:"when a player joins", WhenPlayerLeaves:"when a player leaves", WhenAnimationEnds:"when an animation ends", WhenAnimationMarker:"when an animation reaches a marker", WhenEnterRoom:"when I enter a room",
         WhenQualityDrops:"when quality drops", SetRenderSetting:"set rendering quality", SetLook2d:"set a 2D look, camera or screen dial (ambient, post, zoom, shake, flash, cover)", WhenUiEvent:"when an interface event occurs", WhenCloned:"when I start as a clone", WhenParticles:"when my particles spawn, die or collide", WhenMotor:"when my character jumps, lands or leaves the ground", WhenUiClicked:"when an element is clicked", WhenUiChanged:"when an input is changed",
         WhenSceneStarts:"when scene starts", WhenSceneEnds:"when scene ends", WhenWeather:"when weather becomes", WhenCutsceneSignal:"when cutscene signal", WhenCutsceneEnds:"when cutscene ends", SwitchScene:"switch scene to", PlayCutscene:"play cutscene", SkipCutscene:"skip cutscene", CameraShake:"shake camera", SetTimeScale:"set time scale", Hitstop:"hitstop frames", SetLetterbox:"set letterbox", FadeScreen:"fade screen",
         BlockHeader:"block definition", Move:"move forward", GoTo:"go to", NavigateTo:"navigate to", ChangePosition:"change position",

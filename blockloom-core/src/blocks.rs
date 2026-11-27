@@ -283,6 +283,15 @@ pub enum InstructionKind {
     WhenTestRuns {
         name: String,
     },
+    /// Runs on the host when a LAN guest takes player number `player`
+    /// (2 and up; the host is player 1). Empty matches any player.
+    WhenPlayerJoins {
+        player: String,
+    },
+    /// Runs on the host when the guest playing `player` leaves.
+    WhenPlayerLeaves {
+        player: String,
+    },
     /// Runs when the playing cutscene passes the named signal marker.
     /// Empty matches any signal.
     WhenCutsceneSignal {
@@ -1890,6 +1899,8 @@ impl BlockKind for InstructionKind {
             | K::WhenWeather { .. }
             | K::WhenSceneEnds
             | K::WhenTestRuns { .. }
+            | K::WhenPlayerJoins { .. }
+            | K::WhenPlayerLeaves { .. }
             | K::WhenCutsceneSignal { .. }
             | K::WhenCutsceneEnds
             | K::WhenPlugin { .. }
@@ -1957,6 +1968,8 @@ impl BlockKind for InstructionKind {
                 | InstructionKind::WhenWeather { .. }
                 | InstructionKind::WhenSceneEnds
                 | InstructionKind::WhenTestRuns { .. }
+                | InstructionKind::WhenPlayerJoins { .. }
+                | InstructionKind::WhenPlayerLeaves { .. }
                 | InstructionKind::WhenCutsceneSignal { .. }
                 | InstructionKind::WhenCutsceneEnds
                 | InstructionKind::WhenPlugin { .. }

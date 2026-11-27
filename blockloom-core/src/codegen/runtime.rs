@@ -974,6 +974,11 @@ impl Runner {
                     entry.detail == detail
                 }
                 ("Action", "Action") => entry.detail == detail,
+                // Empty is any player, otherwise the number as typed.
+                ("PlayerJoined", "PlayerJoined") | ("PlayerLeft", "PlayerLeft") => {
+                    entry.detail.is_empty()
+                        || matches!((entry.detail.parse::<f64>(), detail.parse::<f64>()), (Ok(a), Ok(b)) if a == b)
+                }
                 ("Touched", "Touched") => true,
                 ("UiEvent", "UiEvent")
                 | ("UiClicked", "UiClicked")

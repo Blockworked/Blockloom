@@ -425,6 +425,8 @@ fn trigger_name(trigger: &crate::vm::Trigger) -> &'static str {
         Trigger::SceneStarted => "SceneStarted",
         Trigger::SceneEnded => "SceneEnded",
         Trigger::Test(_) => "Test",
+        Trigger::PlayerJoined(_) => "PlayerJoined",
+        Trigger::PlayerLeft(_) => "PlayerLeft",
         Trigger::KeyPressed(_) => "Key",
         Trigger::Clicked => "Clicked",
         Trigger::Collision { .. } => "Collision",
@@ -454,7 +456,10 @@ fn trigger_detail(trigger: &crate::vm::Trigger) -> String {
         Trigger::Collision { with, phase, scope } => {
             format!("{with}\u{1f}{}\u{1f}{}", phase.name(), scope.name())
         }
-        Trigger::Message(name) | Trigger::Test(name) => name.clone(),
+        Trigger::Message(name)
+        | Trigger::Test(name)
+        | Trigger::PlayerJoined(name)
+        | Trigger::PlayerLeft(name) => name.clone(),
         Trigger::AnimationEnded { clip } => clip.clone(),
         Trigger::Particles(event) => event.name().to_string(),
         Trigger::AnimationMarker { marker } => marker.clone(),

@@ -217,6 +217,8 @@ impl LoadedLogic {
             Event::Click { actor } => self.fire_raw("Clicked", &actor, "", ""),
             Event::Message(message) => self.fire_raw("Message", "", &message, ""),
             Event::Test(name) => self.fire_raw("Test", "", &name, ""),
+            Event::PlayerJoined(n) => self.fire_raw("PlayerJoined", "", &n.to_string(), ""),
+            Event::PlayerLeft(n) => self.fire_raw("PlayerLeft", "", &n.to_string(), ""),
             Event::Collision {
                 actor,
                 with,

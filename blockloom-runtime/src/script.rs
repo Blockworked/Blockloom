@@ -350,7 +350,11 @@ impl ScriptEvent {
         use blockloom_core::vm::Event;
         Some(match event {
             // A test start is for test strands, which scripts have none of.
-            Event::Started | Event::Cloned { .. } | Event::Test(_) => return None,
+            Event::Started
+            | Event::Cloned { .. }
+            | Event::Test(_)
+            | Event::PlayerJoined(_)
+            | Event::PlayerLeft(_) => return None,
             Event::Plugin {
                 plugin,
                 event,

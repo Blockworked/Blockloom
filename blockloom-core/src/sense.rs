@@ -188,6 +188,8 @@ pub struct Sensors {
     pub touches: Vec<TouchSense>,
     /// True when at least one gamepad is connected.
     pub gamepad_connected: bool,
+    /// The player numbers LAN guests hold (2 and up); the host is player 1.
+    pub guest_players: Vec<u8>,
     /// Live stick and trigger values by canonical axis name
     /// (`leftstickx`, ...). What `gamepad axis` reads.
     pub gamepad_axes: HashMap<String, f32>,

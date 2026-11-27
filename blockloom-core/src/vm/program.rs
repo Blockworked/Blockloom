@@ -66,6 +66,9 @@ pub enum Trigger {
     SceneEnded,
     /// The test runner started the playmode test of this name.
     Test(String),
+    /// A guest took this player number; empty matches any.
+    PlayerJoined(String),
+    PlayerLeft(String),
     /// The named input action went down.
     ActionPressed(String),
     /// A finger touched the screen.
@@ -690,6 +693,12 @@ fn compile_graph(graph: &ActorGraph) -> Program {
             }),
             InstructionKind::WhenSceneEnds => Some(Trigger::SceneEnded),
             InstructionKind::WhenTestRuns { name } => Some(Trigger::Test(name.trim().to_string())),
+            InstructionKind::WhenPlayerJoins { player } => {
+                Some(Trigger::PlayerJoined(player.trim().to_string()))
+            }
+            InstructionKind::WhenPlayerLeaves { player } => {
+                Some(Trigger::PlayerLeft(player.trim().to_string()))
+            }
             InstructionKind::WhenCutsceneSignal { signal } => Some(Trigger::CutsceneSignal {
                 signal: signal.trim().to_string(),
             }),
@@ -1888,6 +1897,8 @@ fn emit_kind(steps: &mut Vec<Step>, kind: &InstructionKind) {
         | K::WhenWeather { .. }
         | K::WhenSceneEnds
         | K::WhenTestRuns { .. }
+        | K::WhenPlayerJoins { .. }
+        | K::WhenPlayerLeaves { .. }
         | K::WhenCutsceneSignal { .. }
         | K::WhenCutsceneEnds
         | K::WhenUiEvent { .. }

@@ -1,4 +1,5 @@
-//! Bounded LAN spectator sessions over the pinned native transport.
+//! Bounded LAN sessions over the pinned native transport: guests get the
+//! host's state and a player seat, and send that seat's input back.
 
 use crate::{Client, ClientOptions, Event, Fingerprint, Identity, PeerId, Server, ServerOptions};
 use ring::{
@@ -10,7 +11,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub const SCHEMA: u32 = 2;
+pub const SCHEMA: u32 = 3;
+/// Seats guests can take; seat 0 is the host's own player.
+pub const MAX_SEAT: u8 = 16;
+/// Actions one input frame may carry, and how long each name may be.
+pub const MAX_INPUTS: usize = 64;
+pub const MAX_INPUT_NAME: usize = 64;
+/// Largest analog magnitude accepted (mouse deltas run past 1).
+pub const MAX_INPUT_VALUE: f32 = 10_000.0;
 pub const MAX_FRAME: usize = 1024 * 1024;
 pub const MAX_ACTORS: usize = 1024;
 /// Plugin state records (a voxel section each) a snapshot may carry.
@@ -48,6 +56,77 @@ pub struct Snapshot {
     pub scene: String,
     pub actors: BTreeMap<String, ActorState>,
     pub regions: BTreeMap<String, Region>,
+}
+
+/// One action as a guest's own devices read it, by its base name (`Jump`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ActionInput {
+    pub held: bool,
+    pub value: f32,
+    pub vector: [f32; 2],
+}
+
+/// A guest taking or leaving a seat, in the order it happened.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeatChange {
+    Joined(u8),
+    Left(u8),
+}
+
+fn input_frame(seq: u64, input: &BTreeMap<String, ActionInput>) -> Result<Vec<u8>, String> {
+    if input.len() > MAX_INPUTS {
+        return Err("Too many input actions".into());
+    }
+    let mut out = vec![5];
+    out.extend(seq.to_le_bytes());
+    out.extend((input.len() as u16).to_le_bytes());
+    for (name, a) in input {
+        if name.is_empty() || name.len() > MAX_INPUT_NAME {
+            return Err("Invalid input action name".into());
+        }
+        string(&mut out, name)?;
+        out.push(u8::from(a.held));
+        for v in [a.value, a.vector[0], a.vector[1]] {
+            if !v.is_finite() || v.abs() > MAX_INPUT_VALUE {
+                return Err("Invalid input value".into());
+            }
+            out.extend(v.to_le_bytes());
+        }
+    }
+    framed(out)
+}
+
+fn read_input(r: &mut Reader) -> Result<(u64, BTreeMap<String, ActionInput>), String> {
+    let seq = r.u64()?;
+    let n = u16::from_le_bytes(r.bytes(2)?.try_into().unwrap()) as usize;
+    if n > MAX_INPUTS {
+        return Err("Too many input actions".into());
+    }
+    let mut input = BTreeMap::new();
+    for _ in 0..n {
+        let name = r.text()?;
+        if name.is_empty() || name.len() > MAX_INPUT_NAME {
+            return Err("Invalid input action name".into());
+        }
+        let held = r.flag()?;
+        let mut v = [0f32; 3];
+        for x in &mut v {
+            *x = f32::from_le_bytes(r.bytes(4)?.try_into().unwrap());
+            if !x.is_finite() || x.abs() > MAX_INPUT_VALUE {
+                return Err("Invalid input value".into());
+            }
+        }
+        let action = ActionInput {
+            held,
+            value: v[0],
+            vector: [v[1], v[2]],
+        };
+        if input.insert(name, action).is_some() {
+            return Err("Duplicate input action".into());
+        }
+    }
+    r.done()?;
+    Ok((seq, input))
 }
 
 #[derive(Clone)]
@@ -438,6 +517,10 @@ struct Guest {
     acked: Option<(u64, Arc<Snapshot>)>,
     flight: Option<(u64, Arc<Snapshot>)>,
     deadline: Instant,
+    seat: Option<u8>,
+    /// The newest input frame's sequence and actions.
+    input_seq: u64,
+    input: BTreeMap<String, ActionInput>,
 }
 
 /// Attaches to a running authority; publishing state never mutates the world.
@@ -449,6 +532,7 @@ pub struct LanHost {
     /// Bytes of regions a frame may carry beside the actors.
     region_budget: usize,
     closing: bool,
+    changes: Vec<SeatChange>,
 }
 
 /// Checks a state the host is about to publish; answers what a frame may
@@ -515,6 +599,7 @@ impl LanHost {
             latest: Arc::new(initial),
             region_budget,
             closing: false,
+            changes: Vec::new(),
         })
     }
     pub fn invite(&self) -> &Invite {
@@ -526,6 +611,29 @@ impl LanHost {
             .filter(|(_, g)| g.admitted)
             .map(|(id, _)| id.0)
             .collect()
+    }
+    /// Each seated guest's id and seat.
+    pub fn seats(&self) -> Vec<(u64, u8)> {
+        self.guests
+            .iter()
+            .filter_map(|(id, g)| Some((id.0, g.seat?)))
+            .collect()
+    }
+    /// The latest actions the guest in `seat` sent, empty until it sends any.
+    pub fn input(&self, seat: u8) -> Option<&BTreeMap<String, ActionInput>> {
+        self.guests
+            .values()
+            .find(|g| g.seat == Some(seat))
+            .map(|g| &g.input)
+    }
+    /// Seats taken and left since the last call.
+    pub fn take_seat_changes(&mut self) -> Vec<SeatChange> {
+        std::mem::take(&mut self.changes)
+    }
+    fn drop_guest(&mut self, id: PeerId) {
+        if let Some(seat) = self.guests.remove(&id).and_then(|g| g.seat) {
+            self.changes.push(SeatChange::Left(seat));
+        }
     }
     pub fn publish(&mut self, state: Snapshot) -> Result<(), String> {
         if state.epoch < self.latest.epoch
@@ -547,14 +655,15 @@ impl LanHost {
     }
     pub fn kick(&mut self, id: u64) {
         self.server.kick(PeerId(id), "Guest removed");
-        self.guests.remove(&PeerId(id));
+        self.drop_guest(PeerId(id));
     }
     pub fn close(&mut self) {
         self.closing = true;
-        for id in self.guests.keys() {
-            self.server.kick(*id, "LAN closed");
+        let ids: Vec<_> = self.guests.keys().copied().collect();
+        for id in ids {
+            self.server.kick(id, "LAN closed");
+            self.drop_guest(id);
         }
-        self.guests.clear();
         self.server.poll();
     }
     pub fn is_drained(&self) -> bool {
@@ -573,12 +682,15 @@ impl LanHost {
                             acked: None,
                             flight: None,
                             deadline: Instant::now() + TIMEOUT,
+                            seat: None,
+                            input_seq: 0,
+                            input: BTreeMap::new(),
                         },
                     );
                     Ok(())
                 }
                 Event::Closed { .. } => {
-                    self.guests.remove(&id);
+                    self.drop_guest(id);
                     Ok(())
                 }
                 Event::Stream {
@@ -590,7 +702,7 @@ impl LanHost {
             };
             if let Err(e) = result {
                 self.server.kick(id, &e);
-                self.guests.remove(&id);
+                self.drop_guest(id);
             }
         }
         let mut failed = vec![];
@@ -625,10 +737,11 @@ impl LanHost {
         }
         for id in failed {
             self.server.kick(id, "Guest stalled");
-            self.guests.remove(&id);
+            self.drop_guest(id);
         }
     }
     fn receive(&mut self, id: PeerId, data: &[u8]) -> Result<(), String> {
+        let taken: Vec<u8> = self.guests.values().filter_map(|g| g.seat).collect();
         let g = self.guests.get_mut(&id).ok_or("Unknown guest")?;
         for frame in g.frames.feed(data)? {
             let mut r = Reader(&frame);
@@ -643,7 +756,15 @@ impl LanHost {
                     hmac::verify(&key, &self.invite.token, tag.as_ref())
                         .map_err(|_| "Admission refused")?;
                     r.done()?;
+                    let seat = (1..=MAX_SEAT)
+                        .find(|s| !taken.contains(s))
+                        .ok_or("No free player seat")?;
                     g.admitted = true;
+                    g.seat = Some(seat);
+                    self.server
+                        .send_stream(id, STREAM, &framed(vec![6, seat])?, false)
+                        .map_err(|e| e.to_string())?;
+                    self.changes.push(SeatChange::Joined(seat));
                 }
                 3 if g.admitted => {
                     let seq = r.u64()?;
@@ -656,6 +777,15 @@ impl LanHost {
                 }
                 4 if g.admitted => {
                     r.done()?;
+                }
+                5 if g.admitted => {
+                    let (seq, input) = read_input(&mut r)?;
+                    // Reordering can't happen on one stream; an old one is a replay.
+                    if seq <= g.input_seq {
+                        return Err("Stale input".into());
+                    }
+                    g.input_seq = seq;
+                    g.input = input;
                 }
                 _ => return Err("Unexpected guest message".into()),
             }
@@ -675,6 +805,9 @@ pub struct LanClient {
     state: Snapshot,
     seq: u64,
     heartbeat: Instant,
+    seat: Option<u8>,
+    input_seq: u64,
+    sent_input: Option<(BTreeMap<String, ActionInput>, Instant)>,
 }
 impl LanClient {
     pub fn connect(
@@ -694,7 +827,34 @@ impl LanClient {
             state: Snapshot::default(),
             seq: 0,
             heartbeat: Instant::now(),
+            seat: None,
+            input_seq: 0,
+            sent_input: None,
         })
+    }
+    /// The player seat the host gave this guest, once admitted.
+    pub fn seat(&self) -> Option<u8> {
+        self.seat
+    }
+    /// Sends this guest's actions when they change, and at least every
+    /// quarter second so a lost-focus window can't leave a key held.
+    pub fn send_input(&mut self, input: &BTreeMap<String, ActionInput>) -> Result<(), String> {
+        if self.seat.is_none() || !self.client.is_established() {
+            return Ok(());
+        }
+        if let Some((last, at)) = &self.sent_input
+            && last == input
+            && at.elapsed() < Duration::from_millis(250)
+        {
+            return Ok(());
+        }
+        self.input_seq += 1;
+        let bytes = input_frame(self.input_seq, input)?;
+        self.client
+            .send_stream(STREAM, &bytes, false)
+            .map_err(|e| e.to_string())?;
+        self.sent_input = Some((input.clone(), Instant::now()));
+        Ok(())
     }
     pub fn state(&self) -> Option<&Snapshot> {
         (self.seq != 0).then_some(&self.state)
@@ -721,6 +881,16 @@ impl LanClient {
                     fin: false,
                 } => {
                     for body in self.frames.feed(&data)? {
+                        if body.first() == Some(&6) {
+                            if body.len() != 2
+                                || self.seat.is_some()
+                                || !(1..=MAX_SEAT).contains(&body[1])
+                            {
+                                return Err("Invalid seat".into());
+                            }
+                            self.seat = Some(body[1]);
+                            continue;
+                        }
                         let (seq, state) = apply_state(&body, self.seq, &self.state)?;
                         self.seq = seq;
                         self.state = state;

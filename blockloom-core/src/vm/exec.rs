@@ -308,6 +308,9 @@ pub enum Event {
     SceneEnded,
     /// The test runner starts the playmode test of this name.
     Test(String),
+    /// A LAN guest took this player number (2 and up), or left it.
+    PlayerJoined(u8),
+    PlayerLeft(u8),
     /// A key went down, in [`sense::normalize_key`]'s spelling.
     Key(String),
     Click {
@@ -404,6 +407,12 @@ fn plugin_args_match(want: &[String], got: &[String]) -> bool {
                     || matches!((got.parse::<f64>(), want.parse::<f64>()), (Ok(a), Ok(b)) if a == b)
             })
     })
+}
+
+/// Whether a player hat's field names this player: empty is any, otherwise
+/// the number as typed.
+pub fn player_matches(want: &str, got: u8) -> bool {
+    want.is_empty() || want.parse::<f64>().is_ok_and(|n| n == f64::from(got))
 }
 
 impl Event {
@@ -875,6 +884,8 @@ impl Vm {
             (Trigger::SceneStarted, Event::SceneStarted) => true,
             (Trigger::SceneEnded, Event::SceneEnded) => true,
             (Trigger::Test(want), Event::Test(got)) => want == got,
+            (Trigger::PlayerJoined(want), Event::PlayerJoined(got))
+            | (Trigger::PlayerLeft(want), Event::PlayerLeft(got)) => player_matches(want, *got),
             (Trigger::KeyPressed(want), Event::Key(got)) => want == got,
             (Trigger::Clicked, Event::Click { actor: clicked }) => clicked == actor,
             (

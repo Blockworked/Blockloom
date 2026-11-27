@@ -1,4 +1,6 @@
-use blockloom_net::game::{ActorState, Invite, LanClient, LanHost, Snapshot, build_hash};
+use blockloom_net::game::{
+    ActionInput, ActorState, Invite, LanClient, LanHost, SeatChange, Snapshot, build_hash,
+};
 use blockloom_net::{ClientOptions, Impairment, ServerOptions};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -247,4 +249,124 @@ fn a_region_too_big_for_any_frame_is_refused() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn two_guests_take_their_own_seats_and_send_their_own_input() {
+    let build = build_hash(b"trusted fixture");
+    let mut host = LanHost::open(
+        "127.0.0.1:0".parse().unwrap(),
+        build,
+        sample(),
+        Default::default(),
+    )
+    .unwrap();
+    let code = host_invite(&host);
+    let invite = || Invite::decode(&code).unwrap();
+    let mut a = LanClient::connect(invite(), build, Default::default()).unwrap();
+    let mut b = LanClient::connect(invite(), build, Default::default()).unwrap();
+    let end = Instant::now() + Duration::from_secs(8);
+    while a.seat().is_none() || b.seat().is_none() || a.state().is_none() || b.state().is_none() {
+        host.poll();
+        a.poll().unwrap();
+        b.poll().unwrap();
+        assert!(Instant::now() < end, "guests never seated");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let mut seats = vec![a.seat().unwrap(), b.seat().unwrap()];
+    seats.sort();
+    assert_eq!(seats, [1, 2]);
+    let mut joined = host.take_seat_changes();
+    joined.sort_by_key(|c| format!("{c:?}"));
+    assert_eq!(joined, [SeatChange::Joined(1), SeatChange::Joined(2)]);
+
+    let jump = BTreeMap::from([(
+        "Jump".to_string(),
+        ActionInput {
+            held: true,
+            value: 1.0,
+            vector: [1.0, 0.0],
+        },
+    )]);
+    let walk = BTreeMap::from([(
+        "Move".to_string(),
+        ActionInput {
+            held: true,
+            value: 1.0,
+            vector: [0.0, -1.0],
+        },
+    )]);
+    a.send_input(&jump).unwrap();
+    b.send_input(&walk).unwrap();
+    let (sa, sb) = (a.seat().unwrap(), b.seat().unwrap());
+    let end = Instant::now() + Duration::from_secs(8);
+    while host.input(sa) != Some(&jump) || host.input(sb) != Some(&walk) {
+        host.poll();
+        a.poll().unwrap();
+        b.poll().unwrap();
+        assert!(Instant::now() < end, "input never arrived");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    // A leaving guest frees its seat, and the next one takes the lowest free.
+    let gone = a.seat().unwrap();
+    drop(a);
+    let id = host
+        .seats()
+        .into_iter()
+        .find(|(_, s)| *s == gone)
+        .unwrap()
+        .0;
+    host.kick(id);
+    assert_eq!(host.take_seat_changes(), [SeatChange::Left(gone)]);
+    assert!(host.input(gone).is_none());
+    let mut c = LanClient::connect(invite(), build, Default::default()).unwrap();
+    until(&mut host, &mut c, |c| {
+        c.seat().is_some() && c.state().is_some()
+    });
+    assert_eq!(c.seat(), Some(gone));
+}
+
+#[test]
+fn malformed_input_is_refused_before_it_is_sent() {
+    let build = build_hash(b"trusted fixture");
+    let mut host = LanHost::open(
+        "127.0.0.1:0".parse().unwrap(),
+        build,
+        sample(),
+        Default::default(),
+    )
+    .unwrap();
+    let mut c = LanClient::connect(
+        Invite::decode(&host_invite(&host)).unwrap(),
+        build,
+        Default::default(),
+    )
+    .unwrap();
+    until(&mut host, &mut c, |c| c.seat().is_some());
+    let bad = |a: ActionInput| BTreeMap::from([("Jump".to_string(), a)]);
+    assert!(
+        c.send_input(&bad(ActionInput {
+            value: f32::NAN,
+            ..Default::default()
+        }))
+        .is_err()
+    );
+    assert!(
+        c.send_input(&bad(ActionInput {
+            value: 1e9,
+            ..Default::default()
+        }))
+        .is_err()
+    );
+    let long = BTreeMap::from([("x".repeat(65), ActionInput::default())]);
+    assert!(c.send_input(&long).is_err());
+    let many: BTreeMap<_, _> = (0..65)
+        .map(|i| (format!("a{i}"), ActionInput::default()))
+        .collect();
+    assert!(c.send_input(&many).is_err());
+}
+
+fn host_invite(host: &LanHost) -> String {
+    host.invite().encode()
 }

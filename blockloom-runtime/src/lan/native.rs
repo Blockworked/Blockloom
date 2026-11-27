@@ -2,7 +2,7 @@ use super::*;
 use crate::engine::{ActorId, Dimension, PhysicsPose};
 use bevy::prelude::*;
 use blockloom_net::ServerOptions;
-use blockloom_net::game::{ActorState, LanHost, Region, Snapshot, build_hash};
+use blockloom_net::game::{ActorState, LanHost, Region, SeatChange, Snapshot, build_hash};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
@@ -81,6 +81,35 @@ pub fn status(e: &Engine) -> LanSessionStatus {
             ..Default::default()
         },
     }
+}
+
+/// The player numbers seated guests hold (2 and up).
+pub fn guest_players(e: &Engine) -> Vec<u8> {
+    let mut players: Vec<u8> = e
+        .lan
+        .host
+        .as_ref()
+        .map(|h| h.seats().iter().map(|(_, seat)| seat + 1).collect())
+        .unwrap_or_default();
+    players.sort_unstable();
+    players
+}
+
+/// What the guest in seat `player` holds on the action `name` (`Jump P2`
+/// reads its `Jump`), or None when no guest sits there so local pads drive it.
+pub fn remote_action(e: &Engine, player: u8, name: &str) -> Option<super::RemoteAction> {
+    let input = e.lan.host.as_ref()?.input(player)?;
+    let base = super::base_action(name, player);
+    let got = input
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(base))
+        .map(|(_, a)| *a)
+        .unwrap_or_default();
+    Some(super::RemoteAction {
+        held: got.held,
+        value: got.value,
+        vector: got.vector,
+    })
 }
 
 pub fn begin(e: &mut Engine) {
@@ -166,6 +195,14 @@ fn poll(mut e: NonSendMut<Engine>) {
         .retain(|(h, start)| !h.is_drained() && start.elapsed() < Duration::from_secs(1));
     if let Some(h) = &mut e.lan.host {
         h.poll();
+        let changes = h.take_seat_changes();
+        for change in changes {
+            e.fire(match change {
+                SeatChange::Joined(seat) => blockloom_core::vm::Event::PlayerJoined(seat + 1),
+                SeatChange::Left(seat) => blockloom_core::vm::Event::PlayerLeft(seat + 1),
+            });
+        }
+        let Some(h) = &mut e.lan.host else { return };
         let guests = h.guests();
         if guests != e.lan.last_guests {
             e.lan.last_guests = guests;

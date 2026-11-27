@@ -22,7 +22,7 @@ mod variables;
 pub use effect::Effect;
 pub use exec::{
     ActorDicts, ActorLists, DictValues, Dicts, Event, ListValues, Lists, MAX_REPORTER_DEPTH,
-    STEP_BUDGET, Vm,
+    STEP_BUDGET, Vm, player_matches,
 };
 pub use program::{
     Action, Entry, LoopKind, Program, ShowElement, Step, Trigger, compile, temp_index, temp_var,

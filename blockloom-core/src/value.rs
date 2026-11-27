@@ -279,6 +279,31 @@ static OPERATORS: &[ExtOperator] = &[
         eval: |_| Ok(Evaluated::Bool(sense::read(|s| s.gamepad_connected))),
     },
     ExtOperator {
+        kind: "PlayerCount",
+        op: "PlayerCount",
+        arity: 0,
+        default_args: Vec::new,
+        // The host plus every LAN guest playing.
+        eval: |_| {
+            Ok(Evaluated::Number(
+                1.0 + sense::read(|s| s.guest_players.len()) as f64,
+            ))
+        },
+    },
+    ExtOperator {
+        kind: "PlayerConnected",
+        op: "PlayerConnected",
+        arity: 1,
+        default_args: || vec![number(2.0)],
+        // Player 1 is the host and always here; 2 and up are LAN guests.
+        eval: |args| {
+            let n = args[0].as_number().unwrap_or(0.0);
+            Ok(Evaluated::Bool(
+                n == 1.0 || sense::read(|s| s.guest_players.iter().any(|p| f64::from(*p) == n)),
+            ))
+        },
+    },
+    ExtOperator {
         kind: "GamepadAxis",
         op: "GamepadAxis",
         arity: 1,
