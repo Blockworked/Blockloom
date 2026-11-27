@@ -267,6 +267,16 @@ fn default_fps() -> f32 {
 const MAX_MARKER_STEPS: u64 = 256;
 
 impl AnimationClip {
+    /// The rig or model animation this clip plays: `rig_animation`, or its
+    /// own name.
+    pub fn rig_name(&self) -> &str {
+        if self.rig_animation.is_empty() {
+            &self.name
+        } else {
+            &self.rig_animation
+        }
+    }
+
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -569,7 +579,8 @@ pub enum TransitionWhen {
     Marker { name: String },
     /// `fire animation trigger` named it this tick.
     Trigger { name: String },
-    /// A variable, as the actor reads it, compares true.
+    /// A variable, or the motor reading by that name (`speed`, `grounded`),
+    /// as the actor reads it, compares true.
     Variable {
         name: String,
         #[serde(default)]
@@ -612,10 +623,123 @@ pub struct AnimationState {
     pub transitions: Vec<Transition>,
     #[serde(default)]
     pub root_motion: bool,
+    /// Mixes several clips by one or two inputs instead of playing `clip`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blend: Option<BlendSpace>,
 }
 
 fn default_speed() -> f32 {
     1.0
+}
+
+/// Clips placed along one input (`y` empty) or two, mixed by where the
+/// inputs stand. An input is a motor reading such as `speed` or `grounded`,
+/// or else a variable. The clips play in step, so a walk and a run share feet.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Schema)]
+pub struct BlendSpace {
+    #[serde(default)]
+    pub x: String,
+    #[serde(default)]
+    pub y: String,
+    #[serde(default)]
+    pub points: Vec<BlendPoint>,
+}
+
+/// One clip of a blend space, and where it sits.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Schema)]
+pub struct BlendPoint {
+    #[serde(default)]
+    pub clip: String,
+    #[serde(default)]
+    pub x: f32,
+    #[serde(default)]
+    pub y: f32,
+}
+
+impl BlendSpace {
+    pub fn is_2d(&self) -> bool {
+        !self.y.is_empty()
+    }
+
+    pub fn normalize(&mut self) {
+        self.x = self.x.trim().to_string();
+        self.y = self.y.trim().to_string();
+        self.points.retain_mut(|point| {
+            point.clip = point.clip.trim().to_string();
+            for v in [&mut point.x, &mut point.y] {
+                if !v.is_finite() {
+                    *v = 0.0;
+                }
+            }
+            !point.clip.is_empty()
+        });
+    }
+
+    /// Each point's share at `(x, y)`, summing to one; points with no share
+    /// are left out. One input interpolates between neighbours, two use
+    /// gradient bands, so a point standing exactly on the inputs plays alone.
+    pub fn weights(&self, x: f32, y: f32) -> Vec<(usize, f32)> {
+        let n = self.points.len();
+        if n <= 1 {
+            return (0..n).map(|i| (i, 1.0)).collect();
+        }
+        let raw: Vec<f32> = if self.is_2d() {
+            let at = |i: usize| (self.points[i].x, self.points[i].y);
+            (0..n)
+                .map(|i| {
+                    let (ix, iy) = at(i);
+                    (0..n)
+                        .filter(|&j| j != i)
+                        .map(|j| {
+                            let (jx, jy) = at(j);
+                            let (dx, dy) = (jx - ix, jy - iy);
+                            let length = dx * dx + dy * dy;
+                            if length <= 1e-8 {
+                                return 1.0;
+                            }
+                            (1.0 - ((x - ix) * dx + (y - iy) * dy) / length).clamp(0.0, 1.0)
+                        })
+                        .fold(1.0, f32::min)
+                })
+                .collect()
+        } else {
+            let mut order: Vec<usize> = (0..n).collect();
+            order.sort_by(|&a, &b| self.points[a].x.total_cmp(&self.points[b].x));
+            let mut raw = vec![0.0; n];
+            let first = order[0];
+            let last = order[n - 1];
+            if x <= self.points[first].x {
+                raw[first] = 1.0;
+            } else if x >= self.points[last].x {
+                raw[last] = 1.0;
+            } else {
+                for pair in order.windows(2) {
+                    let (a, b) = (pair[0], pair[1]);
+                    let (ax, bx) = (self.points[a].x, self.points[b].x);
+                    if x >= ax && x <= bx {
+                        let t = if bx - ax > 1e-6 {
+                            (x - ax) / (bx - ax)
+                        } else {
+                            0.0
+                        };
+                        raw[a] = 1.0 - t;
+                        raw[b] = t;
+                        break;
+                    }
+                }
+            }
+            raw
+        };
+        let total: f32 = raw.iter().sum();
+        if total <= 1e-6 {
+            return vec![(0, 1.0)];
+        }
+        raw.into_iter()
+            .enumerate()
+            .map(|(i, w)| (i, w / total))
+            .filter(|&(_, w)| w > 1e-4)
+            .collect()
+    }
 }
 
 impl AnimationState {
@@ -627,6 +751,14 @@ impl AnimationState {
             self.speed = default_speed();
         }
         self.speed = self.speed.clamp(0.0, 8.0);
+        if let Some(space) = &mut self.blend {
+            space.normalize();
+            if self.clip.is_empty()
+                && let Some(point) = space.points.first()
+            {
+                self.clip = point.clip.clone();
+            }
+        }
         self.transitions.retain_mut(|transition| {
             transition.to = transition.to.trim().to_string();
             if !transition.blend.is_finite() {
@@ -647,6 +779,9 @@ impl AnimationState {
         });
     }
 }
+
+/// The state `add_locomotion` makes.
+pub const LOCOMOTION: &str = "Locomotion";
 
 /// What happened to a state this tick, for [`AnimationSpec::transition_from`].
 #[derive(Default)]
@@ -732,6 +867,7 @@ impl AnimationSpec {
                     next: String::new(),
                     transitions: Vec::new(),
                     root_motion: false,
+                    blend: None,
                 });
             }
             added += 1;
@@ -760,6 +896,82 @@ impl AnimationSpec {
             }
         }
         added
+    }
+
+    /// Puts looping idle, walk and run clips on one `Locomotion` blend state
+    /// over the motor's `speed` (walk at `walk_speed`, run at `sprint_speed`),
+    /// and sends a jump state there and back on `grounded`. Answers whether it
+    /// added one: it needs two of the three, and no `Locomotion` state yet.
+    pub fn add_locomotion(&mut self, walk_speed: f32, sprint_speed: f32) -> bool {
+        if self.find_state(LOCOMOTION).is_some() {
+            return false;
+        }
+        let named = |words: &[&str], once: bool| {
+            self.clips
+                .iter()
+                .find(|clip| {
+                    let lower = clip.name.to_lowercase();
+                    (clip.loop_mode == LoopMode::Once) == once
+                        && words.iter().any(|word| lower.contains(word))
+                })
+                .map(|clip| clip.name.clone())
+        };
+        let points: Vec<BlendPoint> = [
+            (named(&["idle"], false), 0.0),
+            (named(&["walk"], false), walk_speed),
+            (named(&["run", "sprint"], false), sprint_speed),
+        ]
+        .into_iter()
+        .filter_map(|(clip, x)| clip.map(|clip| BlendPoint { clip, x, y: 0.0 }))
+        .collect();
+        if points.len() < 2 {
+            return false;
+        }
+        let ground = |to: &str, on: &str| Transition {
+            to: to.to_string(),
+            when: TransitionWhen::Variable {
+                name: "grounded".to_string(),
+                compare: Compare::Equal,
+                value: on.to_string(),
+            },
+            blend: default_blend(),
+        };
+        let jump = named(&["jump"], true)
+            .and_then(|clip| self.state_for(&clip).map(|state| state.name.clone()));
+        let old = std::mem::take(&mut self.initial);
+        let mut transitions = Vec::new();
+        if let Some(jump) = &jump {
+            transitions.push(ground(jump, "0"));
+            if let Some(state) = self.states.iter_mut().find(|s| s.name == *jump) {
+                state.next.clear();
+                state.transitions.retain(|t| t.to != LOCOMOTION);
+                state.transitions.push(ground(LOCOMOTION, "1"));
+            }
+        }
+        self.states.insert(
+            0,
+            AnimationState {
+                name: LOCOMOTION.to_string(),
+                clip: points[0].clip.clone(),
+                speed: 1.0,
+                next: String::new(),
+                transitions,
+                root_motion: false,
+                blend: Some(BlendSpace {
+                    x: "speed".to_string(),
+                    y: String::new(),
+                    points,
+                }),
+            },
+        );
+        // What used to return to the old idle comes back to the blend.
+        for state in &mut self.states {
+            if !old.is_empty() && state.next.eq_ignore_ascii_case(&old) {
+                state.next = LOCOMOTION.to_string();
+            }
+        }
+        self.initial = LOCOMOTION.to_string();
+        true
     }
 
     pub fn find_clip(&self, name: &str) -> Option<&AnimationClip> {
@@ -1090,6 +1302,7 @@ mod tests {
             next: String::new(),
             transitions,
             root_motion: false,
+            blend: None,
         };
         let spec = AnimationSpec {
             states: vec![
@@ -1187,6 +1400,7 @@ mod tests {
                 next: String::new(),
                 transitions: Vec::new(),
                 root_motion: false,
+                blend: None,
             }],
             ..AnimationSpec::default()
         };
@@ -1196,5 +1410,89 @@ mod tests {
         assert!(spec.find_state("moving").is_some());
         assert_eq!(spec.state_for("walk").unwrap().name, "Moving");
         assert_eq!(spec.unique_clip_name("Walk"), "Walk 2");
+    }
+
+    #[test]
+    fn a_blend_space_mixes_its_neighbours() {
+        let point = |clip: &str, x: f32, y: f32| BlendPoint {
+            clip: clip.to_string(),
+            x,
+            y,
+        };
+        let line = BlendSpace {
+            x: "speed".to_string(),
+            y: String::new(),
+            points: vec![
+                point("Run", 6.0, 0.0),
+                point("Idle", 0.0, 0.0),
+                point("Walk", 2.0, 0.0),
+            ],
+        };
+        assert_eq!(line.weights(-1.0, 0.0), vec![(1, 1.0)]);
+        assert_eq!(line.weights(9.0, 0.0), vec![(0, 1.0)]);
+        let mid = line.weights(4.0, 0.0);
+        assert_eq!(mid, vec![(0, 0.5), (2, 0.5)]);
+        let near_walk = line.weights(1.5, 0.0);
+        assert!((near_walk[0].1 - 0.25).abs() < 1e-5 && near_walk[0].0 == 1);
+
+        let square = BlendSpace {
+            x: "x".to_string(),
+            y: "y".to_string(),
+            points: vec![
+                point("Idle", 0.0, 0.0),
+                point("Forward", 0.0, 1.0),
+                point("Left", -1.0, 0.0),
+                point("Right", 1.0, 0.0),
+            ],
+        };
+        // Standing on a point plays it alone; between two shares them.
+        assert_eq!(square.weights(0.0, 1.0), vec![(1, 1.0)]);
+        let between = square.weights(0.5, 0.0);
+        let share = |i| between.iter().find(|w| w.0 == i).map_or(0.0, |w| w.1);
+        assert!((share(0) - 0.5).abs() < 1e-5 && (share(3) - 0.5).abs() < 1e-5);
+        assert_eq!(share(1) + share(2), 0.0);
+
+        let mut state: AnimationState = serde_json::from_value(serde_json::json!({
+            "name": "Move",
+            "blend": {"x": " speed ", "points": [{"clip": " Walk "}, {"clip": ""}]}
+        }))
+        .unwrap();
+        state.normalize();
+        assert_eq!(state.clip, "Walk");
+        let space = state.blend.unwrap();
+        assert_eq!((space.x.as_str(), space.points.len()), ("speed", 1));
+    }
+
+    #[test]
+    fn a_models_locomotion_clips_become_one_blend_with_a_jump() {
+        let clip = |name: &str, seconds: f32| crate::pipeline::ModelClip {
+            name: name.to_string(),
+            seconds,
+        };
+        let mut spec: AnimationSpec = serde_json::from_str("{}").unwrap();
+        spec.add_model_clips(&[
+            clip("Idle", 2.0),
+            clip("Walk", 1.0),
+            clip("Run", 0.6),
+            clip("Jump", 0.8),
+        ]);
+        assert!(spec.add_locomotion(5.0, 8.0));
+        assert!(!spec.add_locomotion(5.0, 8.0), "once");
+        assert_eq!(spec.initial, LOCOMOTION);
+        let moving = spec.find_state(LOCOMOTION).unwrap();
+        let space = moving.blend.as_ref().unwrap();
+        let at: Vec<(&str, f32)> = space
+            .points
+            .iter()
+            .map(|p| (p.clip.as_str(), p.x))
+            .collect();
+        assert_eq!(at, vec![("Idle", 0.0), ("Walk", 5.0), ("Run", 8.0)]);
+        assert_eq!(moving.transitions[0].to, "Jump");
+        let jump = spec.find_state("Jump").unwrap();
+        assert!(jump.next.is_empty());
+        assert_eq!(jump.transitions.last().unwrap().to, LOCOMOTION);
+        let mut lone: AnimationSpec = serde_json::from_str("{}").unwrap();
+        lone.add_model_clips(&[clip("Idle", 2.0), clip("Wave", 1.0)]);
+        assert!(!lone.add_locomotion(5.0, 8.0));
     }
 }

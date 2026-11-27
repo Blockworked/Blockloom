@@ -239,13 +239,25 @@ clip is a model clip: no frames, a `seconds` length, and the model animation
 `fps`, and root motion's `motion` is forward (-Z) and up. `ModelInfo::clips`
 reads each glTF animation's length from its samplers' input `max` (unnamed ones
 are `AnimationN`), and `animate-from-model` turns them into clips and states,
-one-shot names (`jump`, `attack`, ...) playing once back to the idle state. On
-load `model::on_ready` puts every animation in one `AnimationGraph` with
-`AnimationTransitions` and a `ModelRig` (name to node); `model::drive_animations`
-is the drawing half, playing the animator's clip on the rig with the state's
-crossfade and seeking it to the animator's time (plus the fixed overstep), so
-the pose is wherever the simulation stands. Without an Animation component the
-look's own animation just loops.
+one-shot names (`jump`, `attack`, ...) playing once back to the idle state.
+Looping idle, walk and run clips also become a `Locomotion` state
+(`AnimationSpec::add_locomotion`): a `BlendSpace` over the motor's `speed`,
+with points at 0, `walk_speed` and `sprint_speed`, leaving for the jump state
+when `grounded` is 0 and coming back when it is 1. A blend space input, like a
+`Variable` transition, reads the actor's motor first (`motor::has_reading`) and
+otherwise a variable. One input interpolates between neighbours; two use
+gradient bands. The animator keeps the shares (`AnimationPlayer::blend`), the
+blended cycle length and a shared `phase` on the tick, so every clip of a blend
+plays in step and root motion moves by the weighted share of each clip's
+motion. The heaviest clip is the one the state reports, and the one a 2D blend
+shows. On load `model::on_ready` puts every animation in one `AnimationGraph`
+with a `ModelRig` (name to node), looping the look's own animation through
+`AnimationTransitions` until the animator takes over. `model::drive_animations`
+is the drawing half: it removes the transitions and sets every node's weight
+itself (the state's clips times the fade in, the faded-out clips, blend and
+all, times the rest), seeking each to the animator's time plus the fixed
+overstep, so the pose is wherever the simulation stands. Without an Animation
+component the look's own animation just loops.
 
 A solid tilemap collides per tile, as the merged rects of
 `Tilemap::solid_rects` (minus its `passable` tiles), and nav blocks the same

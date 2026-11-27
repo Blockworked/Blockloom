@@ -927,6 +927,44 @@ pub const PROPERTIES: [&str; 16] = [
     "slide on steep",
 ];
 
+/// Whether `actor` has a motor that answers `field`, so a blend space input
+/// by that name reads the motor rather than a variable.
+pub fn has_reading(actor: &str, field: &str) -> bool {
+    let field = field.trim().to_ascii_lowercase();
+    READINGS.contains(&field.as_str()) && read_number(actor, "exists") > 0.5
+}
+
+/// Every name `read_number` answers.
+pub const READINGS: [&str; 27] = [
+    "grounded",
+    "rising",
+    "falling",
+    "landed",
+    "jumped",
+    "left ground",
+    "hit head",
+    "changed stance",
+    "crouching",
+    "on wall",
+    "wall normal x",
+    "wall normal y",
+    "speed",
+    "desired speed",
+    "vertical speed",
+    "can jump",
+    "jumps used",
+    "jumps left",
+    "slope",
+    "ground normal x",
+    "ground normal y",
+    "ground normal z",
+    "knockback",
+    "walk speed",
+    "jump height",
+    "enabled",
+    "exists",
+];
+
 /// A number from `actor`'s motor, by the name a reporter gives it.
 pub fn read_number(actor: &str, field: &str) -> f64 {
     REGISTRY.with(|registry| {

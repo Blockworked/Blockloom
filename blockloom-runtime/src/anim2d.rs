@@ -185,7 +185,13 @@ fn start(
         speed: player.speed,
         left: blend,
         total: blend,
+        blend: std::mem::take(&mut player.blend),
+        phase: player.phase,
+        cycle: player.cycle,
     });
+    player.blend.clear();
+    player.phase = 0.0;
+    player.cycle = 0.0;
     player.clip = clip;
     player.state = state;
     player.elapsed = 0.0;
@@ -558,10 +564,56 @@ pub fn step_animations(
         }
         if let Some(fade) = &mut player.fade {
             fade.elapsed += dt * fade.speed;
+            if fade.cycle > 0.0 {
+                fade.phase += dt * fade.speed / fade.cycle;
+            }
             fade.left -= dt;
         }
         if player.fade.as_ref().is_some_and(|fade| fade.left <= 0.0) {
             player.fade = None;
+        }
+        // A blend state mixes its clips by the inputs as they stand this
+        // tick, all in step; the heaviest is the clip the state reports.
+        let blending = spec
+            .find_state(&player.state)
+            .and_then(|state| state.blend.as_ref())
+            .filter(|space| !space.points.is_empty());
+        let mut blend_travel = None;
+        if let Some(space) = blending {
+            let input = |name: &str| blend_input(&engine, actor, name);
+            let weights = space.weights(input(&space.x), input(&space.y));
+            player.blend = weights
+                .iter()
+                .map(|&(i, w)| (space.points[i].clip.clone(), w))
+                .collect();
+            player.cycle = player
+                .blend
+                .iter()
+                .map(|(name, w)| spec.find_clip(name).map_or(0.0, AnimationClip::duration) * w)
+                .sum();
+            let advanced = if player.playing && player.cycle > 1e-4 {
+                player.elapsed - before
+            } else {
+                0.0
+            };
+            let moved = advanced / player.cycle.max(1e-4);
+            player.phase += moved;
+            if let Some((heaviest, _)) = player.blend.iter().max_by(|a, b| a.1.total_cmp(&b.1)) {
+                player.clip = heaviest.clone();
+            }
+            if player.root_motion {
+                let mut sum = [0.0, 0.0];
+                for (name, w) in &player.blend {
+                    if let Some(clip) = spec.find_clip(name) {
+                        sum[0] += clip.motion[0] * w * moved;
+                        sum[1] += clip.motion[1] * w * moved;
+                    }
+                }
+                blend_travel = Some(sum);
+            }
+        } else if !player.blend.is_empty() {
+            player.blend.clear();
+            player.cycle = 0.0;
         }
         let clip = spec.find_clip(&player.clip).cloned();
         let rig_file = rig.as_ref().map(|instance| instance.rig.clone());
@@ -681,6 +733,9 @@ pub fn step_animations(
             commands.entity(entity).remove::<AnimationPlayer>();
             continue;
         }
+        if let Some(blended) = blend_travel {
+            travel = blended;
+        }
         // Root motion moves the actor through its own facing and size. A 3D
         // clip's motion is forward (-Z, the way a 3D actor faces) and up.
         if travel != [0.0, 0.0] {
@@ -717,8 +772,16 @@ pub fn step_animations(
                 markers: &markers,
                 triggers: &triggers,
             };
+            // A motor reading by that name wins over a variable, as for blends.
             let variables = &engine.variables;
-            let read = |name: &str| Some(variables.read(actor, name).as_text());
+            let read = |name: &str| {
+                use blockloom_core::physics::motor;
+                Some(if motor::has_reading(actor, name) {
+                    motor::read_number(actor, name).to_string()
+                } else {
+                    variables.read(actor, name).as_text()
+                })
+            };
             if let Some(taken) = spec.transition_from(&player.state, &inputs, &read) {
                 let state = taken.state.clone();
                 if let Err(message) = playable(&spec, rig_file.as_deref(), &state.clip) {
@@ -738,6 +801,23 @@ pub fn step_animations(
     }
     for event in events {
         engine.fire(event);
+    }
+}
+
+/// A blend space input: the actor's motor reading by that name, or else
+/// its variable as a number.
+fn blend_input(engine: &Engine, actor: &str, name: &str) -> f32 {
+    use blockloom_core::physics::motor;
+    if name.is_empty() {
+        0.0
+    } else if motor::has_reading(actor, name) {
+        motor::read_number(actor, name) as f32
+    } else {
+        engine
+            .variables
+            .read(actor, name)
+            .as_number()
+            .unwrap_or(0.0) as f32
     }
 }
 
@@ -1213,6 +1293,7 @@ mod tests {
     use blockloom_core::components::ActorComponent;
     use blockloom_core::project::Actor;
     use blockloom_core::scene::{Mode, Visual};
+    use blockloom_core::value::Evaluated;
 
     /// One `update` is one 60 Hz fixed step of the player alone.
     fn player_app(spec: AnimationSpec) -> (App, Entity) {
@@ -1338,6 +1419,56 @@ mod tests {
     /// The 3D animator is the same state machine over model clips: a clip
     /// is a length, markers count at its fps, a `Once` clip ends and takes its
     /// `next`, and root motion carries the actor forward along -Z.
+    #[test]
+    fn a_blend_state_mixes_its_clips_by_the_input_and_moves_by_their_share() {
+        let spec: AnimationSpec = serde_json::from_str(
+            r#"{
+                "initial": "Move",
+                "clips": [
+                    {"name":"Walk","seconds":1.0,"fps":30,"loop_mode":"Loop","motion":[2,0]},
+                    {"name":"Run","seconds":0.5,"fps":30,"loop_mode":"Loop","motion":[3,0]}
+                ],
+                "states": [
+                    {"name":"Move","root_motion":true,
+                     "blend":{"x":"pace","points":[{"clip":"Walk","x":2},{"clip":"Run","x":6}]}}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let mut spec = spec;
+        spec.normalize();
+        let (mut app, entity) = player_app_in(spec, Mode::ThreeD);
+        let actor = app.world().get::<ActorId>(entity).unwrap().0.clone();
+        app.world()
+            .non_send::<Engine>()
+            .variables
+            .write(&actor, "pace", Evaluated::Number(4.0));
+        for _ in 0..31 {
+            app.update();
+        }
+        let moving = player(&app, entity);
+        assert_eq!(moving.state, "Move");
+        assert_eq!(moving.blend.len(), 2);
+        assert!(moving.blend.iter().all(|(_, w)| (w - 0.5).abs() < 1e-4));
+        // Half and half is a 0.75 s cycle moving 2.5 m, so 10/3 m/s.
+        assert!((moving.cycle - 0.75).abs() < 1e-4);
+        assert!((moving.phase - moving.elapsed / 0.75).abs() < 1e-3);
+        let z = app.world().get::<Transform>(entity).unwrap().translation.z;
+        assert!(
+            (z + moving.elapsed * 10.0 / 3.0).abs() < 1e-3,
+            "walked to {z}"
+        );
+
+        app.world()
+            .non_send::<Engine>()
+            .variables
+            .write(&actor, "pace", Evaluated::Number(9.0));
+        app.update();
+        let running = player(&app, entity);
+        assert_eq!(running.blend, vec![("Run".to_string(), 1.0)]);
+        assert_eq!(running.clip, "Run");
+    }
+
     #[test]
     fn model_clips_run_the_state_machine_markers_and_root_motion_in_3d() {
         let spec: AnimationSpec = serde_json::from_str(

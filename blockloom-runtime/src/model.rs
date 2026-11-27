@@ -32,8 +32,6 @@ pub struct ModelRig {
     players: Vec<Entity>,
     /// Lowercased animation name (`animationN` by index too) to its node.
     nodes: HashMap<String, AnimationNodeIndex>,
-    showing: Option<AnimationNodeIndex>,
-    last_elapsed: f32,
     missing: Option<String>,
 }
 
@@ -245,17 +243,18 @@ fn on_ready(
     commands.entity(ready.entity).insert(ModelRig {
         players: rigged,
         nodes,
-        showing: start,
-        last_elapsed: 0.0,
         missing: None,
     });
 }
 
-/// The drawing half of the 3D animator: puts the clip each actor's animator
-/// plays (`anim2d::step_animations` keeps its clock, markers and states on the
-/// tick) on its model, crossfading on a change and held to the animator's
-/// time, so the rig shows exactly where the simulation stands.
+/// The drawing half of the 3D animator: puts the clips each actor's animator
+/// plays (`anim2d::step_animations` keeps its clock, blend shares, markers and
+/// states on the tick) on its model, each at its weight and held to the
+/// animator's time, so the rig shows exactly where the simulation stands.
+/// The weights are set here, not by Bevy's transitions, so a crossfade out of
+/// a blend fades every clip of it.
 pub fn drive_animations(
+    mut commands: Commands,
     engine: NonSend<Engine>,
     fixed: Res<Time<Fixed>>,
     actors: Query<(
@@ -264,7 +263,7 @@ pub fn drive_animations(
         &ModelChild,
     )>,
     mut rigs: Query<&mut ModelRig>,
-    mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
+    mut players: Query<(&mut AnimationPlayer, Has<AnimationTransitions>)>,
 ) {
     for (id, logical, child) in &actors {
         let Ok(mut rig) = rigs.get_mut(child.0) else {
@@ -273,67 +272,96 @@ pub fn drive_animations(
         let Some(spec) = engine.actor(&id.0).and_then(|a| a.components.animation()) else {
             continue;
         };
-        let Some(clip) = spec.find_clip(&logical.clip) else {
+        if spec.find_clip(&logical.clip).is_none() {
             continue;
-        };
-        let wanted = if clip.rig_animation.is_empty() {
-            &clip.name
-        } else {
-            &clip.rig_animation
-        };
-        let Some(node) = rig.node(wanted) else {
-            if rig.missing.as_deref() != Some(wanted.as_str()) {
-                rig.missing = Some(wanted.clone());
-                report(
-                    &id.0,
-                    format!(
-                        "the model has no animation called \"{wanted}\" for clip \"{}\"",
-                        clip.name
-                    ),
-                );
-            }
-            continue;
-        };
-        let restarted = logical.elapsed < rig.last_elapsed;
-        let changed = rig.showing != Some(node) || restarted;
-        rig.last_elapsed = logical.elapsed;
-        let fade = logical.fade.as_ref();
-        let fading = fade.and_then(|fade| {
-            let old = spec.find_clip(&fade.clip)?;
-            let name = if old.rig_animation.is_empty() {
-                &old.name
-            } else {
-                &old.rig_animation
-            };
-            Some((rig.node(name)?, old.local_time(fade.elapsed)))
-        });
+        }
         // Between ticks the rig carries on at the animator's speed.
-        let ahead = if logical.playing {
-            fixed.overstep().as_secs_f32() * logical.speed.max(0.0)
-        } else {
-            0.0
+        let ahead = |speed: f32, playing: bool| {
+            if playing {
+                fixed.overstep().as_secs_f32() * speed.max(0.0)
+            } else {
+                0.0
+            }
         };
-        let at = clip.local_time(logical.elapsed + ahead);
-        for &entity in &rig.players {
-            let Ok((mut player, mut transitions)) = players.get_mut(entity) else {
-                continue;
+        let fade_in = logical
+            .fade
+            .as_ref()
+            .filter(|fade| fade.total > 0.0)
+            .map_or(1.0, |fade| (1.0 - fade.left / fade.total).clamp(0.0, 1.0));
+        // Every clip showing, its weight and its time.
+        let mut wanted: Vec<(String, f32, f32)> = Vec::new();
+        let mut put = |clip_name: &str, weight: f32, elapsed: f32, phase: Option<f32>| {
+            let Some(clip) = spec.find_clip(clip_name) else {
+                return;
             };
-            if changed {
-                let blend = fade.map_or(0.0, |fade| fade.total.max(0.0));
-                transitions.play(&mut player, node, Duration::from_secs_f32(blend));
-            }
-            if let Some(active) = player.animation_mut(node) {
-                active.set_speed(0.0).seek_to(at);
-            }
-            if let Some((old, old_at)) = fading
-                && old != node
-                && let Some(active) = player.animation_mut(old)
-            {
-                active.set_speed(0.0).seek_to(old_at);
+            let at = match phase {
+                Some(phase) => clip.local_time(phase * clip.duration()),
+                None => clip.local_time(elapsed),
+            };
+            wanted.push((clip.rig_name().to_string(), weight, at));
+        };
+        let now = ahead(logical.speed, logical.playing);
+        if logical.blend.is_empty() {
+            put(&logical.clip, fade_in, logical.elapsed + now, None);
+        } else {
+            let phase = logical.phase + now / logical.cycle.max(1e-4);
+            for (name, w) in &logical.blend {
+                put(name, w * fade_in, 0.0, Some(phase));
             }
         }
-        if changed {
-            rig.showing = Some(node);
+        if let Some(fade) = &logical.fade {
+            let out = 1.0 - fade_in;
+            let then = ahead(fade.speed, logical.playing);
+            if fade.blend.is_empty() {
+                put(&fade.clip, out, fade.elapsed + then, None);
+            } else {
+                let phase = fade.phase + then / fade.cycle.max(1e-4);
+                for (name, w) in &fade.blend {
+                    put(name, w * out, 0.0, Some(phase));
+                }
+            }
+        }
+        let mut weights: HashMap<AnimationNodeIndex, (f32, f32)> = HashMap::new();
+        for (name, weight, at) in &wanted {
+            match rig.node(name) {
+                Some(node) => {
+                    let entry = weights.entry(node).or_insert((0.0, *at));
+                    entry.0 += weight;
+                }
+                None if rig.missing.as_deref() != Some(name.as_str()) => {
+                    rig.missing = Some(name.clone());
+                    report(
+                        &id.0,
+                        format!("the model has no animation called \"{name}\" for its animator"),
+                    );
+                }
+                None => {}
+            }
+        }
+        for &entity in &rig.players {
+            let Ok((mut player, transitions)) = players.get_mut(entity) else {
+                continue;
+            };
+            if transitions {
+                // The animator takes over from the look's own looping clip.
+                commands.entity(entity).remove::<AnimationTransitions>();
+            }
+            let stale: Vec<AnimationNodeIndex> = player
+                .playing_animations()
+                .map(|(node, _)| *node)
+                .filter(|node| !weights.contains_key(node))
+                .collect();
+            for node in stale {
+                player.stop(node);
+            }
+            for (&node, &(weight, at)) in &weights {
+                if player.animation(node).is_none() {
+                    player.play(node);
+                }
+                if let Some(active) = player.animation_mut(node) {
+                    active.set_speed(0.0).set_weight(weight).seek_to(at);
+                }
+            }
         }
     }
 }
@@ -475,8 +503,6 @@ mod tests {
                 nodes: [("walk".to_string(), walk), ("jump_up".to_string(), jump)]
                     .into_iter()
                     .collect(),
-                showing: Some(walk),
-                last_elapsed: 0.0,
                 missing: None,
             })
             .id();
@@ -502,6 +528,13 @@ mod tests {
                 .animation(node)
                 .map(|active| active.seek_time())
         };
+        let weight = |app: &App, node| {
+            app.world()
+                .get::<AnimationPlayer>(rigged)
+                .unwrap()
+                .animation(node)
+                .map_or(0.0, |active| active.weight())
+        };
         // 1 s into a 0.8 s loop is 0.2 s in.
         assert!((at(&app, walk).unwrap() - 0.2).abs() < 1e-4);
 
@@ -515,17 +548,37 @@ mod tests {
             clip: "Walk".to_string(),
             elapsed: 1.1,
             speed: 1.0,
-            left: 0.2,
+            left: 0.05,
             total: 0.2,
+            ..Default::default()
         });
         app.update();
         assert!((at(&app, jump).unwrap() - 0.1).abs() < 1e-4);
         // Walk fades out from where it was, still held to the animator.
         assert!((at(&app, walk).unwrap() - 0.3).abs() < 1e-4);
-        assert_eq!(
-            app.world().get::<ModelRig>(scene).unwrap().showing,
-            Some(jump)
+        assert!((weight(&app, jump) - 0.75).abs() < 1e-4);
+        assert!((weight(&app, walk) - 0.25).abs() < 1e-4);
+        assert!(app.world().get::<AnimationTransitions>(rigged).is_none());
+
+        // A blend plays every clip at its share, in step through one cycle.
+        let mut logical = app
+            .world_mut()
+            .get_mut::<crate::engine::AnimationPlayer>(actor)
+            .unwrap();
+        logical.fade = None;
+        logical.clip = "Walk".to_string();
+        logical.blend = vec![("Walk".to_string(), 0.75), ("Jump".to_string(), 0.25)];
+        logical.phase = 2.5;
+        logical.cycle = 0.725;
+        app.update();
+        assert!((at(&app, walk).unwrap() - 0.4).abs() < 1e-4);
+        assert!(
+            (at(&app, jump).unwrap() - 0.5).abs() < 1e-4,
+            "a Once clip holds its end"
         );
+        assert!((weight(&app, walk) - 0.75).abs() < 1e-4);
+        assert!((weight(&app, jump) - 0.25).abs() < 1e-4);
+        assert!(app.world().get::<ModelRig>(scene).is_some());
     }
 
     #[test]

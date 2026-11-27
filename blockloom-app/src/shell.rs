@@ -1965,7 +1965,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "animate-from-model",
         cmd: "animate_from_model",
         aliases: &["animate_from_model"],
-        summary: "Give a model actor a clip and a state for every animation in its glTF file (one-shot names play once and return to idle), keeping clips it already has. Answers how many it added.",
+        summary: "Give a model actor a clip and a state for every animation in its glTF file (one-shot names play once and return to idle), keeping clips it already has. Looping idle, walk and run clips also become one Locomotion blend state over the motor's speed, with the jump state left and rejoined on grounded. Answers how many clips and states it added.",
         args: &[A],
     },
     CommandSpec {

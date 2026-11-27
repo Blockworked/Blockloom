@@ -2465,7 +2465,17 @@ pub(crate) fn animate_from_model(
         .animation()
         .cloned()
         .unwrap_or_else(|| serde_json::from_str("{}").expect("an empty animation spec parses"));
-    let added = spec.add_model_clips(&info.clips);
+    let motor = actor
+        .components
+        .character_motor()
+        .cloned()
+        .unwrap_or_else(|| {
+            blockloom_core::physics::motor::CharacterMotorSpec::for_mode(
+                blockloom_core::scene::Mode::ThreeD,
+            )
+        });
+    let added = spec.add_model_clips(&info.clips)
+        + usize::from(spec.add_locomotion(motor.walk_speed, motor.sprint_speed));
     push_undo(&mut s);
     let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
         return Err("Actor not found".to_string());

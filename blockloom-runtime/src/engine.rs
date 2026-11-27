@@ -356,16 +356,26 @@ pub struct AnimationPlayer {
     pub fade: Option<AnimationFade>,
     /// Triggers fired this tick, for the state machine.
     pub triggers: Vec<String>,
+    /// A blend state's clips and their shares; empty plays `clip` alone.
+    pub blend: Vec<(String, f32)>,
+    /// How far through a blend state's shared cycle, in cycles.
+    pub phase: f32,
+    /// The length of one blended cycle, in seconds.
+    pub cycle: f32,
 }
 
 /// The previous clip, still advancing while it fades out.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AnimationFade {
     pub clip: String,
     pub elapsed: f32,
     pub speed: f32,
     pub left: f32,
     pub total: f32,
+    /// The blend it was showing, held as it was, and that blend's cycle.
+    pub blend: Vec<(String, f32)>,
+    pub phase: f32,
+    pub cycle: f32,
 }
 
 /// The pose an actor settled at the end of a fixed step - physically, or from

@@ -669,6 +669,7 @@ Add component calls it "Hurt volume". 2D worlds only.
 | `animation.clips[].markers[].name` | text |  |  |
 | `animation.clips[].motion` | list of number | `[0.0,0.0]` | How far one pass carries the actor when its state has root motion on, in world units. |
 | `animation.clips[].rig_animation` | text |  |  |
+| `animation.clips[].seconds` | number | `0.0` | A model clip's length in seconds: a 3D clip has no frames of its own and plays the model's animation `rig_animation` names (or the clip's name). Its markers and frames count at `fps`, as a flipbook's do. |
 | `animation.states` | list of record | `[]` |  |
 | `animation.states[].name` | text |  |  |
 | `animation.states[].clip` | text |  |  |
@@ -684,6 +685,13 @@ Add component calls it "Hurt volume". 2D worlds only.
 | `animation.states[].transitions[].when (Variable).value` | text |  |  |
 | `animation.states[].transitions[].blend` | number | `-1.0` |  |
 | `animation.states[].root_motion` | switch | `false` |  |
+| `animation.states[].blend` | record or none | `null` | Mixes several clips by one or two inputs instead of playing `clip`. |
+| `animation.states[].blend.x` | text |  |  |
+| `animation.states[].blend.y` | text |  |  |
+| `animation.states[].blend.points` | list of record | `[]` |  |
+| `animation.states[].blend.points[].clip` | text |  |  |
+| `animation.states[].blend.points[].x` | number | `0.0` |  |
+| `animation.states[].blend.points[].y` | number | `0.0` |  |
 | `animation.initial` | text |  | The state the player starts in when the run does. Empty starts idle. |
 | `animation.crossfade` | number | `0.0` | Crossfade seconds for a transition that doesn't set its own. |
 | `animation.rig` | text |  | A skeletal rig file (Spine or DragonBones JSON) under the project's assets. Empty, or a file that won't load, plays the flipbooks. |
