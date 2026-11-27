@@ -4,7 +4,8 @@
 //! a running world waits out `BLOCKLOOM_PROFILE_WARMUP` seconds (3 by
 //! default), then samples every frame for N seconds: wall frame time, the
 //! whole-frame GPU span, each render pass and the fixed step's cost. It
-//! writes the summary as JSON and quits.
+//! writes the summary as JSON and quits. Vsync is off unless
+//! `BLOCKLOOM_PROFILE_VSYNC=1`, so frame times are the game's, not the display's.
 
 use crate::engine::Engine;
 use bevy::diagnostic::DiagnosticsStore;
@@ -20,6 +21,8 @@ use web_time::Instant;
 pub struct Profiler {
     warmup: f64,
     seconds: f64,
+    /// Off with `BLOCKLOOM_PROFILE_VSYNC=1`.
+    uncapped: bool,
     out: std::path::PathBuf,
     /// When the run started, then when sampling did.
     began: Option<Instant>,
@@ -43,8 +46,10 @@ impl Profiler {
             .ok()
             .and_then(|w| w.parse().ok())
             .unwrap_or(3.0);
+        let uncapped = std::env::var("BLOCKLOOM_PROFILE_VSYNC").map_or(true, |v| v == "0");
         Some(Self {
             warmup,
+            uncapped,
             seconds,
             out,
             began: None,
@@ -95,7 +100,7 @@ pub fn sample(
     diagnostics: Option<Res<DiagnosticsStore>>,
     sim: Option<Res<crate::performance::SimSplit>>,
     adapter: Option<Res<RenderAdapter>>,
-    windows: Query<&Window, With<PrimaryWindow>>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut exit: MessageWriter<AppExit>,
 ) {
     let Some(mut p) = profiler else { return };
@@ -103,6 +108,12 @@ pub fn sample(
         return;
     }
     let now = Instant::now();
+    if p.began.is_none() && p.uncapped {
+        // Vsync would measure the display, not the game.
+        if let Ok(mut window) = windows.single_mut() {
+            window.present_mode = bevy::window::PresentMode::AutoNoVsync;
+        }
+    }
     let began = *p.began.get_or_insert(now);
     let last = p.last.replace(now);
     if now.duration_since(began).as_secs_f64() < p.warmup {
@@ -160,6 +171,7 @@ pub fn sample(
         })),
         "resolution": resolution,
         "mode": format!("{:?}", engine.project.world.mode),
+        "vsync": !p.uncapped,
     });
     let written = serde_json::to_vec_pretty(&summary)
         .map_err(|e| e.to_string())

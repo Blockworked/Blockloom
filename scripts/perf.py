@@ -34,8 +34,9 @@ PERF_ENTRIES["third-person"] = ("sample", ("third-person", "ThreeD"))
 
 
 def release_shell():
+    target = pathlib.Path(os.environ.get("CARGO_TARGET_DIR") or ROOT / "target")
     for profile in ("release", "debug"):
-        exe = ROOT / "target" / profile / ("blockloom-shell.exe" if os.name == "nt" else "blockloom-shell")
+        exe = target / profile / ("blockloom-shell.exe" if os.name == "nt" else "blockloom-shell")
         if exe.exists():
             return exe, profile
     return None, None
@@ -73,6 +74,8 @@ def main():
     parser.add_argument("--warmup", type=float, default=3.0)
     parser.add_argument("--timeout", type=float, default=600.0)
     parser.add_argument("--shell", type=pathlib.Path, default=None)
+    parser.add_argument("--adapter", help="GPU to use, by part of its name (WGPU_ADAPTER_NAME), e.g. intel")
+    parser.add_argument("--vsync", action="store_true", help="keep vsync on (frame times then show the display)")
     parser.add_argument("--keep", action="store_true")
     args = parser.parse_args()
 
@@ -86,6 +89,10 @@ def main():
     env = dict(os.environ)
     env.setdefault("BLOCKLOOM_DATA_DIR", str(work / "data"))
     env.setdefault("BLOCKLOOM_RUNTIME", "process")
+    if args.adapter:
+        env["WGPU_ADAPTER_NAME"] = args.adapter
+    if args.vsync:
+        env["BLOCKLOOM_PROFILE_VSYNC"] = "1"
     target = RESULTS / args.label
     target.mkdir(parents=True, exist_ok=True)
 
@@ -112,7 +119,7 @@ def main():
     if rows:
         adapter = rows[0][1].get("adapter") or {}
         print(f"\n{adapter.get('name', 'unknown GPU')} ({adapter.get('backend', '?')}), "
-              f"{rows[0][1].get('resolution')}, {build} build\n")
+              f"{rows[0][1].get('resolution')}, {build} build, vsync {'on' if args.vsync else 'off'}\n")
         print("| entry | fps | frame mean | p95 | p99 | GPU mean | GPU p95 | fixed mean |")
         print("|---|---|---|---|---|---|---|---|")
         for name, got in rows:
