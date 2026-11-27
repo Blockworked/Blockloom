@@ -383,14 +383,6 @@ pub fn apply_lifetimes(
     effects: Res<PendingEffects>,
     mut engine: NonSendMut<Engine>,
     dimension: Res<Dimension>,
-    assets: Res<AssetServer>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut textures: ResMut<Assets<Image>>,
-    mut graph_materials_2d: ResMut<Assets<crate::materials::GraphMaterial2d>>,
-    mut graph_materials_3d: ResMut<Assets<crate::materials::GraphMaterial3d>>,
-    mut tile_materials: ResMut<Assets<bevy::sprite_render::ColorMaterial>>,
-    mut render_cache: ResMut<crate::performance::RenderCache>,
     live: Query<(&Visibility, Option<&CustomComponents>)>,
     mut transforms: Query<&mut Transform>,
 ) {
@@ -430,20 +422,7 @@ pub fn apply_lifetimes(
                 copy.components.set_parent(parent.as_deref().unwrap_or(""));
                 engine.clones.insert(clone.clone(), of.clone());
                 engine.last_created.insert(actor.clone(), clone.clone());
-                spawn_runtime_actor(
-                    &mut commands,
-                    &mut engine,
-                    dimension.0,
-                    &assets,
-                    &mut meshes,
-                    &mut materials,
-                    &mut textures,
-                    &mut graph_materials_2d,
-                    &mut graph_materials_3d,
-                    &mut tile_materials,
-                    &mut render_cache,
-                    copy,
-                );
+                spawn_runtime_actor(&mut commands, &mut engine, dimension.0, copy);
             }
             Effect::CreateActor {
                 actor,
@@ -455,20 +434,7 @@ pub fn apply_lifetimes(
                 made.id = id.clone();
                 made.components.placement_mut().position = *position;
                 engine.last_created.insert(actor.clone(), id.clone());
-                spawn_runtime_actor(
-                    &mut commands,
-                    &mut engine,
-                    dimension.0,
-                    &assets,
-                    &mut meshes,
-                    &mut materials,
-                    &mut textures,
-                    &mut graph_materials_2d,
-                    &mut graph_materials_3d,
-                    &mut tile_materials,
-                    &mut render_cache,
-                    made,
-                );
+                spawn_runtime_actor(&mut commands, &mut engine, dimension.0, made);
             }
             Effect::DeleteActor { actor } => delete_actor(&mut commands, &mut engine, actor),
             Effect::SetParent { actor, parent } => {
@@ -597,14 +563,6 @@ pub fn respawn_actors(
     mut commands: Commands,
     mut engine: NonSendMut<Engine>,
     dimension: Res<Dimension>,
-    assets: Res<AssetServer>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut textures: ResMut<Assets<Image>>,
-    mut graph_materials_2d: ResMut<Assets<crate::materials::GraphMaterial2d>>,
-    mut graph_materials_3d: ResMut<Assets<crate::materials::GraphMaterial3d>>,
-    mut tile_materials: ResMut<Assets<bevy::sprite_render::ColorMaterial>>,
-    mut render_cache: ResMut<crate::performance::RenderCache>,
     mut navmesh: Option<ResMut<NavMesh>>,
 ) {
     if engine.respawn.is_empty() {
@@ -619,20 +577,7 @@ pub fn respawn_actors(
         let Some(actor) = engine.project.actor(id).cloned() else {
             continue;
         };
-        spawn_actor_entity(
-            &mut commands,
-            &mut engine,
-            dimension.0,
-            &assets,
-            &mut meshes,
-            &mut materials,
-            &mut textures,
-            &mut graph_materials_2d,
-            &mut graph_materials_3d,
-            &mut tile_materials,
-            &mut render_cache,
-            &actor,
-        );
+        spawn_actor_entity(&mut commands, &mut engine, dimension.0, &actor);
     }
     // Static solids are the navmesh's ground and holes.
     if let Some(nav) = navmesh.as_deref_mut() {
@@ -651,30 +596,9 @@ pub(crate) fn spawn_runtime_actor(
     commands: &mut Commands,
     engine: &mut Engine,
     mode: Mode,
-    assets: &AssetServer,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    textures: &mut Assets<Image>,
-    graph_materials_2d: &mut Assets<crate::materials::GraphMaterial2d>,
-    graph_materials_3d: &mut Assets<crate::materials::GraphMaterial3d>,
-    tile_materials: &mut Assets<bevy::sprite_render::ColorMaterial>,
-    render_cache: &mut crate::performance::RenderCache,
     actor: Actor,
 ) {
-    spawn_actor_entity(
-        commands,
-        engine,
-        mode,
-        assets,
-        meshes,
-        materials,
-        textures,
-        graph_materials_2d,
-        graph_materials_3d,
-        tile_materials,
-        render_cache,
-        &actor,
-    );
+    spawn_actor_entity(commands, engine, mode, &actor);
     engine.spawned.insert(actor.id.clone(), actor);
 }
 
@@ -685,39 +609,11 @@ pub(crate) fn spawn_actor_entity(
     commands: &mut Commands,
     engine: &mut Engine,
     mode: Mode,
-    assets: &AssetServer,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    textures: &mut Assets<Image>,
-    graph_materials_2d: &mut Assets<crate::materials::GraphMaterial2d>,
-    graph_materials_3d: &mut Assets<crate::materials::GraphMaterial3d>,
-    tile_materials: &mut Assets<bevy::sprite_render::ColorMaterial>,
-    render_cache: &mut crate::performance::RenderCache,
     actor: &Actor,
 ) {
-    let dir = engine.project_dir.clone();
     let entity = match mode {
-        Mode::TwoD => dim2::spawn_actor(
-            commands,
-            actor,
-            dir.as_deref(),
-            assets,
-            textures,
-            meshes,
-            graph_materials_2d,
-            tile_materials,
-            false,
-        ),
-        Mode::ThreeD => dim3::spawn_actor(
-            commands,
-            actor,
-            dir.as_deref(),
-            assets,
-            meshes,
-            materials,
-            graph_materials_3d,
-            render_cache,
-        ),
+        Mode::TwoD => dim2::spawn_actor(commands, actor, false),
+        Mode::ThreeD => dim3::spawn_actor(commands, actor),
     }
     .unwrap_or_else(|| spawn_unseen(commands, actor, mode));
     attach_camera(commands, actor, entity);

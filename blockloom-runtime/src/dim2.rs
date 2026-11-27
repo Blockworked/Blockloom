@@ -253,62 +253,22 @@ fn sprite_for(
     }
 }
 
-/// Spawns one actor, or nothing if its visual belongs to the other dimension
-/// or a tilemap is empty. A custom-shaded actor renders on a quad through
-/// the graph material; a tilemap through its own mesh; everything else
-/// through the sprite pipeline.
-#[allow(clippy::too_many_arguments)]
-pub fn spawn_actor(
-    commands: &mut Commands,
-    actor: &Actor,
-    dir: Option<&Path>,
-    assets: &AssetServer,
-    textures: &mut Assets<Image>,
-    meshes: &mut Assets<Mesh>,
-    graph_materials: &mut Assets<GraphMaterial2d>,
-    tile_materials: &mut Assets<ColorMaterial>,
-    streamed: bool,
-) -> Option<Entity> {
-    let visual = actor.visual()?.clone();
-    match &visual {
-        // An empty map still stands there to be painted on, and a map a
-        // room streams in is built when its room comes near.
-        Visual::Tilemap { .. } => {}
-        _ if shader_of(actor).is_some() && custom_quad_size(&visual).is_none() => return None,
-        _ if shader_of(actor).is_none() && sprite_for(&visual, dir, assets, textures).is_none() => {
-            return None;
-        }
-        _ => {}
+/// The simulation half of spawning one actor: its entity, pose, body and
+/// sprite dials, marked for [`realize_looks`] to draw. Nothing if its visual
+/// belongs to the other dimension.
+pub fn spawn_actor(commands: &mut Commands, actor: &Actor, streamed: bool) -> Option<Entity> {
+    if !has_look(actor) {
+        return None;
     }
-    let mut entity = commands.spawn(crate::world::actor_bundle(actor));
-    // The sort layer rides on z, leaving the authored depth alone. The
-    // borrow ends with this block: the passes below take `commands` again.
-    let id = {
-        let (transform, pose, prev) = spawn_pose(actor);
-        entity.insert((transform, pose, prev));
-        entity.id()
-    };
-    match &visual {
-        Visual::Tilemap { .. } if streamed => {}
-        Visual::Tilemap { tilemap } => {
-            crate::materials::spawn_tilemap_2d(
-                commands,
-                id,
-                tilemap,
-                dir,
-                assets,
-                meshes,
-                tile_materials,
-            );
-        }
-        _ if shader_of(actor).is_some() => {
-            insert_graph(commands, id, actor, dir, assets, meshes, graph_materials);
-        }
-        _ => {
-            let sprite = sprite_for(&visual, dir, assets, textures).expect("checked above");
-            commands.entity(id).insert(sprite);
-        }
-    }
+    let (transform, pose, prev) = spawn_pose(actor);
+    let id = commands
+        .spawn((
+            crate::world::actor_bundle(actor),
+            crate::world::PendingLook::of(actor, streamed),
+        ))
+        // The sort layer rides on z, leaving the authored depth alone.
+        .insert((transform, pose, prev))
+        .id();
     insert_body(&mut commands.entity(id), actor);
     if let Some(spec) = actor.components.sprite() {
         commands
@@ -316,6 +276,81 @@ pub fn spawn_actor(
             .insert(crate::sprites::SpriteDials(spec.clone()));
     }
     Some(id)
+}
+
+/// Whether an actor has a 2D look to draw: a map (even an empty one, to be
+/// painted on), a custom-shaded quad, or a rect, circle or image.
+pub fn has_look(actor: &Actor) -> bool {
+    let Some(visual) = actor.visual() else {
+        return false;
+    };
+    match visual {
+        Visual::Tilemap { .. } => true,
+        _ if shader_of(actor).is_some() => custom_quad_size(visual).is_some(),
+        _ => matches!(
+            visual,
+            Visual::Rect { .. } | Visual::Circle { .. } | Visual::Image { .. }
+        ),
+    }
+}
+
+/// The presentation half of a spawn: sprite, map or shaded quad for every
+/// actor the simulation spawned since the last pass. A map a room streams in
+/// is built when its room comes near.
+#[allow(clippy::too_many_arguments)]
+pub fn realize_looks(
+    mut commands: Commands,
+    pending: Query<(Entity, &crate::world::PendingLook)>,
+    dimension: Res<crate::engine::Dimension>,
+    document: Option<Res<crate::engine::SceneDocument>>,
+    assets: Res<AssetServer>,
+    mut textures: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut graph_materials: ResMut<Assets<GraphMaterial2d>>,
+    mut tile_materials: ResMut<Assets<ColorMaterial>>,
+) {
+    if dimension.0.is_3d() || pending.is_empty() {
+        return;
+    }
+    let dir = document.as_ref().and_then(|document| document.dir.clone());
+    let dir = dir.as_deref();
+    for (id, look) in &pending {
+        commands.entity(id).remove::<crate::world::PendingLook>();
+        let actor = &look.actor;
+        let Some(visual) = actor.visual() else {
+            continue;
+        };
+        match visual {
+            Visual::Tilemap { .. } if look.streamed => {}
+            Visual::Tilemap { tilemap } => {
+                crate::materials::spawn_tilemap_2d(
+                    &mut commands,
+                    id,
+                    tilemap,
+                    dir,
+                    &assets,
+                    &mut meshes,
+                    &mut tile_materials,
+                );
+            }
+            _ if shader_of(actor).is_some() => {
+                insert_graph(
+                    &mut commands,
+                    id,
+                    actor,
+                    dir,
+                    &assets,
+                    &mut meshes,
+                    &mut graph_materials,
+                );
+            }
+            _ => {
+                if let Some(sprite) = sprite_for(visual, dir, &assets, &mut textures) {
+                    commands.entity(id).insert(sprite);
+                }
+            }
+        }
+    }
 }
 
 /// The spawn transform: placement plus the sort layer, so a higher layer
@@ -558,11 +593,6 @@ pub fn apply_effects(
     mut transforms: Query<&mut Transform>,
     mut config: Query<&mut rp::RapierConfiguration>,
     mut sprites: Query<&mut Sprite>,
-    assets: Res<AssetServer>,
-    mut textures: ResMut<Assets<Image>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut graph_materials: ResMut<Assets<GraphMaterial2d>>,
-    mut tile_materials: ResMut<Assets<ColorMaterial>>,
     tiles: Query<&crate::materials::TilemapMesh>,
 ) {
     if !engine.running || engine.paused {
@@ -579,7 +609,6 @@ pub fn apply_effects(
     // Turning "this far this step" into a velocity needs the step's length -
     // a fixed rate keeps it constant, whatever the display does.
     let dt = time.delta_secs().max(1.0 / 1000.0);
-    let dir = engine.project_dir.clone();
     // Dynamic actors a walk verb drives this tick. Whoever was driven last
     // tick but isn't now just let go: brake them below.
     let mut driven: HashSet<String> = HashSet::new();
@@ -837,87 +866,16 @@ pub fn apply_effects(
                             apply_filter(&mut commands.entity(entity), layer, mask, trigger);
                         }
                     }
-                    "Look" => {
+                    // A look or material arriving mid-run is redrawn from the
+                    // authored actor by `realize_looks`, the drawing half.
+                    "Look" | "Material" => {
                         let Some(authored) = engine.actor(actor).cloned() else {
                             continue;
                         };
                         remove_drawn(&mut commands, entity, &tiles);
-                        match authored.visual() {
-                            Some(Visual::Tilemap { tilemap }) => {
-                                crate::materials::spawn_tilemap_2d(
-                                    &mut commands,
-                                    entity,
-                                    tilemap,
-                                    dir.as_deref(),
-                                    &assets,
-                                    &mut meshes,
-                                    &mut tile_materials,
-                                );
-                            }
-                            Some(_) if shader_of(&authored).is_some() => {
-                                insert_graph(
-                                    &mut commands,
-                                    entity,
-                                    &authored,
-                                    dir.as_deref(),
-                                    &assets,
-                                    &mut meshes,
-                                    &mut graph_materials,
-                                );
-                            }
-                            Some(visual) => {
-                                if let Some(sprite) =
-                                    sprite_for(visual, dir.as_deref(), &assets, &mut textures)
-                                {
-                                    commands.entity(entity).insert(sprite);
-                                }
-                            }
-                            None => {}
-                        }
-                    }
-                    "Material" => {
-                        // A custom shader swaps the sprite for a graph quad;
-                        // plain PBR props need lighting, so 2D leaves the
-                        // sprite exactly as it is.
-                        let Some(authored) = engine.actor(actor).cloned() else {
-                            continue;
-                        };
-                        remove_drawn(&mut commands, entity, &tiles);
-                        if shader_of(&authored).is_some() {
-                            insert_graph(
-                                &mut commands,
-                                entity,
-                                &authored,
-                                dir.as_deref(),
-                                &assets,
-                                &mut meshes,
-                                &mut graph_materials,
-                            );
-                        } else if let Some(visual) = authored.visual() {
-                            // A tilemap re-spawns its mesh; anything else its
-                            // sprite. Whatever the look draws with, the
-                            // material attach rebuilds it from scratch.
-                            match visual {
-                                Visual::Tilemap { tilemap } => {
-                                    crate::materials::spawn_tilemap_2d(
-                                        &mut commands,
-                                        entity,
-                                        tilemap,
-                                        dir.as_deref(),
-                                        &assets,
-                                        &mut meshes,
-                                        &mut tile_materials,
-                                    );
-                                }
-                                _ => {
-                                    if let Some(sprite) =
-                                        sprite_for(visual, dir.as_deref(), &assets, &mut textures)
-                                    {
-                                        commands.entity(entity).insert(sprite);
-                                    }
-                                }
-                            }
-                        }
+                        commands
+                            .entity(entity)
+                            .insert(crate::world::PendingLook::of(&authored, false));
                     }
                     _ => {}
                 }
@@ -943,26 +901,11 @@ pub fn apply_effects(
                     // Back to the plain sprite pipeline.
                     "Material" => {
                         remove_drawn(&mut commands, id, &tiles);
-                        match engine.actor(actor).and_then(|a| a.visual()) {
-                            Some(Visual::Tilemap { tilemap }) => {
-                                crate::materials::spawn_tilemap_2d(
-                                    &mut commands,
-                                    id,
-                                    tilemap,
-                                    dir.as_deref(),
-                                    &assets,
-                                    &mut meshes,
-                                    &mut tile_materials,
-                                );
-                            }
-                            Some(visual) => {
-                                if let Some(sprite) =
-                                    sprite_for(visual, dir.as_deref(), &assets, &mut textures)
-                                {
-                                    commands.entity(id).insert(sprite);
-                                }
-                            }
-                            None => {}
+                        if let Some(mut authored) = engine.actor(actor).cloned() {
+                            authored.components.remove("Material");
+                            commands
+                                .entity(id)
+                                .insert(crate::world::PendingLook::of(&authored, false));
                         }
                     }
                     _ => {}

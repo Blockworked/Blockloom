@@ -627,6 +627,16 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .chain()
                     .after(SimStep::ComponentEffects)
                     .before(SimStep::PluginEffects),
+                // The drawing half of every actor the tick made or cloned,
+                // and again for every look the tick's effects attached.
+                (dim2::realize_looks, dim3::realize_looks)
+                    .chain()
+                    .after(SimStep::Lifetimes)
+                    .before(SimStep::Common),
+                (dim2::realize_looks, dim3::realize_looks)
+                    .chain()
+                    .after(SimStep::ApplyEffects)
+                    .before(SimStep::ComponentEffects),
                 (fx::apply_fx_effects, sound::apply_sound_effects)
                     .chain()
                     .after(SimStep::Joints)
@@ -642,6 +652,15 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             )
                 .in_set(world::SimulationSet),
         )
+        // The rebuild is the simulation's; presentation decides when it may
+        // run and draws what it spawned straight after.
+        .configure_sets(
+            Update,
+            world::RebuildSet
+                .run_if(rebuild_ready)
+                .after(fx::despawn_fx)
+                .before(dim2::realize_looks),
+        )
         .add_systems(
             Update,
             (
@@ -653,7 +672,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 preview::drain_preview_inputs,
                 fx::despawn_fx,
                 (
-                    world::rebuild_world.run_if(rebuild_ready),
+                    // The drawing half of every spawn the rebuild made.
+                    (dim2::realize_looks, dim3::realize_looks).chain(),
                     volumes::gather_volumes,
                     post::auto_expose,
                     environment::blend_environment,
@@ -759,11 +779,11 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                     .before(edit::report),
                 tiles::redraw_maps
                     .after(tiles::paint_tiles)
-                    .after(world::rebuild_world)
+                    .after(dim3::realize_looks)
                     .run_if(is_2d),
                 tiles::redraw_maps_3d
                     .after(tiles::paint_tiles)
-                    .after(world::rebuild_world)
+                    .after(dim3::realize_looks)
                     .run_if(is_3d),
                 tiles::publish_level.after(world::publish_sensors),
                 motor::latch_player_input.after(world::publish_sensors),
@@ -773,11 +793,11 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
                 (streaming::update_streaming_cells_2d, tiles::stream_rooms)
                     .chain()
                     .after(world::drive_camera)
-                    .after(world::rebuild_world)
+                    .after(dim3::realize_looks)
                     .run_if(is_2d),
                 tiles::stream_rooms_3d
                     .after(streaming::update_streaming_cells)
-                    .after(world::rebuild_world)
+                    .after(dim3::realize_looks)
                     .run_if(is_3d),
                 tiles::draw_overlays.after(edit::draw),
             ),

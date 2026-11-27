@@ -148,43 +148,106 @@ fn scale_primitive_uv(mesh: &mut Mesh, visual: &Visual, density: f32) {
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, scaled);
 }
 
-/// Spawns one actor, or nothing if its visual belongs to the other dimension
-/// or a tilemap is empty. A custom-shaded actor renders through the graph
-/// material; a tilemap through its textured mesh; a material-carrying actor
-/// through its PBR properties; everything else through flat color.
-#[allow(clippy::too_many_arguments)]
-pub fn spawn_actor(
-    commands: &mut Commands,
-    actor: &Actor,
-    dir: Option<&Path>,
-    assets: &AssetServer,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    graph_materials: &mut Assets<GraphMaterial3d>,
-    cache: &mut crate::performance::RenderCache,
-) -> Option<Entity> {
-    let visual = actor.visual()?.clone();
-    let mesh = surface_mesh(actor, &visual, cache, meshes)?;
-    let id = commands
-        .spawn((crate::world::actor_bundle(actor), Mesh3d(mesh.clone())))
-        .id();
-    if let Some(lod) = cache.lod(&visual, &mesh, meshes) {
-        commands.entity(id).insert(lod);
+/// The simulation half of spawning one actor: its entity, pose and body,
+/// marked for [`realize_looks`] to draw. Nothing if its visual belongs to the
+/// other dimension or a tilemap is empty.
+pub fn spawn_actor(commands: &mut Commands, actor: &Actor) -> Option<Entity> {
+    if !has_look(actor) {
+        return None;
     }
-    insert_look_extras(commands, id, actor, &visual, &mesh, dir, assets);
-    insert_surface(
-        commands,
-        id,
-        actor,
-        &visual,
-        dir,
-        assets,
-        materials,
-        graph_materials,
-        cache,
-    );
+    let id = commands
+        .spawn((
+            crate::world::actor_bundle(actor),
+            crate::world::PendingLook::of(actor, false),
+        ))
+        .id();
     insert_body(&mut commands.entity(id), actor);
     Some(id)
+}
+
+/// Whether an actor has a 3D look to draw: a 3D shape, a model, or a map
+/// with tiles in it. Anything else spawns unseen.
+pub fn has_look(actor: &Actor) -> bool {
+    match actor.visual() {
+        Some(Visual::Tilemap { tilemap }) => tilemap.has_tiles(),
+        Some(visual) => matches!(
+            visual,
+            Visual::Cuboid { .. }
+                | Visual::Sphere { .. }
+                | Visual::Capsule { .. }
+                | Visual::Plane { .. }
+                | Visual::Model { .. }
+        ),
+        None => false,
+    }
+}
+
+/// The presentation half of a spawn: mesh, LOD, surface and model for every
+/// actor the simulation spawned since the last pass.
+#[allow(clippy::too_many_arguments)]
+pub fn realize_looks(
+    mut commands: Commands,
+    pending: Query<(Entity, &crate::world::PendingLook)>,
+    dimension: Res<crate::engine::Dimension>,
+    document: Option<Res<crate::engine::SceneDocument>>,
+    assets: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut graph_materials: ResMut<Assets<GraphMaterial3d>>,
+    mut cache: ResMut<crate::performance::RenderCache>,
+) {
+    if !dimension.0.is_3d() || pending.is_empty() {
+        return;
+    }
+    let dir = document.as_ref().and_then(|document| document.dir.clone());
+    for (id, look) in &pending {
+        commands.entity(id).remove::<crate::world::PendingLook>();
+        let actor = &look.actor;
+        let Some(visual) = actor.visual().cloned() else {
+            continue;
+        };
+        let Some(mesh) = surface_mesh(actor, &visual, &mut cache, &mut meshes) else {
+            continue;
+        };
+        commands.entity(id).insert(Mesh3d(mesh.clone()));
+        if look.surface_only {
+            insert_surface(
+                &mut commands,
+                id,
+                actor,
+                &visual,
+                dir.as_deref(),
+                &assets,
+                &mut materials,
+                &mut graph_materials,
+                &mut cache,
+            );
+            continue;
+        }
+        if let Some(lod) = cache.lod(&visual, &mesh, &mut meshes) {
+            commands.entity(id).insert(lod);
+        }
+        insert_look_extras(
+            &mut commands,
+            id,
+            actor,
+            &visual,
+            &mesh,
+            dir.as_deref(),
+            &assets,
+        );
+        insert_surface(
+            &mut commands,
+            id,
+            actor,
+            &visual,
+            dir.as_deref(),
+            &assets,
+            &mut materials,
+            &mut graph_materials,
+            &mut cache,
+        );
+    }
 }
 
 /// What a look draws beyond its mesh and surface: a model's glTF scene, or
@@ -493,11 +556,6 @@ pub fn apply_effects(
     mut controllers: Query<&mut rp::KinematicCharacterController>,
     mut transforms: Query<&mut Transform>,
     mut config: Query<&mut rp::RapierConfiguration>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    assets: Res<AssetServer>,
-    mut graph_materials: ResMut<Assets<GraphMaterial3d>>,
-    mut cache: ResMut<crate::performance::RenderCache>,
     models: Query<&crate::model::ModelChild>,
 ) {
     if !engine.running || engine.paused {
@@ -512,7 +570,6 @@ pub fn apply_effects(
         return;
     }
     let dt = time.delta_secs().max(1.0 / 1000.0);
-    let dir = engine.project_dir.clone();
     // Dynamic actors a walk verb drives this tick. Whoever was driven last
     // tick but isn't now just let go: brake them below.
     let mut driven: HashSet<String> = HashSet::new();
@@ -775,67 +832,24 @@ pub fn apply_effects(
                         let (layer, mask, trigger) = engine.filter_of(actor);
                         apply_filter(&mut commands.entity(entity), layer, mask, trigger);
                     }
+                    // A look arriving mid-run is drawn again from the authored
+                    // actor by `realize_looks`, the drawing half; a material
+                    // only redraws the surface.
                     "Look" => {
-                        let Some(visual) = authored.visual().cloned() else {
-                            continue;
-                        };
-                        let Some(mesh) = surface_mesh(&authored, &visual, &mut cache, &mut meshes)
-                        else {
-                            continue;
-                        };
-                        commands.entity(entity).insert(Mesh3d(mesh.clone()));
                         commands
                             .entity(entity)
                             .remove::<(crate::culling::LodGroup, crate::culling::Occluder)>();
-                        if let Some(lod) = cache.lod(&visual, &mesh, &mut meshes) {
-                            commands.entity(entity).insert(lod);
-                        }
                         crate::model::detach(&mut commands, entity, &models);
-                        insert_look_extras(
-                            &mut commands,
-                            entity,
-                            &authored,
-                            &visual,
-                            &mesh,
-                            dir.as_deref(),
-                            &assets,
-                        );
-                        insert_surface(
-                            &mut commands,
-                            entity,
-                            &authored,
-                            &visual,
-                            dir.as_deref(),
-                            &assets,
-                            &mut materials,
-                            &mut graph_materials,
-                            &mut cache,
-                        );
+                        remove_surface(&mut commands, entity);
+                        commands
+                            .entity(entity)
+                            .insert(crate::world::PendingLook::of(&authored, false));
                     }
                     "Material" => {
-                        // Rebuild the surface from scratch: whatever it drew
-                        // with before, it now draws with the authored look
-                        // plus the authored material.
-                        let Some(visual) = authored.visual().cloned() else {
-                            continue;
-                        };
-                        let Some(mesh) = surface_mesh(&authored, &visual, &mut cache, &mut meshes)
-                        else {
-                            continue;
-                        };
                         remove_surface(&mut commands, entity);
-                        commands.entity(entity).insert(Mesh3d(mesh));
-                        insert_surface(
-                            &mut commands,
-                            entity,
-                            &authored,
-                            &visual,
-                            dir.as_deref(),
-                            &assets,
-                            &mut materials,
-                            &mut graph_materials,
-                            &mut cache,
-                        );
+                        commands
+                            .entity(entity)
+                            .insert(crate::world::PendingLook::surface(&authored));
                     }
                     _ => {}
                 }
@@ -869,26 +883,10 @@ pub fn apply_effects(
                             continue;
                         };
                         authored.components.remove("Material");
-                        let Some(visual) = authored.visual().cloned() else {
-                            continue;
-                        };
                         remove_surface(&mut commands, id);
-                        if let Some(mesh) =
-                            surface_mesh(&authored, &visual, &mut cache, &mut meshes)
-                        {
-                            commands.entity(id).insert(Mesh3d(mesh));
-                        }
-                        insert_surface(
-                            &mut commands,
-                            id,
-                            &authored,
-                            &visual,
-                            dir.as_deref(),
-                            &assets,
-                            &mut materials,
-                            &mut graph_materials,
-                            &mut cache,
-                        );
+                        commands
+                            .entity(id)
+                            .insert(crate::world::PendingLook::surface(&authored));
                     }
                     _ => {}
                 }

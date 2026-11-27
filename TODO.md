@@ -1575,7 +1575,8 @@ Phased by dependency and value per cost. Each phase unblocks the next.
         - [x] Contacts relayed on the fixed tick (the physics work's `contacts.rs`: `track_contacts` per step, `world::deliver_contacts` at the next tick).
         - [x] `add_world` split: `simulation::add_simulation` (fixed step and physics) with presentation ordered around it; headless 2D/3D harness in `simulation::tests` (determinism, VM vs native logic).
         - [x] `VolumeEye`: volumes weighed at a named actor or point instead of the camera.
-        - [ ] Split the `Update` chain and `rebuild_world`/`apply_lifetimes` (simulation spawn vs visuals), move the tick-sampled part of `publish_sensors` into the fixed tick, virtual-delta cap and own accumulator.
+        - [x] Split `rebuild_world`/`apply_lifetimes` (simulation spawn vs visuals through `PendingLook`/`realize_looks`), `rebuild_world` registered by the simulation, actor senses sampled on the tick, virtual-delta cap (`catchup.rs`). A headless world rebuilds itself with no image or material stores.
+        - [ ] Own fixed-step accumulator (still Bevy's), `pump_editor` and the environment blend still in presentation's `Update`, `engine.project` reads not yet on `SceneDocument`.
     - [ ] Phases 2 to 6 as in the plan (players and authoring, LAN and late join, prediction and dedicated server, plugin/save scope, browser and internet).
 - [ ] Deploy: Web/WASM (see Phase 8 player and Phase 9 editor), Android signing (see Phase 6.5), Windows Store signing (see Phase 6.6), iOS signing, console path, auto-updater/DLC/addressables.
 - [ ] Ecosystem: analytics/crash, achievements/IAP hooks, asset store, collab/VCS, docs/LTS.

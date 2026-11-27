@@ -1943,6 +1943,12 @@ impl Tilemap {
     /// Turn the grid into one mesh: a quad per filled tile with tileset UVs.
     /// Tile `(0, 0)` sits at the top-left; the map is centered on the actor.
     /// Animated tiles show their first frame; see [`Tilemap::build_mesh_at`].
+    /// Whether any cell holds a tile, without building the mesh.
+    pub fn has_tiles(&self) -> bool {
+        (0..self.height)
+            .any(|y| (0..self.width).any(|x| self.tile_at(x, y).is_some_and(|t| t >= 0)))
+    }
+
     pub fn build_mesh(&self) -> TileMesh {
         self.build_mesh_at(0.0)
     }

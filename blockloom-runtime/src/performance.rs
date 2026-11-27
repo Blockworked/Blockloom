@@ -180,8 +180,9 @@ pub fn publish_update_split(
 
 #[derive(SystemParam)]
 pub struct PerformanceStores<'w> {
-    pub cache: ResMut<'w, RenderCache>,
-    pub cells: ResMut<'w, crate::streaming::StreamingCells>,
+    // Drawing state a rebuild starts over; a headless world has none.
+    pub cache: Option<ResMut<'w, RenderCache>>,
+    pub cells: Option<ResMut<'w, crate::streaming::StreamingCells>>,
     pub warmup: Option<ResMut<'w, crate::streaming::Warmup>>,
 }
 

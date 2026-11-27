@@ -154,16 +154,32 @@ more than Bevy's 250 ms. A cheap sim keeps 250 ms; an expensive one turns a
 hitch into slow motion instead of a spiral. A test stepping time by hand is
 left alone.
 
-Still interleaved, and the next extraction: the `Update` chain (`pump_editor`,
-`rebuild_world`, `gather_volumes`/`blend_environment`, `publish_sensors`) and
-`rebuild_world`/`apply_lifetimes` themselves, which spawn meshes and materials
-next to the entities. The sim systems therefore still take the asset stores
-(`AssetServer`, `Assets<Mesh>`, `Assets<StandardMaterial>`, ...) as required
-parameters. The tests in `simulation.rs` supply them as plain CPU-side asset
-collections over `MinimalPlugins`, which is the headless footing: a 2D and a 3D
-project step on the fixed clock with no window or device, the same project steps
-to the same place on every run, and a project compiled to native logic steps to
-the same place as the VM.
+Spawning is split the same way. `dim2::spawn_actor`/`dim3::spawn_actor` are
+the simulation half: the entity, its pose and its body, decided from the
+document alone (`has_look` says whether the actor draws at all), plus a
+`world::PendingLook` holding the actor as it spawned. `realize_looks` in each
+dimension is the drawing half: it turns that marker into a sprite, map, shaded
+quad, mesh, LOD, model and surface, then removes it. Presentation runs it in
+`Update` right after the rebuild, and twice in the fixed step, after
+`SimStep::Lifetimes` (clones and new actors) and after `SimStep::ApplyEffects`
+(a Look or Material attached or detached mid-run, which clear what was drawn and
+mark the actor again; `PendingLook::surface` redraws only a 3D surface). The
+asset stores therefore sit only in presentation: `rebuild_world` and
+`apply_lifetimes` take none, colour tweens and 2D frame drawing take theirs as
+`Option`, and the drawing caches a rebuild clears are optional too.
+
+`rebuild_world` itself is registered by `add_simulation`, in `Update` under
+`world::RebuildSet`; presentation gates that set (`rebuild_ready`, a 2D world
+waits for its sprite shaders) and orders it after `fx::despawn_fx` and before
+`realize_looks`. The tests in `simulation.rs` run over `MinimalPlugins` with no
+image or material stores at all, only the mesh store Rapier's own async
+colliders read: a world rebuilds itself from the document and draws nothing, a
+2D and a 3D project step on the fixed clock, the same project steps to the same
+place on every run, and a project compiled to native logic steps to the same
+place as the VM. Actor senses are already sampled on the tick
+(`publish_simulation_actors` in `SimStep::Sample`); `publish_sensors` reuses
+them while running and only gathers input per frame. Still in presentation's
+`Update` chain: `pump_editor` (the editor link) and the environment blend.
 
 `engine::SceneDocument` is the open scene's `World`, the game settings and
 the project folder as a plain resource, republished by `rebuild_world`, so a

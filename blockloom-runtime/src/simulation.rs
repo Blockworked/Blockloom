@@ -55,6 +55,7 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
         .init_resource::<crate::volumes::VolumeRun>()
         .init_resource::<world::InputRun>()
         .add_message::<crate::module::WorldRebuilt>()
+        .add_systems(Update, world::rebuild_world.in_set(world::RebuildSet))
         .add_systems(
             Update,
             crate::module::forget_on_rebuild::<world::InputRun>.after(world::rebuild_world),
@@ -255,8 +256,8 @@ mod tests {
         project
     }
 
-    /// The simulation alone: no window or renderer, and the asset stores are
-    /// empty CPU-side collections. One `app.update()` after the first is one
+    /// The simulation alone: no window, renderer, asset server or asset
+    /// stores. One `app.update()` after the first is one
     /// fixed step at 60 Hz. Schedules the blocks through native logic compiled into `native` when
     /// given a folder, and through the VM otherwise.
     fn headless_with(project: Project, mode: Mode, native: Option<&std::path::Path>) -> App {
@@ -277,13 +278,10 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.add_plugins(TransformPlugin);
+        // The simulation draws nothing, so the only asset store is the mesh
+        // one Rapier's own async colliders read.
         app.add_plugins(AssetPlugin::default());
         app.init_asset::<Mesh>()
-            .init_asset::<Image>()
-            .init_asset::<StandardMaterial>()
-            .init_asset::<crate::materials::GraphMaterial2d>()
-            .init_asset::<crate::materials::GraphMaterial3d>()
-            .init_asset::<bevy::sprite_render::ColorMaterial>()
             .init_resource::<crate::performance::RenderCache>()
             .init_resource::<crate::ui::UiManager>()
             .init_resource::<crate::sound::SoundState>();
@@ -299,6 +297,52 @@ mod tests {
         world::begin_run(&mut engine, 0.0, 0.0);
         add_simulation(&mut app, mode, engine);
         app
+    }
+
+    /// The simulation building its own world from the document, the way a
+    /// headless server would: no presentation registered, so every actor is
+    /// an entity with a pose and a body, and a look nobody draws.
+    #[test]
+    fn a_headless_world_rebuilds_itself_without_drawing() {
+        for mode in [Mode::TwoD, Mode::ThreeD] {
+            let mut project = mover(mode, 1.0);
+            if mode.is_3d() {
+                project.actors[0].components.set_visual(Visual::Cuboid {
+                    color: "#FFFFFF".to_string(),
+                    size: [1.0, 1.0, 1.0],
+                });
+            }
+            blockloom_core::value::register_blockloom_operators();
+            let (_sender, incoming) = std::sync::mpsc::channel();
+            let mut engine = Engine::new(incoming, mode);
+            engine.project = project;
+            engine.rebuild = true;
+            let mut app = App::new();
+            app.add_plugins(MinimalPlugins);
+            app.add_plugins(TransformPlugin);
+            app.add_plugins(AssetPlugin::default());
+            app.init_asset::<Mesh>()
+                .init_resource::<crate::ui::UiManager>()
+                .init_resource::<crate::sound::SoundState>();
+            app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+                1.0 / 60.0,
+            )));
+            add_simulation(&mut app, mode, engine);
+            app.update();
+            let mut actors = app
+                .world_mut()
+                .query::<(&crate::engine::ActorId, Option<&world::PendingLook>)>();
+            let found: Vec<_> = actors
+                .iter(app.world())
+                .map(|(id, look)| (id.0.clone(), look.is_some()))
+                .collect();
+            assert_eq!(found.len(), 1, "{mode:?}: {found:?}");
+            assert!(found[0].1, "{mode:?}: the look waits for presentation");
+            let mut drawn = app
+                .world_mut()
+                .query_filtered::<Entity, Or<(With<Sprite>, With<Mesh3d>)>>();
+            assert_eq!(drawn.iter(app.world()).count(), 0, "{mode:?}");
+        }
     }
 
     fn position_after(mode: Mode, steps: usize) -> Vec3 {

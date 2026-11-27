@@ -488,8 +488,10 @@ pub fn step_animations(
     mut commands: Commands,
     time: Res<Time>,
     mut engine: NonSendMut<Engine>,
-    assets: Res<AssetServer>,
-    images: Res<Assets<Image>>,
+    // Drawing frames is presentation: a headless world has no sprite to show
+    // them on, nor the stores, and the clocks and markers run without them.
+    assets: Option<Res<AssetServer>>,
+    images: Option<Res<Assets<Image>>>,
     mut actors: Query<(
         Entity,
         &ActorId,
@@ -636,9 +638,11 @@ pub fn step_animations(
             if player.root_motion {
                 travel = clip_travel(clip, before, player.elapsed);
             }
-            if let Some(mut sprite) = sprite {
+            if let (Some(mut sprite), Some(assets), Some(images)) =
+                (sprite, assets.as_deref(), images.as_deref())
+            {
                 if let Some(frame) = clip.frame(cursor.frame) {
-                    show_frame(&mut sprite, frame, dir.as_deref(), &assets, &images);
+                    show_frame(&mut sprite, frame, dir.as_deref(), assets, images);
                 }
                 fade_ghost(
                     &mut commands,
@@ -649,8 +653,8 @@ pub fn step_animations(
                     &player,
                     &spec,
                     dir.as_deref(),
-                    &assets,
-                    &images,
+                    assets,
+                    images,
                 );
             }
         } else {

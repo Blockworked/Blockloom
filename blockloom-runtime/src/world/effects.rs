@@ -388,7 +388,8 @@ pub fn step_tweens(
         Option<&mut Sprite>,
         Option<&MeshMaterial3d<StandardMaterial>>,
     )>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    // Color is presentation; a headless world tweens motion only.
+    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
 ) {
     if !engine.running || engine.paused {
         return;
@@ -428,9 +429,9 @@ pub fn step_tweens(
                     .as_ref()
                     .map(|sprite| sprite.color)
                     .or_else(|| {
-                        material
-                            .as_ref()
-                            .and_then(|handle| materials.get(&handle.0).map(|mat| mat.base_color))
+                        material.as_ref().and_then(|handle| {
+                            materials.as_ref()?.get(&handle.0).map(|mat| mat.base_color)
+                        })
                     })
                     .unwrap_or(Color::WHITE),
             );
@@ -444,6 +445,7 @@ pub fn step_tweens(
             sprite.color = mixed;
         }
         if let Some(handle) = material
+            && let Some(materials) = materials.as_mut()
             && let Some(mut mat) = materials.get_mut(&handle.0)
         {
             mat.base_color = mixed;

@@ -157,6 +157,11 @@ pub fn sync_navmesh(
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SimulationSet;
 
+/// The per-frame world rebuild, registered by the simulation. Presentation
+/// gates it (a 2D world waits for its sprite shaders) and draws after it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RebuildSet;
+
 /// `#RRGGBB` as the renderer wants it. An unparseable color reads as magenta,
 /// which is easier to notice than a silent black.
 pub fn parse_color(hex: &str) -> Color {
@@ -224,6 +229,35 @@ pub fn custom_for(actor: &Actor) -> CustomComponents {
 /// fixed steps - for physics bodies the step overwrites it again (`record_poses`
 /// after rapier's writeback), and for actors moved straight by step effects it
 /// is captured the same way.
+/// An actor the simulation spawned whose look presentation hasn't drawn yet,
+/// with whether a room streams its map in later. A headless world never
+/// draws one, so there the marker just stays.
+#[derive(Component)]
+pub struct PendingLook {
+    pub actor: Box<Actor>,
+    pub streamed: bool,
+    /// Only the surface changed (a material came or went), so the mesh's
+    /// LOD, model and extras stay as they are.
+    pub surface_only: bool,
+}
+
+impl PendingLook {
+    pub fn of(actor: &Actor, streamed: bool) -> Self {
+        Self {
+            actor: Box::new(actor.clone()),
+            streamed,
+            surface_only: false,
+        }
+    }
+
+    pub fn surface(actor: &Actor) -> Self {
+        Self {
+            surface_only: true,
+            ..Self::of(actor, false)
+        }
+    }
+}
+
 pub fn actor_bundle(actor: &Actor) -> impl Bundle {
     let transform = transform_for(actor);
     (

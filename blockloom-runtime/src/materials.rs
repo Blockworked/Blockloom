@@ -23,7 +23,6 @@
 
 use bevy::asset::{AssetEvent, AssetId, Assets, Handle};
 use bevy::color::Color;
-use bevy::ecs::system::SystemParam;
 use bevy::image::{Image, ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::math::Vec4;
 use bevy::mesh::Mesh2d;
@@ -970,16 +969,6 @@ pub fn custom_quad_size(visual: &blockloom_core::scene::Visual) -> Option<Vec2> 
         }
         _ => None,
     }
-}
-
-/// The material asset stores, as one system param: graph effects for both
-/// dimensions plus the tilemap material. Bundled because a system takes at
-/// most sixteen params, and the spawners already need most of them.
-#[derive(SystemParam)]
-pub struct MaterialStores<'w> {
-    pub graph_2d: ResMut<'w, Assets<GraphMaterial2d>>,
-    pub graph_3d: ResMut<'w, Assets<GraphMaterial3d>>,
-    pub tiles: ResMut<'w, Assets<ColorMaterial>>,
 }
 
 /// A tilemap mesh with animated tiles: the map it was built from, the mesh

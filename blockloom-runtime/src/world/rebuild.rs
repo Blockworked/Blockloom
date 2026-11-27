@@ -52,16 +52,11 @@ pub fn rebuild_world(
     mut engine: NonSendMut<Engine>,
     mut dimension: ResMut<Dimension>,
     mut effects: ResMut<PendingEffects>,
-    assets: Res<AssetServer>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut textures: ResMut<Assets<Image>>,
     actors: Query<Entity, With<ActorId>>,
     scenery: Query<Entity, Or<(With<WorldCamera>, With<WorldLight>)>>,
     voices: Query<Entity, With<crate::sound::VoiceTag>>,
     mut sound: ResMut<crate::sound::SoundState>,
     mut navmesh: Option<ResMut<NavMesh>>,
-    mut stores: crate::materials::MaterialStores,
     mut performance: crate::performance::PerformanceStores,
     claims: Option<ResMut<crate::environment::ExposureClaims>>,
 ) {
@@ -85,8 +80,12 @@ pub fn rebuild_world(
     if let Some(mut claims) = claims {
         claims.director = None;
     }
-    performance.cache.clear();
-    performance.cells.clear();
+    if let Some(cache) = performance.cache.as_mut() {
+        cache.clear();
+    }
+    if let Some(cells) = performance.cells.as_mut() {
+        cells.clear();
+    }
     if let Some(warmup) = performance.warmup.as_mut() {
         warmup.open();
     }
@@ -200,7 +199,6 @@ pub fn rebuild_world(
     // A child authored in its parent's frame is put where that works out to,
     // once, before anything is spawned from these placements.
     place_authored_children(&mut project);
-    let dir = engine.project_dir.clone();
     // The level's live maps, parallax and rooms start from the document.
     let level = crate::tiles::Level::seed(&project);
     let streamed = level.streamed_maps();
@@ -221,18 +219,8 @@ pub fn rebuild_world(
                 bevy::audio::SpatialListener::default(),
             ));
             for actor in &project.actors {
-                let entity = dim2::spawn_actor(
-                    &mut commands,
-                    actor,
-                    dir.as_deref(),
-                    &assets,
-                    &mut textures,
-                    &mut meshes,
-                    &mut stores.graph_2d,
-                    &mut stores.tiles,
-                    streamed.contains(&actor.id),
-                )
-                .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::TwoD));
+                let entity = dim2::spawn_actor(&mut commands, actor, streamed.contains(&actor.id))
+                    .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::TwoD));
                 attach_camera(&mut commands, actor, entity);
                 crate::fx::insert_fx_state(&mut commands, actor, entity);
                 engine.entities.insert(actor.id.clone(), entity);
@@ -252,18 +240,8 @@ pub fn rebuild_world(
                         ));
                     actor.components.placement_mut().position[2] = 0.0;
                 }
-                let entity = dim2::spawn_actor(
-                    &mut commands,
-                    &actor,
-                    dir.as_deref(),
-                    &assets,
-                    &mut textures,
-                    &mut meshes,
-                    &mut stores.graph_2d,
-                    &mut stores.tiles,
-                    streamed.contains(&actor.id),
-                )
-                .unwrap_or_else(|| spawn_unseen(&mut commands, &actor, Mode::TwoD));
+                let entity = dim2::spawn_actor(&mut commands, &actor, streamed.contains(&actor.id))
+                    .unwrap_or_else(|| spawn_unseen(&mut commands, &actor, Mode::TwoD));
                 attach_camera(&mut commands, &actor, entity);
                 crate::fx::insert_fx_state(&mut commands, &actor, entity);
                 engine.entities.insert(actor.id.clone(), entity);
@@ -272,17 +250,8 @@ pub fn rebuild_world(
         Mode::ThreeD => {
             dim3::spawn_scenery(&mut commands, &project.world.camera);
             for actor in &project.actors {
-                let entity = dim3::spawn_actor(
-                    &mut commands,
-                    actor,
-                    dir.as_deref(),
-                    &assets,
-                    &mut meshes,
-                    &mut materials,
-                    &mut stores.graph_3d,
-                    &mut performance.cache,
-                )
-                .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::ThreeD));
+                let entity = dim3::spawn_actor(&mut commands, actor)
+                    .unwrap_or_else(|| spawn_unseen(&mut commands, actor, Mode::ThreeD));
                 attach_camera(&mut commands, actor, entity);
                 crate::fx::insert_fx_state(&mut commands, actor, entity);
                 engine.entities.insert(actor.id.clone(), entity);
@@ -300,17 +269,8 @@ pub fn rebuild_world(
                             Mode::ThreeD,
                         ));
                 }
-                let entity = dim3::spawn_actor(
-                    &mut commands,
-                    &actor,
-                    dir.as_deref(),
-                    &assets,
-                    &mut meshes,
-                    &mut materials,
-                    &mut stores.graph_3d,
-                    &mut performance.cache,
-                )
-                .unwrap_or_else(|| spawn_unseen(&mut commands, &actor, Mode::ThreeD));
+                let entity = dim3::spawn_actor(&mut commands, &actor)
+                    .unwrap_or_else(|| spawn_unseen(&mut commands, &actor, Mode::ThreeD));
                 attach_camera(&mut commands, &actor, entity);
                 crate::fx::insert_fx_state(&mut commands, &actor, entity);
                 engine.entities.insert(actor.id.clone(), entity);
