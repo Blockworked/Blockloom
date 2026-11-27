@@ -90,6 +90,51 @@ pub struct ModelInfo {
     pub animations: usize,
     pub skins: usize,
     pub warnings: Vec<String>,
+    /// Each named animation and its length, for the 3D animator's clips.
+    #[serde(default)]
+    pub clips: Vec<ModelClip>,
+}
+
+/// One animation in a model file: its name (`AnimationN` by its index when it
+/// has none) and its length in seconds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
+pub struct ModelClip {
+    pub name: String,
+    pub seconds: f32,
+}
+
+/// A glTF's animations and their lengths: the latest keyframe any of its
+/// samplers reaches, which glTF requires each input accessor to state as
+/// `max`.
+pub fn model_clips(value: &serde_json::Value) -> Vec<ModelClip> {
+    let accessors = value.get("accessors").and_then(|a| a.as_array());
+    let Some(animations) = value.get("animations").and_then(|a| a.as_array()) else {
+        return Vec::new();
+    };
+    animations
+        .iter()
+        .enumerate()
+        .map(|(index, animation)| {
+            let seconds = animation
+                .get("samplers")
+                .and_then(|s| s.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|sampler| {
+                    let input = sampler.get("input")?.as_u64()? as usize;
+                    let max = accessors?.get(input)?.get("max")?.as_array()?;
+                    Some(max.first()?.as_f64()? as f32)
+                })
+                .fold(0.0f32, f32::max);
+            let name = animation
+                .get("name")
+                .and_then(|n| n.as_str())
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+                .map_or_else(|| format!("Animation{index}"), str::to_string);
+            ModelClip { name, seconds }
+        })
+        .collect()
 }
 
 impl ModelInfo {
@@ -258,6 +303,7 @@ fn inspect_gltf_value(name: &str, value: &serde_json::Value) -> Result<ModelInfo
     let nodes = count(value, "nodes");
     let animations = count(value, "animations");
     let skins = count(value, "skins");
+    let clips = model_clips(value);
     if meshes == 0 {
         warnings.push("no meshes: nothing to draw".to_string());
     }
@@ -272,6 +318,7 @@ fn inspect_gltf_value(name: &str, value: &serde_json::Value) -> Result<ModelInfo
         animations,
         skins,
         warnings,
+        clips,
     })
 }
 
@@ -310,6 +357,7 @@ fn inspect_obj(bytes: &[u8]) -> ModelInfo {
         animations: 0,
         skins: 0,
         warnings,
+        clips: Vec::new(),
     }
 }
 
@@ -364,6 +412,7 @@ fn inspect_fbx(name: &str, bytes: &[u8]) -> ModelInfo {
         animations,
         skins,
         warnings,
+        clips: Vec::new(),
     }
 }
 
@@ -1621,6 +1670,31 @@ mod tests {
             "animations": vec![0; animations],
             "skins": vec![0; skins],
         })
+    }
+
+    #[test]
+    fn a_models_clips_are_as_long_as_their_latest_keyframe() {
+        let value = serde_json::json!({
+            "asset": {"version": "2.0"},
+            "accessors": [{"max": [0.8]}, {"max": [1.25]}, {"max": [2.0]}],
+            "animations": [
+                {"name": "Walk", "samplers": [{"input": 0}, {"input": 1}]},
+                {"samplers": [{"input": 2}]}
+            ]
+        });
+        assert_eq!(
+            model_clips(&value),
+            vec![
+                ModelClip {
+                    name: "Walk".to_string(),
+                    seconds: 1.25
+                },
+                ModelClip {
+                    name: "Animation1".to_string(),
+                    seconds: 2.0
+                },
+            ]
+        );
     }
 
     #[test]

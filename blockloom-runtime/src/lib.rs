@@ -901,7 +901,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
             Update,
             (
                 model::watch_models,
-                model::pause_rigs,
+                (model::pause_rigs, model::drive_animations).chain(),
                 (
                     light_probes::start_bakes,
                     probes::run_captures,

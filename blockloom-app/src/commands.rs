@@ -2434,6 +2434,51 @@ pub(crate) fn add_actor_component(
 
 /// Replaces a component in place, keyed by the name it already has - what
 /// every field in the inspector writes through.
+/// Gives a model actor an Animation component with a clip and a state for
+/// every animation its glTF file holds, keeping whatever the actor's animator
+/// already names. Answers how many clips it added.
+pub(crate) fn animate_from_model(
+    state: &SharedState,
+    app: &AppHandle,
+    actor_id: String,
+) -> Result<usize, String> {
+    let mut s = lock(state)?;
+    let dir = s
+        .project_dir()
+        .map(Path::to_path_buf)
+        .ok_or("No project is open")?;
+    let actor = s
+        .project()
+        .and_then(|p| p.actor(&actor_id))
+        .ok_or("Actor not found")?;
+    let Some(blockloom_core::scene::Visual::Model { path, .. }) = actor.visual() else {
+        return Err(format!("{} doesn't look like a model", actor.name));
+    };
+    let file = blockloom_core::assets::resolve(&dir, path)
+        .ok_or_else(|| format!("{path} isn't in the project's assets"))?;
+    let info = pipeline::inspect_model_file(&file)?;
+    if info.clips.is_empty() {
+        return Err(format!("{path} has no animations"));
+    }
+    let mut spec = actor
+        .components
+        .animation()
+        .cloned()
+        .unwrap_or_else(|| serde_json::from_str("{}").expect("an empty animation spec parses"));
+    let added = spec.add_model_clips(&info.clips);
+    push_undo(&mut s);
+    let Some(actor) = s.project_mut().and_then(|p| p.actor_mut(&actor_id)) else {
+        return Err("Actor not found".to_string());
+    };
+    actor
+        .components
+        .insert(ActorComponent::Animation { animation: spec });
+    auto_save(&mut s);
+    sync_runtime(&mut s);
+    emit(app, &mut s);
+    Ok(added)
+}
+
 pub(crate) fn set_actor_component(
     state: &SharedState,
     app: &AppHandle,

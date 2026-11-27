@@ -663,6 +663,11 @@ impl Backend {
                     component,
                 )?)
             }
+            "animate_from_model" => to_json(commands::animate_from_model(
+                state,
+                app,
+                arg(&args, "actorId")?,
+            )?),
             "set_actor_component" => {
                 let component: ActorComponent = arg(&args, "component")?;
                 to_json(commands::set_actor_component(

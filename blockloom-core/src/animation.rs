@@ -251,6 +251,11 @@ pub struct AnimationClip {
     pub motion: [f32; 2],
     #[serde(default)]
     pub rig_animation: String,
+    /// A model clip's length in seconds: a 3D clip has no frames of its own
+    /// and plays the model's animation `rig_animation` names (or the clip's
+    /// name). Its markers and frames count at `fps`, as a flipbook's do.
+    #[serde(default)]
+    pub seconds: f32,
 }
 
 fn default_fps() -> f32 {
@@ -273,6 +278,49 @@ impl AnimationClip {
             markers: Vec::new(),
             motion: [0.0, 0.0],
             rig_animation: String::new(),
+            seconds: 0.0,
+        }
+    }
+
+    /// A model clip of `seconds`, playing the model's animation of the same
+    /// name.
+    pub fn timed(name: impl Into<String>, seconds: f32, loop_mode: LoopMode) -> Self {
+        let mut clip = Self::new(name);
+        clip.fps = 30.0;
+        clip.seconds = seconds;
+        clip.loop_mode = loop_mode;
+        clip.normalize();
+        clip
+    }
+
+    /// A model clip: no frames, only a length.
+    pub fn is_timed(&self) -> bool {
+        self.frame_count() == 0 && self.seconds > 0.0
+    }
+
+    /// Steps one pass counts: its frames, or a model clip's length at `fps`.
+    fn steps(&self) -> usize {
+        match self.frame_count() {
+            0 if self.seconds > 0.0 => (self.seconds * self.fps.max(0.1)).ceil().max(1.0) as usize,
+            count => count,
+        }
+    }
+
+    /// Where a model clip's own timeline stands `elapsed` seconds in: held at
+    /// the end once, wrapped in a loop, there and back in ping-pong.
+    pub fn local_time(&self, elapsed: f32) -> f32 {
+        let length = self.duration();
+        if length <= 0.0 {
+            return 0.0;
+        }
+        let elapsed = elapsed.max(0.0);
+        match self.loop_mode {
+            LoopMode::Once => elapsed.min(length),
+            LoopMode::Loop => elapsed % length,
+            LoopMode::PingPong => {
+                let t = elapsed % (2.0 * length);
+                if t > length { 2.0 * length - t } else { t }
+            }
         }
     }
 
@@ -314,6 +362,10 @@ impl AnimationClip {
             }
         }
         self.rig_animation = self.rig_animation.trim().to_string();
+        if !self.seconds.is_finite() || self.seconds < 0.0 {
+            self.seconds = 0.0;
+        }
+        self.seconds = self.seconds.min(3600.0);
     }
 
     /// How many frames the clip shows per pass.
@@ -346,6 +398,16 @@ impl AnimationClip {
 
     /// Seconds frame `index` holds for.
     pub fn frame_duration(&self, index: usize) -> f32 {
+        if self.is_timed() {
+            // A model clip's last step is whatever of its length is left.
+            let step = 1.0 / self.fps.max(0.1);
+            let last = self.steps() - 1;
+            return if index >= last {
+                (self.seconds - last as f32 * step).max(1e-4)
+            } else {
+                step
+            };
+        }
         match self.durations.get(index) {
             Some(seconds) if *seconds > 0.0 => *seconds,
             _ => 1.0 / self.fps.max(0.1),
@@ -354,7 +416,7 @@ impl AnimationClip {
 
     /// The frames one cycle shows, in order: there and back for ping-pong.
     fn sequence(&self) -> Vec<usize> {
-        let count = self.frame_count();
+        let count = self.steps();
         let mut order: Vec<usize> = (0..count).collect();
         if self.loop_mode == LoopMode::PingPong && count > 2 {
             order.extend((1..count - 1).rev());
@@ -364,7 +426,7 @@ impl AnimationClip {
 
     /// Seconds one pass takes. Zero for a clip with nothing to play.
     pub fn duration(&self) -> f32 {
-        (0..self.frame_count())
+        (0..self.steps())
             .map(|index| self.frame_duration(index))
             .sum()
     }
@@ -637,7 +699,69 @@ pub struct SlotTint {
     pub color: String,
 }
 
+/// Names that read as one-shot moves: a clip called this plays once and
+/// hands back to the initial state.
+const ONE_SHOTS: &[&str] = &[
+    "jump", "attack", "hit", "die", "death", "land", "shoot", "punch", "kick", "roll", "dodge",
+];
+
 impl AnimationSpec {
+    /// Adds a clip and a state for every model animation this spec doesn't
+    /// already name, answering how many it added. A one-shot name plays once
+    /// and returns to the initial state, which is the first clip that reads as
+    /// idle when none was set.
+    pub fn add_model_clips(&mut self, clips: &[crate::pipeline::ModelClip]) -> usize {
+        let mut added = 0;
+        for model in clips {
+            if model.seconds <= 0.0 || self.find_clip(&model.name).is_some() {
+                continue;
+            }
+            let lower = model.name.to_lowercase();
+            let once = ONE_SHOTS.iter().any(|word| lower.contains(word));
+            let mode = if once { LoopMode::Once } else { LoopMode::Loop };
+            self.clips.push(AnimationClip::timed(
+                model.name.clone(),
+                model.seconds,
+                mode,
+            ));
+            if self.state_for(&model.name).is_none() {
+                self.states.push(AnimationState {
+                    name: model.name.clone(),
+                    clip: model.name.clone(),
+                    speed: 1.0,
+                    next: String::new(),
+                    transitions: Vec::new(),
+                    root_motion: false,
+                });
+            }
+            added += 1;
+        }
+        if self.initial.is_empty() {
+            self.initial = self
+                .clips
+                .iter()
+                .find(|clip| clip.name.to_lowercase().contains("idle"))
+                .or_else(|| self.clips.first())
+                .map(|clip| clip.name.clone())
+                .unwrap_or_default();
+        }
+        if self.crossfade <= 0.0 && added > 0 {
+            self.crossfade = 0.2;
+        }
+        let initial = self.initial.clone();
+        for state in &mut self.states {
+            let once = self
+                .clips
+                .iter()
+                .find(|clip| clip.name.eq_ignore_ascii_case(&state.clip))
+                .is_some_and(|clip| clip.loop_mode == LoopMode::Once);
+            if once && state.next.is_empty() && !state.name.eq_ignore_ascii_case(&initial) {
+                state.next = initial.clone();
+            }
+        }
+        added
+    }
+
     pub fn find_clip(&self, name: &str) -> Option<&AnimationClip> {
         let wanted = name.trim();
         if wanted.is_empty() {
@@ -779,6 +903,61 @@ mod tests {
             loop_mode,
             ..AnimationClip::new("Walk")
         }
+    }
+
+    #[test]
+    fn a_models_animations_become_clips_and_states() {
+        let clips = [
+            crate::pipeline::ModelClip {
+                name: "Walk".to_string(),
+                seconds: 0.8,
+            },
+            crate::pipeline::ModelClip {
+                name: "Idle".to_string(),
+                seconds: 2.0,
+            },
+            crate::pipeline::ModelClip {
+                name: "Jump".to_string(),
+                seconds: 0.6,
+            },
+        ];
+        let mut spec: AnimationSpec = serde_json::from_str("{}").unwrap();
+        assert_eq!(spec.add_model_clips(&clips), 3);
+        assert_eq!(spec.initial, "Idle");
+        let jump = spec.find_clip("jump").unwrap();
+        assert!(jump.is_timed() && jump.loop_mode == LoopMode::Once);
+        assert_eq!(spec.find_clip("walk").unwrap().loop_mode, LoopMode::Loop);
+        assert_eq!(spec.state_for("Jump").unwrap().next, "Idle");
+        // Running it again adds nothing and keeps what was authored.
+        spec.states[0].speed = 2.0;
+        assert_eq!(spec.add_model_clips(&clips), 0);
+        assert_eq!(spec.states[0].speed, 2.0);
+    }
+
+    #[test]
+    fn a_model_clip_counts_its_length_in_steps() {
+        let mut once = AnimationClip::timed("Jump", 1.05, LoopMode::Once);
+        once.markers = vec![FrameMarker {
+            frame: 15,
+            name: "push".to_string(),
+        }];
+        assert!(once.is_timed() && once.is_empty());
+        assert!((once.duration() - 1.05).abs() < 1e-5);
+        assert!(!once.cursor(1.0).done);
+        assert!(once.cursor(1.06).done);
+        assert_eq!(once.local_time(2.0), once.duration());
+        // A marker on step 15 is half a second in at 30 fps.
+        let early = once.cursor(0.49);
+        assert!(once.markers_reached(None, early).is_empty());
+        assert_eq!(
+            once.markers_reached(Some(early.step), once.cursor(0.51)),
+            vec!["push"]
+        );
+        let walk = AnimationClip::timed("Walk", 0.8, LoopMode::Loop);
+        assert!(!walk.cursor(100.0).done);
+        assert!((walk.local_time(1.0) - 0.2).abs() < 1e-4);
+        let sway = AnimationClip::timed("Sway", 1.0, LoopMode::PingPong);
+        assert!((sway.local_time(1.25) - 0.75).abs() < 1e-4);
     }
 
     #[test]

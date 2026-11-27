@@ -683,6 +683,11 @@ impl Vm {
         self.pending.push(event);
     }
 
+    /// The events queued for the next tick.
+    pub fn pending_events(&self) -> &[Event] {
+        &self.pending
+    }
+
     /// Makes a clone on a script's behalf, answering `(clone id, template
     /// id)` or `None` when nothing answers to `wanted`. A block reaches the
     /// same code through `create a clone of`; this is the door for the

@@ -1962,6 +1962,13 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        name: "animate-from-model",
+        cmd: "animate_from_model",
+        aliases: &["animate_from_model"],
+        summary: "Give a model actor a clip and a state for every animation in its glTF file (one-shot names play once and return to idle), keeping clips it already has. Answers how many it added.",
+        args: &[A],
+    },
+    CommandSpec {
         name: "set-actor-component",
         cmd: "set_actor_component",
         aliases: &["set_actor_component"],

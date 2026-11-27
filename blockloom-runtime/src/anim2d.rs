@@ -135,7 +135,10 @@ fn playable(spec: &AnimationSpec, rig: Option<&Rig>, name: &str) -> Result<(), S
         return Ok(());
     }
     match spec.find_clip(name) {
-        Some(clip) if clip.is_empty() => Err(format!("animation clip \"{name}\" has no frames")),
+        // A model clip has no frames, only the length of the model's own.
+        Some(clip) if clip.is_empty() && !clip.is_timed() => {
+            Err(format!("animation clip \"{name}\" has no frames"))
+        }
         Some(_) => Ok(()),
         None => Err(format!("there's no animation clip called \"{name}\"")),
     }
@@ -510,6 +513,7 @@ pub fn step_animations(
     }
     let dt = time.delta_secs();
     let dir = engine.project_dir.clone();
+    let three_d = engine.project.active_scene().world.mode.is_3d();
     let mut events: Vec<Event> = Vec::new();
     for (entity, id, player, sprite, rig, dials, ghost, booted, mut transform) in &mut actors {
         let actor = id.0.as_str();
@@ -657,16 +661,38 @@ pub fn step_animations(
                     images,
                 );
             }
+        } else if let Some(clip) = clip.as_ref().filter(|clip| clip.is_timed()) {
+            // A model clip: the clock, markers and end run here, and the
+            // model's own animation follows it in `model::drive_animations`.
+            let cursor = clip.cursor(player.elapsed);
+            markers.extend(
+                clip.markers_reached(player.last_step, cursor)
+                    .into_iter()
+                    .map(str::to_string),
+            );
+            player.last_step = Some(cursor.step);
+            player.frame = cursor.frame + 1;
+            done = cursor.done;
+            if player.root_motion {
+                travel = clip_travel(clip, before, player.elapsed);
+            }
         } else {
             // The rig that played this clip went away: nothing left to show.
             commands.entity(entity).remove::<AnimationPlayer>();
             continue;
         }
-        // Root motion moves the actor through its own facing and size.
+        // Root motion moves the actor through its own facing and size. A 3D
+        // clip's motion is forward (-Z, the way a 3D actor faces) and up.
         if travel != [0.0, 0.0] {
-            let local = Vec3::new(if flip_x { -travel[0] } else { travel[0] }, travel[1], 0.0);
-            let moved = transform.rotation * (local * transform.scale);
-            transform.translation += Vec3::new(moved.x, moved.y, 0.0);
+            if three_d {
+                let local = Vec3::new(0.0, travel[1], -travel[0]);
+                let moved = transform.rotation * (local * transform.scale);
+                transform.translation += moved;
+            } else {
+                let local = Vec3::new(if flip_x { -travel[0] } else { travel[0] }, travel[1], 0.0);
+                let moved = transform.rotation * (local * transform.scale);
+                transform.translation += Vec3::new(moved.x, moved.y, 0.0);
+            }
         }
         let ended = done && !player.ended_fired;
         for marker in &markers {
@@ -1190,16 +1216,29 @@ mod tests {
 
     /// One `update` is one 60 Hz fixed step of the player alone.
     fn player_app(spec: AnimationSpec) -> (App, Entity) {
+        player_app_in(spec, Mode::TwoD)
+    }
+
+    fn player_app_in(spec: AnimationSpec, mode: Mode) -> (App, Entity) {
         let (_sender, incoming) = std::sync::mpsc::channel();
-        let mut engine = Engine::new(incoming, Mode::TwoD);
+        let mut engine = Engine::new(incoming, mode);
+        engine.project = blockloom_core::project::Project::starter("Animated", mode);
+        engine.project.actors.clear();
         engine.running = true;
-        let mut actor = Actor::new(
-            "Hero",
+        let look = if mode.is_3d() {
+            Visual::Model {
+                path: "assets/models/hero.glb".to_string(),
+                tint: "#FFFFFF".to_string(),
+                scale: [1.0, 1.0, 1.0],
+                animation: String::new(),
+            }
+        } else {
             Visual::Rect {
                 color: "#FFFFFF".to_string(),
                 size: [10.0, 10.0],
-            },
-        );
+            }
+        };
+        let mut actor = Actor::new("Hero", look);
         actor
             .components
             .insert(ActorComponent::Animation { animation: spec });
@@ -1294,6 +1333,81 @@ mod tests {
             ("Walking", "Walk")
         );
         assert!(back.playing);
+    }
+
+    /// The 3D animator is the same state machine over model clips: a clip
+    /// is a length, markers count at its fps, a `Once` clip ends and takes its
+    /// `next`, and root motion carries the actor forward along -Z.
+    #[test]
+    fn model_clips_run_the_state_machine_markers_and_root_motion_in_3d() {
+        let spec: AnimationSpec = serde_json::from_str(
+            r#"{
+                "initial": "Walking",
+                "clips": [
+                    {"name":"Walk","seconds":0.8,"fps":30,"loop_mode":"Loop","motion":[1.6,0]},
+                    {"name":"Jump","rig_animation":"jump_up","seconds":0.5,"fps":30,"loop_mode":"Once",
+                     "markers":[{"frame":6,"name":"push"}]}
+                ],
+                "states": [
+                    {"name":"Walking","clip":"Walk","root_motion":true,
+                     "transitions":[{"to":"Jumping","when":{"kind":"Trigger","name":"jump"},"blend":0.2}]},
+                    {"name":"Jumping","clip":"Jump","next":"Walking"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let (mut app, entity) = player_app_in(spec, Mode::ThreeD);
+        for _ in 0..13 {
+            app.update();
+        }
+        let walking = player(&app, entity);
+        assert_eq!(walking.clip, "Walk");
+        let at = app.world().get::<Transform>(entity).unwrap().translation;
+        // 1.6 m a 0.8 s pass is 2 m/s, forward being -Z.
+        assert!(
+            (at.z + walking.elapsed * 2.0).abs() < 1e-3,
+            "walked to {at}"
+        );
+        assert!(at.x.abs() < 1e-6 && at.y.abs() < 1e-6);
+
+        let actor = app.world().get::<ActorId>(entity).unwrap().0.clone();
+        app.world_mut().resource_mut::<PendingEffects>().0 = vec![Effect::FireAnimationTrigger {
+            actor: actor.clone(),
+            name: "jump".to_string(),
+        }];
+        app.update();
+        app.world_mut().resource_mut::<PendingEffects>().0.clear();
+        let jumping = player(&app, entity);
+        assert_eq!(jumping.state, "Jumping");
+        assert!(
+            jumping
+                .fade
+                .as_ref()
+                .is_some_and(|fade| fade.clip == "Walk")
+        );
+        for _ in 0..40 {
+            app.update();
+        }
+        // No VM tick runs here, so everything the animator fired is queued.
+        let heard = app
+            .world()
+            .non_send::<Engine>()
+            .vm
+            .pending_events()
+            .to_vec();
+        assert!(
+            heard.iter().any(
+                |event| matches!(event, Event::AnimationMarker { marker, .. } if marker == "push")
+            ),
+            "{heard:?}"
+        );
+        assert!(
+            heard
+                .iter()
+                .any(|event| matches!(event, Event::AnimationEnded { clip, .. } if clip == "Jump")),
+            "{heard:?}"
+        );
+        assert_eq!(player(&app, entity).state, "Walking");
     }
 
     #[test]

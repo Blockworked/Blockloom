@@ -12,7 +12,7 @@ use blockloom_core::scene::Visual;
 use blockloom_protocol::RuntimeMessage;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 /// The child entity a model's scene spawns under, and what it came from.
 #[derive(Component)]
@@ -23,6 +23,24 @@ pub struct ModelScene {
     gltf: Handle<Gltf>,
     animation: String,
     reported: bool,
+}
+
+/// On a loaded model scene: every animation in its file as one graph, and
+/// what the animator last put on the rig.
+#[derive(Component)]
+pub struct ModelRig {
+    players: Vec<Entity>,
+    /// Lowercased animation name (`animationN` by index too) to its node.
+    nodes: HashMap<String, AnimationNodeIndex>,
+    showing: Option<AnimationNodeIndex>,
+    last_elapsed: f32,
+    missing: Option<String>,
+}
+
+impl ModelRig {
+    fn node(&self, name: &str) -> Option<AnimationNodeIndex> {
+        self.nodes.get(&name.trim().to_lowercase()).copied()
+    }
 }
 
 /// On the actor: the child its model scene hangs off.
@@ -169,10 +187,28 @@ fn on_ready(
     let Some(gltf) = gltfs.get(&scene.gltf) else {
         return;
     };
-    let clip = if scene.animation.is_empty() {
-        gltf.animations.first().cloned()
+    // Every animation goes in one graph, so the animator can crossfade
+    // between them; the look's own animation loops until it takes over.
+    let mut graph = AnimationGraph::new();
+    let mut nodes = HashMap::new();
+    let named: HashMap<&Handle<AnimationClip>, &str> = gltf
+        .named_animations
+        .iter()
+        .map(|(name, clip)| (clip, &**name))
+        .collect();
+    let mut order = Vec::new();
+    for (index, clip) in gltf.animations.iter().enumerate() {
+        let node = graph.add_clip(clip.clone(), 1.0, graph.root);
+        nodes.insert(format!("animation{index}"), node);
+        if let Some(name) = named.get(clip) {
+            nodes.insert(name.to_lowercase(), node);
+        }
+        order.push(node);
+    }
+    let start = if scene.animation.is_empty() {
+        order.first().copied()
     } else {
-        let found = gltf.named_animations.get(scene.animation.as_str()).cloned();
+        let found = nodes.get(&scene.animation.to_lowercase()).copied();
         if found.is_none() {
             let mut names: Vec<&str> = gltf.named_animations.keys().map(|name| &**name).collect();
             names.sort_unstable();
@@ -192,17 +228,112 @@ fn on_ready(
         }
         found
     };
-    let Some(clip) = clip else {
-        return;
-    };
-    let (graph, index) = AnimationGraph::from_clip(clip);
     let graph = graphs.add(graph);
+    let mut rigged = Vec::new();
     for entity in children.iter_descendants(ready.entity) {
         if let Ok(mut player) = players.get_mut(entity) {
-            player.play(index).repeat();
+            let mut transitions = AnimationTransitions::new();
+            if let Some(node) = start {
+                transitions.play(&mut player, node, Duration::ZERO).repeat();
+            }
             commands
                 .entity(entity)
-                .insert(AnimationGraphHandle(graph.clone()));
+                .insert((AnimationGraphHandle(graph.clone()), transitions));
+            rigged.push(entity);
+        }
+    }
+    commands.entity(ready.entity).insert(ModelRig {
+        players: rigged,
+        nodes,
+        showing: start,
+        last_elapsed: 0.0,
+        missing: None,
+    });
+}
+
+/// The drawing half of the 3D animator: puts the clip each actor's animator
+/// plays (`anim2d::step_animations` keeps its clock, markers and states on the
+/// tick) on its model, crossfading on a change and held to the animator's
+/// time, so the rig shows exactly where the simulation stands.
+pub fn drive_animations(
+    engine: NonSend<Engine>,
+    fixed: Res<Time<Fixed>>,
+    actors: Query<(
+        &crate::engine::ActorId,
+        &crate::engine::AnimationPlayer,
+        &ModelChild,
+    )>,
+    mut rigs: Query<&mut ModelRig>,
+    mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
+) {
+    for (id, logical, child) in &actors {
+        let Ok(mut rig) = rigs.get_mut(child.0) else {
+            continue;
+        };
+        let Some(spec) = engine.actor(&id.0).and_then(|a| a.components.animation()) else {
+            continue;
+        };
+        let Some(clip) = spec.find_clip(&logical.clip) else {
+            continue;
+        };
+        let wanted = if clip.rig_animation.is_empty() {
+            &clip.name
+        } else {
+            &clip.rig_animation
+        };
+        let Some(node) = rig.node(wanted) else {
+            if rig.missing.as_deref() != Some(wanted.as_str()) {
+                rig.missing = Some(wanted.clone());
+                report(
+                    &id.0,
+                    format!(
+                        "the model has no animation called \"{wanted}\" for clip \"{}\"",
+                        clip.name
+                    ),
+                );
+            }
+            continue;
+        };
+        let restarted = logical.elapsed < rig.last_elapsed;
+        let changed = rig.showing != Some(node) || restarted;
+        rig.last_elapsed = logical.elapsed;
+        let fade = logical.fade.as_ref();
+        let fading = fade.and_then(|fade| {
+            let old = spec.find_clip(&fade.clip)?;
+            let name = if old.rig_animation.is_empty() {
+                &old.name
+            } else {
+                &old.rig_animation
+            };
+            Some((rig.node(name)?, old.local_time(fade.elapsed)))
+        });
+        // Between ticks the rig carries on at the animator's speed.
+        let ahead = if logical.playing {
+            fixed.overstep().as_secs_f32() * logical.speed.max(0.0)
+        } else {
+            0.0
+        };
+        let at = clip.local_time(logical.elapsed + ahead);
+        for &entity in &rig.players {
+            let Ok((mut player, mut transitions)) = players.get_mut(entity) else {
+                continue;
+            };
+            if changed {
+                let blend = fade.map_or(0.0, |fade| fade.total.max(0.0));
+                transitions.play(&mut player, node, Duration::from_secs_f32(blend));
+            }
+            if let Some(active) = player.animation_mut(node) {
+                active.set_speed(0.0).seek_to(at);
+            }
+            if let Some((old, old_at)) = fading
+                && old != node
+                && let Some(active) = player.animation_mut(old)
+            {
+                active.set_speed(0.0).seek_to(old_at);
+            }
+        }
+        if changed {
+            rig.showing = Some(node);
         }
     }
 }
@@ -281,6 +412,120 @@ mod tests {
                 ..default()
             }),
         ));
+    }
+
+    /// The drawing half follows the animator: the clip it plays goes on the
+    /// rig held at the animator's time, and a state change crossfades.
+    #[test]
+    fn the_rig_follows_the_animators_clip_time_and_crossfade() {
+        use crate::engine::InsertEngine;
+        use blockloom_core::animation::{AnimationClip as Clip, AnimationSpec, LoopMode};
+        use blockloom_core::components::ActorComponent;
+        let mut app = App::new();
+        app.add_plugins((TaskPoolPlugin::default(), bevy::time::TimePlugin));
+        app.init_resource::<Assets<AnimationClip>>()
+            .init_resource::<Assets<AnimationGraph>>();
+        let (_sender, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, blockloom_core::scene::Mode::ThreeD);
+        let mut actor = blockloom_core::project::Actor::new(
+            "Hero",
+            Visual::Cuboid {
+                color: "#FFFFFF".to_string(),
+                size: [1.0, 1.0, 1.0],
+            },
+        );
+        let spec = AnimationSpec {
+            clips: vec![
+                Clip::timed("Walk", 0.8, LoopMode::Loop),
+                Clip {
+                    rig_animation: "jump_up".to_string(),
+                    ..Clip::timed("Jump", 0.5, LoopMode::Once)
+                },
+            ],
+            ..serde_json::from_str("{}").unwrap()
+        };
+        actor
+            .components
+            .insert(ActorComponent::Animation { animation: spec });
+        let id = actor.id.clone();
+        engine.project.actors.push(actor);
+        app.insert_engine(engine);
+
+        let mut graph = AnimationGraph::new();
+        let mut clips = app.world_mut().resource_mut::<Assets<AnimationClip>>();
+        let walk_clip = clips.add(AnimationClip::default());
+        let jump_clip = clips.add(AnimationClip::default());
+        let walk = graph.add_clip(walk_clip, 1.0, graph.root);
+        let jump = graph.add_clip(jump_clip, 1.0, graph.root);
+        let graph = app
+            .world_mut()
+            .resource_mut::<Assets<AnimationGraph>>()
+            .add(graph);
+        let mut player = AnimationPlayer::default();
+        let mut transitions = AnimationTransitions::new();
+        transitions.play(&mut player, walk, Duration::ZERO);
+        let rigged = app
+            .world_mut()
+            .spawn((player, transitions, AnimationGraphHandle(graph)))
+            .id();
+        let scene = app
+            .world_mut()
+            .spawn(ModelRig {
+                players: vec![rigged],
+                nodes: [("walk".to_string(), walk), ("jump_up".to_string(), jump)]
+                    .into_iter()
+                    .collect(),
+                showing: Some(walk),
+                last_elapsed: 0.0,
+                missing: None,
+            })
+            .id();
+        let actor = app
+            .world_mut()
+            .spawn((
+                crate::engine::ActorId(id),
+                ModelChild(scene),
+                crate::engine::AnimationPlayer {
+                    clip: "Walk".to_string(),
+                    elapsed: 1.0,
+                    speed: 1.0,
+                    ..Default::default()
+                },
+            ))
+            .id();
+        app.add_systems(Update, drive_animations);
+        app.update();
+        let at = |app: &App, node| {
+            app.world()
+                .get::<AnimationPlayer>(rigged)
+                .unwrap()
+                .animation(node)
+                .map(|active| active.seek_time())
+        };
+        // 1 s into a 0.8 s loop is 0.2 s in.
+        assert!((at(&app, walk).unwrap() - 0.2).abs() < 1e-4);
+
+        let mut logical = app
+            .world_mut()
+            .get_mut::<crate::engine::AnimationPlayer>(actor)
+            .unwrap();
+        logical.clip = "Jump".to_string();
+        logical.elapsed = 0.1;
+        logical.fade = Some(crate::engine::AnimationFade {
+            clip: "Walk".to_string(),
+            elapsed: 1.1,
+            speed: 1.0,
+            left: 0.2,
+            total: 0.2,
+        });
+        app.update();
+        assert!((at(&app, jump).unwrap() - 0.1).abs() < 1e-4);
+        // Walk fades out from where it was, still held to the animator.
+        assert!((at(&app, walk).unwrap() - 0.3).abs() < 1e-4);
+        assert_eq!(
+            app.world().get::<ModelRig>(scene).unwrap().showing,
+            Some(jump)
+        );
     }
 
     #[test]

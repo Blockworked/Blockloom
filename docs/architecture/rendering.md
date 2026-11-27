@@ -231,6 +231,22 @@ authored box stands in until the scene is ready, stays for OBJ/FBX or a file
 that won't load, and is always what the actor collides as. `ModelCache` keeps
 loaded files alive across rebuilds so an edit doesn't flash the box.
 
+A model with an Animation component is driven by the same animator as 2D
+(`anim2d::step_animations`, on the fixed tick, in both dimensions): states,
+transitions, crossfades, markers, `when animation ends` and root motion. A 3D
+clip is a model clip: no frames, a `seconds` length, and the model animation
+`rig_animation` names (or the clip's name). Its markers count frames at its
+`fps`, and root motion's `motion` is forward (-Z) and up. `ModelInfo::clips`
+reads each glTF animation's length from its samplers' input `max` (unnamed ones
+are `AnimationN`), and `animate-from-model` turns them into clips and states,
+one-shot names (`jump`, `attack`, ...) playing once back to the idle state. On
+load `model::on_ready` puts every animation in one `AnimationGraph` with
+`AnimationTransitions` and a `ModelRig` (name to node); `model::drive_animations`
+is the drawing half, playing the animator's clip on the rig with the state's
+crossfade and seeking it to the animator's time (plus the fixed overstep), so
+the pose is wherever the simulation stands. Without an Animation component the
+look's own animation just loops.
+
 A solid tilemap collides per tile, as the merged rects of
 `Tilemap::solid_rects` (minus its `passable` tiles), and nav blocks the same
 rects. Ray and overlap queries see them too, as a `ColliderShape::Parts`
