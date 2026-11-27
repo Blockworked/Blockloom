@@ -16,6 +16,7 @@ pub mod contacts;
 pub mod controller;
 pub mod cook;
 pub mod edit;
+pub mod genres;
 pub mod geometry;
 pub mod ids;
 pub mod joints;

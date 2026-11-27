@@ -32,15 +32,20 @@ BLESSED = ROOT / "tests" / "corpus"
 
 # Name -> how to get the project open: a sample in a dimension, or a folder to copy.
 ENTRIES = {
-    "playground-3d": ("sample", "ThreeD"),
-    "playground-2d": ("sample", "TwoD"),
+    "playground-3d": ("sample", ("physics-playground", "ThreeD")),
+    "playground-2d": ("sample", ("physics-playground", "TwoD")),
+    "platformer": ("sample", ("platformer", "TwoD")),
+    "top-down": ("sample", ("top-down", "TwoD")),
+    "first-person": ("sample", ("first-person", "ThreeD")),
+    "ui-puzzle": ("sample", ("ui-puzzle", "TwoD")),
 }
 
 
 def open_entry(shell, work, name, how, what):
     """Open the entry and answer a stable label per actor id: a sample makes fresh ids each time."""
     if how == "sample":
-        reply = shell.run(f'create-project name="Corpus {name}" location="{work}" mode={what} sample=physics-playground')
+        sample, mode = what
+        reply = shell.run(f'create-project name="Corpus {name}" location="{work}" mode={mode} sample={sample}')
     else:
         copy = work / name
         shutil.copytree(what, copy)

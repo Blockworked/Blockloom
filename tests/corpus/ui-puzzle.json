@@ -1,0 +1,69 @@
+{
+  "actors": [
+    {
+      "id": "Board",
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    }
+  ],
+  "globals": {
+    "light 0": {
+      "kind": "Number",
+      "value": 0.0
+    },
+    "light 1": {
+      "kind": "Number",
+      "value": 1.0
+    },
+    "light 2": {
+      "kind": "Number",
+      "value": 1.0
+    },
+    "light 3": {
+      "kind": "Number",
+      "value": 1.0
+    },
+    "light 4": {
+      "kind": "Number",
+      "value": 0.0
+    },
+    "light 5": {
+      "kind": "Number",
+      "value": 1.0
+    },
+    "light 6": {
+      "kind": "Number",
+      "value": 1.0
+    },
+    "light 7": {
+      "kind": "Number",
+      "value": 1.0
+    },
+    "light 8": {
+      "kind": "Number",
+      "value": 0.0
+    },
+    "moves": {
+      "kind": "Number",
+      "value": 0.0
+    },
+    "solved": {
+      "kind": "Number",
+      "value": 0.0
+    }
+  },
+  "ticks": 240
+}

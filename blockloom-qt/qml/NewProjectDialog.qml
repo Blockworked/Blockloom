@@ -10,9 +10,24 @@ StitchDialog {
     id: root
     required property var app
     property string mode: "TwoD"
-    // "" starts empty, otherwise a sample by name ("third-person" is 3D only).
+    // "" starts empty, otherwise a sample by name. Some only fit one dimension.
     property string sample: ""
-    onModeChanged: if (mode === "TwoD" && sample === "third-person") sample = ""
+    readonly property var samples: [
+        { name: "physics-playground", label: "Physics playground", modes: ["TwoD", "ThreeD"],
+          about: "A player, a stack of crates, a pendulum on a rope, a motor wheel, a door (3D only), a joint that snaps and a trigger zone, all made of components with no custom code." },
+        { name: "platformer", label: "Platformer", modes: ["TwoD"],
+          about: "Steps of platforms to jump up, coins to collect and a flag at the end." },
+        { name: "top-down", label: "Top down", modes: ["TwoD"],
+          about: "An arena seen from above with gems to collect and a guard on patrol who sends you back to the start." },
+        { name: "third-person", label: "Third person", modes: ["ThreeD"],
+          about: "A rigged figure that walks, runs and jumps on one blended animator, plants its feet and turns its head, and a boulder that knocks it limp for two seconds." },
+        { name: "first-person", label: "First person", modes: ["ThreeD"],
+          about: "A room with orbs to collect, stairs up to a ledge and a door that slides open once you have them all." },
+        { name: "ui-puzzle", label: "Interface puzzle", modes: ["TwoD", "ThreeD"],
+          about: "Nine lights made of interface buttons. Each press flips a light and its neighbours; turn them all on." }
+    ]
+    function sampleInfo(name) { return samples.find(s => s.name === name); }
+    onModeChanged: { const s = sampleInfo(sample); if (s && s.modes.indexOf(mode) < 0) sample = ""; }
     property string error: ""
     property bool busy: false
     title: "New project"
@@ -66,17 +81,22 @@ StitchDialog {
             text: (root.mode === "TwoD" ? "Sprites and flat physics, measured in pixels." : "Meshes and 3D physics, measured in metres.") + " A project can switch later."
         }
         Text { text: "Start from"; color: Theme.textDim; font.pixelSize: 12 }
-        RowLayout {
-            spacing: 6
+        Flow {
+            objectName: "samples"; Layout.fillWidth: true; spacing: 6
             StitchButton { objectName: "sample-empty"; text: "Empty"; primary: root.sample === ""; onClicked: root.sample = "" }
-            StitchButton { objectName: "sample-physics"; text: "Physics playground"; primary: root.sample === "physics-playground"; onClicked: root.sample = "physics-playground" }
-            StitchButton { objectName: "sample-third-person"; text: "Third person"; visible: root.mode === "ThreeD"; primary: root.sample === "third-person"; onClicked: root.sample = "third-person" }
+            Repeater {
+                model: root.samples.filter(s => s.modes.indexOf(root.mode) >= 0)
+                StitchButton {
+                    required property var modelData
+                    objectName: "sample-" + modelData.name
+                    text: modelData.label; primary: root.sample === modelData.name
+                    onClicked: root.sample = modelData.name
+                }
+            }
         }
         Text {
             visible: root.sample !== ""; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: 12
-            text: root.sample === "third-person"
-                ? "A rigged figure that walks, runs and jumps on one blended animator, plants its feet and turns its head, and a boulder that knocks it limp for two seconds."
-                : "A player, a stack of crates, a pendulum on a rope, a motor wheel, a door" + (root.mode === "TwoD" ? " (3D only)" : "") + ", a joint that snaps and a trigger zone, all made of components with no custom code."
+            text: { const s = root.sampleInfo(root.sample); return s ? s.about : ""; }
         }
         RowLayout {
             Layout.alignment: Qt.AlignRight; Layout.topMargin: 8; spacing: 8

@@ -376,5 +376,18 @@ all components). `create-project ... sample=physics-playground` and the New
 Project dialog's "Start from" use it. Tests: core (plans clean in both
 dimensions, pack round trip), app (opens runnable), runtime (plays 240 ticks).
 
+Genre templates live in `physics/genres.rs` beside it and go through the same
+`sample::build`; `sample::modes` says which dimensions each fits, and the dialog
+offers only those. `platformer` (2D: platforms a jump apart, coins, a flag),
+`top-down` (2D, no gravity: walls, gems, a guard gliding on a kinematic trigger
+body who sends the player back and costs a life), `first-person` (3D: orbs,
+stairs to a ledge, a door that glides open on the fourth orb) and `ui-puzzle`
+(either: a 3x3 lights puzzle of `show button` blocks and `when ui clicked`
+strands; `LIGHTS_SOLUTION` solves it). Pickups are triggers whose own strand
+counts a global and deletes itself. `simulation::tests` walk the player into
+each first pickup and click the puzzle solved; all four are corpus entries.
+`third-person` is not: `go limp` starts each body at the bone pose last drawn,
+so where the figure falls depends on frame timing.
+
 Packs carry the whole `Project`, so physics settings, components, constraints
 and cooked collision data ship in `game.pack` with no extra format.

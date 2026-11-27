@@ -10,7 +10,23 @@ use crate::project::{Actor, Project};
 use crate::scene::{Mode, Visual};
 
 /// Which samples exist, for the project dialog and the shell.
-pub const SAMPLES: [&str; 2] = ["physics-playground", "third-person"];
+pub const SAMPLES: [&str; 6] = [
+    "physics-playground",
+    "third-person",
+    "platformer",
+    "top-down",
+    "first-person",
+    "ui-puzzle",
+];
+
+/// The dimensions a sample can be made in.
+pub fn modes(sample: &str) -> &'static [Mode] {
+    match sample {
+        "third-person" | "first-person" => &[Mode::ThreeD],
+        "platformer" | "top-down" => &[Mode::TwoD],
+        _ => &[Mode::TwoD, Mode::ThreeD],
+    }
+}
 
 /// Where the third-person sample keeps its figure.
 pub const FIGURE: &str = "assets/models/figure.glb";
@@ -20,6 +36,10 @@ pub fn build(sample: &str, name: &str, mode: Mode) -> Result<Project, String> {
     match sample {
         "physics-playground" => physics_playground(name, mode),
         "third-person" => third_person(name, mode),
+        "platformer" => super::genres::platformer(name, mode),
+        "top-down" => super::genres::top_down(name, mode),
+        "first-person" => super::genres::first_person(name, mode),
+        "ui-puzzle" => super::genres::ui_puzzle(name, mode),
         other => Err(format!(
             "No sample called \"{other}\". Samples: {}",
             SAMPLES.join(", ")
@@ -495,6 +515,26 @@ mod tests {
             };
             assert_eq!(names(&a), names(&b), "{mode:?}");
             assert!(b.errors().next().is_none(), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn every_template_plans_cleanly_in_its_dimensions() {
+        for sample in SAMPLES {
+            for &mode in modes(sample) {
+                let project = build(sample, "T", mode).unwrap();
+                let errors: Vec<_> = plan(&project).errors().map(|i| i.message.clone()).collect();
+                assert!(errors.is_empty(), "{sample} {mode:?}: {errors:?}");
+                let pack = crate::pack::GamePack::new(project.clone());
+                let text = serde_json::to_string(&pack).unwrap();
+                let back = crate::pack::GamePack::from_json(&text, "test").unwrap();
+                assert_eq!(back.project.actors.len(), project.actors.len(), "{sample}");
+            }
+            for mode in [Mode::TwoD, Mode::ThreeD] {
+                if !modes(sample).contains(&mode) {
+                    assert!(build(sample, "T", mode).is_err(), "{sample} {mode:?}");
+                }
+            }
         }
     }
 

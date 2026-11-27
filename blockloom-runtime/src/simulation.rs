@@ -201,7 +201,20 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
             dim3::track_contacts.run_if(crate::is_3d),
             crate::record::record,
         )
-            .chain(),
+            .chain()
+            // Unordered against the writeback, a pose could be read before or
+            // after physics wrote it, which made replays drift.
+            .after(bevy_rapier2d::prelude::PhysicsSet::Writeback)
+            .after(bevy_rapier3d::prelude::PhysicsSet::Writeback),
+    )
+    // Rapier propagates transforms before it reads kinematic poses, but only
+    // trees marked dirty, and Bevy marks them once a frame. Mark every step,
+    // or a moved parent's second step in a frame syncs last frame's pose.
+    .add_systems(
+        FixedPostUpdate,
+        bevy::transform::systems::mark_dirty_trees
+            .before(bevy_rapier2d::plugin::RapierTransformPropagateSet)
+            .before(bevy_rapier3d::plugin::RapierTransformPropagateSet),
     )
     .add_systems(
         FixedUpdate,
@@ -415,7 +428,7 @@ mod tests {
                 let change = blockloom_core::change::diff(&before, &after);
                 change.apply(&mut engine.project, true);
                 let ids = world::respawnable(&engine, &change).expect("a plain edit");
-                assert_eq!(ids, [player.clone()]);
+                assert_eq!(ids, std::slice::from_ref(&player));
                 engine.respawn = ids;
             }
             app.update();
@@ -958,5 +971,107 @@ mod tests {
         let compiled = template_run(Some(&root));
         let _ = std::fs::remove_dir_all(root);
         assert_eq!(compiled, (states, blends, steps));
+    }
+
+    /// Plays `sample` headless with the player's motor driven by blocks in
+    /// world space along `intent` from the start, and reads a global after
+    /// `ticks` fixed steps.
+    fn play_template(sample: &str, mode: Mode, intent: [f64; 3], ticks: usize, read: &str) -> f64 {
+        use blockloom_core::blocks::{Instruction, InstructionKind as K, Strand};
+        use blockloom_core::components::ActorComponent;
+        use blockloom_core::physics::motor::{MotorAction, MotorOwner, MoveSpace};
+        let mut project = blockloom_core::physics::sample::build(sample, "T", mode).unwrap();
+        let player = project
+            .actors
+            .iter_mut()
+            .find(|a| a.name == "Player")
+            .unwrap();
+        let mut motor = player.components.character_motor().cloned().unwrap();
+        motor.owner = MotorOwner::Script;
+        motor.space = MoveSpace::World;
+        player
+            .components
+            .insert(ActorComponent::CharacterMotor { motor });
+        player.graph.strands.push(Strand::with_instructions(
+            960,
+            0,
+            [
+                K::WhenStarted,
+                K::MotorAct {
+                    action: MotorAction::Intent,
+                    x: Value::number(intent[0]),
+                    y: Value::number(intent[1]),
+                    z: Value::number(intent[2]),
+                },
+            ]
+            .into_iter()
+            .map(Instruction::new)
+            .collect(),
+        ));
+        let mut app = headless_built(project, mode, None);
+        for _ in 0..ticks {
+            app.update();
+        }
+        app.world()
+            .non_send::<Engine>()
+            .variables
+            .read("", read)
+            .as_number()
+            .unwrap_or(0.0)
+    }
+
+    /// Phase E's genre templates play: walking into the first pickup counts it.
+    #[test]
+    fn the_genre_templates_count_their_first_pickup() {
+        assert_eq!(
+            play_template("platformer", Mode::TwoD, [1.0, 0.0, 0.0], 90, "coins"),
+            1.0
+        );
+        assert_eq!(
+            play_template("top-down", Mode::TwoD, [1.0, 0.0, 0.0], 60, "gems"),
+            1.0
+        );
+        assert_eq!(
+            play_template("first-person", Mode::ThreeD, [0.0, 0.0, -1.0], 90, "orbs"),
+            1.0
+        );
+        // Nothing to pick up standing still.
+        assert_eq!(
+            play_template("platformer", Mode::TwoD, [0.0; 3], 90, "coins"),
+            0.0
+        );
+    }
+
+    /// The interface puzzle answers clicks and knows when it is solved.
+    #[test]
+    fn the_ui_puzzle_is_solved_by_its_solution() {
+        use blockloom_core::physics::genres::LIGHTS_SOLUTION;
+        use blockloom_core::vm::Event;
+        let project = blockloom_core::physics::sample::build("ui-puzzle", "T", Mode::TwoD).unwrap();
+        let mut app = headless_built(project, Mode::TwoD, None);
+        let read = |app: &App, name: &str| {
+            app.world()
+                .non_send::<Engine>()
+                .variables
+                .read("", name)
+                .as_number()
+                .unwrap_or(-1.0)
+        };
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(read(&app, "solved"), 0.0);
+        for cell in LIGHTS_SOLUTION {
+            app.world_mut()
+                .non_send_mut::<Engine>()
+                .fire(Event::UiClicked {
+                    id: format!("cell {cell}"),
+                });
+            for _ in 0..5 {
+                app.update();
+            }
+        }
+        assert_eq!(read(&app, "moves"), 3.0);
+        assert_eq!(read(&app, "solved"), 1.0);
     }
 }

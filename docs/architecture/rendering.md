@@ -303,7 +303,8 @@ stood when it fell. `pose_ragdolls` (PostUpdate, before IK, which skips limp
 actors) lays each bone over its body. `get_up` despawns the bodies and blends
 from the pose they lay in back to the animation over `get_up` seconds
 (`GettingUp`). It needs the loaded model, so a headless world has nothing to
-ragdoll.
+ragdoll. The bone poses it starts from are the last frame's, not the tick's, so
+a ragdoll is the one part of a run a replay doesn't repeat exactly.
 
 `figure::glb` writes a blocky rigged figure from code. It is a skinned mesh of
 boxes, each rigidly on one of 11 bones, with Idle, Walk, Run and Jump clips. It
