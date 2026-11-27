@@ -40,10 +40,10 @@ compiled), **Scr** (script ABI), **CLI** (shell and MCP), **UI** (inspector).
 From section 14.2 of the plan, the ones this container cannot show or that need
 a real course: fast projectile and rotating obstacle against real CCD hardware
 settings, mesh/terrain/tile seams, input from gamepad and touch, 30/60/144 FPS
-timing sweeps, streaming independent of LOD, AI using the motor, animation
-ragdoll, and agreement between the embedded editor, the process runtime, the
+timing sweeps, streaming independent of LOD, AI using the motor, and agreement between the embedded editor, the process runtime, the
 native player and the web player. Each needs a GPU or a display; none is
-claimed.
+claimed. The animation ragdoll handoff (`go_limp`/`get_up`) is shown headless in
+`ragdoll::tests`, against rapier, without a rendered model.
 
 ## Required gates still open
 
