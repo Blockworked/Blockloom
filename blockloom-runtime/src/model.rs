@@ -25,20 +25,43 @@ pub struct ModelScene {
     reported: bool,
 }
 
-/// On a loaded model scene: every animation in its file as one graph, and
-/// what the animator last put on the rig.
+/// On a loaded model scene: every animation in its file as one graph, once
+/// per region (the base, then each animation layer's bones), and the
+/// players it drives.
 #[derive(Component)]
 pub struct ModelRig {
     players: Vec<Entity>,
-    /// Lowercased animation name (`animationN` by index too) to its node.
-    nodes: HashMap<String, AnimationNodeIndex>,
+    /// Lowercased animation name (`animationN` by index too) to its node in
+    /// each region, the base first.
+    nodes: HashMap<String, Vec<AnimationNodeIndex>>,
+    /// The lowercased layer each region after the base belongs to.
+    layers: Vec<String>,
     missing: Option<String>,
 }
 
 impl ModelRig {
-    fn node(&self, name: &str) -> Option<AnimationNodeIndex> {
-        self.nodes.get(&name.trim().to_lowercase()).copied()
+    fn node_in(&self, name: &str, region: usize) -> Option<AnimationNodeIndex> {
+        self.nodes
+            .get(&name.trim().to_lowercase())
+            .and_then(|nodes| nodes.get(region))
+            .copied()
     }
+
+    fn region_of(&self, layer: &str) -> Option<usize> {
+        let layer = layer.to_lowercase();
+        self.layers.iter().position(|l| *l == layer).map(|i| i + 1)
+    }
+}
+
+/// Mask groups for a rig with `regions` regions (the base plus its layers):
+/// every target sits in exactly one group, and a region's nodes mask out
+/// every group but their own.
+fn region_mask(region: usize, regions: usize) -> bevy::animation::graph::AnimationMask {
+    if regions <= 1 {
+        return 0;
+    }
+    let all: bevy::animation::graph::AnimationMask = (1u64 << regions) - 1;
+    all & !(1u64 << region)
 }
 
 /// On the actor: the child its model scene hangs off.
@@ -160,8 +183,11 @@ fn on_ready(
     children: Query<&Children>,
     cameras: Query<(), With<Camera>>,
     mut players: Query<&mut AnimationPlayer>,
+    names: Query<&Name>,
+    targets: Query<&bevy::animation::AnimationTargetId>,
     gltfs: Res<Assets<Gltf>>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
+    engine: NonSend<Engine>,
 ) {
     let Ok(scene) = scenes.get(ready.entity) else {
         return;
@@ -188,7 +214,46 @@ fn on_ready(
     // Every animation goes in one graph, so the animator can crossfade
     // between them; the look's own animation loops until it takes over.
     let mut graph = AnimationGraph::new();
-    let mut nodes = HashMap::new();
+    // Each animation layer owns its bones and everything under them; a bone
+    // two layers name goes to the later one. The rest is the base's.
+    let layers: Vec<(String, Vec<String>)> = engine
+        .actor(&scene.id)
+        .and_then(|a| a.components.animation())
+        .map(|spec| {
+            spec.layers
+                .iter()
+                .map(|layer| {
+                    let bones = layer.bones.iter().map(|b| b.to_lowercase()).collect();
+                    (layer.name.to_lowercase(), bones)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let regions = layers.len() + 1;
+    if regions > 1 {
+        let mut owner: HashMap<Entity, usize> = HashMap::new();
+        for entity in children.iter_descendants(ready.entity) {
+            let Ok(name) = names.get(entity) else {
+                continue;
+            };
+            let name = name.as_str().to_lowercase();
+            for (i, (_, bones)) in layers.iter().enumerate() {
+                if bones.contains(&name) {
+                    owner.insert(entity, i + 1);
+                    for below in children.iter_descendants(entity) {
+                        owner.insert(below, i + 1);
+                    }
+                }
+            }
+        }
+        for entity in std::iter::once(ready.entity).chain(children.iter_descendants(ready.entity)) {
+            if let Ok(target) = targets.get(entity) {
+                let region = owner.get(&entity).copied().unwrap_or(0);
+                graph.add_target_to_mask_group(*target, region as u32);
+            }
+        }
+    }
+    let mut nodes: HashMap<String, Vec<AnimationNodeIndex>> = HashMap::new();
     let named: HashMap<&Handle<AnimationClip>, &str> = gltf
         .named_animations
         .iter()
@@ -196,17 +261,28 @@ fn on_ready(
         .collect();
     let mut order = Vec::new();
     for (index, clip) in gltf.animations.iter().enumerate() {
-        let node = graph.add_clip(clip.clone(), 1.0, graph.root);
-        nodes.insert(format!("animation{index}"), node);
+        let per_region: Vec<AnimationNodeIndex> = (0..regions)
+            .map(|region| {
+                graph.add_clip_with_mask(
+                    clip.clone(),
+                    region_mask(region, regions),
+                    1.0,
+                    graph.root,
+                )
+            })
+            .collect();
+        order.push(per_region[0]);
         if let Some(name) = named.get(clip) {
-            nodes.insert(name.to_lowercase(), node);
+            nodes.insert(name.to_lowercase(), per_region.clone());
         }
-        order.push(node);
+        nodes.insert(format!("animation{index}"), per_region);
     }
     let start = if scene.animation.is_empty() {
         order.first().copied()
     } else {
-        let found = nodes.get(&scene.animation.to_lowercase()).copied();
+        let found = nodes
+            .get(&scene.animation.to_lowercase())
+            .map(|per_region| per_region[0]);
         if found.is_none() {
             let mut names: Vec<&str> = gltf.named_animations.keys().map(|name| &**name).collect();
             names.sort_unstable();
@@ -243,6 +319,7 @@ fn on_ready(
     commands.entity(ready.entity).insert(ModelRig {
         players: rigged,
         nodes,
+        layers: layers.into_iter().map(|(name, _)| name).collect(),
         missing: None,
     });
 }
@@ -261,11 +338,12 @@ pub fn drive_animations(
         &crate::engine::ActorId,
         &crate::engine::AnimationPlayer,
         &ModelChild,
+        Option<&crate::anim_layers::AnimationLayers>,
     )>,
     mut rigs: Query<&mut ModelRig>,
     mut players: Query<(&mut AnimationPlayer, Has<AnimationTransitions>)>,
 ) {
-    for (id, logical, child) in &actors {
+    for (id, logical, child, layered) in &actors {
         let Ok(mut rig) = rigs.get_mut(child.0) else {
             continue;
         };
@@ -321,21 +399,50 @@ pub fn drive_animations(
                 }
             }
         }
+        // A layer's bones take its weight of the layer's clip, and keep the
+        // rest of the base.
+        let mut layer_clips: Vec<(usize, f32, String, f32)> = Vec::new();
+        for play in layered.map_or(&[][..], |layers| &layers.0[..]) {
+            let (Some(region), Some(clip)) =
+                (rig.region_of(&play.layer), spec.find_clip(&play.clip))
+            else {
+                continue;
+            };
+            let at = clip.local_time(play.elapsed + ahead(1.0, !play.ended && logical.playing));
+            layer_clips.push((
+                region,
+                play.weight.clamp(0.0, 1.0),
+                clip.rig_name().to_string(),
+                at,
+            ));
+        }
+        let regions = rig.layers.len() + 1;
         let mut weights: HashMap<AnimationNodeIndex, (f32, f32)> = HashMap::new();
-        for (name, weight, at) in &wanted {
-            match rig.node(name) {
+        let mut add =
+            |rig: &mut ModelRig, name: &str, region: usize, weight: f32, at: f32| match rig
+                .node_in(name, region)
+            {
                 Some(node) => {
-                    let entry = weights.entry(node).or_insert((0.0, *at));
+                    let entry = weights.entry(node).or_insert((0.0, at));
                     entry.0 += weight;
                 }
-                None if rig.missing.as_deref() != Some(name.as_str()) => {
-                    rig.missing = Some(name.clone());
+                None if rig.missing.as_deref() != Some(name) => {
+                    rig.missing = Some(name.to_string());
                     report(
                         &id.0,
                         format!("the model has no animation called \"{name}\" for its animator"),
                     );
                 }
                 None => {}
+            };
+        for region in 0..regions {
+            let layer = layer_clips.iter().find(|(r, ..)| *r == region);
+            let keep = 1.0 - layer.map_or(0.0, |(_, w, ..)| *w);
+            for (name, weight, at) in &wanted {
+                add(&mut rig, name, region, weight * keep, *at);
+            }
+            if let Some((_, w, name, at)) = layer {
+                add(&mut rig, name, region, *w, *at);
             }
         }
         for &entity in &rig.players {
@@ -483,8 +590,10 @@ mod tests {
         let mut clips = app.world_mut().resource_mut::<Assets<AnimationClip>>();
         let walk_clip = clips.add(AnimationClip::default());
         let jump_clip = clips.add(AnimationClip::default());
-        let walk = graph.add_clip(walk_clip, 1.0, graph.root);
-        let jump = graph.add_clip(jump_clip, 1.0, graph.root);
+        let walk = graph.add_clip(walk_clip.clone(), 1.0, graph.root);
+        let jump = graph.add_clip(jump_clip.clone(), 1.0, graph.root);
+        let walk_upper = graph.add_clip(walk_clip, 1.0, graph.root);
+        let jump_upper = graph.add_clip(jump_clip, 1.0, graph.root);
         let graph = app
             .world_mut()
             .resource_mut::<Assets<AnimationGraph>>()
@@ -500,9 +609,13 @@ mod tests {
             .world_mut()
             .spawn(ModelRig {
                 players: vec![rigged],
-                nodes: [("walk".to_string(), walk), ("jump_up".to_string(), jump)]
-                    .into_iter()
-                    .collect(),
+                nodes: [
+                    ("walk".to_string(), vec![walk, walk_upper]),
+                    ("jump_up".to_string(), vec![jump, jump_upper]),
+                ]
+                .into_iter()
+                .collect(),
+                layers: vec!["upper body".to_string()],
                 missing: None,
             })
             .id();
@@ -579,6 +692,43 @@ mod tests {
         assert!((weight(&app, walk) - 0.75).abs() < 1e-4);
         assert!((weight(&app, jump) - 0.25).abs() < 1e-4);
         assert!(app.world().get::<ModelRig>(scene).is_some());
+
+        // A layer at half weight shares its bones with the base clip.
+        let mut logical = app
+            .world_mut()
+            .get_mut::<crate::engine::AnimationPlayer>(actor)
+            .unwrap();
+        logical.blend.clear();
+        logical.elapsed = 0.1;
+        app.world_mut()
+            .entity_mut(actor)
+            .insert(crate::anim_layers::AnimationLayers(vec![
+                crate::anim_layers::LayerPlay {
+                    layer: "Upper Body".to_string(),
+                    clip: "Jump".to_string(),
+                    elapsed: 0.2,
+                    weight: 0.5,
+                    target: 0.5,
+                    ..Default::default()
+                },
+            ]));
+        app.update();
+        assert!(
+            (weight(&app, walk) - 1.0).abs() < 1e-4,
+            "the base keeps its bones"
+        );
+        assert_eq!(weight(&app, jump), 0.0);
+        assert!((weight(&app, walk_upper) - 0.5).abs() < 1e-4);
+        assert!((weight(&app, jump_upper) - 0.5).abs() < 1e-4);
+        assert!((at(&app, jump_upper).unwrap() - 0.2).abs() < 1e-4);
+        assert!((at(&app, walk_upper).unwrap() - 0.1).abs() < 1e-4);
+    }
+
+    #[test]
+    fn region_masks_leave_each_region_only_its_own_group() {
+        assert_eq!(region_mask(0, 1), 0);
+        assert_eq!(region_mask(0, 3), 0b110);
+        assert_eq!(region_mask(2, 3), 0b011);
     }
 
     #[test]

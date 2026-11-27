@@ -699,6 +699,10 @@ Add component calls it "Hurt volume". 2D worlds only.
 | `animation.slot_tints` | list of record | `[]` | Tints per rig slot, laid over the slot's own color: `(slot, color)`. |
 | `animation.slot_tints[].slot` | text |  |  |
 | `animation.slot_tints[].color` | color |  |  |
+| `animation.layers` | list of record | `[]` | Bone-masked layers a 3D model plays clips on over the state machine, such as a wave on the upper body while the legs walk. |
+| `animation.layers[].name` | text |  |  |
+| `animation.layers[].bones` | list of text | `[]` |  |
+| `animation.layers[].weight` | number | `1.0` |  |
 
 ## Sprite
 

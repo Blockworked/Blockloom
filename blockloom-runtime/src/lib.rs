@@ -26,6 +26,7 @@ mod ai;
 #[cfg(target_os = "android")]
 pub mod android;
 mod anim2d;
+mod anim_layers;
 pub mod api;
 mod atmosphere;
 mod batching;

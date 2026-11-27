@@ -12,6 +12,21 @@ impl Actor {
         self.verb("set_surface", &[PluginArg::from(property), PluginArg::from(value)]);
     }
 
+    /// Plays a clip on one of my Animation component's bone layers over the state machine, fading in by the crossfade. A clip that plays once fades back out at its end.
+    pub fn play_layer(&self, clip: &str, layer: &str) {
+        self.verb("play_layer", &[PluginArg::from(clip), PluginArg::from(layer)]);
+    }
+
+    /// Fades one of my animation layers out by the crossfade, handing its bones back to the state machine.
+    pub fn stop_layer(&self, layer: &str) {
+        self.verb("stop_layer", &[PluginArg::from(layer)]);
+    }
+
+    /// How much of its bones one of my animation layers takes from the state machine, 0 to 1, easing there by the crossfade.
+    pub fn set_layer_weight(&self, layer: &str, weight: f64) {
+        self.verb("set_layer_weight", &[PluginArg::from(layer), PluginArg::from(weight)]);
+    }
+
     /// Reads one property of a component on an actor by its registry path, as the run has it now.
     pub fn property(&self, property: &str, actor: &str) -> Option<String> {
         self.verb_text("property", &[PluginArg::from(property), PluginArg::from(actor)])

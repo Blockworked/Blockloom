@@ -178,6 +178,8 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
                 world::step_tweens,
                 crate::anim2d::apply_animation_effects,
                 crate::anim2d::step_animations,
+                crate::anim_layers::apply_layer_verbs,
+                crate::anim_layers::step_layers,
             )
                 .chain()
                 .in_set(SimStep::Animation),

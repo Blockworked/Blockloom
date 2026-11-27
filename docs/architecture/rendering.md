@@ -259,6 +259,21 @@ all, times the rest), seeking each to the animator's time plus the fixed
 overstep, so the pose is wherever the simulation stands. Without an Animation
 component the look's own animation just loops.
 
+An Animation component's `layers` are bone masks for models: each names bones
+that it owns, with everything under them, and a layer named later wins a bone
+two layers share. The `play_layer`, `stop_layer` and `set_layer_weight` verbs
+(blocks and script methods from the one verb row) play a clip on a layer over the
+state machine. `anim_layers::step_layers` keeps each layer's clock, markers and
+end on the tick. A `Once` clip fires `when animation ends` and fades back out.
+It also eases the weight toward its target at the spec's crossfade. `on_ready`
+reads the layers when the model loads and adds each animation once per region
+(the base, then each layer) to the graph. Every target joins its region's mask
+group, and a region's nodes mask out every other group (`region_mask`). In a
+layer's region, `drive_animations` gives the base clips `1 - weight` and the
+layer's clip `weight`, so each bone is blended exactly once. Changing the layers
+mid-run takes effect when the model next loads. Layers don't apply to 2D
+flipbooks or rigs, and at most 32 are kept.
+
 A solid tilemap collides per tile, as the merged rects of
 `Tilemap::solid_rects` (minus its `passable` tiles), and nav blocks the same
 rects. Ray and overlap queries see them too, as a `ColliderShape::Parts`

@@ -157,6 +157,62 @@ pub static VERBS: &[VerbSpec] = &[
         shape: Shape::Statement,
     },
     VerbSpec {
+        name: "play_layer",
+        label: "play animation {clip} on layer {layer}",
+        category: "looks",
+        section: "Animation",
+        purpose: "Plays a clip on one of my Animation component's bone layers over the state machine, fading in by the crossfade. A clip that plays once fades back out at its end.",
+        icon: "layers",
+        args: &[
+            VerbArg {
+                name: "clip",
+                ty: ArgType::Text,
+                default: "wave",
+            },
+            VerbArg {
+                name: "layer",
+                ty: ArgType::Text,
+                default: "upper body",
+            },
+        ],
+        shape: Shape::Statement,
+    },
+    VerbSpec {
+        name: "stop_layer",
+        label: "stop animation layer {layer}",
+        category: "looks",
+        section: "Animation",
+        purpose: "Fades one of my animation layers out by the crossfade, handing its bones back to the state machine.",
+        icon: "layers",
+        args: &[VerbArg {
+            name: "layer",
+            ty: ArgType::Text,
+            default: "upper body",
+        }],
+        shape: Shape::Statement,
+    },
+    VerbSpec {
+        name: "set_layer_weight",
+        label: "set animation layer {layer} weight to {weight}",
+        category: "looks",
+        section: "Animation",
+        purpose: "How much of its bones one of my animation layers takes from the state machine, 0 to 1, easing there by the crossfade.",
+        icon: "layers",
+        args: &[
+            VerbArg {
+                name: "layer",
+                ty: ArgType::Text,
+                default: "upper body",
+            },
+            VerbArg {
+                name: "weight",
+                ty: ArgType::Number,
+                default: "0.5",
+            },
+        ],
+        shape: Shape::Statement,
+    },
+    VerbSpec {
         name: "property",
         label: "{property} of {actor}",
         category: "actors",

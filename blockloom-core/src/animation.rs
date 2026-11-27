@@ -823,6 +823,30 @@ pub struct AnimationSpec {
     /// Tints per rig slot, laid over the slot's own color: `(slot, color)`.
     #[serde(default)]
     pub slot_tints: Vec<SlotTint>,
+    /// Bone-masked layers a 3D model plays clips on over the state machine,
+    /// such as a wave on the upper body while the legs walk.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<AnimationLayer>,
+}
+
+/// The most layers a spec keeps: each is a mask group beside the base.
+pub const MAX_LAYERS: usize = 32;
+
+/// A layer: the bones it owns (each with everything under it) and how much
+/// of them a clip played on it takes from the base. A bone two layers name
+/// belongs to the later one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schema)]
+pub struct AnimationLayer {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub bones: Vec<String>,
+    #[serde(default = "default_layer_weight")]
+    pub weight: f32,
+}
+
+fn default_layer_weight() -> f32 {
+    1.0
 }
 
 /// A skin tint for one rig slot.
@@ -1026,6 +1050,27 @@ impl AnimationSpec {
             tint.color = tint.color.trim().to_string();
             !tint.slot.is_empty()
         });
+        self.layers.retain_mut(|layer| {
+            layer.name = layer.name.trim().to_string();
+            layer.bones.retain_mut(|bone| {
+                *bone = bone.trim().to_string();
+                !bone.is_empty()
+            });
+            layer.weight = if layer.weight.is_finite() {
+                layer.weight.clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            !layer.name.is_empty()
+        });
+        self.layers.truncate(MAX_LAYERS);
+    }
+
+    pub fn find_layer(&self, name: &str) -> Option<&AnimationLayer> {
+        let wanted = name.trim();
+        self.layers
+            .iter()
+            .find(|layer| layer.name.eq_ignore_ascii_case(wanted))
     }
 
     /// The transition `state` takes this tick, if any. `variable` answers a
