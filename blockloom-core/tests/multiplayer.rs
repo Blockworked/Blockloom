@@ -27,6 +27,8 @@ fn opt_in_survives_wire_folder_and_pack_roundtrips() {
     project.multiplayer = MultiplayerSettings {
         enabled: true,
         max_guests: 3,
+        port: 7000,
+        announce: true,
     };
     let restored: Project = wire::from_wire(wire::to_wire(&project).unwrap()).unwrap();
     assert_eq!(restored.multiplayer, project.multiplayer);

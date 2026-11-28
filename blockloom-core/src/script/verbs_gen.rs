@@ -76,4 +76,34 @@ impl Actor {
     pub fn screen_open(&self, screen: &str) -> Option<bool> {
         self.verb_number("screen_open", &[PluginArg::from(screen)]).map(|n| n != 0.0)
     }
+
+    /// Opens this run to LAN guests on the port in Project settings, up to its guest limit; each guest plays the next player. Needs multiplayer on in Project settings.
+    pub fn host_lan(&self) {
+        self.verb("host_lan", &[]);
+    }
+
+    /// Closes this run to LAN guests. They go back to their own game; the run carries on.
+    pub fn close_lan(&self) {
+        self.verb("close_lan", &[]);
+    }
+
+    /// Leaves this run and joins a LAN game of the same build as the next player: a number from the games found (1 is the first), a game's name, or an invite.
+    pub fn join_lan(&self, game: &str) {
+        self.verb("join_lan", &[PluginArg::from(game)]);
+    }
+
+    /// How many LAN games of this build are announcing themselves nearby. Hosts announce when Project settings say so.
+    pub fn lan_game_count(&self) -> Option<f64> {
+        self.verb_number("lan_game_count", &[])
+    }
+
+    /// The name of one LAN game found, 1 for the first; empty past the end.
+    pub fn lan_game_name(&self, index: f64) -> Option<String> {
+        self.verb_text("lan_game_name", &[PluginArg::from(index)])
+    }
+
+    /// Whether this run is open to LAN guests.
+    pub fn hosting_lan(&self) -> Option<bool> {
+        self.verb_number("hosting_lan", &[]).map(|n| n != 0.0)
+    }
 }

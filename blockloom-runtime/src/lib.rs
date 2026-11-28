@@ -395,6 +395,7 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // presentation systems below reach as a `NonSend` too.
     let rate = engine.project.world.fixed_rate;
     simulation::add_simulation(app, mode, engine);
+    server::register_client(app);
     #[cfg(all(
         feature = "multiplayer",
         not(target_arch = "wasm32"),

@@ -11,6 +11,8 @@ boring = "5"
 quiche = "0.30"
 rcgen = "0.14"
 ring = "0.17"
+# SO_REUSEADDR so every game on a machine can hear LAN announcements.
+socket2 = "0.6"
 
 [dev-dependencies]
 # Evaluated, not adopted: see tests/tokio_quiche.rs and docs/multiplayer-phase0.md.

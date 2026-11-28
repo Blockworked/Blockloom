@@ -1,4 +1,4 @@
-# Native LAN spectator slice
+# Native LAN multiplayer
 
 Status: implemented internal slice, 2026-10-05. This attaches a native QUIC
 endpoint to the existing run. Guests receive read-only actor replicas; player
@@ -167,6 +167,31 @@ template, and authored actors the host already deleted go. A roster older than
 effects already taken, or from another scene, is skipped. Not yet: actors made
 by `create actor` before the guest joined aren't rebuilt, and there is no
 prediction, so a guest feels the round trip.
+
+## Hosting and joining from a game (schema 4)
+
+Blocks in the Players section (verbs, `blockloom-core/src/verbs.rs`) run a
+LAN game without the editor. `open game to LAN` binds this machine's LAN
+address (`announce::lan_address`, loopback with no network) on the project's
+port, up to its guest limit; `close LAN game` closes it. `join LAN game`
+takes a number from the games found (1 is the first), a game's name, or an
+invite: the blocks' world turns it into an invite (`lan_verbs`) and the
+playing world joins with its own content hash as the trusted build
+(`server::switch_link`), so only the same build gets in. Joining leaves the
+world's own run, stops its own server and LAN game, and starts the run over
+as a client; when the host closes LAN or drops, the guest goes back to its
+own game with the reason in the log. These verbs never reach LAN guests.
+`LAN games found`, `name of LAN game` and `hosting LAN game?` read the
+snapshot (`Sensors::lan_games`, `lan_hosting`).
+
+**Announce on LAN** (Project settings, off by default) has an open game
+broadcast its name ("Pond Game on 192.168.1.5") and invite to UDP port
+47777 once a second (`announce::Announcer`). Every run with multiplayer on
+listens there (`announce::Listener`, address reuse so several games on one
+machine share it) and lists games of its own build heard in the last four
+seconds. The invite carries the admission secret, so announcing means anyone
+on the network may join. A guest can't leave by itself yet: its blocks don't
+run, so closing the game is the way out.
 
 ## Verification
 

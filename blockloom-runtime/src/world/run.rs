@@ -27,7 +27,8 @@ pub fn pump_editor(
     // however the frames that pressed Play happened to fall.
     let now = fixed.elapsed_secs_f64();
     // A patch that can't respawn actors on their own loads the patched copy.
-    let mut again: Option<EditorMessage> = None;
+    let mut again: Option<EditorMessage> =
+        std::mem::take(&mut engine.restart).then_some(EditorMessage::Start);
     loop {
         let message = match again
             .take()

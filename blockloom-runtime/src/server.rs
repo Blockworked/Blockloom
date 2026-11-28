@@ -97,19 +97,33 @@ pub trait ServerLink: Send {
     fn seat(&self) -> u8 {
         0
     }
+    /// A host on another machine: losing it sends this world back to its
+    /// own game rather than closing it.
+    fn remote(&self) -> bool {
+        false
+    }
+    /// Why the link stopped, when it failed.
+    fn failure(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Effects a client must never apply for a server: saves and plugin calls
 /// are the server's to make, on its own machine.
 pub fn for_clients(effect: &Effect) -> bool {
-    !matches!(
-        effect,
+    match effect {
         Effect::SaveVariable { .. }
-            | Effect::SwitchSaveSlot { .. }
-            | Effect::DeleteSaveSlot { .. }
-            | Effect::PluginCall { .. }
-    )
+        | Effect::SwitchSaveSlot { .. }
+        | Effect::DeleteSaveSlot { .. }
+        | Effect::PluginCall { .. } => false,
+        // The server opens and closes LAN; its own player joins elsewhere.
+        Effect::Verb { verb, .. } => verb != "host_lan" && verb != "close_lan",
+        _ => true,
+    }
 }
+
+/// Verbs about hosting and joining, which never reach LAN guests.
+pub const LAN_VERBS: &[&str] = &["host_lan", "close_lan", "join_lan"];
 
 /// A running integrated server. Dropping it stops the thread.
 pub struct IntegratedServer {
@@ -298,6 +312,8 @@ fn receive(mut link: ResMut<Link>, mut engine: NonSendMut<Engine>, mut views: Re
             sensors.current_save_slot = s.current_save_slot.clone();
             sensors.save_slots = s.save_slots.clone();
             sensors.language = s.language.clone();
+            sensors.lan_games = s.lan_games.clone();
+            sensors.lan_hosting = s.lan_hosting;
         });
         sensors.actors = blockloom_core::sense::take_actors();
         blockloom_core::sense::publish(sensors);
@@ -371,23 +387,136 @@ pub fn integrated() -> bool {
 
 /// Makes `app`'s world a client of `server`.
 pub fn follow(app: &mut App, server: impl ServerLink + 'static) {
+    register_client(app);
     app.world_mut().non_send_mut::<Engine>().authority = false;
     // The server records the run; the client's poses only follow it.
     app.world_mut().remove_resource::<crate::record::Recorder>();
-    app.insert_resource(Following::new(Box::new(server)))
+    app.insert_resource(Following::new(Box::new(server)));
+}
+
+/// A switch this world makes between frames.
+pub enum LinkChange {
+    /// Join the LAN game this invite names, as the next player.
+    Join(String),
+    /// The host went away: play this world's own game again.
+    Return(String),
+}
+
+#[derive(Resource, Default)]
+pub struct LinkRequest(pub Option<LinkChange>);
+
+#[derive(Resource)]
+struct ClientSystems;
+
+/// The systems a world that follows a server runs, idle until it does, so
+/// a world can join a LAN game mid-run.
+pub fn register_client(app: &mut App) {
+    if app.world().contains_resource::<ClientSystems>() {
+        return;
+    }
+    app.insert_resource(ClientSystems)
+        .init_resource::<LinkRequest>()
         .add_systems(
             FixedUpdate,
             take_ticks
                 .after(SimStep::Sample)
-                .before(SimStep::PluginInput),
+                .before(SimStep::PluginInput)
+                .run_if(resource_exists::<Following>),
+        )
+        .add_systems(
+            FixedUpdate,
+            client_verbs
+                .after(SimStep::Verbs)
+                .before(SimStep::ClearEffects),
         )
         .add_systems(
             FixedPostUpdate,
             pose_from_server
                 .after(crate::dim2::record_poses)
-                .after(crate::dim3::record_poses),
+                .after(crate::dim3::record_poses)
+                .run_if(resource_exists::<Following>),
         )
-        .add_systems(Last, send_input);
+        .add_systems(Update, switch_link.before(crate::world::pump_editor))
+        .add_systems(Last, send_input.run_if(resource_exists::<Following>));
+}
+
+/// `join LAN game`, once the blocks' world has made its target an invite.
+fn client_verbs(effects: Res<PendingEffects>, mut request: ResMut<LinkRequest>) {
+    for (_, args) in crate::verbs::calls(&effects, "join_lan") {
+        if let Some(invite) = args.first().and_then(|a| a.as_str()) {
+            request.0 = Some(LinkChange::Join(invite.to_string()));
+        }
+    }
+}
+
+/// Joins a host, or comes back from one, and starts this world's run over.
+fn switch_link(world: &mut World) {
+    let Some(change) = world.resource_mut::<LinkRequest>().0.take() else {
+        return;
+    };
+    match change {
+        LinkChange::Join(invite) => join(world, invite),
+        LinkChange::Return(why) => {
+            crate::bridge::send(&blockloom_protocol::RuntimeMessage::Error {
+                actor: String::new(),
+                message: why,
+            });
+            if integrated() {
+                let engine = world.non_send::<Engine>();
+                let mode = world.resource::<crate::engine::Dimension>().0;
+                let server = IntegratedServer::spawn(mode, engine.project.world.fixed_rate);
+                server.editor(EditorMessage::Load {
+                    project: Box::new(engine.project.clone()),
+                    dir: engine
+                        .project_dir
+                        .as_ref()
+                        .map(|dir| dir.to_string_lossy().into_owned()),
+                });
+                world.insert_resource(Following::new(Box::new(server)));
+            } else {
+                world.remove_resource::<Following>();
+                world.non_send_mut::<Engine>().authority = true;
+            }
+            world.non_send_mut::<Engine>().restart = true;
+        }
+    }
+}
+
+#[cfg(all(
+    feature = "multiplayer",
+    not(target_arch = "wasm32"),
+    not(target_os = "android")
+))]
+fn join(world: &mut World, invite: String) {
+    let mut engine = world.non_send_mut::<Engine>();
+    let trusted = crate::lan::own_build(&engine);
+    let target = crate::lan::remote::JoinTarget { invite, trusted };
+    match crate::lan::remote::RemoteServer::connect(&target) {
+        Ok(remote) => {
+            // This world stops hosting; its own server, if any, stops when dropped.
+            crate::lan::close(&mut engine);
+            engine.authority = false;
+            engine.restart = true;
+            world.remove_resource::<crate::record::Recorder>();
+            world.insert_resource(Following::new(Box::new(remote)));
+        }
+        Err(error) => crate::bridge::send(&blockloom_protocol::RuntimeMessage::Error {
+            actor: String::new(),
+            message: format!("Couldn't join the LAN game: {error}"),
+        }),
+    }
+}
+
+#[cfg(not(all(
+    feature = "multiplayer",
+    not(target_arch = "wasm32"),
+    not(target_os = "android")
+)))]
+fn join(_: &mut World, _: String) {
+    crate::bridge::send(&blockloom_protocol::RuntimeMessage::Error {
+        actor: String::new(),
+        message: "This build can't join LAN games: play a desktop build".into(),
+    });
 }
 
 /// Every tick that arrived since the last step: their effects in order, and
@@ -501,12 +630,25 @@ fn send_input(
     mut exit: MessageWriter<AppExit>,
     cameras: Query<&GlobalTransform, With<crate::world::WorldCamera>>,
     facing: Res<crate::player_camera::BodyFacing>,
+    mut request: ResMut<LinkRequest>,
 ) {
-    // A client has nothing to show once its server is gone (a recorder or
-    // profiler finished there, or it stopped).
-    if !following.server.lock().expect("server link").is_running() {
-        exit.write(AppExit::Success);
-        return;
+    {
+        let link = following.server.lock().expect("server link");
+        if !link.is_running() {
+            if link.remote() {
+                if request.0.is_none() {
+                    let why = link
+                        .failure()
+                        .unwrap_or_else(|| "The LAN game ended".into());
+                    request.0 = Some(LinkChange::Return(format!("{why}: back to your own game")));
+                }
+            } else {
+                // Nothing to show once its own server is gone (a recorder
+                // or profiler finished there, or it stopped).
+                exit.write(AppExit::Success);
+            }
+            return;
+        }
     }
     if std::mem::take(&mut engine.start_server) {
         following.editor(EditorMessage::Start);

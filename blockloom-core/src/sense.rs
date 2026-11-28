@@ -190,6 +190,10 @@ pub struct Sensors {
     pub gamepad_connected: bool,
     /// The player numbers LAN guests hold (2 and up); the host is player 1.
     pub guest_players: Vec<u8>,
+    /// Games of this build announcing themselves on the LAN, by name.
+    pub lan_games: Vec<String>,
+    /// This run has a LAN game open.
+    pub lan_hosting: bool,
     /// Live stick and trigger values by canonical axis name
     /// (`leftstickx`, ...). What `gamepad axis` reads.
     pub gamepad_axes: HashMap<String, f32>,
@@ -743,6 +747,15 @@ pub fn publish_seats(players: Vec<u8>, actions: Vec<(String, ActionSense)>) {
         for (name, action) in actions {
             s.actions.insert(name, action);
         }
+    });
+}
+
+/// Sets what the LAN reporters read: games heard and whether this run hosts.
+pub fn publish_lan(games: Vec<String>, hosting: bool) {
+    SENSORS.with(|snapshot| {
+        let mut s = snapshot.borrow_mut();
+        s.lan_games = games;
+        s.lan_hosting = hosting;
     });
 }
 

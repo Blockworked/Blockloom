@@ -1,10 +1,15 @@
-//! Project opt-in for native LAN spectators.
+//! Project opt-in for native LAN multiplayer.
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MultiplayerSettings {
     pub enabled: bool,
     pub max_guests: usize,
+    /// The UDP port `open game to LAN` listens on (0 picks a free one).
+    pub port: u16,
+    /// Tell the local network about an open game, invite and all, so the
+    /// same game elsewhere can list and join it without typing an invite.
+    pub announce: bool,
 }
 
 impl Default for MultiplayerSettings {
@@ -12,6 +17,8 @@ impl Default for MultiplayerSettings {
         Self {
             enabled: false,
             max_guests: 8,
+            port: 7777,
+            announce: false,
         }
     }
 }
@@ -35,12 +42,17 @@ impl<'de> Deserialize<'de> for MultiplayerSettings {
         struct Fields {
             enabled: bool,
             max_guests: usize,
+            port: u16,
+            announce: bool,
         }
         impl Default for Fields {
             fn default() -> Self {
+                let d = MultiplayerSettings::default();
                 Self {
-                    enabled: false,
-                    max_guests: 8,
+                    enabled: d.enabled,
+                    max_guests: d.max_guests,
+                    port: d.port,
+                    announce: d.announce,
                 }
             }
         }
@@ -48,6 +60,8 @@ impl<'de> Deserialize<'de> for MultiplayerSettings {
         let settings = Self {
             enabled: fields.enabled,
             max_guests: fields.max_guests,
+            port: fields.port,
+            announce: fields.announce,
         };
         settings.validate().map_err(serde::de::Error::custom)?;
         Ok(settings)

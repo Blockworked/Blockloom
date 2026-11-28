@@ -364,6 +364,83 @@ pub static VERBS: &[VerbSpec] = &[
             read: read_screen_open,
         },
     },
+    VerbSpec {
+        name: "host_lan",
+        label: "open game to LAN",
+        category: "events",
+        section: "Players",
+        purpose: "Opens this run to LAN guests on the port in Project settings, up to its guest limit; each guest plays the next player. Needs multiplayer on in Project settings.",
+        icon: "wifi",
+        args: &[],
+        shape: Shape::Statement,
+    },
+    VerbSpec {
+        name: "close_lan",
+        label: "close LAN game",
+        category: "events",
+        section: "Players",
+        purpose: "Closes this run to LAN guests. They go back to their own game; the run carries on.",
+        icon: "wifi-off",
+        args: &[],
+        shape: Shape::Statement,
+    },
+    VerbSpec {
+        name: "join_lan",
+        label: "join LAN game {game}",
+        category: "events",
+        section: "Players",
+        purpose: "Leaves this run and joins a LAN game of the same build as the next player: a number from the games found (1 is the first), a game's name, or an invite.",
+        icon: "log-in",
+        args: &[VerbArg {
+            name: "game",
+            ty: ArgType::Text,
+            default: "1",
+        }],
+        shape: Shape::Statement,
+    },
+    VerbSpec {
+        name: "lan_game_count",
+        label: "LAN games found",
+        category: "events",
+        section: "Players",
+        purpose: "How many LAN games of this build are announcing themselves nearby. Hosts announce when Project settings say so.",
+        icon: "search",
+        args: &[],
+        shape: Shape::Reporter {
+            returns: Returns::Number,
+            read: read_lan_game_count,
+        },
+    },
+    VerbSpec {
+        name: "lan_game_name",
+        label: "name of LAN game {index}",
+        category: "events",
+        section: "Players",
+        purpose: "The name of one LAN game found, 1 for the first; empty past the end.",
+        icon: "search",
+        args: &[VerbArg {
+            name: "index",
+            ty: ArgType::Number,
+            default: "1",
+        }],
+        shape: Shape::Reporter {
+            returns: Returns::Text,
+            read: read_lan_game_name,
+        },
+    },
+    VerbSpec {
+        name: "hosting_lan",
+        label: "hosting LAN game?",
+        category: "events",
+        section: "Players",
+        purpose: "Whether this run is open to LAN guests.",
+        icon: "wifi",
+        args: &[],
+        shape: Shape::Reporter {
+            returns: Returns::Bool,
+            read: read_hosting_lan,
+        },
+    },
 ];
 
 /// The verb called `name`.
@@ -516,6 +593,26 @@ fn read_screen_open(_me: &str, args: &[Evaluated]) -> Result<Evaluated, String> 
             .map(|(_, open)| Evaluated::Bool(*open))
     })
     .ok_or_else(|| format!("no screen called \"{screen}\" is listed"))
+}
+
+fn read_lan_game_count(_me: &str, _: &[Evaluated]) -> Result<Evaluated, String> {
+    Ok(Evaluated::Number(
+        sense::read(|sensors| sensors.lan_games.len()) as f64,
+    ))
+}
+
+fn read_lan_game_name(_me: &str, args: &[Evaluated]) -> Result<Evaluated, String> {
+    let index = args[0].as_number()?;
+    Ok(Evaluated::Text(sense::read(|sensors| {
+        (index >= 1.0)
+            .then(|| sensors.lan_games.get(index as usize - 1).cloned())
+            .flatten()
+            .unwrap_or_default()
+    })))
+}
+
+fn read_hosting_lan(_me: &str, _: &[Evaluated]) -> Result<Evaluated, String> {
+    Ok(Evaluated::Bool(sense::read(|sensors| sensors.lan_hosting)))
 }
 
 // ─── Generated surfaces ─────────────────────────────────────────────────────

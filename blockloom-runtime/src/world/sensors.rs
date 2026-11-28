@@ -486,6 +486,9 @@ pub fn publish_sensors(
         touches: touch_points,
         gamepad_connected: pad_count > 0,
         guest_players: crate::lan::guest_players(&engine),
+        // Set once a tick by `publish_lan`, where the blocks run.
+        lan_games: Vec::new(),
+        lan_hosting: false,
         gamepad_axes: pad_axes,
         gamepad_buttons: pad_buttons,
         actors: senses,

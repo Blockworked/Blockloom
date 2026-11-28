@@ -40,7 +40,7 @@ Item {
             && lighting.indexOf(heading) < 0;
     }
 
-    function multiplayerOf() { return Object.assign({ enabled: false, max_guests: 8 }, project ? project.multiplayer || {} : {}); }
+    function multiplayerOf() { return Object.assign({ enabled: false, max_guests: 8, port: 7777, announce: false }, project ? project.multiplayer || {} : {}); }
     function writeMultiplayer(next) { invoke("set_multiplayer", { settings: Object.assign(multiplayerOf(), next) }); }
     function sceneComponent(command, args) {
         const fields = {
@@ -271,11 +271,15 @@ Item {
             }
             Section {
                 heading: "Multiplayer"
-                InspectorRow { label: "LAN spectators"; labelWidth: 140; Layout.fillWidth: true
+                InspectorRow { label: "LAN multiplayer"; labelWidth: 140; Layout.fillWidth: true
                     SwitchField { value: root.multiplayerOf().enabled; onToggled: on => root.writeMultiplayer({ enabled: on }) } }
                 InspectorRow { label: "Guest limit"; labelWidth: 140; Layout.fillWidth: true
                     SpinBox { from: 1; to: 16; value: root.multiplayerOf().max_guests; onValueModified: root.writeMultiplayer({ max_guests: value }) } }
-                Note { text: "Guests can watch primitive 2D and 3D actors. Player controls are not available yet. Changes apply when you next press Play." }
+                InspectorRow { label: "Port"; labelWidth: 140; Layout.fillWidth: true
+                    SpinBox { from: 0; to: 65535; editable: true; value: root.multiplayerOf().port; onValueModified: root.writeMultiplayer({ port: value }) } }
+                InspectorRow { label: "Announce on LAN"; labelWidth: 140; Layout.fillWidth: true
+                    SwitchField { value: root.multiplayerOf().announce; onToggled: on => root.writeMultiplayer({ announce: on }) } }
+                Note { text: "Each guest plays the next player: actions and motors set to player 2 follow the first guest. Open game to LAN starts hosting on this port. Announcing lets the same game nearby list it, invite included, so anyone on the network can join. Changes apply when you next press Play." }
             }
             Section {
                 heading: "Project"

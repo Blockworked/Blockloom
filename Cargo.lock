@@ -2650,6 +2650,7 @@ dependencies = [
  "quiche",
  "rcgen",
  "ring",
+ "socket2",
  "tokio",
  "tokio-quiche",
 ]

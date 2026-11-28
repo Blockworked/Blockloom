@@ -119,10 +119,7 @@ impl ServerLink for RemoteServer {
             return Vec::new();
         }
         if let Err(error) = self.client.poll() {
-            crate::bridge::send(&blockloom_protocol::RuntimeMessage::Fatal {
-                message: format!("Lost the LAN host: {error}"),
-            });
-            self.failed = Some(error);
+            self.failed = Some(format!("Lost the LAN host: {error}"));
             return Vec::new();
         }
         let mut ticks = Vec::new();
@@ -140,9 +137,6 @@ impl ServerLink for RemoteServer {
                     let message = format!(
                         "The host sent effects this build can't read: {error}: run the same build as the host"
                     );
-                    crate::bridge::send(&blockloom_protocol::RuntimeMessage::Fatal {
-                        message: message.clone(),
-                    });
                     self.failed = Some(message);
                     return Vec::new();
                 }
@@ -195,6 +189,14 @@ impl ServerLink for RemoteServer {
 
     fn seat(&self) -> u8 {
         self.client.seat().unwrap_or(0)
+    }
+
+    fn remote(&self) -> bool {
+        true
+    }
+
+    fn failure(&self) -> Option<String> {
+        self.failed.clone()
     }
 }
 
@@ -320,6 +322,15 @@ mod tests {
 
     /// A host's server running `project` with LAN open, and a guest link to it.
     fn host_with_lan(project: &blockloom_core::project::Project) -> (App, RemoteServer) {
+        let (host, _, target) = open_host(project);
+        (host, RemoteServer::connect(&target).unwrap())
+    }
+
+    /// A host's server running `project` with LAN open, its editor's side,
+    /// and what joins it.
+    fn open_host(
+        project: &blockloom_core::project::Project,
+    ) -> (App, std::sync::mpsc::Sender<EditorMessage>, JoinTarget) {
         use crate::engine::Engine;
         use blockloom_core::scene::Mode;
         use std::time::{Duration, Instant};
@@ -353,9 +364,80 @@ mod tests {
         };
         let trusted = invite.rsplit('|').next().unwrap().to_string();
         // Keep the editor's side open for the host's lifetime.
+        let keep = editor.clone();
         std::mem::forget(editor);
-        let remote = RemoteServer::connect(&JoinTarget { invite, trusted }).unwrap();
-        (host, remote)
+        (host, keep, JoinTarget { invite, trusted })
+    }
+
+    /// A world playing its own game joins a host mid-run, follows it, and
+    /// comes back to its own game when the host closes LAN.
+    #[test]
+    fn a_running_game_joins_a_host_and_comes_back() {
+        use crate::engine::Engine;
+        use crate::server::{Following, LinkChange, LinkRequest};
+        use blockloom_core::project::{Actor, Project};
+        use blockloom_core::scene::{Mode, Visual};
+        use std::time::{Duration, Instant};
+
+        let mut project = Project::starter("drop-in", Mode::TwoD);
+        project.actors = vec![Actor::new(
+            "Box",
+            Visual::Rect {
+                color: "#FFFFFF".to_string(),
+                size: [10.0, 10.0],
+            },
+        )];
+        project.multiplayer.enabled = true;
+        let (mut host, host_editor, target) = open_host(&project);
+
+        // The guest plays its own copy of the same game first.
+        let (editor, incoming) = std::sync::mpsc::channel();
+        let mut guest =
+            crate::simulation::headless_server(Engine::new(incoming, Mode::TwoD), Mode::TwoD, 60.0);
+        crate::server::register_client(&mut guest);
+        editor
+            .send(EditorMessage::Load {
+                project: Box::new(project.clone()),
+                dir: None,
+            })
+            .unwrap();
+        editor.send(EditorMessage::Start).unwrap();
+        for _ in 0..3 {
+            guest.update();
+        }
+        assert!(guest.world().non_send::<Engine>().authority);
+        guest.world_mut().resource_mut::<LinkRequest>().0 = Some(LinkChange::Join(target.invite));
+        let end = Instant::now() + Duration::from_secs(20);
+        loop {
+            guest.update();
+            host.update();
+            std::thread::sleep(Duration::from_millis(2));
+            let seated = guest
+                .world()
+                .get_resource::<Following>()
+                .is_some_and(|f| f.seat() == 1);
+            if seated {
+                break;
+            }
+            assert!(Instant::now() < end, "the guest never took a seat");
+        }
+        assert!(!guest.world().non_send::<Engine>().authority);
+        assert!(guest.world().non_send::<Engine>().running);
+
+        host_editor.send(EditorMessage::CloseLan).unwrap();
+        loop {
+            guest.update();
+            host.update();
+            std::thread::sleep(Duration::from_millis(2));
+            if guest.world().get_resource::<Following>().is_none() {
+                break;
+            }
+            assert!(Instant::now() < end, "the guest never came back");
+        }
+        guest.update();
+        let engine = guest.world().non_send::<Engine>();
+        assert!(engine.authority && engine.running);
+        drop(editor);
     }
 
     /// Clones the host made before the guest joined show up on the guest.

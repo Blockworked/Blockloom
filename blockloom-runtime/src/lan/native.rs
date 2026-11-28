@@ -2,6 +2,7 @@ use super::*;
 use crate::engine::{ActorId, Dimension, PhysicsPose};
 use bevy::prelude::*;
 use blockloom_net::ServerOptions;
+use blockloom_net::announce::{Announcer, Heard, Listener};
 use blockloom_net::game::{ActorState, LanHost, Region, SeatChange, Snapshot, build_hash};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
@@ -25,6 +26,12 @@ pub struct Session {
     effects: Vec<blockloom_core::vm::Effect>,
     /// Seat actions held last tick, for their pressed and released edges.
     seat_held: BTreeMap<String, bool>,
+    /// This run's content hash: what a host's invite carries and a guest
+    /// must match.
+    build: [u8; 32],
+    announcer: Option<Announcer>,
+    listener: Option<Listener>,
+    heard: Vec<Heard>,
 }
 
 /// How often, in fixed ticks, plugins are asked what changed.
@@ -116,8 +123,30 @@ pub fn remote_action(e: &Engine, player: u8, name: &str) -> Option<super::Remote
     })
 }
 
+/// What a host and its guests must agree on: the engine and the document.
+pub fn content_hash(project: &blockloom_core::project::Project) -> [u8; 32] {
+    let mut content =
+        format!("blockloom-{}-lan-spectator-1\n", env!("CARGO_PKG_VERSION")).into_bytes();
+    content.extend(serde_json::to_vec(project).expect("a project serializes"));
+    build_hash(&content)
+}
+
+/// This run's content hash as hex, the trusted build a guest joins with.
+pub fn own_build(e: &Engine) -> String {
+    e.lan.build.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 pub fn begin(e: &mut Engine) {
     e.lan.settings = e.project.multiplayer.clone();
+    e.lan.build = content_hash(&e.project);
+    e.lan.heard.clear();
+    // Listening is quiet when the port can't be shared: no games are found.
+    e.lan.listener = e
+        .lan
+        .settings
+        .enabled
+        .then(|| Listener::new(e.lan.build).ok())
+        .flatten();
     e.lan.regions.clear();
     e.lan.synced.clear();
     e.lan.unsynced.clear();
@@ -141,10 +170,7 @@ pub fn open(e: &mut Engine, bind: &str, max_guests: usize) {
         if e.lan.host.is_some() || e.lan.requested.is_some() {
             return Err("LAN is already open".into());
         }
-        let mut content =
-            format!("blockloom-{}-lan-spectator-1\n", env!("CARGO_PKG_VERSION")).into_bytes();
-        content.extend(serde_json::to_vec(&e.project).map_err(|err| err.to_string())?);
-        let build = build_hash(&content);
+        let build = e.lan.build;
         let bind: std::net::SocketAddr = bind
             .parse()
             .map_err(|_| "Use a numeric interface IP and port, such as 192.168.1.5:7777")?;
@@ -160,6 +186,7 @@ pub fn open(e: &mut Engine, bind: &str, max_guests: usize) {
 
 pub fn close(e: &mut Engine) {
     e.lan.requested = None;
+    e.lan.announcer = None;
     if let Some(mut host) = e.lan.host.take() {
         host.close();
         // Keep close retransmission bounded even under repeated toggles.
@@ -193,6 +220,16 @@ pub fn register(app: &mut App) {
         apply_seat_input
             .after(crate::simulation::SimStep::Sample)
             .before(crate::simulation::SimStep::PluginInput)
+            .in_set(crate::world::SimulationSet),
+    );
+    app.add_systems(
+        FixedUpdate,
+        (
+            publish_lan
+                .after(crate::simulation::SimStep::Sample)
+                .before(crate::simulation::SimStep::PluginInput),
+            lan_verbs.in_set(crate::simulation::SimStep::Verbs),
+        )
             .in_set(crate::world::SimulationSet),
     );
     app.add_systems(
@@ -273,7 +310,11 @@ fn apply_seat_input(mut e: NonSendMut<Engine>, mut views: ResMut<crate::server::
 
 fn keep_effects(mut e: NonSendMut<Engine>, effects: Res<crate::engine::PendingEffects>) {
     if e.lan.host.is_some() {
-        e.lan.effects.extend(effects.0.iter().cloned());
+        // Hosting and joining are the host's own business.
+        let shared = effects.0.iter().filter(|effect| {
+            !matches!(effect, blockloom_core::vm::Effect::Verb { verb, .. } if crate::server::LAN_VERBS.contains(&verb.as_str()))
+        });
+        e.lan.effects.extend(shared.cloned());
     }
 }
 
@@ -299,7 +340,99 @@ fn poll(mut e: NonSendMut<Engine>) {
             e.lan.last_guests = guests;
             super::report(&e, None);
         }
+        if e.lan.settings.announce && e.lan.announcer.is_none() {
+            let invite = e.lan.host.as_ref().expect("checked above").invite().clone();
+            let name = format!("{} on {}", e.project.name, invite.address.ip());
+            e.lan.announcer = Announcer::new(&name, &invite).ok();
+        }
+        if let Some(a) = &mut e.lan.announcer {
+            a.tick();
+        }
     }
+    if let Some(listener) = &mut e.lan.listener {
+        listener.poll();
+        let games = listener.games();
+        e.lan.heard = games;
+    }
+}
+
+/// The address `open game to LAN` binds: this machine's LAN address, or
+/// loopback with no network, on the project's port.
+fn host_address(e: &Engine) -> String {
+    let ip = blockloom_net::announce::lan_address()
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    std::net::SocketAddr::new(ip, e.lan.settings.port).to_string()
+}
+
+/// A `join LAN game` target as an invite: a number from the games found,
+/// a game's name, or an invite already.
+fn resolve_join(e: &Engine, target: &str) -> Result<String, String> {
+    let target = target.trim();
+    if target.starts_with("blockloom-lan/") {
+        return Ok(target.to_string());
+    }
+    let heard = &e.lan.heard;
+    let found = match target.parse::<f64>() {
+        Ok(n) if n >= 1.0 => heard.get(n as usize - 1),
+        _ => heard.iter().find(|h| h.name.eq_ignore_ascii_case(target)),
+    };
+    found.map(|h| h.invite.encode()).ok_or_else(|| {
+        format!(
+            "No LAN game \"{target}\" was found: pick one from LAN games found, and turn on Announce on the host"
+        )
+    })
+}
+
+/// `open game to LAN`, `close LAN game`, and `join LAN game` turned into an
+/// invite, where the blocks run. Joining itself is the playing world's.
+fn lan_verbs(mut e: NonSendMut<Engine>, mut effects: ResMut<crate::engine::PendingEffects>) {
+    if !e.authority {
+        return;
+    }
+    let mut errors = Vec::new();
+    for effect in effects.0.iter_mut() {
+        let blockloom_core::vm::Effect::Verb { actor, verb, args } = effect else {
+            continue;
+        };
+        match verb.as_str() {
+            "host_lan" => {
+                let bind = host_address(&e);
+                let max = e.lan.settings.max_guests;
+                open(&mut e, &bind, max);
+                if let Some(error) = status(&e).error {
+                    errors.push((actor.clone(), error));
+                }
+            }
+            "close_lan" => close(&mut e),
+            "join_lan" => {
+                let target = args.first().and_then(|a| a.as_str()).unwrap_or("");
+                match resolve_join(&e, target) {
+                    Ok(invite) => *args = vec![serde_json::Value::String(invite)],
+                    Err(error) => {
+                        errors.push((actor.clone(), error));
+                        *verb = String::new();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // Reported where the run is shown, as a block's error.
+    for (actor, message) in errors {
+        effects
+            .0
+            .push(blockloom_core::vm::Effect::Error { actor, message });
+    }
+}
+
+/// What the LAN reporters read, once a tick where the blocks run.
+fn publish_lan(e: NonSend<Engine>) {
+    if !e.running {
+        return;
+    }
+    let games = e.lan.heard.iter().map(|h| h.name.clone()).collect();
+    let hosting = e.lan.host.is_some() || e.lan.requested.is_some();
+    blockloom_core::sense::publish_lan(games, hosting);
 }
 
 fn capture(
@@ -438,4 +571,41 @@ pub fn sync_apply_calls(
         }
     }
     calls.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blockloom_net::game::Invite;
+
+    #[test]
+    fn a_join_target_is_a_number_a_name_or_an_invite() {
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let mut e = Engine::new(rx, blockloom_core::scene::Mode::TwoD);
+        let invite = |port: u16| {
+            Invite::decode(&format!(
+                "blockloom-lan/1|127.0.0.1:{port}|{}|{}|{}",
+                "ab".repeat(32),
+                "cd".repeat(32),
+                "ef".repeat(32)
+            ))
+            .unwrap()
+        };
+        e.lan.heard = vec![
+            Heard {
+                name: "Pond on 10.0.0.2".into(),
+                invite: invite(7001),
+            },
+            Heard {
+                name: "Pond on 10.0.0.3".into(),
+                invite: invite(7002),
+            },
+        ];
+        assert!(resolve_join(&e, "2").unwrap().contains(":7002|"));
+        assert!(resolve_join(&e, "pond on 10.0.0.2").unwrap().contains(":7001|"));
+        let typed = invite(9).encode();
+        assert_eq!(resolve_join(&e, &format!(" {typed} ")).unwrap(), typed);
+        let missing = resolve_join(&e, "3").unwrap_err();
+        assert!(missing.contains(": "), "names the fix: {missing}");
+    }
 }

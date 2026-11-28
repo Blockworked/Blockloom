@@ -8,6 +8,7 @@
 //! Everything is driven by `poll` from one thread, so nothing here ever blocks
 //! the simulation.
 
+pub mod announce;
 mod client;
 mod error;
 pub mod game;
