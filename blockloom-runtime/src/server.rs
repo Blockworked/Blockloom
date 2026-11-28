@@ -491,4 +491,55 @@ mod tests {
         let engine = client.world().non_send::<Engine>();
         assert!(!engine.authority);
     }
+
+    /// A key the client saw go down starts the server's `when key pressed`
+    /// strand once, and the client never runs it itself.
+    #[test]
+    fn a_key_the_client_saw_starts_the_servers_strand_once() {
+        let mut project = walker(Mode::TwoD);
+        project.actors[0].graph.strands = vec![Strand::with_instructions(
+            0,
+            0,
+            vec![
+                Instruction::new(InstructionKind::WhenKeyPressed {
+                    key: "space".into(),
+                }),
+                Instruction::new(InstructionKind::Move {
+                    steps: Value::number(40.0),
+                }),
+            ],
+        )];
+        let server = IntegratedServer::start(project.clone(), Mode::TwoD);
+        blockloom_core::value::register_blockloom_operators();
+        let (_editor, incoming) = channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.project = project;
+        let mut client = crate::simulation::headless(engine, Mode::TwoD, true);
+        follow(&mut client, server);
+        client
+            .world_mut()
+            .non_send_mut::<Engine>()
+            .fire(Event::Key("space".into()));
+        let x = |app: &mut App| {
+            let mut q = app.world_mut().query::<(&ActorId, &Transform)>();
+            q.iter(app.world())
+                .next()
+                .map_or(0.0, |(_, t)| t.translation.x)
+        };
+        let end = Instant::now() + Duration::from_secs(20);
+        while x(&mut client) < 39.0 {
+            client.update();
+            std::thread::sleep(Duration::from_millis(5));
+            assert!(Instant::now() < end, "the press never moved the actor");
+        }
+        for _ in 0..30 {
+            client.update();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            (x(&mut client) - 40.0).abs() < 0.01,
+            "moved once: {}",
+            x(&mut client)
+        );
+    }
 }
