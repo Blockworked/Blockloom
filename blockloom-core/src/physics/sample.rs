@@ -10,20 +10,21 @@ use crate::project::{Actor, Project};
 use crate::scene::{Mode, Visual};
 
 /// Which samples exist, for the project dialog and the shell.
-pub const SAMPLES: [&str; 6] = [
+pub const SAMPLES: [&str; 7] = [
     "physics-playground",
     "third-person",
     "platformer",
     "top-down",
     "first-person",
     "ui-puzzle",
+    "lan-co-op",
 ];
 
 /// The dimensions a sample can be made in.
 pub fn modes(sample: &str) -> &'static [Mode] {
     match sample {
         "third-person" | "first-person" => &[Mode::ThreeD],
-        "platformer" | "top-down" => &[Mode::TwoD],
+        "platformer" | "top-down" | "lan-co-op" => &[Mode::TwoD],
         _ => &[Mode::TwoD, Mode::ThreeD],
     }
 }
@@ -40,6 +41,7 @@ pub fn build(sample: &str, name: &str, mode: Mode) -> Result<Project, String> {
         "top-down" => super::genres::top_down(name, mode),
         "first-person" => super::genres::first_person(name, mode),
         "ui-puzzle" => super::genres::ui_puzzle(name, mode),
+        "lan-co-op" => super::genres::lan_co_op(name, mode),
         other => Err(format!(
             "No sample called \"{other}\". Samples: {}",
             SAMPLES.join(", ")

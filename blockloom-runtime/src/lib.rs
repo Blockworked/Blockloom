@@ -396,6 +396,8 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     let rate = engine.project.world.fixed_rate;
     simulation::add_simulation(app, mode, engine);
     server::register_client(app);
+    // This world's frames latch player 1's presses.
+    app.insert_resource(motor::FrameLatch);
     #[cfg(all(
         feature = "multiplayer",
         not(target_arch = "wasm32"),

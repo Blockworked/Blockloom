@@ -494,4 +494,67 @@ mod tests {
         }
         assert_eq!(count(&mut guest), 2, "made once");
     }
+
+    /// The LAN co-op template: a guest's Move drives Player 2 on the host,
+    /// who appears when the guest joins.
+    #[test]
+    fn the_co_op_template_gives_a_guest_player_two() {
+        use crate::engine::{ActorId, Engine};
+        use blockloom_core::scene::Mode;
+        use std::time::{Duration, Instant};
+
+        let project =
+            blockloom_core::physics::sample::build("lan-co-op", "Co-op", Mode::TwoD).unwrap();
+        let two = project
+            .actors
+            .iter()
+            .find(|a| a.name == "Player 2")
+            .unwrap()
+            .id
+            .clone();
+        let (mut host, remote) = host_with_lan(&project);
+        let (_e, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.project = project;
+        let mut guest = crate::simulation::headless(engine, Mode::TwoD, true);
+        crate::server::follow(&mut guest, remote);
+        let pose = |app: &mut App| {
+            let mut q = app
+                .world_mut()
+                .query::<(&ActorId, &Transform, &Visibility)>();
+            q.iter(app.world())
+                .find(|(id, _, _)| id.0 == two)
+                .map(|(_, t, v)| (t.translation.x, *v != Visibility::Hidden))
+                .unwrap_or((f32::NAN, false))
+        };
+        let start = pose(&mut host).0;
+        let end = Instant::now() + Duration::from_secs(30);
+        loop {
+            let mut sensors = blockloom_core::sense::Sensors::default();
+            sensors.actions.insert(
+                "Move".into(),
+                blockloom_core::input::ActionSense {
+                    held: true,
+                    value: 1.0,
+                    vector: [1.0, 0.0],
+                    ..Default::default()
+                },
+            );
+            blockloom_core::sense::publish(sensors);
+            guest.update();
+            host.update();
+            std::thread::sleep(Duration::from_millis(2));
+            let (x, shown) = pose(&mut guest);
+            if shown && x > start + 30.0 {
+                break;
+            }
+            assert!(
+                Instant::now() < end,
+                "player 2 never moved for the guest: {:?} from {start}",
+                pose(&mut guest)
+            );
+        }
+        let (x, shown) = pose(&mut host);
+        assert!(shown && x > start + 30.0, "the host saw it too: {x}");
+    }
 }

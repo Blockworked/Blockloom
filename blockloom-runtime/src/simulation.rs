@@ -169,6 +169,7 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
                 .chain()
                 .in_set(SimStep::Lifetimes),
             (
+                motor::latch_tick_input.run_if(is_authority),
                 motor::drive_motors.run_if(is_authority),
                 controller::apply_motion.run_if(is_authority),
                 world::apply_common,
@@ -1077,6 +1078,47 @@ mod tests {
             .read("", read)
             .as_number()
             .unwrap_or(0.0)
+    }
+
+    /// A player-owned motor on a world with no frames of its own (an
+    /// integrated server) moves on its player's published Move.
+    #[test]
+    fn a_player_motor_moves_on_a_headless_world() {
+        let project = blockloom_core::physics::sample::build("top-down", "T", Mode::TwoD).unwrap();
+        let id = project
+            .actors
+            .iter()
+            .find(|a| a.name == "Player")
+            .unwrap()
+            .id
+            .clone();
+        let mut app = headless_built(project, Mode::TwoD, None);
+        let x = |app: &mut App| {
+            let e = app.world().non_send::<Engine>().entities[&id];
+            app.world()
+                .entity(e)
+                .get::<Transform>()
+                .unwrap()
+                .translation
+                .x
+        };
+        app.update();
+        let start = x(&mut app);
+        for _ in 0..30 {
+            let mut sensors = blockloom_core::sense::Sensors::default();
+            sensors.actions.insert(
+                "Move".into(),
+                blockloom_core::input::ActionSense {
+                    held: true,
+                    value: 1.0,
+                    vector: [1.0, 0.0],
+                    ..Default::default()
+                },
+            );
+            blockloom_core::sense::publish(sensors);
+            app.update();
+        }
+        assert!(x(&mut app) > start + 20.0, "{start} -> {}", x(&mut app));
     }
 
     /// Phase E's genre templates play: walking into the first pickup counts it.

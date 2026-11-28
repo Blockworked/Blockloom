@@ -629,3 +629,246 @@ mod tests {
         assert_eq!(lights_flipped(0).len(), 3);
     }
 }
+
+/// Seats past the host's in the LAN co-op template: players 2 to 4.
+const GUESTS: u8 = 3;
+
+/// A top-down arena for up to four players over LAN. H hosts, J joins the
+/// first game found; each guest gets the next player, who appears when they
+/// join. Everyone collects the same gems.
+pub(super) fn lan_co_op(name: &str, mode: Mode) -> Result<Project, String> {
+    use crate::components::ActorComponent;
+    if mode.is_3d() {
+        return Err("the LAN co-op template is 2D only".to_string());
+    }
+    let (mut project, library, player) = start(name, mode, PlayerPreset::TopDown2d, |scene| {
+        scene.actors.retain(|a| a.name != "Ground");
+        scene.world.gravity = [0.0; 3];
+        if let Some(player) = scene.actors.iter_mut().find(|a| a.name == "Player") {
+            player.components.placement_mut().position = [-150.0, 0.0, 0.0];
+        }
+    })?;
+    project.multiplayer.enabled = true;
+    project.multiplayer.max_guests = usize::from(GUESTS);
+    project.multiplayer.announce = true;
+    global(&mut project, "gems", 0.0);
+    // Each guest's pad: copies of every gameplay action for their player.
+    let input = &mut project.settings.input;
+    let bases: Vec<String> = input
+        .actions
+        .iter()
+        .filter(|a| a.player == 0 && a.map == "Gameplay")
+        .map(|a| a.name.clone())
+        .collect();
+    for seat in 1..=GUESTS {
+        for base in &bases {
+            if let Some(copy) = input.player_copy(base, seat)
+                && input.find(&copy.name).is_none()
+            {
+                input.actions.push(copy);
+            }
+        }
+    }
+    let scene = project.active_scene_mut();
+    let host = scene
+        .actors
+        .iter()
+        .find(|a| a.id == player)
+        .cloned()
+        .ok_or("the player went missing")?;
+    let colors = ["#FFD166", "#06D6A0", "#EF476F"];
+    let mut names = vec![host.name.clone()];
+    for seat in 1..=GUESTS {
+        let mut guest = host.clone();
+        guest.id = Actor::new("", rect("#FFFFFF", 1.0, 1.0)).id;
+        guest.name = format!("Player {}", seat + 1);
+        guest.refresh_physics_ids();
+        guest.components.remove("Camera");
+        guest.components.remove("PlayerCamera");
+        for component in guest.components.iter_mut() {
+            if let ActorComponent::CharacterMotor { motor } = component {
+                motor.player = seat;
+                motor.id = super::ids::ComponentId::generate();
+            }
+        }
+        let tint = colors[usize::from(seat) - 1].to_string();
+        let look = match guest.components.visual().cloned() {
+            Some(Visual::Rect { size, .. }) => Visual::Rect { color: tint, size },
+            Some(Visual::Circle { radius, .. }) => Visual::Circle {
+                color: tint,
+                radius,
+            },
+            Some(other) => other,
+            None => rect(&tint, 40.0, 40.0),
+        };
+        guest.components.set_visual(look);
+        let spawn = [-150.0 + 100.0 * f32::from(seat), 0.0, 0.0];
+        guest.components.placement_mut().position = spawn;
+        // Hidden and out of the way until someone plays them.
+        guest.components.set_visible(false);
+        let number = (seat + 1).to_string();
+        guest.graph.strands = vec![
+            strand(
+                0,
+                vec![
+                    K::WhenPlayerJoins {
+                        player: number.clone(),
+                    },
+                    K::GoTo {
+                        x: num(f64::from(spawn[0])),
+                        y: num(0.0),
+                        z: num(0.0),
+                    },
+                    K::SetVisible { visible: true },
+                ],
+            ),
+            strand(
+                320,
+                vec![
+                    K::WhenPlayerLeaves { player: number },
+                    K::SetVisible { visible: false },
+                ],
+            ),
+        ];
+        names.push(guest.name.clone());
+        scene.add_actor(guest);
+    }
+    scene.add_actor(actor_at(
+        "Floor",
+        rect("#2B2D42", 760.0, 560.0),
+        [0.0, 0.0, -1.0],
+    ));
+    for (at, size) in [
+        ([0.0, 290.0], [780.0, 20.0]),
+        ([0.0, -290.0], [780.0, 20.0]),
+        ([-390.0, 0.0], [20.0, 600.0]),
+        ([390.0, 0.0], [20.0, 600.0]),
+    ] {
+        place(
+            scene,
+            &library,
+            actor_at(
+                "Wall",
+                rect("#8D99AE", size[0], size[1]),
+                [at[0], at[1], 0.0],
+            ),
+            None,
+            false,
+        )?;
+    }
+    for (x, y) in [
+        (220.0, 160.0),
+        (-260.0, 200.0),
+        (260.0, -200.0),
+        (-240.0, -180.0),
+    ] {
+        let mut gem = actor_at(
+            "Gem",
+            Visual::Circle {
+                color: "#4CC9F0".into(),
+                radius: 10.0,
+            },
+            [x, y, 0.0],
+        );
+        // Whoever touches it first gets it for everyone.
+        gem.graph.strands = names
+            .iter()
+            .enumerate()
+            .map(|(i, who)| {
+                let mut s = pickup_strand(
+                    "gems",
+                    vec![K::If {
+                        condition: op(Op::Eq, vec![var("gems"), num(4.0)]),
+                        body: body(vec![K::Broadcast {
+                            name: "all gems".to_string(),
+                        }]),
+                    }],
+                );
+                s.x = 320 * i as i32;
+                if let Some(first) = s.instructions.first_mut() {
+                    first.kind = K::WhenCollision {
+                        with: who.clone(),
+                        phase: super::ContactPhase::Enter,
+                        scope: Default::default(),
+                    };
+                }
+                s
+            })
+            .collect();
+        place(scene, &library, gem, None, true)?;
+    }
+    // The join screen: what to press, and who is here.
+    let verb = |name: &str| {
+        Value::op(
+            Op::from_name(crate::verbs::OPERATOR),
+            vec![Value::text(name)],
+        )
+    };
+    let mut lobby = actor_at("Lobby", rect("#2B2D42", 1.0, 1.0), [0.0, 250.0, 1.0]);
+    let say = |text: Value| K::Say { text };
+    lobby.graph.strands = vec![
+        strand(
+            0,
+            vec![
+                K::WhenKeyPressed {
+                    key: "h".to_string(),
+                },
+                K::If {
+                    condition: op(Op::Not, vec![verb("hosting_lan")]),
+                    body: body(vec![K::Verb {
+                        verb: "host_lan".to_string(),
+                        args: Vec::new(),
+                    }]),
+                },
+            ],
+        ),
+        strand(
+            320,
+            vec![
+                K::WhenKeyPressed {
+                    key: "j".to_string(),
+                },
+                K::Verb {
+                    verb: "join_lan".to_string(),
+                    args: vec![Value::text("1")],
+                },
+            ],
+        ),
+        strand(
+            640,
+            vec![
+                K::WhenStarted,
+                K::Forever {
+                    body: body(vec![K::IfElse {
+                        condition: verb("hosting_lan"),
+                        then_body: body(vec![say(op(
+                            Op::Join,
+                            vec![
+                                Value::text("Hosting on the LAN. Players: "),
+                                Value::op(Op::from_name("PlayerCount"), Vec::new()),
+                            ],
+                        ))]),
+                        else_body: body(vec![K::IfElse {
+                            condition: op(Op::Gt, vec![verb("lan_game_count"), num(0.0)]),
+                            then_body: body(vec![say(op(
+                                Op::Join,
+                                vec![
+                                    Value::text("J to join "),
+                                    Value::op(
+                                        Op::from_name(crate::verbs::OPERATOR),
+                                        vec![Value::text("lan_game_name"), num(1.0)],
+                                    ),
+                                ],
+                            ))]),
+                            else_body: body(vec![say(Value::text(
+                                "H to host a LAN game, J to join one",
+                            ))]),
+                        }]),
+                    }]),
+                },
+            ],
+        ),
+    ];
+    scene.add_actor(lobby);
+    Ok(finish(project, library))
+}

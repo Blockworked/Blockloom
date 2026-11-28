@@ -39,6 +39,57 @@ fn action_name(base: &str, player: u8) -> String {
     }
 }
 
+/// A world whose frames latch player 1's motors (`latch_player_input`), so
+/// the fixed step leaves that player's presses to it.
+#[derive(Resource)]
+pub struct FrameLatch;
+
+/// Fills player-owned motors once a fixed tick, after LAN seats are fed:
+/// guests' players everywhere, and every player on a world with no frames
+/// of its own (an integrated server). Presses are edges of `held` per tick,
+/// so a snapshot repeated across ticks presses once.
+pub fn latch_tick_input(
+    // Core keeps motors and the snapshot in thread-local state: stay on the main thread.
+    _main: NonSend<Engine>,
+    framed: Option<Res<FrameLatch>>,
+    layers: Option<Res<crate::physics_install::PhysicsLayers>>,
+    mut held: Local<HashMap<String, bool>>,
+) {
+    let mode = layers
+        .and_then(|layers| layers.mode)
+        .unwrap_or(Mode::ThreeD);
+    for actor in motor::actors() {
+        let Some(spec) = motor::spec_of(&actor) else {
+            continue;
+        };
+        if spec.owner != MotorOwner::Player || (spec.player == 0 && framed.is_some()) {
+            continue;
+        }
+        let (stick, jump_held, sprint, crouch) = blockloom_core::sense::read(|sense| {
+            let find = |base: &str| sense.actions.get(&action_name(base, spec.player));
+            (
+                find("Move").map(|a| a.vector).unwrap_or([0.0; 2]),
+                find("Jump").is_some_and(|a| a.held),
+                find("Sprint").is_some_and(|a| a.held),
+                find("Crouch").is_some_and(|a| a.held),
+            )
+        });
+        let direction = match mode {
+            Mode::ThreeD => [stick[0], 0.0, -stick[1]],
+            Mode::TwoD => [stick[0], stick[1], 0.0],
+        };
+        let was = held.insert(actor.clone(), jump_held).unwrap_or(false);
+        motor::submit_input(
+            &actor,
+            direction,
+            jump_held && !was,
+            jump_held,
+            sprint,
+            crouch,
+        );
+    }
+}
+
 /// Fills the intent of every player-owned motor from the published actions.
 /// Runs after the sensors are published, so a press this frame is seen.
 pub fn latch_player_input(

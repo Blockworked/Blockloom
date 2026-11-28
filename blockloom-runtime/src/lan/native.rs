@@ -602,7 +602,11 @@ mod tests {
             },
         ];
         assert!(resolve_join(&e, "2").unwrap().contains(":7002|"));
-        assert!(resolve_join(&e, "pond on 10.0.0.2").unwrap().contains(":7001|"));
+        assert!(
+            resolve_join(&e, "pond on 10.0.0.2")
+                .unwrap()
+                .contains(":7001|")
+        );
         let typed = invite(9).encode();
         assert_eq!(resolve_join(&e, &format!(" {typed} ")).unwrap(), typed);
         let missing = resolve_join(&e, "3").unwrap_err();

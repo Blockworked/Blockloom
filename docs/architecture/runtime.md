@@ -246,7 +246,10 @@ plugin gameplay stages, saves, motors and the controller from running. The
 rest of the fixed step still runs on the server's effects (`take_ticks` puts
 them in `PendingEffects` after `Sample`), so clones, looks, sounds and the
 interface happen on the client the way they did on the server, and
-`pose_from_server` then puts every actor where the server left it. A
+`pose_from_server` then puts every actor where the server left it. Player-owned motors take their input once a tick in
+`motor::latch_tick_input`, after LAN seats are fed: guests' players
+everywhere, and player 1 too on a world without frames of its own (no
+`FrameLatch`), with presses as per-tick edges of `held`. A
 client also sends its view (`SeatView`: camera yaw and the body yaw a
 first-person camera turned), since the server has no camera: a motor moves and
 turns with its own seat's view (`SeatViews::for_motor`). LAN guests reach the

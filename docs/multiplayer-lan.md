@@ -190,7 +190,11 @@ broadcast its name ("Pond Game on 192.168.1.5") and invite to UDP port
 listens there (`announce::Listener`, address reuse so several games on one
 machine share it) and lists games of its own build heard in the last four
 seconds. The invite carries the admission secret, so announcing means anyone
-on the network may join. A guest can't leave by itself yet: its blocks don't
+on the network may join. The **LAN co-op** template (`physics::genres::lan_co_op`) puts it together:
+a top-down arena whose Player 2 to 4 copies have motors for players 2 to 4
+and pad-only action copies, appear on `when player joins` and hide on `when
+player leaves`; a Lobby actor says what to press, H runs `open game to LAN`
+and J `join LAN game 1`, and it announces by default. A guest can't leave by itself yet: its blocks don't
 run, so closing the game is the way out.
 
 ## Verification

@@ -24,7 +24,9 @@ StitchDialog {
         { name: "first-person", label: "First person", modes: ["ThreeD"],
           about: "A room with orbs to collect, stairs up to a ledge and a door that slides open once you have them all." },
         { name: "ui-puzzle", label: "Interface puzzle", modes: ["TwoD", "ThreeD"],
-          about: "Nine lights made of interface buttons. Each press flips a light and its neighbours; turn them all on." }
+          about: "Nine lights made of interface buttons. Each press flips a light and its neighbours; turn them all on." },
+        { name: "lan-co-op", label: "LAN co-op", modes: ["TwoD"],
+          about: "An arena for up to four players on one network. H hosts a game, J joins one nearby; each friend who joins gets the next player, and everyone collects the same gems." }
     ]
     function sampleInfo(name) { return samples.find(s => s.name === name); }
     onModeChanged: { const s = sampleInfo(sample); if (s && s.modes.indexOf(mode) < 0) sample = ""; }
