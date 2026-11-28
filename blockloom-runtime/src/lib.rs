@@ -376,7 +376,11 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     }
     // The simulation first: its resources and the engine, which the
     // presentation systems below reach as a `NonSend` too.
+    let rate = engine.project.world.fixed_rate;
     simulation::add_simulation(app, mode, engine);
+    if server::integrated() {
+        server::follow(app, server::IntegratedServer::spawn(mode, rate));
+    }
     app.insert_resource(ClearColor(Color::srgb(0.11, 0.14, 0.19)))
         .init_resource::<ui::UiManager>()
         .init_resource::<ui_design::DesignSession>()

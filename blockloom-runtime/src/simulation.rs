@@ -297,6 +297,28 @@ pub(crate) fn headless(mut engine: Engine, mode: Mode, rebuild: bool) -> App {
     app
 }
 
+/// The simulation alone, waiting for the editor's messages the way a world
+/// with a window does: an integrated server. One `update` is one fixed tick.
+pub(crate) fn headless_server(engine: Engine, mode: Mode, rate: f64) -> App {
+    use bevy::time::TimeUpdateStrategy;
+    use std::time::Duration;
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_plugins(TransformPlugin);
+    app.add_plugins(AssetPlugin::default());
+    app.init_asset::<Mesh>()
+        .init_resource::<crate::performance::RenderCache>()
+        .init_resource::<crate::ui::UiManager>()
+        .init_resource::<crate::sound::SoundState>();
+    app.insert_resource(Time::<Fixed>::from_hz(rate));
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+        1.0 / rate,
+    )));
+    add_simulation(&mut app, mode, engine);
+    app.add_systems(Update, world::pump_editor.before(world::RebuildSet));
+    app
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

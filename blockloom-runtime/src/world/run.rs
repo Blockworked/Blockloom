@@ -15,6 +15,7 @@ pub fn pump_editor(
     real: Res<Time<Real>>,
     mut fixed: ResMut<Time<Fixed>>,
     mut exit: MessageWriter<AppExit>,
+    following: Option<Res<crate::server::Following>>,
 ) {
     // The project names its own fixed rate. Step-sized here, once a frame, so
     // the next FixedUpdate runs at whatever the loaded project asked for.
@@ -41,6 +42,28 @@ pub fn pump_editor(
                 return;
             }
         };
+        if let Some(following) = &following {
+            match &message {
+                // The server hosts LAN; this world only draws.
+                EditorMessage::OpenLan { .. }
+                | EditorMessage::CloseLan
+                | EditorMessage::LanStatus
+                | EditorMessage::KickGuest { .. } => {
+                    following.editor(message);
+                    continue;
+                }
+                // Sent when this world's own run begins (`begin_run`).
+                EditorMessage::Start => {}
+                EditorMessage::Load { .. }
+                | EditorMessage::Patch { .. }
+                | EditorMessage::Plugins { .. }
+                | EditorMessage::Stop
+                | EditorMessage::Pause { .. }
+                | EditorMessage::Step
+                | EditorMessage::Shutdown => following.editor(message.clone()),
+                _ => {}
+            }
+        }
         match message {
             EditorMessage::OpenLan { bind, max_guests } => {
                 crate::lan::open(&mut engine, &bind, max_guests)
@@ -387,6 +410,11 @@ pub fn begin_run(engine: &mut Engine, now: f64, real_now: f64) {
     engine.running = true;
     engine.started_at = now;
     engine.wall_started_at = real_now;
+    if !engine.authority {
+        // The server runs the game; this world's green flag is its cue.
+        engine.start_server = true;
+        return;
+    }
     crate::lan::begin(engine);
     crate::plugins::begin(engine);
     engine.fire(Event::Started);

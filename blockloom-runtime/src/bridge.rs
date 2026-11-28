@@ -95,11 +95,33 @@ pub fn detach(world: u64) {
     }
 }
 
+std::thread_local! {
+    static SERVER_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Marks this thread as an integrated server's. Its client applies the same
+/// effects and tells the editor about them, so the server only reports what
+/// no client sees: the LAN session, scripts and fatal errors.
+pub fn mark_server_thread() {
+    SERVER_THREAD.with(|s| s.set(true));
+}
+
 /// Sends one message to the editor. A closed pipe is ignored: the editor is
 /// gone and the window is about to follow. With no editor at all, only the
 /// messages a player might need to see reach stderr - the devtools console
 /// on the web, where printing would panic instead.
 pub fn send(message: &RuntimeMessage) {
+    if SERVER_THREAD.with(|s| s.get())
+        && !matches!(
+            message,
+            RuntimeMessage::LanSession(_)
+                | RuntimeMessage::ScriptLoaded { .. }
+                | RuntimeMessage::Fatal { .. }
+                | RuntimeMessage::PluginDiagnostics { .. }
+        )
+    {
+        return;
+    }
     if !attached() {
         match message {
             RuntimeMessage::Error { actor, message } => {

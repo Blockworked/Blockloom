@@ -248,8 +248,16 @@ them in `PendingEffects` after `Sample`), so clones, looks, sounds and the
 interface happen on the client the way they did on the server, and
 `pose_from_server` then puts every actor where the server left it. LAN guests
 reach the same server through `lan/native.rs`, which the simulation half
-registers. Not wired into Play yet: the editor and built games still run one
-authoritative world.
+registers. `BLOCKLOOM_SERVER=integrated` turns it on for Play and built
+games: `add_world` spawns the server and follows it, `pump_editor` forwards
+the editor's messages (LAN ones go only to the server), the client's own
+green flag (`begin_run`) starts the server's run, and the client quits when
+its server does. On the server thread `bridge` only passes the LAN session,
+script loads, plugin diagnostics and fatal errors, since the client reports
+everything else as it applies the same effects. Replayed through it, the
+corpus matches on five of six entries; playground-3d's crates land about
+2 cm off. Off by default until that is understood and input and the
+interface are proven over it.
 
 ## Per-frame cost
 

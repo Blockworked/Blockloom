@@ -10,6 +10,7 @@ use blockloom_core::project::Project;
 use blockloom_core::scene::Mode;
 use blockloom_core::sense::Sensors;
 use blockloom_core::vm::{Effect, Event};
+use blockloom_protocol::EditorMessage;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
@@ -45,24 +46,44 @@ pub struct ServerTick {
 /// A running integrated server. Dropping it stops the thread.
 pub struct IntegratedServer {
     to: Sender<ToServer>,
+    editor: Sender<EditorMessage>,
     from: Receiver<ServerTick>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl IntegratedServer {
-    /// Starts `project` running, already past its green flag.
-    pub fn start(project: Project, mode: Mode) -> Self {
+    /// A server for a `mode` world, waiting for the editor's messages.
+    pub fn spawn(mode: Mode, rate: f32) -> Self {
         let (to, inbox) = channel();
         let (outbox, from) = channel();
+        let (editor, incoming) = channel();
         let thread = std::thread::Builder::new()
             .name("blockloom-server".into())
-            .spawn(move || run(project, mode, inbox, outbox))
+            .spawn(move || run(mode, rate, incoming, inbox, outbox))
             .expect("spawn the integrated server");
         Self {
             to,
+            editor,
             from,
             thread: Some(thread),
         }
+    }
+
+    /// A server already running `project`, past its green flag.
+    #[allow(dead_code)]
+    pub fn start(project: Project, mode: Mode) -> Self {
+        let server = Self::spawn(mode, project.world.fixed_rate);
+        server.editor(EditorMessage::Load {
+            project: Box::new(project),
+            dir: None,
+        });
+        server.editor(EditorMessage::Start);
+        server
+    }
+
+    /// Hands the server what the editor told this world.
+    pub fn editor(&self, message: EditorMessage) {
+        let _ = self.editor.send(message);
     }
 
     pub fn send(&self, input: ClientInput) {
@@ -74,7 +95,6 @@ impl IntegratedServer {
         self.from.try_iter().collect()
     }
 
-    #[allow(dead_code)]
     pub fn is_running(&self) -> bool {
         self.thread.as_ref().is_some_and(|t| !t.is_finished())
     }
@@ -85,6 +105,8 @@ impl Drop for IntegratedServer {
         // The server stops when its inbox closes.
         let (dead, _) = channel();
         self.to = dead;
+        let (dead, _) = channel();
+        self.editor = dead;
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -100,20 +122,22 @@ struct Link {
     effects: Vec<Effect>,
 }
 
-fn run(project: Project, mode: Mode, inbox: Receiver<ToServer>, outbox: Sender<ServerTick>) {
+fn run(
+    mode: Mode,
+    rate: f32,
+    incoming: Receiver<EditorMessage>,
+    inbox: Receiver<ToServer>,
+    outbox: Sender<ServerTick>,
+) {
     blockloom_core::value::register_blockloom_operators();
-    let (_editor, incoming) = channel();
-    let mut engine = Engine::new(incoming, mode);
-    engine.project = project;
-    let loaded = engine.project.clone();
-    engine.vm.load(&loaded);
-    let rate = f64::from(engine.project.world.fixed_rate);
+    crate::bridge::mark_server_thread();
+    let engine = Engine::new(incoming, mode);
     let rate = if rate.is_finite() {
-        rate.clamp(1.0, 1000.0)
+        f64::from(rate).clamp(1.0, 1000.0)
     } else {
         60.0
     };
-    let mut app = crate::simulation::headless(engine, mode, true);
+    let mut app = crate::simulation::headless_server(engine, mode, rate);
     app.insert_resource(Link {
         inbox: std::sync::Mutex::new(inbox),
         outbox,
@@ -126,7 +150,7 @@ fn run(project: Project, mode: Mode, inbox: Receiver<ToServer>, outbox: Sender<S
     let mut next = Instant::now();
     loop {
         app.update();
-        if app.world().resource::<Link>().closed {
+        if app.world().resource::<Link>().closed || app.should_exit().is_some() {
             return;
         }
         next += step;
@@ -236,6 +260,10 @@ pub struct Following {
 }
 
 impl Following {
+    pub fn editor(&self, message: EditorMessage) {
+        self.server.lock().expect("server link").editor(message);
+    }
+
     pub fn new(server: IntegratedServer) -> Self {
         Self {
             server: std::sync::Mutex::new(server),
@@ -245,16 +273,23 @@ impl Following {
     }
 }
 
+/// Whether this world runs its game on an integrated server. Opt-in with
+/// `BLOCKLOOM_SERVER=integrated` until single-player is proven on it.
+pub fn integrated() -> bool {
+    std::env::var("BLOCKLOOM_SERVER").is_ok_and(|v| v == "integrated")
+}
+
 /// Makes `app`'s world a client of `server`.
 pub fn follow(app: &mut App, server: IntegratedServer) {
     app.world_mut().non_send_mut::<Engine>().authority = false;
+    // The server records the run; the client's poses only follow it.
+    app.world_mut().remove_resource::<crate::record::Recorder>();
     app.insert_resource(Following::new(server))
         .add_systems(
             FixedUpdate,
             take_ticks
                 .after(SimStep::Sample)
-                .before(SimStep::PluginInput)
-                .in_set(crate::world::SimulationSet),
+                .before(SimStep::PluginInput),
         )
         .add_systems(
             FixedPostUpdate,
@@ -267,8 +302,17 @@ pub fn follow(app: &mut App, server: IntegratedServer) {
 
 /// Every tick that arrived since the last step: their effects in order, and
 /// the newest poses.
-fn take_ticks(mut following: ResMut<Following>, mut effects: ResMut<PendingEffects>) {
+fn take_ticks(
+    mut following: ResMut<Following>,
+    mut effects: ResMut<PendingEffects>,
+    engine: NonSend<Engine>,
+) {
     let ticks = following.server.lock().expect("server link").ticks();
+    // A world that isn't running draws the document, not the server's run.
+    if !engine.running {
+        following.poses.clear();
+        return;
+    }
     for tick in ticks {
         effects.0.extend(tick.effects);
         following.last_tick = tick.tick;
@@ -281,6 +325,9 @@ fn pose_from_server(
     engine: NonSend<Engine>,
     mut actors: Query<(&mut Transform, Option<&mut PhysicsPose>, &mut Visibility)>,
 ) {
+    if !engine.running {
+        return;
+    }
     for pose in &following.poses {
         let Some(entity) = engine.entities.get(&pose.id) else {
             continue;
@@ -304,7 +351,20 @@ fn pose_from_server(
 }
 
 /// Once a frame: this world's input and the events it saw.
-fn send_input(following: Res<Following>, mut engine: NonSendMut<Engine>) {
+fn send_input(
+    following: Res<Following>,
+    mut engine: NonSendMut<Engine>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    // A client has nothing to show once its server is gone (a recorder or
+    // profiler finished there, or it stopped).
+    if !following.server.lock().expect("server link").is_running() {
+        exit.write(AppExit::Success);
+        return;
+    }
+    if std::mem::take(&mut engine.start_server) {
+        following.editor(EditorMessage::Start);
+    }
     let events = std::mem::take(&mut engine.forwarded);
     let mut sensors = blockloom_core::sense::read(|s| s.clone());
     sensors.actors.clear();

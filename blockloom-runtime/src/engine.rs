@@ -465,6 +465,8 @@ pub struct Engine {
     pub authority: bool,
     /// Events a client saw since it last told its server.
     pub forwarded: Vec<blockloom_core::vm::Event>,
+    /// A client's run began: its server presses the green flag next.
+    pub start_server: bool,
     pub paused: bool,
     /// Play was pressed and the run begins once the world is warm (see
     /// `streaming::warm_up`). Reads as running to the editor.
@@ -668,6 +670,7 @@ impl Engine {
             running: false,
             authority: true,
             forwarded: Vec::new(),
+            start_server: false,
             paused: false,
             window_focused: false,
             wants_cursor_locked: false,
