@@ -224,13 +224,14 @@ pub fn register(app: &mut App) {
     );
     app.add_systems(
         FixedUpdate,
-        (
-            publish_lan
-                .after(crate::simulation::SimStep::Sample)
-                .before(crate::simulation::SimStep::PluginInput),
-            lan_verbs.in_set(crate::simulation::SimStep::Verbs),
-        )
+        publish_lan
+            .after(crate::simulation::SimStep::Sample)
+            .before(crate::simulation::SimStep::PluginInput)
             .in_set(crate::world::SimulationSet),
+    );
+    app.add_systems(
+        FixedUpdate,
+        lan_verbs.in_set(crate::simulation::SimStep::Verbs),
     );
     app.add_systems(
         FixedUpdate,

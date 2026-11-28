@@ -199,6 +199,14 @@ run, so closing the game is the way out.
 
 ## Verification
 
+`just smoke lan` hosts the LAN co-op template in the shell's runtime, builds
+it, and starts the built player with `--join` over loopback: it passes when
+the host lists the guest, the guest is still running a few seconds later and
+neither logged an error or panicked. Runtime tests cover a guest driving its
+own motor through the host (`the_co_op_template_gives_a_guest_player_two`),
+joining mid-run and coming back when the host closes, late join, and per-seat
+views.
+
 Loopback UDP tests cover baseline/delta reconstruction, spawn/delete, dimension
 and scene epochs, wrong admission/build, failed binds, slow-reader coalescing,
 and graceful close under 5% loss with delay/jitter. Codec tests reject oversized,

@@ -3063,7 +3063,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "open-lan",
         cmd: "open_lan",
         aliases: &["open_lan"],
-        summary: "Open a running world to LAN spectators; session-status reports the result and invite.",
+        summary: "Open a running world to LAN guests; session-status reports the result and invite.",
         args: &[
             ArgSpec {
                 name: "bind",
@@ -3095,7 +3095,7 @@ pub(crate) const COMMANDS: &[CommandSpec] = &[
         name: "kick-guest",
         cmd: "kick_guest",
         aliases: &["kick_guest"],
-        summary: "Disconnect one LAN spectator by its server-issued id.",
+        summary: "Disconnect one LAN guest by its server-issued id.",
         args: &[ArgSpec {
             name: "id",
             ty: "number",

@@ -179,10 +179,63 @@ def flow_scripted(shell, work, mode, env, args):
     shell.run("close-project")
 
 
+def flow_lan(shell, work, env, args):
+    """The LAN co-op template hosted from the shell's runtime, and its built
+    player joining it as player 2 over loopback."""
+    shell.run(f'create-project name="Smoke LAN" location="{work}" mode=TwoD sample=lan-co-op')
+    out = work / "build-lan"
+    shell.run(f'build-game path="{out}"')
+    folders = [p for p in out.iterdir() if p.is_dir()]
+    check(folders, f"build wrote no folder in {out}")
+    shell.run("run-project")
+    # A software renderer warms up before the run starts; ask until it has.
+    invite, lan, asked, deadline = None, {}, 0.0, time.monotonic() + args.timeout
+    while invite is None and time.monotonic() < deadline:
+        if not lan.get("open") and time.monotonic() - asked > 2:
+            shell.run('open-lan bind="127.0.0.1:0" max_guests=3')
+            asked = time.monotonic()
+        time.sleep(0.25)
+        lan = shell.run("session-status")["result"] or {}
+        invite = lan.get("invite")
+    check(invite, f"LAN didn't open within {args.timeout}s: {lan.get('error')}")
+    folder = folders[0]
+    exe = next(
+        (p for p in folder.iterdir() if p.is_file() and os.access(p, os.X_OK) and p.suffix in ("", ".exe")),
+        None,
+    )
+    check(exe is not None, f"no player in {folder}")
+    log = folder / "smoke-guest.log"
+    with open(log, "w") as text:
+        guest = subprocess.Popen(
+            [str(exe), "--join", invite, "--trusted-build", invite.rsplit("|", 1)[-1]],
+            stdout=text, stderr=subprocess.STDOUT, env=env,
+        )
+        try:
+            joined, deadline = False, time.monotonic() + args.timeout
+            while not joined and time.monotonic() < deadline:
+                check(guest.poll() is None, f"the guest exited:\n{log.read_text(errors='replace')[-2000:]}")
+                joined = bool((shell.run("session-status")["result"] or {}).get("guests"))
+                time.sleep(0.25)
+            check(joined, f"the guest never joined within {args.timeout}s")
+            time.sleep(args.player_seconds)
+            check(guest.poll() is None, f"the guest left:\n{log.read_text(errors='replace')[-2000:]}")
+            state = shell.run("sync-status")["state"]
+            check(not errors(state), f"the host logged errors: {errors(state)[:3]}")
+        finally:
+            guest.kill()
+            guest.wait()
+    text = log.read_text(errors="replace")
+    check("panicked" not in text, f"the guest panicked:\n{text[-2000:]}")
+    shell.run("close-lan")
+    shell.run("stop-project")
+    shell.run("close-project")
+
+
 FLOWS = {
     "playground-3d": lambda s, w, e, a: flow_playground(s, w, "ThreeD", e, a),
     "playground-2d": lambda s, w, e, a: flow_playground(s, w, "TwoD", e, a),
     "scripted-3d": lambda s, w, e, a: flow_scripted(s, w, "ThreeD", e, a),
+    "lan": flow_lan,
 }
 
 
