@@ -217,13 +217,30 @@ pub fn run_process() {
                         .and_then(|i| args.get(i + 1))
                         .map(std::path::PathBuf::from)
                         .or_else(blockloom_core::pack::beside_exe);
-                    lan::guest::run(invite, trusted, game.as_deref())
+                    // The diagnostic viewer, or the game itself as a client.
+                    if args.iter().any(|a| a == "--spectate") || game.is_none() {
+                        lan::guest::run(invite, trusted, game.as_deref())?;
+                        return Ok(None);
+                    }
+                    lan::remote::set_join(lan::remote::JoinTarget {
+                        invite: invite.clone(),
+                        trusted: trusted.clone(),
+                    });
+                    Ok::<_, String>(game)
                 })();
-                if let Err(error) = result {
-                    eprintln!("{error}");
-                    std::process::exit(1);
+                match result {
+                    Err(error) => {
+                        eprintln!("{error}");
+                        std::process::exit(1);
+                    }
+                    Ok(None) => return,
+                    Ok(Some(game)) => {
+                        blockloom_core::init();
+                        let play = ["--play".to_string(), game.to_string_lossy().into_owned()];
+                        run_launch(Launch::from_args(play.into_iter()));
+                        return;
+                    }
                 }
-                return;
             }
         }
         blockloom_core::init();
@@ -378,7 +395,28 @@ pub(crate) fn add_world(app: &mut App, mode: Mode, mut engine: engine::Engine) {
     // presentation systems below reach as a `NonSend` too.
     let rate = engine.project.world.fixed_rate;
     simulation::add_simulation(app, mode, engine);
-    if server::integrated() {
+    #[cfg(all(
+        feature = "multiplayer",
+        not(target_arch = "wasm32"),
+        not(target_os = "android")
+    ))]
+    let joined = match lan::remote::join_target() {
+        Some(target) => match lan::remote::RemoteServer::connect(target) {
+            Ok(remote) => {
+                server::follow(app, remote);
+                true
+            }
+            Err(error) => player::fatal(&format!("Couldn't join the LAN game: {error}")),
+        },
+        None => false,
+    };
+    #[cfg(not(all(
+        feature = "multiplayer",
+        not(target_arch = "wasm32"),
+        not(target_os = "android")
+    )))]
+    let joined = false;
+    if !joined && server::integrated() {
         server::follow(app, server::IntegratedServer::spawn(mode, rate));
     }
     app.insert_resource(ClearColor(Color::srgb(0.11, 0.14, 0.19)))

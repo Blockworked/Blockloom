@@ -126,6 +126,7 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
             SimStep::Scripts,
             SimStep::PluginFixed,
             SimStep::SavedData,
+            SimStep::PluginEffects,
         )
             .run_if(is_authority),
     );
@@ -207,7 +208,7 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
     .add_systems(
         FixedPostUpdate,
         (
-            plugins::stage(Stage::PostPhysics),
+            plugins::stage(Stage::PostPhysics).run_if(is_authority),
             world::apply_parenting,
             dim2::record_poses,
             dim3::record_poses,

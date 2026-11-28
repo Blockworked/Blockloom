@@ -219,7 +219,7 @@ pub(crate) fn locate_pack(path: &Path) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-fn fatal(message: &str) -> ! {
+pub(crate) fn fatal(message: &str) -> ! {
     // A built game that can't load has nothing else to do. On the web there
     // is no process to exit, so the message lands on the page instead.
     #[cfg(target_arch = "wasm32")]

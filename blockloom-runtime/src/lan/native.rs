@@ -21,6 +21,10 @@ pub struct Session {
     /// Each plugin's last `sync.sections` generation and revision.
     synced: BTreeMap<String, (u64, u64)>,
     unsynced: BTreeSet<String>,
+    /// This tick's effects, for guests that follow the host as clients.
+    effects: Vec<blockloom_core::vm::Effect>,
+    /// Seat actions held last tick, for their pressed and released edges.
+    seat_held: BTreeMap<String, bool>,
 }
 
 /// How often, in fixed ticks, plugins are asked what changed.
@@ -184,6 +188,78 @@ pub fn register(app: &mut App) {
             .after(crate::dim3::track_contacts),
     );
     app.add_systems(Update, poll.after(crate::world::pump_editor));
+    app.add_systems(
+        FixedUpdate,
+        apply_seat_input
+            .after(crate::simulation::SimStep::Sample)
+            .before(crate::simulation::SimStep::PluginInput)
+            .in_set(crate::world::SimulationSet),
+    );
+    app.add_systems(
+        FixedUpdate,
+        keep_effects
+            .after(crate::simulation::SimStep::Animation)
+            .before(crate::simulation::SimStep::ClearEffects)
+            .in_set(crate::world::SimulationSet),
+    );
+}
+
+/// Seated guests' actions as their players' copies, with edges, once a
+/// tick on the server, so blocks and motors read them like a local pad.
+fn apply_seat_input(mut e: NonSendMut<Engine>) {
+    if !e.running || e.lan.host.is_none() {
+        if !e.lan.seat_held.is_empty() {
+            e.lan.seat_held.clear();
+        }
+        return;
+    }
+    let mut actions = Vec::new();
+    let mut fired = Vec::new();
+    let defs: Vec<_> = e
+        .project
+        .settings
+        .input
+        .actions
+        .iter()
+        .filter(|a| a.player > 0)
+        .map(|a| (a.name.clone(), a.player))
+        .collect();
+    for (name, player) in defs {
+        let Some(r) = remote_action(&e, player, &name) else {
+            e.lan.seat_held.remove(&name);
+            continue;
+        };
+        let was = e
+            .lan
+            .seat_held
+            .insert(name.clone(), r.held)
+            .unwrap_or(false);
+        if r.held && !was {
+            fired.push(name.to_lowercase());
+        }
+        actions.push((
+            name,
+            blockloom_core::input::ActionSense {
+                held: r.held,
+                pressed: r.held && !was,
+                released: !r.held && was,
+                value: r.value,
+                vector: r.vector,
+            },
+        ));
+    }
+    blockloom_core::sense::publish_seats(guest_players(&e), actions);
+    if !e.paused {
+        for action in fired {
+            e.fire(blockloom_core::vm::Event::Action(action));
+        }
+    }
+}
+
+fn keep_effects(mut e: NonSendMut<Engine>, effects: Res<crate::engine::PendingEffects>) {
+    if e.lan.host.is_some() {
+        e.lan.effects.extend(effects.0.iter().cloned());
+    }
 }
 
 fn poll(mut e: NonSendMut<Engine>) {
@@ -302,11 +378,20 @@ fn capture(
             }
             Err(error) => super::report(&e, Some(error)),
         }
-    } else if let Some(h) = &mut e.lan.host
-        && let Err(error) = h.publish(state)
-    {
-        close(&mut e);
-        super::report(&e, Some(error));
+    } else if e.lan.host.is_some() {
+        let effects = std::mem::take(&mut e.lan.effects);
+        let tick = e.lan.tick;
+        let h = e.lan.host.as_mut().expect("checked above");
+        let mut result = h.publish(state);
+        if result.is_ok() && !effects.is_empty() {
+            result = serde_json::to_vec(&effects)
+                .map_err(|err| err.to_string())
+                .and_then(|bytes| h.publish_effects(tick, &bytes));
+        }
+        if let Err(error) = result {
+            close(&mut e);
+            super::report(&e, Some(error));
+        }
     }
 }
 

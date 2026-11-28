@@ -734,6 +734,18 @@ pub fn publish_run(time: f64, wall_time: f64, paused: bool, scene: &str, scenes:
     });
 }
 
+/// Sets the players LAN guests hold and their seats' actions (`Jump P2`),
+/// over whatever the local devices said.
+pub fn publish_seats(players: Vec<u8>, actions: Vec<(String, ActionSense)>) {
+    SENSORS.with(|snapshot| {
+        let mut s = snapshot.borrow_mut();
+        s.guest_players = players;
+        for (name, action) in actions {
+            s.actions.insert(name, action);
+        }
+    });
+}
+
 /// Samples the retained interface before either block scheduler runs.
 pub fn publish_ui(ui: HashMap<String, UiSense>, focus: String) {
     SENSORS.with(|snapshot| {

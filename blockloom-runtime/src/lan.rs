@@ -50,14 +50,6 @@ pub fn base_action(name: &str, player: u8) -> &str {
 pub fn guest_players(_: &Engine) -> Vec<u8> {
     Vec::new()
 }
-#[cfg(not(all(
-    feature = "multiplayer",
-    not(target_arch = "wasm32"),
-    not(target_os = "android")
-)))]
-pub fn remote_action(_: &Engine, _: u8, _: &str) -> Option<RemoteAction> {
-    None
-}
 
 pub fn report(engine: &Engine, error: Option<String>) {
     let mut status = status(engine);
@@ -105,6 +97,12 @@ pub fn register(_: &mut bevy::prelude::App) {}
     not(target_os = "android")
 ))]
 pub mod guest;
+#[cfg(all(
+    feature = "multiplayer",
+    not(target_arch = "wasm32"),
+    not(target_os = "android")
+))]
+pub mod remote;
 
 #[cfg(not(all(
     feature = "multiplayer",

@@ -391,18 +391,15 @@ pub fn publish_sensors(
         });
         let source = own.as_ref().unwrap_or(&live);
         let on = blockloom_core::input::map_enabled(&action.map);
-        // A LAN guest in this player's seat drives it instead of a local pad.
-        let remote = (action.player > 0)
-            .then(|| crate::lan::remote_action(&engine, action.player, &action.name))
-            .flatten();
-        let (held_now, value, vector) = match remote {
-            _ if !on => (false, 0.0, [0.0; 2]),
-            Some(r) => (r.held, r.value, r.vector),
-            None => (
+        // A LAN guest's seat is fed in on the fixed step (`lan::apply_seat_input`).
+        let (held_now, value, vector) = if on {
+            (
                 source.action_held(&scoped),
                 source.action_value(&scoped),
                 source.action_vector(&scoped),
-            ),
+            )
+        } else {
+            (false, 0.0, [0.0; 2])
         };
         let was = engine
             .prev_action_held

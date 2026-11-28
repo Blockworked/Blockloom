@@ -43,6 +43,29 @@ pub struct ServerTick {
     pub poses: Vec<ActorPose>,
 }
 
+/// Where a client's ticks come from: its own integrated server, or a host's
+/// over LAN.
+pub trait ServerLink: Send {
+    /// Every tick that finished since the last call, oldest first.
+    fn ticks(&mut self) -> Vec<ServerTick>;
+    fn send(&mut self, input: ClientInput);
+    /// What the editor told this world. A remote host ignores it.
+    fn editor(&mut self, message: EditorMessage);
+    fn is_running(&self) -> bool;
+}
+
+/// Effects a client must never apply for a server: saves and plugin calls
+/// are the server's to make, on its own machine.
+pub fn for_clients(effect: &Effect) -> bool {
+    !matches!(
+        effect,
+        Effect::SaveVariable { .. }
+            | Effect::SwitchSaveSlot { .. }
+            | Effect::DeleteSaveSlot { .. }
+            | Effect::PluginCall { .. }
+    )
+}
+
 /// A running integrated server. Dropping it stops the thread.
 pub struct IntegratedServer {
     to: Sender<ToServer>,
@@ -97,6 +120,21 @@ impl IntegratedServer {
 
     pub fn is_running(&self) -> bool {
         self.thread.as_ref().is_some_and(|t| !t.is_finished())
+    }
+}
+
+impl ServerLink for IntegratedServer {
+    fn ticks(&mut self) -> Vec<ServerTick> {
+        IntegratedServer::ticks(self)
+    }
+    fn send(&mut self, input: ClientInput) {
+        IntegratedServer::send(self, input)
+    }
+    fn editor(&mut self, message: EditorMessage) {
+        IntegratedServer::editor(self, message)
+    }
+    fn is_running(&self) -> bool {
+        IntegratedServer::is_running(self)
     }
 }
 
@@ -253,7 +291,7 @@ fn send_tick(
 /// sends its own input back.
 #[derive(Resource)]
 pub struct Following {
-    server: std::sync::Mutex<IntegratedServer>,
+    server: std::sync::Mutex<Box<dyn ServerLink>>,
     /// The newest tick's poses, applied after this world's own step.
     poses: Vec<ActorPose>,
     pub last_tick: u64,
@@ -264,7 +302,7 @@ impl Following {
         self.server.lock().expect("server link").editor(message);
     }
 
-    pub fn new(server: IntegratedServer) -> Self {
+    pub fn new(server: Box<dyn ServerLink>) -> Self {
         Self {
             server: std::sync::Mutex::new(server),
             poses: Vec::new(),
@@ -280,11 +318,11 @@ pub fn integrated() -> bool {
 }
 
 /// Makes `app`'s world a client of `server`.
-pub fn follow(app: &mut App, server: IntegratedServer) {
+pub fn follow(app: &mut App, server: impl ServerLink + 'static) {
     app.world_mut().non_send_mut::<Engine>().authority = false;
     // The server records the run; the client's poses only follow it.
     app.world_mut().remove_resource::<crate::record::Recorder>();
-    app.insert_resource(Following::new(server))
+    app.insert_resource(Following::new(Box::new(server)))
         .add_systems(
             FixedUpdate,
             take_ticks
@@ -314,9 +352,13 @@ fn take_ticks(
         return;
     }
     for tick in ticks {
-        effects.0.extend(tick.effects);
+        effects
+            .0
+            .extend(tick.effects.into_iter().filter(for_clients));
         following.last_tick = tick.tick;
-        following.poses = tick.poses;
+        if !tick.poses.is_empty() {
+            following.poses = tick.poses;
+        }
     }
 }
 

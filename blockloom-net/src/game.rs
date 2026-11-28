@@ -626,6 +626,27 @@ impl LanHost {
             .find(|g| g.seat == Some(seat))
             .map(|g| &g.input)
     }
+    /// Sends every seated guest one tick's effects, opaque to this layer, in
+    /// order on the reliable stream. A guest that can't keep up is dropped.
+    pub fn publish_effects(&mut self, tick: u64, effects: &[u8]) -> Result<(), String> {
+        let mut body = vec![7];
+        body.extend(tick.to_le_bytes());
+        body.extend(effects);
+        let bytes = framed(body)?;
+        let seated: Vec<PeerId> = self
+            .guests
+            .iter()
+            .filter(|(_, g)| g.seat.is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        for id in seated {
+            if self.server.send_stream(id, STREAM, &bytes, false).is_err() {
+                self.server.kick(id, "Guest fell behind");
+                self.drop_guest(id);
+            }
+        }
+        Ok(())
+    }
     /// Seats taken and left since the last call.
     pub fn take_seat_changes(&mut self) -> Vec<SeatChange> {
         std::mem::take(&mut self.changes)
@@ -808,6 +829,7 @@ pub struct LanClient {
     seat: Option<u8>,
     input_seq: u64,
     sent_input: Option<(BTreeMap<String, ActionInput>, Instant)>,
+    effects: Vec<(u64, Vec<u8>)>,
 }
 impl LanClient {
     pub fn connect(
@@ -830,7 +852,12 @@ impl LanClient {
             seat: None,
             input_seq: 0,
             sent_input: None,
+            effects: Vec::new(),
         })
+    }
+    /// Every tick's effects that arrived since the last call, oldest first.
+    pub fn take_effects(&mut self) -> Vec<(u64, Vec<u8>)> {
+        std::mem::take(&mut self.effects)
     }
     /// The player seat the host gave this guest, once admitted.
     pub fn seat(&self) -> Option<u8> {
@@ -889,6 +916,17 @@ impl LanClient {
                                 return Err("Invalid seat".into());
                             }
                             self.seat = Some(body[1]);
+                            continue;
+                        }
+                        if body.first() == Some(&7) {
+                            if body.len() < 9 || self.seat.is_none() {
+                                return Err("Invalid effects frame".into());
+                            }
+                            let tick = u64::from_le_bytes(body[1..9].try_into().unwrap());
+                            if self.effects.len() >= 4096 {
+                                return Err("Too many unread effects".into());
+                            }
+                            self.effects.push((tick, body[9..].to_vec()));
                             continue;
                         }
                         let (seq, state) = apply_state(&body, self.seq, &self.state)?;

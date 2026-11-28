@@ -308,6 +308,23 @@ fn two_guests_take_their_own_seats_and_send_their_own_input() {
         std::thread::sleep(Duration::from_millis(1));
     }
 
+    // Every seated guest gets each tick's effects, in order.
+    host.publish_effects(7, b"[1]").unwrap();
+    host.publish_effects(8, b"[2]").unwrap();
+    let end = Instant::now() + Duration::from_secs(8);
+    let (mut ga, mut gb) = (Vec::new(), Vec::new());
+    while ga.len() < 2 || gb.len() < 2 {
+        host.poll();
+        a.poll().unwrap();
+        b.poll().unwrap();
+        ga.extend(a.take_effects());
+        gb.extend(b.take_effects());
+        assert!(Instant::now() < end, "effects never arrived");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let want = vec![(7, b"[1]".to_vec()), (8, b"[2]".to_vec())];
+    assert_eq!((ga, gb), (want.clone(), want));
+
     // A leaving guest frees its seat, and the next one takes the lowest free.
     let gone = a.seat().unwrap();
     drop(a);
