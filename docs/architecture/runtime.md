@@ -226,6 +226,31 @@ before it, so it takes no `Engine` at all.
 default), a named actor or a point, so a world with no camera blends the same
 atmosphere for `sample_atmosphere`.
 
+## Integrated server
+
+`blockloom-runtime/src/server.rs`. Plan 2's Phase M moves every game onto
+the Minecraft and Hytale shape: the game logic runs on an integrated server
+and every player, the host included, is a client of it.
+`IntegratedServer::start` builds the headless simulation (`simulation::headless`
+with the document rebuilt) on its own thread, paced to the project's fixed
+rate. Each fixed tick it answers with a `ServerTick`: the tick's effects in
+order (captured before `ClearEffects`) and every actor's settled pose. A
+client sends `ClientInput` once a frame: its sensor snapshot (the server keeps
+its own actors, clock and run state) and the edges it saw, which the server
+fires once each.
+
+`server::follow` turns a world into a client: `Engine::authority` goes false,
+so `fire` queues events in `Engine::forwarded` for the server, the physics
+pipelines stay off, and `simulation::is_authority` keeps the blocks, scripts,
+plugin gameplay stages, saves, motors and the controller from running. The
+rest of the fixed step still runs on the server's effects (`take_ticks` puts
+them in `PendingEffects` after `Sample`), so clones, looks, sounds and the
+interface happen on the client the way they did on the server, and
+`pose_from_server` then puts every actor where the server left it. LAN guests
+reach the same server through `lan/native.rs`, which the simulation half
+registers. Not wired into Play yet: the editor and built games still run one
+authoritative world.
+
 ## Per-frame cost
 
 `publish_sensors` rebuilds the snapshot every frame, so it is the first thing

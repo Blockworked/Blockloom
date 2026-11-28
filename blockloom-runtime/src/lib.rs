@@ -117,6 +117,7 @@ mod script;
 pub(crate) mod script_component;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod script_wasm;
+mod server;
 mod shadows;
 mod simulation;
 mod sky;

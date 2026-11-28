@@ -115,6 +115,20 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
             .chain()
             .in_set(world::SimulationSet),
     );
+    // A client of an integrated server applies the server's effects but
+    // never runs the blocks, scripts, plugins' gameplay or saves itself.
+    app.configure_sets(
+        FixedUpdate,
+        (
+            SimStep::PluginInput,
+            SimStep::PluginPreSimulation,
+            SimStep::Vm,
+            SimStep::Scripts,
+            SimStep::PluginFixed,
+            SimStep::SavedData,
+        )
+            .run_if(is_authority),
+    );
     app.configure_sets(
         FixedUpdate,
         world::SimulationSet.before(bevy_rapier2d::prelude::PhysicsSet::SyncBackend),
@@ -153,8 +167,8 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
                 .chain()
                 .in_set(SimStep::Lifetimes),
             (
-                motor::drive_motors,
-                controller::apply_motion,
+                motor::drive_motors.run_if(is_authority),
+                controller::apply_motion.run_if(is_authority),
                 world::apply_common,
             )
                 .chain()
@@ -236,6 +250,11 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
             .after(bevy_rapier2d::prelude::PhysicsSet::Writeback)
             .after(bevy_rapier3d::prelude::PhysicsSet::Writeback),
     );
+}
+
+/// Whether this world runs its own gameplay, rather than following a server.
+pub(crate) fn is_authority(following: Option<Res<crate::server::Following>>) -> bool {
+    following.is_none()
 }
 
 /// The simulation alone, drawing nothing, stepped one fixed tick per

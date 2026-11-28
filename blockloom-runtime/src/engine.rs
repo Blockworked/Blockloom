@@ -460,6 +460,11 @@ pub struct Engine {
     /// Actor id -> its entity, for as long as the world stands.
     pub entities: HashMap<String, Entity>,
     pub running: bool,
+    /// False in a client of an integrated server: the server runs the blocks
+    /// and physics, and events this world sees go to it instead.
+    pub authority: bool,
+    /// Events a client saw since it last told its server.
+    pub forwarded: Vec<blockloom_core::vm::Event>,
     pub paused: bool,
     /// Play was pressed and the run begins once the world is warm (see
     /// `streaming::warm_up`). Reads as running to the editor.
@@ -661,6 +666,8 @@ impl Engine {
             made: 0,
             entities: HashMap::new(),
             running: false,
+            authority: true,
+            forwarded: Vec::new(),
             paused: false,
             window_focused: false,
             wants_cursor_locked: false,
@@ -923,6 +930,12 @@ impl Engine {
     }
 
     pub fn fire(&mut self, event: blockloom_core::vm::Event) {
+        if !self.authority {
+            if self.running && self.forwarded.len() < 1024 {
+                self.forwarded.push(event);
+            }
+            return;
+        }
         self.run_widget_actions(&event);
         // Queued even while paused: the fixed `tick` skips paused steps, but
         // the per-frame `ui` entry point drains these so menus answer while

@@ -1052,7 +1052,7 @@ pub fn track_contacts(
 /// `FixedUpdate` pass, so it takes effect the same step.
 pub fn sync_pause(engine: NonSend<Engine>, mut configs: Query<&mut rp::RapierConfiguration>) {
     for mut config in &mut configs {
-        config.physics_pipeline_active = engine.running && !engine.paused;
+        config.physics_pipeline_active = engine.running && !engine.paused && engine.authority;
     }
 }
 
