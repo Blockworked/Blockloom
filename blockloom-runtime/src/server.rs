@@ -21,6 +21,37 @@ use std::time::{Duration, Instant};
 pub struct ClientInput {
     pub sensors: Sensors,
     pub events: Vec<Event>,
+    pub view: SeatView,
+}
+
+/// Where a player's camera looks, in radians about +Y. A motor that moves
+/// with the camera, or a first-person camera that turns the body, needs the
+/// seat's own view: the server draws nothing and has no camera of its own.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SeatView {
+    pub yaw: Option<f32>,
+    /// The body the camera turns, and to what. No actor means the seat's own
+    /// motor (a LAN guest only sends the angle).
+    pub facing: Option<(Option<String>, f32)>,
+}
+
+/// Each seat's latest view, on a server.
+#[derive(Resource, Default)]
+pub struct SeatViews(pub std::collections::HashMap<u8, SeatView>);
+
+impl SeatViews {
+    /// The camera yaw and body facing a motor driven by `seat` follows.
+    pub fn for_motor(&self, seat: u8, actor: &str) -> (Option<f32>, Option<f32>) {
+        let Some(view) = self.0.get(&seat) else {
+            return (None, None);
+        };
+        let facing = view
+            .facing
+            .as_ref()
+            .filter(|(who, _)| who.as_deref().is_none_or(|who| who == actor))
+            .map(|(_, yaw)| *yaw);
+        (view.yaw, facing)
+    }
 }
 
 pub enum ToServer {
@@ -52,6 +83,10 @@ pub trait ServerLink: Send {
     /// What the editor told this world. A remote host ignores it.
     fn editor(&mut self, message: EditorMessage);
     fn is_running(&self) -> bool;
+    /// The seat this world plays: 0 on its own server, a guest's on a host's.
+    fn seat(&self) -> u8 {
+        0
+    }
 }
 
 /// Effects a client must never apply for a server: saves and plugin calls
@@ -223,7 +258,7 @@ fn register(app: &mut App) {
 
 /// Drains clients' input: the newest snapshot stands for the seat, and every
 /// edge is fired once.
-fn receive(mut link: ResMut<Link>, mut engine: NonSendMut<Engine>) {
+fn receive(mut link: ResMut<Link>, mut engine: NonSendMut<Engine>, mut views: ResMut<SeatViews>) {
     let mut newest = None;
     loop {
         let got = link.inbox.lock().expect("server inbox").try_recv();
@@ -232,6 +267,7 @@ fn receive(mut link: ResMut<Link>, mut engine: NonSendMut<Engine>) {
                 for event in input.events.iter().cloned() {
                     engine.fire(event);
                 }
+                views.0.insert(0, input.view.clone());
                 newest = Some(input.sensors);
             }
             Err(TryRecvError::Empty) => break,
@@ -300,6 +336,11 @@ pub struct Following {
 impl Following {
     pub fn editor(&self, message: EditorMessage) {
         self.server.lock().expect("server link").editor(message);
+    }
+
+    /// The seat this world plays.
+    pub fn seat(&self) -> u8 {
+        self.server.lock().expect("server link").seat()
     }
 
     pub fn new(server: Box<dyn ServerLink>) -> Self {
@@ -397,6 +438,8 @@ fn send_input(
     following: Res<Following>,
     mut engine: NonSendMut<Engine>,
     mut exit: MessageWriter<AppExit>,
+    cameras: Query<&GlobalTransform, With<crate::world::WorldCamera>>,
+    facing: Res<crate::player_camera::BodyFacing>,
 ) {
     // A client has nothing to show once its server is gone (a recorder or
     // profiler finished there, or it stopped).
@@ -414,7 +457,21 @@ fn send_input(
         .server
         .lock()
         .expect("server link")
-        .send(ClientInput { sensors, events });
+        .send(ClientInput {
+            sensors,
+            events,
+            view: SeatView {
+                yaw: cameras.iter().next().map(|camera| {
+                    let forward = camera.forward();
+                    (-forward.x).atan2(-forward.z)
+                }),
+                facing: facing
+                    .0
+                    .iter()
+                    .next()
+                    .map(|(actor, yaw)| (Some(actor.clone()), *yaw)),
+            },
+        });
 }
 
 #[cfg(test)]
@@ -465,6 +522,7 @@ mod tests {
             server.send(ClientInput {
                 sensors,
                 events: Vec::new(),
+                view: SeatView::default(),
             });
             got.extend(server.ticks());
             assert!(Instant::now() < end, "the server stopped ticking");
@@ -475,6 +533,30 @@ mod tests {
             .and_then(|t| t.poses.first())
             .map_or(f32::NAN, |p| p.transform.translation.x);
         (x, got)
+    }
+
+    #[test]
+    fn a_motor_follows_its_own_seats_view() {
+        let mut views = SeatViews::default();
+        views.0.insert(
+            0,
+            SeatView {
+                yaw: Some(1.0),
+                facing: Some((Some("Host".into()), 2.0)),
+            },
+        );
+        views.0.insert(
+            1,
+            SeatView {
+                yaw: Some(3.0),
+                facing: Some((None, 0.5)),
+            },
+        );
+        assert_eq!(views.for_motor(0, "Host"), (Some(1.0), Some(2.0)));
+        // The host's camera turns its own body, not another of its motors.
+        assert_eq!(views.for_motor(0, "Pet"), (Some(1.0), None));
+        assert_eq!(views.for_motor(1, "Guest"), (Some(3.0), Some(0.5)));
+        assert_eq!(views.for_motor(2, "Nobody"), (None, None));
     }
 
     #[test]

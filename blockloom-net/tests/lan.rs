@@ -1,5 +1,6 @@
 use blockloom_net::game::{
-    ActionInput, ActorState, Invite, LanClient, LanHost, SeatChange, Snapshot, build_hash,
+    ActionInput, ActorState, Invite, LanClient, LanHost, SeatChange, Snapshot, ViewInput,
+    build_hash,
 };
 use blockloom_net::{ClientOptions, Impairment, ServerOptions};
 use std::collections::BTreeMap;
@@ -296,11 +297,18 @@ fn two_guests_take_their_own_seats_and_send_their_own_input() {
             vector: [0.0, -1.0],
         },
     )]);
-    a.send_input(&jump).unwrap();
-    b.send_input(&walk).unwrap();
+    let look = ViewInput {
+        yaw: Some(1.5),
+        facing: None,
+    };
+    a.send_input(&jump, look).unwrap();
+    b.send_input(&walk, ViewInput::default()).unwrap();
     let (sa, sb) = (a.seat().unwrap(), b.seat().unwrap());
     let end = Instant::now() + Duration::from_secs(8);
-    while host.input(sa) != Some(&jump) || host.input(sb) != Some(&walk) {
+    while host.input(sa) != Some(&jump)
+        || host.input(sb) != Some(&walk)
+        || host.view(sa) != Some(look)
+    {
         host.poll();
         a.poll().unwrap();
         b.poll().unwrap();
@@ -363,25 +371,36 @@ fn malformed_input_is_refused_before_it_is_sent() {
     until(&mut host, &mut c, |c| c.seat().is_some());
     let bad = |a: ActionInput| BTreeMap::from([("Jump".to_string(), a)]);
     assert!(
-        c.send_input(&bad(ActionInput {
-            value: f32::NAN,
-            ..Default::default()
-        }))
+        c.send_input(
+            &bad(ActionInput {
+                value: f32::NAN,
+                ..Default::default()
+            }),
+            ViewInput::default()
+        )
         .is_err()
     );
     assert!(
-        c.send_input(&bad(ActionInput {
-            value: 1e9,
-            ..Default::default()
-        }))
+        c.send_input(
+            &bad(ActionInput {
+                value: 1e9,
+                ..Default::default()
+            }),
+            ViewInput::default()
+        )
         .is_err()
     );
     let long = BTreeMap::from([("x".repeat(65), ActionInput::default())]);
-    assert!(c.send_input(&long).is_err());
+    assert!(c.send_input(&long, ViewInput::default()).is_err());
     let many: BTreeMap<_, _> = (0..65)
         .map(|i| (format!("a{i}"), ActionInput::default()))
         .collect();
-    assert!(c.send_input(&many).is_err());
+    assert!(c.send_input(&many, ViewInput::default()).is_err());
+    let spin = ViewInput {
+        yaw: Some(f32::INFINITY),
+        facing: None,
+    };
+    assert!(c.send_input(&BTreeMap::new(), spin).is_err());
 }
 
 fn host_invite(host: &LanHost) -> String {

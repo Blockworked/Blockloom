@@ -246,9 +246,13 @@ plugin gameplay stages, saves, motors and the controller from running. The
 rest of the fixed step still runs on the server's effects (`take_ticks` puts
 them in `PendingEffects` after `Sample`), so clones, looks, sounds and the
 interface happen on the client the way they did on the server, and
-`pose_from_server` then puts every actor where the server left it. LAN guests
-reach the same server through `lan/native.rs`, which the simulation half
-registers. `BLOCKLOOM_SERVER=integrated` turns it on for Play and built
+`pose_from_server` then puts every actor where the server left it. A
+client also sends its view (`SeatView`: camera yaw and the body yaw a
+first-person camera turned), since the server has no camera: a motor moves and
+turns with its own seat's view (`SeatViews::for_motor`). LAN guests reach the
+same server through `lan/native.rs`, which the simulation half registers, and
+a guest's world follows the host through `lan/remote.rs`, the other
+`ServerLink`; its camera follows its seat's actor (`player_camera::seat_actor`). `BLOCKLOOM_SERVER=integrated` turns it on for Play and built
 games: `add_world` spawns the server and follows it, `pump_editor` forwards
 the editor's messages (LAN ones go only to the server), the client's own
 green flag (`begin_run`) starts the server's run, and the client quits when

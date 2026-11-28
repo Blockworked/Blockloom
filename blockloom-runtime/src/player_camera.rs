@@ -44,6 +44,27 @@ fn yaw_of(target: &Transform) -> f32 {
 
 /// Whether a camera with look input should take the pointer when a run
 /// starts: the first-person and third-person presets read a locked mouse.
+/// The actor a seat plays: the first, by id, whose player-driven motor or
+/// player camera names that seat.
+pub fn seat_actor(engine: &Engine, seat: u8) -> Option<String> {
+    use blockloom_core::physics::motor::MotorOwner;
+    let mut ids: Vec<&String> = engine
+        .entities
+        .keys()
+        .filter(|id| {
+            engine.actor(id).is_some_and(|actor| {
+                let c = &actor.components;
+                c.character_motor()
+                    .is_some_and(|m| m.enabled && m.owner == MotorOwner::Player && m.player == seat)
+                    || c.player_camera()
+                        .is_some_and(|p| p.enabled && p.player == seat)
+            })
+        })
+        .collect();
+    ids.sort();
+    ids.first().map(|id| id.to_string())
+}
+
 pub fn wants_lock(engine: &Engine) -> bool {
     engine.project.actors.iter().any(|actor| {
         actor.components.contains("Camera")

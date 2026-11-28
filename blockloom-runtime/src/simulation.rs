@@ -62,6 +62,7 @@ pub(crate) fn add_simulation(app: &mut App, mode: Mode, engine: Engine) {
         )
         .init_resource::<world::NavMesh>()
         .init_resource::<crate::player_camera::BodyFacing>()
+        .init_resource::<crate::server::SeatViews>()
         .init_resource::<physics_install::PhysicsLayers>()
         .insert_engine(engine);
     crate::module::register(app);

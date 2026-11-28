@@ -5,7 +5,7 @@
 use crate::server::{ActorPose, ClientInput, ServerLink, ServerTick};
 use bevy::prelude::*;
 use blockloom_net::ClientOptions;
-use blockloom_net::game::{ActionInput, Invite, LanClient};
+use blockloom_net::game::{ActionInput, Invite, LanClient, ViewInput};
 use blockloom_protocol::EditorMessage;
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -43,11 +43,6 @@ impl RemoteServer {
             failed: None,
             seen: 0,
         })
-    }
-
-    /// The seat the host gave this guest, once admitted.
-    pub fn seat(&self) -> Option<u8> {
-        self.client.seat()
     }
 }
 
@@ -160,7 +155,13 @@ impl ServerLink for RemoteServer {
 
     fn send(&mut self, input: ClientInput) {
         if self.failed.is_none()
-            && let Err(error) = self.client.send_input(&own_actions(&input.sensors))
+            && let Err(error) = self.client.send_input(
+                &own_actions(&input.sensors),
+                ViewInput {
+                    yaw: input.view.yaw,
+                    facing: input.view.facing.map(|(_, yaw)| yaw),
+                },
+            )
         {
             self.failed = Some(error);
         }
@@ -170,6 +171,10 @@ impl ServerLink for RemoteServer {
 
     fn is_running(&self) -> bool {
         self.failed.is_none()
+    }
+
+    fn seat(&self) -> u8 {
+        self.client.seat().unwrap_or(0)
     }
 }
 

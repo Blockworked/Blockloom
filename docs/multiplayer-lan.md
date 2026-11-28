@@ -39,10 +39,11 @@ certificate fingerprint, a 256-bit admission secret and a content compatibility
 hash; share them privately. Nothing is broadcast, and no firewall or router
 configuration is changed.
 
-On another desktop, launch the primitive spectator view:
+On another desktop, launch the primitive spectator view (see Playing as a
+guest below for the game itself):
 
 ```bash
-target/release/blockloom-runtime --join "$LAN_INVITE" --trusted-build "$CONTENT_HASH"
+target/release/blockloom-runtime --join "$LAN_INVITE" --trusted-build "$CONTENT_HASH" --spectate
 ```
 
 Supply the content hash through a trusted channel. It is the invite's final
@@ -127,21 +128,41 @@ That stronger compatibility gate is required before executable guest gameplay.
 Discovery, packaged host menus, controllable guests,
 dedicated-server shipping and full gameplay replication remain planned.
 
-## Seats and input (schema 3)
+## Seats and input (schema 4)
 
 An admitted guest gets the lowest free player seat (1 to 16; seat 0 is the
 host's own player) in a seat frame before its first state. It then sends its
-own actions by base name (`Jump`, `Move`) whenever they change and at least
-every 250 ms: at most 64 actions, names up to 64 bytes, finite values within
-10000, and a rising sequence; anything else drops the guest. The host feeds a
-seat's actions in as that player's action copies (`Jump P2` for seat 1), in
-place of the local pad, so a character motor or player camera set to that
-player follows the guest. An action the guest hasn't sent reads as released.
-`when player joins`/`when player leaves` fire on the host with the player
-number (2 and up), and `player count`/`player connected?` read the seats.
-Scripts don't see these events yet. This is the first step of Phase M in
-plan 2, which moves every game onto an integrated server the host joins as a
-client.
+own actions by base name (`Jump`, `Move`) and its view (camera yaw, and the
+body yaw a first-person camera turns, each optional) whenever they change and
+at least every 250 ms: at most 64 actions, names up to 64 bytes, finite values
+within 10000, and a rising sequence; anything else drops the guest. The host
+feeds a seat's actions in as that player's action copies (`Jump P2` for seat
+1), in place of the local pad, so a character motor or player camera set to
+that player follows the guest. A motor set to that player moves relative to
+the guest's camera and turns with the guest's first-person view
+(`server::SeatViews`), not the host's. An action the guest hasn't sent reads
+as released. `when player joins`/`when player leaves` fire on the host with
+the player number (2 and up), and `player count`/`player connected?` read the
+seats. Scripts don't see these events yet.
+
+## Playing as a guest
+
+A guest with a local build of the same game runs that game as a client of the
+host (`lan/remote.rs`, a `ServerLink` like the integrated server): its own
+world builds the document, sends its seat's input, applies each tick's effects
+the host publishes (frame 7: the tick, then the effects as JSON, saves and
+plugin calls left out) and takes the host's poses. Its camera follows the
+rig's settings on its own seat's actor: the first actor, by id, whose
+player-driven motor or player camera names that seat. Without a build beside
+the runtime (or `--game`), or with `--spectate`, `--join` opens the diagnostic
+viewer above instead.
+
+```bash
+"Pond Game (Linux x64)/Pond Game" --join "$LAN_INVITE" --trusted-build "$CONTENT_HASH"
+```
+
+Not yet: clones the host made before a guest joined are missing on that
+guest, and there is no prediction, so a guest feels the round trip.
 
 ## Verification
 

@@ -89,6 +89,7 @@ pub fn drive_motors(
     access: ControllerAccess,
     cameras: Query<&GlobalTransform, With<WorldCamera>>,
     facing: Res<crate::player_camera::BodyFacing>,
+    views: Option<Res<crate::server::SeatViews>>,
     transforms: Query<(&Transform, &GlobalTransform)>,
     mut commands: Commands,
     time: Res<Time<Fixed>>,
@@ -123,10 +124,14 @@ pub fn drive_motors(
             continue;
         };
         let own_yaw = transform.rotation.to_euler(EulerRot::YXZ).0;
+        // On a server, or a host with guests, the seat's own camera counts.
+        let (seat_yaw, seat_facing) = views
+            .as_ref()
+            .map_or((None, None), |views| views.for_motor(spec.player, &actor));
         let yaw = match spec.space {
             MoveSpace::World => 0.0,
             MoveSpace::Actor => own_yaw,
-            MoveSpace::Camera => camera_yaw.unwrap_or(own_yaw),
+            MoveSpace::Camera => seat_yaw.or(camera_yaw).unwrap_or(own_yaw),
         };
         let carry = carry_of(&actor, &engine, &transforms, &mut carried, dt);
         let _ = global;
@@ -135,7 +140,7 @@ pub fn drive_motors(
             Ok(driven) => {
                 // A camera that turns the body wins over the motor's own facing.
                 // The write is deferred: the controller service reads every Transform.
-                let turned = if let Some(&yaw) = facing.0.get(&actor) {
+                let turned = if let Some(yaw) = seat_facing.or(facing.0.get(&actor).copied()) {
                     Some(Quat::from_rotation_y(yaw))
                 } else if let (Some(face), true) = (driven.face, driven.turn_speed > 0.0) {
                     let mut delta = face - own_yaw;

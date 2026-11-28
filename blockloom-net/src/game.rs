@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub const SCHEMA: u32 = 3;
+pub const SCHEMA: u32 = 4;
 /// Seats guests can take; seat 0 is the host's own player.
 pub const MAX_SEAT: u8 = 16;
 /// Actions one input frame may carry, and how long each name may be.
@@ -66,6 +66,14 @@ pub struct ActionInput {
     pub vector: [f32; 2],
 }
 
+/// Where a guest's camera looks, in radians about +Y: motors that move with
+/// the camera, or turn the body with it, follow the guest's view, not the host's.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ViewInput {
+    pub yaw: Option<f32>,
+    pub facing: Option<f32>,
+}
+
 /// A guest taking or leaving a seat, in the order it happened.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SeatChange {
@@ -73,7 +81,11 @@ pub enum SeatChange {
     Left(u8),
 }
 
-fn input_frame(seq: u64, input: &BTreeMap<String, ActionInput>) -> Result<Vec<u8>, String> {
+fn input_frame(
+    seq: u64,
+    input: &BTreeMap<String, ActionInput>,
+    view: ViewInput,
+) -> Result<Vec<u8>, String> {
     if input.len() > MAX_INPUTS {
         return Err("Too many input actions".into());
     }
@@ -93,10 +105,33 @@ fn input_frame(seq: u64, input: &BTreeMap<String, ActionInput>) -> Result<Vec<u8
             out.extend(v.to_le_bytes());
         }
     }
+    for v in [view.yaw, view.facing] {
+        match v {
+            Some(v) if v.is_finite() => {
+                out.push(1);
+                out.extend(v.to_le_bytes());
+            }
+            Some(_) => return Err("Invalid view angle".into()),
+            None => out.push(0),
+        }
+    }
     framed(out)
 }
 
-fn read_input(r: &mut Reader) -> Result<(u64, BTreeMap<String, ActionInput>), String> {
+fn read_angle(r: &mut Reader) -> Result<Option<f32>, String> {
+    if !r.flag()? {
+        return Ok(None);
+    }
+    let v = f32::from_le_bytes(r.bytes(4)?.try_into().unwrap());
+    if !v.is_finite() {
+        return Err("Invalid view angle".into());
+    }
+    Ok(Some(v.rem_euclid(std::f32::consts::TAU)))
+}
+
+type ReadInput = (u64, BTreeMap<String, ActionInput>, ViewInput);
+
+fn read_input(r: &mut Reader) -> Result<ReadInput, String> {
     let seq = r.u64()?;
     let n = u16::from_le_bytes(r.bytes(2)?.try_into().unwrap()) as usize;
     if n > MAX_INPUTS {
@@ -125,8 +160,12 @@ fn read_input(r: &mut Reader) -> Result<(u64, BTreeMap<String, ActionInput>), St
             return Err("Duplicate input action".into());
         }
     }
+    let view = ViewInput {
+        yaw: read_angle(r)?,
+        facing: read_angle(r)?,
+    };
     r.done()?;
-    Ok((seq, input))
+    Ok((seq, input, view))
 }
 
 #[derive(Clone)]
@@ -521,6 +560,7 @@ struct Guest {
     /// The newest input frame's sequence and actions.
     input_seq: u64,
     input: BTreeMap<String, ActionInput>,
+    view: ViewInput,
 }
 
 /// Attaches to a running authority; publishing state never mutates the world.
@@ -626,6 +666,13 @@ impl LanHost {
             .find(|g| g.seat == Some(seat))
             .map(|g| &g.input)
     }
+    /// Where a seat's guest last said its camera looks.
+    pub fn view(&self, seat: u8) -> Option<ViewInput> {
+        self.guests
+            .values()
+            .find(|g| g.seat == Some(seat))
+            .map(|g| g.view)
+    }
     /// Sends every seated guest one tick's effects, opaque to this layer, in
     /// order on the reliable stream. A guest that can't keep up is dropped.
     pub fn publish_effects(&mut self, tick: u64, effects: &[u8]) -> Result<(), String> {
@@ -706,6 +753,7 @@ impl LanHost {
                             seat: None,
                             input_seq: 0,
                             input: BTreeMap::new(),
+                            view: ViewInput::default(),
                         },
                     );
                     Ok(())
@@ -800,13 +848,14 @@ impl LanHost {
                     r.done()?;
                 }
                 5 if g.admitted => {
-                    let (seq, input) = read_input(&mut r)?;
+                    let (seq, input, view) = read_input(&mut r)?;
                     // Reordering can't happen on one stream; an old one is a replay.
                     if seq <= g.input_seq {
                         return Err("Stale input".into());
                     }
                     g.input_seq = seq;
                     g.input = input;
+                    g.view = view;
                 }
                 _ => return Err("Unexpected guest message".into()),
             }
@@ -828,7 +877,7 @@ pub struct LanClient {
     heartbeat: Instant,
     seat: Option<u8>,
     input_seq: u64,
-    sent_input: Option<(BTreeMap<String, ActionInput>, Instant)>,
+    sent_input: Option<(BTreeMap<String, ActionInput>, ViewInput, Instant)>,
     effects: Vec<(u64, Vec<u8>)>,
 }
 impl LanClient {
@@ -865,22 +914,27 @@ impl LanClient {
     }
     /// Sends this guest's actions when they change, and at least every
     /// quarter second so a lost-focus window can't leave a key held.
-    pub fn send_input(&mut self, input: &BTreeMap<String, ActionInput>) -> Result<(), String> {
+    pub fn send_input(
+        &mut self,
+        input: &BTreeMap<String, ActionInput>,
+        view: ViewInput,
+    ) -> Result<(), String> {
         if self.seat.is_none() || !self.client.is_established() {
             return Ok(());
         }
-        if let Some((last, at)) = &self.sent_input
+        if let Some((last, last_view, at)) = &self.sent_input
             && last == input
+            && *last_view == view
             && at.elapsed() < Duration::from_millis(250)
         {
             return Ok(());
         }
         self.input_seq += 1;
-        let bytes = input_frame(self.input_seq, input)?;
+        let bytes = input_frame(self.input_seq, input, view)?;
         self.client
             .send_stream(STREAM, &bytes, false)
             .map_err(|e| e.to_string())?;
-        self.sent_input = Some((input.clone(), Instant::now()));
+        self.sent_input = Some((input.clone(), view, Instant::now()));
         Ok(())
     }
     pub fn state(&self) -> Option<&Snapshot> {

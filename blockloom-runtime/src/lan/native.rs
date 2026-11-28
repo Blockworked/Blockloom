@@ -206,12 +206,27 @@ pub fn register(app: &mut App) {
 
 /// Seated guests' actions as their players' copies, with edges, once a
 /// tick on the server, so blocks and motors read them like a local pad.
-fn apply_seat_input(mut e: NonSendMut<Engine>) {
+fn apply_seat_input(mut e: NonSendMut<Engine>, mut views: ResMut<crate::server::SeatViews>) {
     if !e.running || e.lan.host.is_none() {
         if !e.lan.seat_held.is_empty() {
             e.lan.seat_held.clear();
         }
+        views.0.retain(|seat, _| *seat == 0);
         return;
+    }
+    if let Some(host) = &e.lan.host {
+        views.0.retain(|seat, _| *seat == 0);
+        for (_, seat) in host.seats() {
+            if let Some(view) = host.view(seat) {
+                views.0.insert(
+                    seat,
+                    crate::server::SeatView {
+                        yaw: view.yaw,
+                        facing: view.facing.map(|yaw| (None, yaw)),
+                    },
+                );
+            }
+        }
     }
     let mut actions = Vec::new();
     let mut fired = Vec::new();

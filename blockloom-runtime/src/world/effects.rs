@@ -486,6 +486,8 @@ pub fn drive_camera(
     mut facing: ResMut<crate::player_camera::BodyFacing>,
     mut state: Local<crate::player_camera::RigState>,
     mut rigs: Query<(&mut CameraRig, &Transform, Option<&ActorId>), Without<WorldCamera>>,
+    bodies: Query<&Transform, Without<WorldCamera>>,
+    following: Option<Res<crate::server::Following>>,
 ) {
     // Scroll is read every frame so none queues up behind a held-off camera.
     let scroll: f32 = wheel
@@ -499,17 +501,33 @@ pub fn drive_camera(
     if editor.is_some_and(|editor| crate::edit::editing(&engine, &editor)) {
         return;
     }
-    let Some((mut rig, target, id)) = rigs.iter_mut().next() else {
+    let Some((mut rig, rig_pose, rig_id)) = rigs.iter_mut().next() else {
         return;
     };
-    let id = id.map_or("", |id| id.0.as_str());
+    let rig_id = rig_id.map_or("", |id| id.0.as_str());
+    // A LAN guest's camera follows its own seat's actor, framed by the rig.
+    let seat = following.as_ref().map_or(0, |f| f.seat());
+    let seated = (seat > 0)
+        .then(|| crate::player_camera::seat_actor(&engine, seat))
+        .flatten()
+        .and_then(|actor| {
+            let pose = bodies.get(*engine.entities.get(&actor)?).ok()?;
+            Some((actor, *pose))
+        });
+    let (id, target) = match &seated {
+        Some((actor, pose)) => (actor.as_str(), pose),
+        None => (rig_id, rig_pose),
+    };
     let Ok(live) = sets.p1().single_mut().map(|(t, _)| *t) else {
         return;
     };
-    let spec = engine
-        .actor(id)
-        .and_then(|actor| actor.components.player_camera().copied())
-        .filter(|spec| spec.enabled);
+    let camera_of = |id: &str| {
+        engine
+            .actor(id)
+            .and_then(|actor| actor.components.player_camera().copied())
+            .filter(|spec| spec.enabled)
+    };
+    let spec = camera_of(id).or_else(|| camera_of(rig_id));
     facing.0.clear();
     let mut next = live;
     let dt = time.delta_secs();
