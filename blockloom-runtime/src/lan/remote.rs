@@ -2,7 +2,7 @@
 //! client, fed by the host's effects and snapshots, and sends its seat's
 //! actions back.
 
-use crate::server::{ActorPose, ClientInput, ServerLink, ServerTick};
+use crate::server::{ActorPose, ClientInput, Roster, ServerLink, ServerTick};
 use bevy::prelude::*;
 use blockloom_net::ClientOptions;
 use blockloom_net::game::{ActionInput, Invite, LanClient, ViewInput};
@@ -31,6 +31,8 @@ pub struct RemoteServer {
     client: LanClient,
     failed: Option<String>,
     seen: u64,
+    /// The newest tick whose effects arrived.
+    effects_tick: u64,
 }
 
 impl RemoteServer {
@@ -42,6 +44,7 @@ impl RemoteServer {
             client,
             failed: None,
             seen: 0,
+            effects_tick: 0,
         })
     }
 }
@@ -125,15 +128,22 @@ impl ServerLink for RemoteServer {
         let mut ticks = Vec::new();
         for (tick, bytes) in self.client.take_effects() {
             match serde_json::from_slice(&bytes) {
-                Ok(effects) => ticks.push(ServerTick {
-                    tick,
-                    effects,
-                    poses: Vec::new(),
-                }),
+                Ok(effects) => {
+                    self.effects_tick = self.effects_tick.max(tick);
+                    ticks.push(ServerTick {
+                        tick,
+                        effects,
+                        ..Default::default()
+                    })
+                }
                 Err(error) => {
-                    self.failed = Some(format!(
-                        "The host sent effects this build can't read: {error}"
-                    ));
+                    let message = format!(
+                        "The host sent effects this build can't read: {error}: run the same build as the host"
+                    );
+                    crate::bridge::send(&blockloom_protocol::RuntimeMessage::Fatal {
+                        message: message.clone(),
+                    });
+                    self.failed = Some(message);
                     return Vec::new();
                 }
             }
@@ -144,10 +154,20 @@ impl ServerLink for RemoteServer {
             self.seen = self.client.sequence();
             let mut poses: Vec<ActorPose> = state.actors.values().map(pose_of).collect();
             poses.sort_by(|a, b| a.id.cmp(&b.id));
+            // A snapshot older than effects already taken would undo them.
+            let roster = (state.tick >= self.effects_tick).then(|| Roster {
+                scene: state.scene.clone(),
+                actors: state
+                    .actors
+                    .values()
+                    .map(|a| (a.id.clone(), a.template.clone()))
+                    .collect(),
+            });
             ticks.push(ServerTick {
                 tick: state.tick,
                 effects: Vec::new(),
                 poses,
+                roster,
             });
         }
         ticks
@@ -255,37 +275,8 @@ mod tests {
         };
         project.settings.input.actions = vec![go, copy];
 
-        blockloom_core::value::register_blockloom_operators();
-        let (editor, incoming) = std::sync::mpsc::channel();
-        let mut host =
-            crate::simulation::headless_server(Engine::new(incoming, Mode::TwoD), Mode::TwoD, 60.0);
-        editor
-            .send(EditorMessage::Load {
-                project: Box::new(project.clone()),
-                dir: None,
-            })
-            .unwrap();
-        editor.send(EditorMessage::Start).unwrap();
-        host.update();
-        host.update();
-        editor
-            .send(EditorMessage::OpenLan {
-                bind: "127.0.0.1:0".into(),
-                max_guests: 2,
-            })
-            .unwrap();
+        let (mut host, remote) = host_with_lan(&project);
         let end = Instant::now() + Duration::from_secs(20);
-        let invite = loop {
-            host.update();
-            let status = crate::lan::status(host.world().non_send::<Engine>());
-            if let Some(invite) = status.invite {
-                break invite;
-            }
-            assert!(Instant::now() < end, "LAN never opened: {:?}", status.error);
-        };
-        let trusted = invite.rsplit('|').next().unwrap().to_string();
-        let remote = RemoteServer::connect(&JoinTarget { invite, trusted }).unwrap();
-
         let (_e, incoming) = std::sync::mpsc::channel();
         let mut engine = Engine::new(incoming, Mode::TwoD);
         engine.project = project;
@@ -325,5 +316,100 @@ mod tests {
             crate::lan::guest_players(host.world().non_send::<Engine>()),
             vec![2]
         );
+    }
+
+    /// A host's server running `project` with LAN open, and a guest link to it.
+    fn host_with_lan(project: &blockloom_core::project::Project) -> (App, RemoteServer) {
+        use crate::engine::Engine;
+        use blockloom_core::scene::Mode;
+        use std::time::{Duration, Instant};
+        blockloom_core::value::register_blockloom_operators();
+        let (editor, incoming) = std::sync::mpsc::channel();
+        let mut host =
+            crate::simulation::headless_server(Engine::new(incoming, Mode::TwoD), Mode::TwoD, 60.0);
+        editor
+            .send(EditorMessage::Load {
+                project: Box::new(project.clone()),
+                dir: None,
+            })
+            .unwrap();
+        editor.send(EditorMessage::Start).unwrap();
+        host.update();
+        host.update();
+        editor
+            .send(EditorMessage::OpenLan {
+                bind: "127.0.0.1:0".into(),
+                max_guests: 2,
+            })
+            .unwrap();
+        let end = Instant::now() + Duration::from_secs(20);
+        let invite = loop {
+            host.update();
+            let status = crate::lan::status(host.world().non_send::<Engine>());
+            if let Some(invite) = status.invite {
+                break invite;
+            }
+            assert!(Instant::now() < end, "LAN never opened: {:?}", status.error);
+        };
+        let trusted = invite.rsplit('|').next().unwrap().to_string();
+        // Keep the editor's side open for the host's lifetime.
+        std::mem::forget(editor);
+        let remote = RemoteServer::connect(&JoinTarget { invite, trusted }).unwrap();
+        (host, remote)
+    }
+
+    /// Clones the host made before the guest joined show up on the guest.
+    #[test]
+    fn a_late_guest_gets_the_clones_it_missed() {
+        use crate::engine::{ActorId, Engine};
+        use blockloom_core::blocks::{Instruction, InstructionKind, Strand};
+        use blockloom_core::project::{Actor, Project};
+        use blockloom_core::scene::{Mode, Visual};
+        use std::time::{Duration, Instant};
+
+        let mut actor = Actor::new(
+            "Coin",
+            Visual::Rect {
+                color: "#FFFF00".to_string(),
+                size: [10.0, 10.0],
+            },
+        );
+        actor.graph.strands = vec![Strand::with_instructions(
+            0,
+            0,
+            vec![
+                Instruction::new(InstructionKind::WhenStarted),
+                Instruction::new(InstructionKind::CreateClone {
+                    of: "myself".into(),
+                }),
+            ],
+        )];
+        let mut project = Project::starter("late", Mode::TwoD);
+        project.actors = vec![actor];
+        project.multiplayer.enabled = true;
+        let (mut host, remote) = host_with_lan(&project);
+
+        let (_e, incoming) = std::sync::mpsc::channel();
+        let mut engine = Engine::new(incoming, Mode::TwoD);
+        engine.project = project;
+        let mut guest = crate::simulation::headless(engine, Mode::TwoD, true);
+        crate::server::follow(&mut guest, remote);
+        let count = |app: &mut App| {
+            let mut q = app.world_mut().query::<&ActorId>();
+            q.iter(app.world()).count()
+        };
+        let end = Instant::now() + Duration::from_secs(20);
+        while count(&mut guest) < 2 {
+            guest.update();
+            host.update();
+            std::thread::sleep(Duration::from_millis(2));
+            assert!(Instant::now() < end, "the clone never reached the guest");
+        }
+        assert_eq!(count(&mut host), 2);
+        for _ in 0..30 {
+            guest.update();
+            host.update();
+        }
+        assert_eq!(count(&mut guest), 2, "made once");
     }
 }

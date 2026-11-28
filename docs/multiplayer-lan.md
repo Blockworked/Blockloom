@@ -161,8 +161,12 @@ viewer above instead.
 "Pond Game (Linux x64)/Pond Game" --join "$LAN_INVITE" --trusted-build "$CONTENT_HASH"
 ```
 
-Not yet: clones the host made before a guest joined are missing on that
-guest, and there is no prediction, so a guest feels the round trip.
+A guest that joins late catches up from the snapshot's roster
+(`server::catch_up`): clones the host made earlier are cloned from their
+template, and authored actors the host already deleted go. A roster older than
+effects already taken, or from another scene, is skipped. Not yet: actors made
+by `create actor` before the guest joined aren't rebuilt, and there is no
+prediction, so a guest feels the round trip.
 
 ## Verification
 

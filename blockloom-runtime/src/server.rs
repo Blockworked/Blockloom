@@ -72,6 +72,16 @@ pub struct ServerTick {
     pub tick: u64,
     pub effects: Vec<Effect>,
     pub poses: Vec<ActorPose>,
+    /// Every actor the server has, by id and the actor it was cloned from,
+    /// when this world may have missed how they came and went (a LAN guest
+    /// joining late). Its own server never sends one.
+    pub roster: Option<Roster>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Roster {
+    pub scene: String,
+    pub actors: Vec<(String, String)>,
 }
 
 /// Where a client's ticks come from: its own integrated server, or a host's
@@ -316,6 +326,7 @@ fn send_tick(
         tick: link.tick,
         effects: std::mem::take(&mut link.effects),
         poses,
+        roster: None,
     };
     if link.outbox.send(tick).is_err() {
         link.closed = true;
@@ -400,7 +411,57 @@ fn take_ticks(
         if !tick.poses.is_empty() {
             following.poses = tick.poses;
         }
+        if let Some(roster) = tick.roster {
+            catch_up(&engine, &roster, &mut effects.0);
+        }
     }
+}
+
+/// What a late guest missed: clones made before it joined, and authored
+/// actors already deleted. Brand-new `create actor` actors aren't rebuilt.
+fn catch_up(engine: &Engine, roster: &Roster, effects: &mut Vec<Effect>) {
+    if roster.scene != engine.project.active_scene().name {
+        return;
+    }
+    let pending: std::collections::HashSet<&str> = effects
+        .iter()
+        .filter_map(|e| match e {
+            Effect::CreateClone { clone, .. } => Some(clone.as_str()),
+            Effect::DeleteActor { actor } => Some(actor.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut made = Vec::new();
+    for (id, template) in &roster.actors {
+        if id != template
+            && !engine.entities.contains_key(id)
+            && !pending.contains(id.as_str())
+            && engine.actor(template).is_some()
+        {
+            made.push(Effect::CreateClone {
+                actor: template.clone(),
+                clone: id.clone(),
+                of: template.clone(),
+            });
+        }
+    }
+    let present: std::collections::HashSet<&str> =
+        roster.actors.iter().map(|(id, _)| id.as_str()).collect();
+    let mut gone: Vec<&String> = engine
+        .entities
+        .keys()
+        .filter(|id| {
+            !present.contains(id.as_str())
+                && !pending.contains(id.as_str())
+                && !engine.clones.contains_key(*id)
+        })
+        .collect();
+    gone.sort();
+    made.extend(
+        gone.into_iter()
+            .map(|id| Effect::DeleteActor { actor: id.clone() }),
+    );
+    effects.extend(made);
 }
 
 fn pose_from_server(
